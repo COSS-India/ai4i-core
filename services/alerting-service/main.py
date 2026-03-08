@@ -175,7 +175,8 @@ async def health_check():
         # Check PostgreSQL connectivity
         if db_engine:
             async with db_engine.begin() as conn:
-                await conn.execute("SELECT 1")
+                from sqlalchemy import text
+                await conn.execute(text("SELECT 1"))
             postgres_status = "healthy"
         else:
             postgres_status = "unhealthy"

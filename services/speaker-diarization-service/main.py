@@ -35,7 +35,6 @@ from ai4icore_model_management import ModelManagementPlugin, ModelManagementConf
 from routers import inference_router
 from models import database_models, auth_models
 from utils.service_registry_client import ServiceRegistryHttpClient
-from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
@@ -354,16 +353,6 @@ if tracer:
     logger.info("✅ FastAPI instrumentation enabled for tracing")
 else:
     logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
-
-# Add rate limiting middleware (will use app.state.redis_client when available)
-rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-app.add_middleware(
-    RateLimitMiddleware,
-    redis_client=None,  # Will use app.state.redis_client as fallback
-    requests_per_minute=rate_limit_per_minute,
-    requests_per_hour=rate_limit_per_hour,
-)
 
 # Register error handlers
 add_error_handlers(app)

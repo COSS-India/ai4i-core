@@ -3,6 +3,28 @@
 # Configure: APISIX_PUBLIC_ORIGIN, APISIX_UPSTREAM_SUFFIX (see README).
 #
 routes:
+- uri: /.well-known/jwks.json
+  name: jwks-endpoint
+  priority: 100
+  methods:
+  - GET
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: '*'
+      allow_methods: GET,OPTIONS
+      max_age: 86400
+      allow_credential: false
+    response-rewrite:
+      headers:
+        Cache-Control: public, max-age=3600
 - uri: /
   name: root-route
   priority: 1
@@ -68,11 +90,28 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,PATCH,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token,X-Correlation-ID,X-Request-ID
       allow_credential: true
     proxy-rewrite:
@@ -89,11 +128,15 @@ routes:
         X-Served-By: APISIX-Gateway
         X-Service: alert-management-service
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       rejected_code: 429
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       allow_degradation: false
       count: 200
@@ -114,11 +157,28 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -130,11 +190,15 @@ routes:
         X-Service: asr-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -156,11 +220,28 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -172,14 +253,86 @@ routes:
         X-Service: audio-lang-detection-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+- uri: /api/v1/auth/login
+  name: auth-login-rate-limit-route
+  priority: 10
+  methods:
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: POST,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token
+      allow_credential: true
+    limit-count:
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
+      key_type: var
+      rejected_code: 429
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 300
+      allow_degradation: false
+      count: 5
+- uri: /api/v1/auth/register
+  name: auth-register-rate-limit-route
+  priority: 10
+  methods:
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: POST,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token
+      allow_credential: true
+    limit-count:
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
+      key_type: var
+      rejected_code: 429
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 3600
+      allow_degradation: false
+      count: 3
 - uri: /api/v1/auth/*
   name: auth-route
 
@@ -224,11 +377,28 @@ routes:
     nodes:
       config-service${APISIX_UPSTREAM_SUFFIX}:8082: 1
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token
       allow_credential: true
     response-rewrite:
@@ -239,6 +409,19 @@ routes:
       headers:
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
+    limit-count:
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
+      key_type: var
+      count: 200
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
 - uri: /api/v1/feature-flags/*
   name: feature-flags-route
 
@@ -257,13 +440,43 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token
       allow_credential: true
+    limit-count:
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
+      key_type: var
+      count: 200
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
 - uri: /api/v1/language-detection/*
   name: language-detection-route
 
@@ -282,11 +495,28 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -298,11 +528,15 @@ routes:
         X-Service: language-detection-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -328,11 +562,28 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -344,11 +595,15 @@ routes:
         X-Service: language-diarization-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 60
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -370,6 +625,23 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     proxy-rewrite:
       headers:
         X-Gateway: apisix
@@ -379,11 +651,15 @@ routes:
         X-Service: llm-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 60
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -409,11 +685,28 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-Anonymous-Session-Id,X-Try-It,sec-ch-ua,sec-ch-ua-mobile,sec-ch-ua-platform,Referer
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-Anonymous-Session-Id,X-Try-It,sec-ch-ua,sec-ch-ua-mobile,sec-ch-ua-platform,Referer,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token
       allow_credential: true
     response-rewrite:
@@ -423,11 +716,15 @@ routes:
           X-Served-By: APISIX-Gateway
           X-Service: model-management
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       rejected_code: 429
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       allow_degradation: false
       count: 120
@@ -450,13 +747,30 @@ routes:
     nodes:
       multi-tenant-service${APISIX_UPSTREAM_SUFFIX}:8001: 1
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,PATCH,OPTIONS
       max_age: 3600
       allow_credential: true
       expose_headers: X-Auth-Token
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
     proxy-rewrite:
       regex_uri:
       - ^/api/v1/multi-tenant/(.*)
@@ -469,11 +783,15 @@ routes:
         X-Service: multi-tenant-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 200
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -495,11 +813,28 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -511,11 +846,15 @@ routes:
         X-Service: ner-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -537,6 +876,23 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     proxy-rewrite:
       headers:
         X-Gateway: apisix
@@ -546,11 +902,15 @@ routes:
         X-Service: nmt-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -572,13 +932,43 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token
       allow_credential: true
+    limit-count:
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
+      key_type: var
+      count: 200
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
 - uri: /api/v1/ocr/*
   name: ocr-route
 
@@ -597,6 +987,23 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     proxy-rewrite:
       headers:
         X-Gateway: apisix
@@ -606,11 +1013,15 @@ routes:
         X-Service: ocr-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 60
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -632,6 +1043,23 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     proxy-rewrite:
       headers:
         X-Gateway: apisix
@@ -641,11 +1069,15 @@ routes:
         X-Service: pipeline-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 60
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -667,11 +1099,28 @@ routes:
     nodes:
       config-service${APISIX_UPSTREAM_SUFFIX}:8082: 1
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token
       allow_credential: true
     response-rewrite:
@@ -682,6 +1131,19 @@ routes:
       headers:
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
+    limit-count:
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
+      key_type: var
+      count: 200
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
 - uri: /api/v1/speaker-diarization/*
   name: speaker-diarization-route
 
@@ -700,11 +1162,28 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -716,11 +1195,15 @@ routes:
         X-Service: speaker-diarization-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 60
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -742,13 +1225,43 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token
       allow_credential: true
+    limit-count:
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
+      key_type: var
+      count: 200
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
 - uri: /api/v1/transliteration/*
   name: transliteration-route
 
@@ -767,11 +1280,28 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -783,11 +1313,15 @@ routes:
         X-Service: transliteration-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -806,13 +1340,26 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
     response-rewrite:
       body_base64: false
       headers:
         X-Service: nmt-service
     serverless-pre-function:
       functions:
-      - 'return function(conf, ctx) local sid = ngx.var.http_x_anonymous_session_id;
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; local sid = ngx.var.http_x_anonymous_session_id;
         if sid and sid ~= '''' then ngx.req.set_header(''X-Try-It-RateLimit-Key'',
         sid) else ngx.req.set_header(''X-Try-It-RateLimit-Key'', ngx.var.remote_addr
         or ''unknown'') end; ngx.req.read_body(); local b = ngx.req.get_body_data();
@@ -825,7 +1372,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: POST,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-Anonymous-Session-Id,X-Try-It,sec-ch-ua,sec-ch-ua-mobile,sec-ch-ua-platform,Referer
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-Anonymous-Session-Id,X-Try-It,sec-ch-ua,sec-ch-ua-mobile,sec-ch-ua-platform,Referer,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token,X-Service,X-RateLimit-Limit,X-RateLimit-Remaining,X-RateLimit-Reset,RateLimit-Limit,RateLimit-Remaining,RateLimit-Reset
       allow_credential: true
     proxy-rewrite:
@@ -838,7 +1385,11 @@ routes:
       count: 5
       key: http_x_try_it_ratelimit_key
       rejected_msg: Please login to access other services.
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       rejected_code: 403
       show_limit_quota_header: true
@@ -862,11 +1413,28 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -878,11 +1446,15 @@ routes:
         X-Service: tts-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -1017,11 +1589,28 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,Cookie,Set-Cookie
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,Cookie,Set-Cookie,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: Set-Cookie
       allow_credential: true
     proxy-rewrite:
@@ -1086,11 +1675,28 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,PATCH,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token,X-Service
       allow_credential: true
     proxy-rewrite:
@@ -1102,11 +1708,15 @@ routes:
         X-Service: unleash-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 200
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -1128,19 +1738,40 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token
       allow_credential: true
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 200
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -1174,11 +1805,28 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token
       allow_credential: true
     proxy-rewrite:
@@ -1190,11 +1838,15 @@ routes:
         X-Service: jaeger
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 100
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -1342,11 +1994,28 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,kbn-version,kbn-xsrf
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,kbn-version,kbn-xsrf,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token,kbn-version
       allow_credential: true
     proxy-rewrite:
@@ -1358,11 +2027,15 @@ routes:
         X-Service: opensearch-dashboards
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       count: 100
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -1434,11 +2107,28 @@ routes:
     nodes:
       prometheus${APISIX_UPSTREAM_SUFFIX}:9090: 1
   plugins:
+    forward-auth:
+      uri: http://auth-service:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-auth-source
+      upstream_headers:
+      - X-User-ID
+      - X-User-Email
+      - X-User-Roles
+      - X-Auth-Source
+      - X-Validated
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
+        or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
+      phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
       expose_headers: X-Auth-Token
       allow_credential: true
     proxy-rewrite:
@@ -1447,13 +2137,17 @@ routes:
       - /prometheus/$1
       use_real_request_uri_unsafe: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: ${REDIS_HOST}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_database: 1
       key_type: var
       rejected_code: 429
       show_limit_quota_header: true
       allow_degradation: false
       time_window: 60
-      key: remote_addr
+      key: http_x_user_id
       count: 200
 - uri: /prometheus/query
   name: prometheus-query-page

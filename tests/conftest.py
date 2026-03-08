@@ -76,6 +76,31 @@ async def authenticated_client(test_api_key: str) -> AsyncGenerator[httpx.AsyncC
         yield client
 
 
+@pytest.fixture(scope="function")
+async def authenticated_jwt_client() -> AsyncGenerator[httpx.AsyncClient, None]:
+    """Create httpx.AsyncClient authenticated with a JWT access token (login flow).
+
+    Attempts to log in with test credentials. If the auth-service is not
+    available the fixture is skipped automatically.
+    """
+    test_email = os.getenv("TEST_USER_EMAIL", "testuser@example.com")
+    test_password = os.getenv("TEST_USER_PASSWORD", "Test@1234")
+    async with httpx.AsyncClient(
+        base_url="http://localhost:8080",
+        headers={"Content-Type": "application/json"},
+        timeout=30.0,
+    ) as client:
+        resp = await client.post(
+            "/api/v1/auth/login",
+            json={"email": test_email, "password": test_password},
+        )
+        if resp.status_code != 200:
+            pytest.skip("Test user not available for JWT auth")
+        tokens = resp.json()
+        client.headers["Authorization"] = f"Bearer {tokens['access_token']}"
+        yield client
+
+
 @pytest.fixture(scope="session")
 async def redis_client() -> AsyncGenerator[redis.Redis, None]:
     """Create Redis client for cache testing."""

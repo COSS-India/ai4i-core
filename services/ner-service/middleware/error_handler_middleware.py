@@ -18,7 +18,6 @@ from middleware.exceptions import (
     AuthenticationError,
     AuthorizationError,
     ErrorDetail,
-    RateLimitExceededError,
 )
 
 # Import OpenTelemetry for tracing
@@ -184,22 +183,6 @@ def add_error_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=403,
             content={"detail": error_detail.dict()},
-        )
-
-    @app.exception_handler(RateLimitExceededError)
-    async def rate_limit_error_handler(
-        request: Request, exc: RateLimitExceededError
-    ):  # type: ignore[unused-argument]
-        """Handle rate limit exceeded errors."""
-        error_detail = ErrorDetail(
-            message=exc.message,
-            code="RATE_LIMIT_EXCEEDED",
-            timestamp=time.time(),
-        )
-        return JSONResponse(
-            status_code=429,
-            content={"detail": error_detail.dict()},
-            headers={"Retry-After": str(exc.retry_after)},
         )
 
     @app.exception_handler(HTTPException)

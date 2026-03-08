@@ -13,6 +13,8 @@ OUTPUT="$CONF_DIR/apisix.yaml"
 # Use trailing dot (.) when suffix empty so DNS does not append host search domain (e.g. idc.tarento.com).
 APISIX_PUBLIC_ORIGIN="${APISIX_PUBLIC_ORIGIN:-http://localhost:3000}"
 APISIX_UPSTREAM_SUFFIX="${APISIX_UPSTREAM_SUFFIX:-.}"
+REDIS_HOST="${REDIS_HOST:-redis}"
+REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 
 if [ ! -f "$TEMPLATE" ]; then
     echo "Error: APISIX template not found at $TEMPLATE" >&2
@@ -24,6 +26,8 @@ escape_sed() { printf '%s' "$1" | sed 's/[&\\]/\\&/g'; }
 
 sed -e "s#\${APISIX_PUBLIC_ORIGIN}#$(escape_sed "$APISIX_PUBLIC_ORIGIN")#g" \
     -e "s#\${APISIX_UPSTREAM_SUFFIX}#$(escape_sed "$APISIX_UPSTREAM_SUFFIX")#g" \
+    -e "s#\${REDIS_HOST}#$(escape_sed "$REDIS_HOST")#g" \
+    -e "s#\${REDIS_PASSWORD}#$(escape_sed "$REDIS_PASSWORD")#g" \
     < "$TEMPLATE" > "$OUTPUT"
 
 echo "APISIX config generated at $OUTPUT (origin=$APISIX_PUBLIC_ORIGIN upstream_suffix=${APISIX_UPSTREAM_SUFFIX:-<empty>})"

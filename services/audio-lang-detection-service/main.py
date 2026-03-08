@@ -34,7 +34,6 @@ from ai4icore_model_management import ModelManagementPlugin, ModelManagementConf
 from routers import inference_router
 from models import database_models, auth_models
 from utils.service_registry_client import ServiceRegistryHttpClient
-from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
@@ -370,16 +369,6 @@ multi_tenant_config.tenant_paths = ["/api/v1/audio-lang-detection"]
 multi_tenant_plugin = MultiTenantPlugin(multi_tenant_config)
 multi_tenant_plugin.register_plugin(app, multi_tenant_db_url=multi_tenant_db_url)
 logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for Audio Language Detection service")
-
-# Rate limiting (Redis client will be picked from app.state)
-rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-app.add_middleware(
-    RateLimitMiddleware,
-    redis_client=None,
-    requests_per_minute=rate_limit_per_minute,
-    requests_per_hour=rate_limit_per_hour,
-)
 
 # Error handlers
 add_error_handlers(app)

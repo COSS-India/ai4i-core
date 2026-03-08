@@ -48,10 +48,9 @@ except ImportError:
 
 # Import middleware components
 from middleware.auth_provider import AuthProvider
-from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
-from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
+from middleware.exceptions import AuthenticationError, AuthorizationError
 from utils.service_registry_client import ServiceRegistryHttpClient
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig, AuthContextMiddleware
 
@@ -179,11 +178,6 @@ async def lifespan(app: FastAPI):
         app.state.db_engine = db_engine
 
         # Tenant schema router is created by MultiTenantPlugin at registration time
-        
-        # Update rate limiting middleware with Redis client
-        for middleware in app.user_middleware:
-            if hasattr(middleware, 'cls') and middleware.cls == RateLimitMiddleware:
-                middleware.kwargs['redis_client'] = redis_client
         
         # Initialize streaming service
         global streaming_service
@@ -427,16 +421,6 @@ multi_tenant_plugin.register_plugin(app, multi_tenant_db_url=multi_tenant_db_url
 logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for TTS service")
 
 
-# Add rate limiting middleware (will be configured with Redis in lifespan)
-rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-app.add_middleware(
-    RateLimitMiddleware,
-    requests_per_minute=rate_limit_per_minute,
-    requests_per_hour=rate_limit_per_hour,
-    redis_client=None  # Will be set in lifespan
-)
-
 # Register error handlers
 add_error_handlers(app)
 
@@ -531,6 +515,8 @@ async def health_check() -> Dict[str, Any]:
     
     try:
         # Check Triton server connectivity
+        # Run sync Triton client call in executor to avoid blocking the event loop
+        # (blocking the event loop deadlocks BaseHTTPMiddleware's threadpool)
         try:
             from utils.triton_client import TritonClient
             triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
@@ -539,14 +525,18 @@ async def health_check() -> Dict[str, Any]:
                 triton_url = triton_url.split('://', 1)[1]
             triton_api_key = os.getenv("TRITON_API_KEY")
             triton_client = TritonClient(triton_url, triton_api_key)
-            
-            # Check if server is ready
-            if triton_client.is_server_ready():
-                health_status["triton"] = "healthy"
-            else:
-                health_status["triton"] = "unhealthy"
+
+            # Check if server is ready (run in executor to avoid event loop blocking)
+            loop = asyncio.get_event_loop()
+            is_ready = await asyncio.wait_for(
+                loop.run_in_executor(None, triton_client.is_server_ready),
+                timeout=5
+            )
+            health_status["triton"] = "healthy" if is_ready else "unhealthy"
         except ImportError:
             health_status["triton"] = "unavailable"
+        except asyncio.TimeoutError:
+            health_status["triton"] = "unhealthy"
     except Exception as e:
         if not exclude_health_logs:
             logger.error(f"Triton health check failed: {e}")

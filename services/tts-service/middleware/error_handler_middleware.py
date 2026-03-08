@@ -6,9 +6,8 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from middleware.exceptions import (
-    AuthenticationError, 
-    AuthorizationError, 
-    RateLimitExceededError,
+    AuthenticationError,
+    AuthorizationError,
     ErrorDetail,
     ServiceError,
     TritonInferenceError,
@@ -19,8 +18,6 @@ from middleware.exceptions import (
 from services.constants.error_messages import (
     AUTH_FAILED,
     AUTH_FAILED_TTS_MESSAGE,
-    RATE_LIMIT_EXCEEDED,
-    RATE_LIMIT_EXCEEDED_TTS_MESSAGE,
     SERVICE_UNAVAILABLE,
     SERVICE_UNAVAILABLE_TTS_MESSAGE,
     INVALID_REQUEST,
@@ -317,19 +314,6 @@ def add_error_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=403,
             content={"detail": error_detail.dict()}
-        )
-    
-    @app.exception_handler(RateLimitExceededError)
-    async def rate_limit_error_handler(request: Request, exc: RateLimitExceededError):
-        """Handle rate limit exceeded errors."""
-        error_detail = ErrorDetail(
-            message=RATE_LIMIT_EXCEEDED_TTS_MESSAGE.format(x=exc.retry_after),
-            code=RATE_LIMIT_EXCEEDED
-        )
-        return JSONResponse(
-            status_code=429,
-            content={"detail": error_detail.dict()},
-            headers={"Retry-After": str(exc.retry_after)}
         )
     
     @app.exception_handler(ServiceError)

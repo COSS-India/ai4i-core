@@ -76,6 +76,18 @@ cp frontend/simple-ui/env.template frontend/simple-ui/.env
 
 **Note:** You can edit these `.env` files if you need to customize settings, but the defaults should work for initial setup.
 
+### Generate RSA Keys (Required for JWT Authentication)
+
+The auth-service uses RS256 asymmetric keys for signing JWT tokens. Generate a key pair before starting services:
+
+```bash
+mkdir -p infrastructure/certs
+openssl genrsa -out infrastructure/certs/jwt-private.pem 2048
+openssl rsa -in infrastructure/certs/jwt-private.pem -pubout -out infrastructure/certs/jwt-public.pem
+```
+
+The default `env.template` for auth-service already points to the correct paths inside the container. If you skipped this step, auth-service will auto-generate ephemeral keys (tokens won't survive restarts — fine for quick testing, not for real use).
+
 ## Step 3: Build Docker Images
 
 Build all the Docker images using the local development compose file:
@@ -187,13 +199,19 @@ This will create:
 
 ## Step 6: Start All Services
 
-Now that the databases are ready, start all remaining services:
+Now that the databases are ready, start all remaining services.
 
+**With APISIX API Gateway (recommended):**
 ```bash
-docker compose -f docker-compose-local.yml up -d
+docker compose -f docker-compose-local.yml --profile apisix up -d
 ```
 
-This will start all application services, monitoring tools, and the frontend.
+**With Kong API Gateway (legacy):**
+```bash
+docker compose -f docker-compose-local.yml --profile kong up -d
+```
+
+This will start the API gateway, all application services, monitoring tools, and the frontend.
 
 **Note:** Docker Compose will automatically start services in the correct order based on their dependencies.
 
@@ -397,7 +415,7 @@ This `docker-compose-local.yml` configuration is optimized for local development
 
 ### Production Deployment
 
-For production deployment with Kong API Gateway, load balancing, and enhanced security features, refer to the production docker-compose configuration.
+For production deployment with APISIX API Gateway, RS256 JWT verification, Redis-backed rate limiting, and network isolation, refer to the production `docker-compose.yml` configuration and `security_strengthn.md` for the full security architecture.
 
 ## Next Steps
 

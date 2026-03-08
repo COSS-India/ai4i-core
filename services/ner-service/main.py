@@ -60,7 +60,6 @@ except ImportError:
 
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
-from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
@@ -399,16 +398,6 @@ if CorrelationMiddleware:
 
 # Request logging
 app.add_middleware(RequestLoggingMiddleware)
-
-# Rate limiting (Redis client will be picked from app.state)
-rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-app.add_middleware(
-    RateLimitMiddleware,
-    redis_client=None,
-    requests_per_minute=rate_limit_per_minute,
-    requests_per_hour=rate_limit_per_hour,
-)
 
 # Error handlers
 add_error_handlers(app)

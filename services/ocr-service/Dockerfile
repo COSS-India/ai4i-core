@@ -20,6 +20,7 @@ COPY libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+COPY libs/ai4icore_gateway_auth /app/libs/ai4icore_gateway_auth
 
 # Copy service requirements
 COPY services/ocr-service/requirements.txt .
@@ -33,6 +34,7 @@ RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_multi_tenant
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_gateway_auth
 
 # Verify packaging is installed (for debugging)
 RUN python -c "import packaging; print(f'packaging version: {packaging.__version__}')" || (echo "ERROR: packaging not found!" && exit 1)
@@ -72,6 +74,7 @@ COPY --from=builder /app/libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_ten
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
+COPY --from=builder /app/libs/ai4icore_gateway_auth /app/libs/ai4icore_gateway_auth
 
 # Copy application code and shared constants
 COPY services/ocr-service .
