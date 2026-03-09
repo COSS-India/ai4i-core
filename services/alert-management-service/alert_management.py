@@ -34,6 +34,7 @@ VALID_ORGANIZATIONS = ["irctc", "kisanmitra", "bashadaan", "beml"]
 # Database connection pool (will be initialized on startup)
 db_pool: Optional[asyncpg.Pool] = None
 auth_db_pool: Optional[asyncpg.Pool] = None
+multi_tenant_db_pool: Optional[asyncpg.Pool] = None
 
 # Database configuration
 DB_HOST = os.getenv("POSTGRES_HOST", "postgres")
@@ -44,14 +45,16 @@ DB_NAME = "alerting_db"
 
 # Auth database configuration (for querying users by role)
 AUTH_DB_NAME = "auth_db"
+# Multi-tenant database (for resolving tenant name -> tenant user email)
+MULTI_TENANT_DB_NAME = os.getenv("MULTI_TENANT_DB_NAME", "multi_tenant_db")
 
 # Sync service configuration
 SYNC_SERVICE_URL = os.getenv("ALERT_CONFIG_SYNC_SERVICE_URL", "http://alert-config-sync-service:8097")
 SYNC_ENABLED = os.getenv("ALERT_SYNC_ENABLED", "true").lower() == "true"
 
 async def init_db_pool():
-    """Initialize database connection pools for alerting_db and auth_db"""
-    global db_pool, auth_db_pool
+    """Initialize database connection pools for alerting_db, auth_db, and multi_tenant_db"""
+    global db_pool, auth_db_pool, multi_tenant_db_pool
     if db_pool is None:
         db_pool = await asyncpg.create_pool(
             host=DB_HOST,
@@ -80,16 +83,41 @@ async def init_db_pool():
             max_queries=50000,
             command_timeout=60
         )
+    
+    # Initialize multi_tenant_db connection pool for resolving tenant -> tenant user email
+    if multi_tenant_db_pool is None:
+        try:
+            multi_tenant_db_pool = await asyncpg.create_pool(
+                host=DB_HOST,
+                port=DB_PORT,
+                user=DB_USER,
+                password=DB_PASSWORD,
+                database=MULTI_TENANT_DB_NAME,
+                min_size=2,
+                max_size=10,
+                max_inactive_connection_lifetime=300,
+                max_queries=50000,
+                command_timeout=60
+            )
+        except Exception as e:
+            logger.warning(
+                f"Could not initialize multi_tenant_db pool (tenant email resolution in responses will fall back to stored email_to): {e}",
+                extra={"context": {"error": str(e)}}
+            )
+            multi_tenant_db_pool = None
 
 async def close_db_pool():
     """Close database connection pools"""
-    global db_pool, auth_db_pool
+    global db_pool, auth_db_pool, multi_tenant_db_pool
     if db_pool:
         await db_pool.close()
         db_pool = None
     if auth_db_pool:
         await auth_db_pool.close()
         auth_db_pool = None
+    if multi_tenant_db_pool:
+        await multi_tenant_db_pool.close()
+        multi_tenant_db_pool = None
 
 async def ensure_db_pool():
     """Ensure database connection pools are initialized"""
@@ -186,6 +214,70 @@ async def get_users_by_role(role_name: str) -> List[str]:
             status_code=500,
             detail=f"Failed to query users by role: {str(e)}"
         )
+
+
+async def resolve_tenant_name_to_emails(tenant_name: str) -> List[str]:
+    """
+    Resolve tenant name to list of tenant user emails using multi_tenant_db and auth_db.
+    Matches tenant by organization_name only (case-insensitive, trimmed); then auth_db users
+    where id = tenant.user_id and is_tenant = true. Returns [] if tenant not found or no emails.
+    """
+    if not tenant_name or not str(tenant_name).strip():
+        return []
+    tenant_name = str(tenant_name).strip()
+    try:
+        if multi_tenant_db_pool is None:
+            await init_db_pool()
+        if multi_tenant_db_pool is None:
+            return []
+        async with multi_tenant_db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT tenant_id, user_id
+                FROM tenants
+                WHERE LOWER(TRIM(organization_name)) = LOWER(TRIM($1))
+                LIMIT 1
+                """,
+                tenant_name
+            )
+            if not row:
+                return []
+            user_id = row.get("user_id")
+            if user_id is None:
+                return []
+        if auth_db_pool is None:
+            return []
+        async with auth_db_pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT email FROM users
+                WHERE id = $1 AND is_tenant = true AND is_active = true AND email IS NOT NULL AND email != ''
+                """,
+                user_id
+            )
+            return [r["email"] for r in rows if r.get("email")]
+    except Exception as e:
+        logger.warning(
+            f"Failed to resolve tenant '{tenant_name}' to emails: {e}",
+            extra={"context": {"tenant_name": tenant_name, "error": str(e)}}
+        )
+        return []
+
+
+async def _receiver_row_to_response(row: Any) -> "NotificationReceiverResponse":
+    """
+    Build NotificationReceiverResponse from a DB row. When the receiver has tenant set,
+    resolve tenant to tenant user emails and use those for email_to in the response;
+    otherwise use the stored email_to.
+    """
+    data = dict(row)
+    tenant = (row.get("tenant") or "").strip() if row.get("tenant") else None
+    if tenant:
+        resolved_emails = await resolve_tenant_name_to_emails(tenant)
+        if resolved_emails:
+            data["email_to"] = resolved_emails
+    return NotificationReceiverResponse(**data)
+
 
 async def trigger_config_sync(actor: Optional[str] = None, request: Optional[Request] = None) -> None:
     """
@@ -327,20 +419,33 @@ class AlertAnnotation(BaseModel):
     value: str = Field(..., description="Annotation value")
 
 class AlertDefinitionCreate(BaseModel):
-    """Request model for creating an alert definition. PromQL is built from alert_type and threshold."""
+    """Request model for creating an alert definition. PromQL is built from alert_type+threshold OR from sub_category/signal/signal_metric/condition_operator."""
     name: str = Field(..., description="Alert name (e.g., 'HighLatency')")
     description: Optional[str] = Field(None, description="Alert description")
     threshold_value: float = Field(..., description="Threshold value (e.g. seconds for latency, percent for error_rate/CPU/Memory/Disk)")
-    threshold_unit: str = Field(..., description="Threshold unit: 'seconds' (latency), 'percent' or 'ratio' (error_rate), 'percent' (CPU/Memory/Disk)")
+    threshold_unit: str = Field(..., description="Threshold unit: 'ms' or 's' for latency (ms converted to seconds in PromQL); '%' for error rate and infrastructure (CPU/Memory/Disk)")
     category: str = Field(default="application", description="Category: 'application' or 'infrastructure'")
     severity: str = Field(..., description="Severity: 'critical', 'warning', or 'info'")
     urgency: str = Field(default="medium", description="Urgency: 'high', 'medium', or 'low'")
-    alert_type: str = Field(..., description="Application: 'Latency' or 'Error Rate'. Infrastructure: 'CPU', 'Memory', or 'Disk'")
+    alert_type: Optional[str] = Field(None, description="Application: 'Latency' or 'Error Rate'. Infrastructure: 'CPU', 'Memory', or 'Disk'. Required when not using sub_category/signal/signal_metric.")
+    sub_category: Optional[str] = Field(None, description="Sub-category filtered by category (e.g. 'Performance', 'Availability')")
+    signal: Optional[str] = Field(None, description="Monitoring signal type (e.g. 'Latency', 'Error rate')")
+    signal_metric: Optional[str] = Field(None, description="Specific metric within the selected signal (e.g. 'Latency P50', '4xx error rate')")
+    condition_operator: Optional[str] = Field(None, description="Comparison operator: '>', '>=', '<', '<='")
     scope: Optional[str] = Field(None, description="Scope (e.g., 'all_services', 'per_service')")
+    service: Optional[List[str]] = Field(None, description="Optional list of service names; when set, adds service label (or service=~ regex for multiple) to the generated PromQL")
     evaluation_interval: str = Field(default="30s", description="Prometheus evaluation interval")
     for_duration: str = Field(default="5m", description="Duration before alert fires")
     enabled: Optional[bool] = Field(default=True, description="Whether the alert definition is enabled")
     annotations: Optional[List[AlertAnnotation]] = Field(default_factory=list, description="Alert annotations")
+
+    def model_post_init(self, __context):
+        """Require either (alert_type) or (sub_category, signal, signal_metric, condition_operator)."""
+        new_path = all([self.sub_category, self.signal, self.signal_metric, self.condition_operator])
+        if new_path:
+            return
+        if not self.alert_type:
+            raise ValueError("Either provide alert_type or all of sub_category, signal, signal_metric, condition_operator")
 
 class AlertDefinitionUpdate(BaseModel):
     """Request model for updating an alert definition"""
@@ -351,7 +456,12 @@ class AlertDefinitionUpdate(BaseModel):
     severity: Optional[str] = None
     urgency: Optional[str] = None
     alert_type: Optional[str] = None
+    sub_category: Optional[str] = None
+    signal: Optional[str] = None
+    signal_metric: Optional[str] = None
+    condition_operator: Optional[str] = None
     scope: Optional[str] = None
+    service: Optional[List[str]] = None
     evaluation_interval: Optional[str] = None
     for_duration: Optional[str] = None
     enabled: Optional[bool] = None
@@ -370,7 +480,12 @@ class AlertDefinitionResponse(BaseModel):
     severity: str
     urgency: str
     alert_type: Optional[str]
+    sub_category: Optional[str] = None
+    signal: Optional[str] = None
+    signal_metric: Optional[str] = None
+    condition_operator: Optional[str] = None
     scope: Optional[str]
+    service: Optional[List[str]] = None
     evaluation_interval: str
     for_duration: str
     enabled: bool
@@ -384,6 +499,9 @@ class NotificationReceiverCreate(BaseModel):
     category: str = Field(..., description="Category: 'application' or 'infrastructure'")
     severity: str = Field(..., description="Severity: 'critical', 'warning', or 'info'")
     alert_type: Optional[str] = Field(None, description="Optional alert type filter (e.g., 'latency', 'error_rate')")
+    alert_names: Optional[List[str]] = Field(None, description="Optional list of alert definition names to route only those alerts within the group")
+    tenant: Optional[str] = Field(None, description="Optional tenant name; when set, route by tenant_id and use tenant user email (auth_db is_tenant=true)")
+    rule_name: Optional[str] = Field(None, description="Optional rule name; when set, stored on the receiver and used for the auto-created routing rule")
     email_to: Optional[List[str]] = Field(None, description="Email addresses (required if rbac_role not provided)", min_items=1)
     rbac_role: Optional[str] = Field(None, description="RBAC role name (ADMIN, MODERATOR, USER, GUEST) - if provided, emails will be resolved from users with this role")
     email_subject_template: Optional[str] = Field(None, description="Email subject template")
@@ -409,6 +527,9 @@ class NotificationReceiverCreate(BaseModel):
 class NotificationReceiverUpdate(BaseModel):
     """Request model for updating a notification receiver"""
     receiver_name: Optional[str] = None
+    rule_name: Optional[str] = None
+    alert_names: Optional[List[str]] = Field(None, description="Optional list of alert definition names")
+    tenant: Optional[str] = Field(None, description="Optional tenant name")
     email_to: Optional[List[str]] = Field(None, description="Email addresses (required if rbac_role not provided)", min_items=1)
     rbac_role: Optional[str] = Field(None, description="RBAC role name (ADMIN, MODERATOR, USER, GUEST) - if provided, emails will be resolved from users with this role")
     email_subject_template: Optional[str] = None
@@ -437,8 +558,11 @@ class NotificationReceiverResponse(BaseModel):
     id: int
     organization: str
     receiver_name: str
+    rule_name: Optional[str] = None
     email_to: List[str]
     rbac_role: Optional[str] = None
+    alert_names: Optional[List[str]] = None
+    tenant: Optional[str] = None
     email_subject_template: Optional[str]
     email_body_template: Optional[str]
     enabled: bool
@@ -453,6 +577,8 @@ class RoutingRuleCreate(BaseModel):
     match_severity: Optional[str] = Field(None, description="Match severity: 'critical', 'warning', 'info', or null (all)")
     match_category: Optional[str] = Field(None, description="Match category: 'application', 'infrastructure', or null (all)")
     match_alert_type: Optional[str] = Field(None, description="Match alert type or null (all)")
+    match_alert_names: Optional[List[str]] = Field(None, description="Optional list of alert names to match (alertname label)")
+    match_tenant_id: Optional[str] = Field(None, description="Optional tenant_id to match (tenant label in metrics)")
     group_by: Optional[List[str]] = Field(default_factory=lambda: ["alertname", "category", "severity"], description="Labels to group by")
     group_wait: str = Field(default="10s", description="Wait time before sending first notification")
     group_interval: str = Field(default="10s", description="Wait time before sending next notification")
@@ -467,6 +593,8 @@ class RoutingRuleUpdate(BaseModel):
     match_severity: Optional[str] = None
     match_category: Optional[str] = None
     match_alert_type: Optional[str] = None
+    match_alert_names: Optional[List[str]] = None
+    match_tenant_id: Optional[str] = None
     group_by: Optional[List[str]] = None
     group_wait: Optional[str] = None
     group_interval: Optional[str] = None
@@ -494,6 +622,8 @@ class RoutingRuleResponse(BaseModel):
     match_severity: Optional[str]
     match_category: Optional[str]
     match_alert_type: Optional[str]
+    match_alert_names: Optional[List[str]] = None
+    match_tenant_id: Optional[str] = None
     group_by: List[str]
     group_wait: str
     group_interval: str
@@ -510,6 +640,55 @@ class RoutingRuleResponse(BaseModel):
 # Application alert types (display): "Latency", "Error Rate". Infrastructure: "CPU", "Memory", "Disk".
 APPLICATION_ALERT_TYPES_DISPLAY = ("Latency", "Error Rate")
 INFRASTRUCTURE_ALERT_TYPES_DISPLAY = ("CPU", "Memory", "Disk")
+
+# -----------------------------------------------------------------------------
+# Configurable Sub-category / Signal / Signal metric / Condition operator
+# Used to build PromQL from structured inputs. Extend these dicts to add new options.
+# -----------------------------------------------------------------------------
+SUB_CATEGORIES_CONFIG: Dict[str, Dict[str, Any]] = {
+    # Application
+    "performance": {"label": "Performance", "signals": ["latency"], "category": "application"},
+    "availability": {"label": "Availability", "signals": ["error_rate"], "category": "application"},
+    # Infrastructure
+    "compute": {"label": "Compute", "signals": ["cpu_utilization", "memory_utilization"], "category": "infrastructure"},
+    "storage": {"label": "Storage", "signals": ["disk_utilization"], "category": "infrastructure"},
+}
+SIGNALS_CONFIG: Dict[str, Dict[str, Any]] = {
+    # Application
+    "latency": {"label": "Latency", "signal_metrics": ["latency_p50", "latency_p99"]},
+    "error_rate": {"label": "Error rate", "signal_metrics": ["error_rate_4xx", "error_rate_5xx", "error_rate_timeout"]},
+    # Infrastructure
+    "cpu_utilization": {"label": "CPU Utilization", "signal_metrics": ["total_cpu_usage"]},
+    "memory_utilization": {"label": "Memory Utilization", "signal_metrics": ["total_memory_usage"]},
+    "disk_utilization": {"label": "Disk Utilization", "signal_metrics": ["total_disk_usage"]},
+}
+SIGNAL_METRICS_CONFIG: Dict[str, Dict[str, Any]] = {
+    # Application
+    "latency_p50": {"label": "Latency P50", "signal": "latency", "quantile": 0.5},
+    "latency_p99": {"label": "Latency P99", "signal": "latency", "quantile": 0.99},
+    "error_rate_4xx": {"label": "4xx error rate", "signal": "error_rate", "status_regex": "[4].."},
+    "error_rate_5xx": {"label": "5xx error rate", "signal": "error_rate", "status_regex": "5.."},
+    "error_rate_timeout": {"label": "Timeout error rate", "signal": "error_rate", "status_regex": "408|504"},
+    # Infrastructure (infra_type used to build same PromQL as legacy CPU/Memory/Disk)
+    "total_cpu_usage": {"label": "Total CPU Usage", "signal": "cpu_utilization", "infra_type": "cpu"},
+    "total_memory_usage": {"label": "Total Memory Usage", "signal": "memory_utilization", "infra_type": "memory"},
+    "total_disk_usage": {"label": "Total Disk Usage", "signal": "disk_utilization", "infra_type": "disk"},
+}
+CONDITION_OPERATORS_LIST: List[str] = [">", ">=", "<", "<="]
+
+# Valid threshold_unit: latency accepts "ms" or "s"; everything else "%" (percent).
+THRESHOLD_UNIT_LATENCY = ("ms", "s", "seconds")
+THRESHOLD_UNIT_PERCENT = ("%", "percent")
+
+# Optional: map label-derived keys to config keys (e.g. "4xx error rate" -> "4xx_error_rate" -> error_rate_4xx)
+SIGNAL_METRIC_LABEL_TO_KEY: Dict[str, str] = {
+    "4xx_error_rate": "error_rate_4xx",
+    "5xx_error_rate": "error_rate_5xx",
+    "timeout_error_rate": "error_rate_timeout",
+    "total_cpu_usage": "total_cpu_usage",  # no-op, allows "Total CPU Usage" -> total_cpu_usage
+    "total_memory_usage": "total_memory_usage",
+    "total_disk_usage": "total_disk_usage",
+}
 
 
 def _normalize_alert_type(category: str, alert_type: str) -> str:
@@ -558,18 +737,19 @@ def build_promql_from_threshold(
 
     if category == "application":
         # No organization filter: evaluate across all organizations
+        # Include tenant in group-by so firing alerts get the metric's tenant label for Alertmanager routing
         org_filter = ""
         if at == "latency":
-            # Latency: threshold_value in seconds
+            # Latency: threshold_value in seconds; sum by (le, endpoint, tenant) preserves tenant from metric
             return (
-                f'histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{{endpoint=~"/.*inference.*"{org_filter}}}[5m]))) > {threshold_value}'
+                f'histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{{endpoint=~"/.*inference.*"{org_filter}}}[5m]))) > {threshold_value}'
             )
         if at == "error_rate":
-            # Error rate: ratio of 5xx to total. threshold_unit "percent" -> use threshold_value/100
+            # Error rate: ratio of 5xx to total; sum by (endpoint, tenant) preserves tenant from metric
             thresh = (threshold_value / 100.0) if (threshold_unit or "").lower() == "percent" else threshold_value
             return (
-                f'sum by (endpoint)(rate(telemetry_obsv_http_requests_total{{status=~"[45]..", endpoint=~"/.*inference.*"{org_filter}}}[5m])) '
-                f'/ sum by (endpoint)(rate(telemetry_obsv_http_requests_total{{endpoint=~"/.*inference.*"{org_filter}}}[5m])) > {thresh}'
+                f'sum by (endpoint, tenant)(rate(telemetry_obsv_http_requests_total{{status=~"[45]..", endpoint=~"/.*inference.*"{org_filter}}}[5m])) '
+                f'/ sum by (endpoint, tenant)(rate(telemetry_obsv_http_requests_total{{endpoint=~"/.*inference.*"{org_filter}}}[5m])) > {thresh}'
             )
         raise HTTPException(
             status_code=400,
@@ -596,6 +776,185 @@ def build_promql_from_threshold(
         )
 
     raise HTTPException(status_code=400, detail="category must be 'application' or 'infrastructure'")
+
+
+def build_promql_from_signal_config(
+    category: str,
+    sub_category: str,
+    signal: str,
+    signal_metric: str,
+    condition_operator: str,
+    threshold_value: float,
+    threshold_unit: str,
+    organization: Optional[str] = None,
+) -> str:
+    """
+    Build PromQL from configurable sub_category, signal, signal_metric, and condition_operator.
+    Supports application (Performance/Availability) and infrastructure (Compute/Storage).
+    Latency: threshold_unit "ms" or "s" (ms is converted to seconds for PromQL). Everything else: "%".
+    """
+    category = (category or "application").lower()
+    if category not in ("application", "infrastructure"):
+        raise HTTPException(
+            status_code=400,
+            detail="category must be 'application' or 'infrastructure'"
+        )
+    sub = (sub_category or "").strip().lower().replace(" ", "_")
+    sig = (signal or "").strip().lower().replace(" ", "_")
+    metric_key = (signal_metric or "").strip().lower().replace(" ", "_")
+    if metric_key in SIGNAL_METRIC_LABEL_TO_KEY:
+        metric_key = SIGNAL_METRIC_LABEL_TO_KEY[metric_key]
+    op = (condition_operator or ">").strip()
+
+    if sub not in SUB_CATEGORIES_CONFIG:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid sub_category '{sub_category}'. Must be one of: {list(SUB_CATEGORIES_CONFIG.keys())}"
+        )
+    if SUB_CATEGORIES_CONFIG[sub].get("category") != category:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Sub_category '{sub_category}' is not valid for category '{category}'."
+        )
+    if sig not in SIGNALS_CONFIG or sig not in SUB_CATEGORIES_CONFIG[sub]["signals"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid signal '{signal}' for sub_category '{sub_category}'."
+        )
+    if metric_key not in SIGNAL_METRICS_CONFIG or SIGNAL_METRICS_CONFIG[metric_key]["signal"] != sig:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid signal_metric '{signal_metric}' for signal '{signal}'."
+        )
+    if op not in CONDITION_OPERATORS_LIST:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid condition_operator '{condition_operator}'. Must be one of: {CONDITION_OPERATORS_LIST}"
+        )
+
+    config = SIGNAL_METRICS_CONFIG[metric_key]
+    org_filter = f', organization="{organization}"' if organization else ""
+
+    # --- Latency: threshold_unit "ms" or "s"; convert ms to seconds for PromQL ---
+    if config["signal"] == "latency":
+        unit = (threshold_unit or "s").strip().lower()
+        if unit not in THRESHOLD_UNIT_LATENCY:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid threshold_unit for latency: '{threshold_unit}'. Use 'ms' or 's'."
+            )
+        threshold_seconds = (threshold_value / 1000.0) if unit == "ms" else threshold_value
+        quantile = config["quantile"]
+        expr = (
+            f'histogram_quantile({quantile}, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{{endpoint=~"/.*inference.*"{org_filter}}}[5m])))'
+        )
+        return f"{expr} {op} {threshold_seconds}"
+
+    # --- Error rate: threshold in % (or percent) ---
+    if config["signal"] == "error_rate":
+        unit = (threshold_unit or "%").strip().lower()
+        if unit not in THRESHOLD_UNIT_PERCENT and unit != "ratio":
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid threshold_unit for error rate. Use '%' (percent)."
+            )
+        thresh = (threshold_value / 100.0) if unit in THRESHOLD_UNIT_PERCENT else threshold_value
+        status_regex = config["status_regex"]
+        num = f'sum by (endpoint, tenant)(rate(telemetry_obsv_http_requests_total{{status=~"{status_regex}", endpoint=~"/.*inference.*"{org_filter}}}[5m]))'
+        den = f'sum by (endpoint, tenant)(rate(telemetry_obsv_http_requests_total{{endpoint=~"/.*inference.*"{org_filter}}}[5m]))'
+        return f"({num} / {den}) {op} {thresh}"
+
+    # --- Infrastructure: CPU, Memory, Disk — threshold in % ---
+    if "infra_type" in config:
+        unit = (threshold_unit or "%").strip().lower()
+        if unit not in THRESHOLD_UNIT_PERCENT:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid threshold_unit for infrastructure. Use '%' (percent)."
+            )
+        infra = config["infra_type"]
+        if infra == "cpu":
+            expr = (
+                '100 * (1 - (sum(rate(node_cpu_seconds_total{mode="idle"}[5m])) / sum(rate(node_cpu_seconds_total[5m]))))'
+            )
+            return f"{expr} {op} {threshold_value}"
+        if infra == "memory":
+            expr = (
+                '100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))'
+            )
+            return f"{expr} {op} {threshold_value}"
+        if infra == "disk":
+            expr = (
+                '100 * (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|ramfs|overlay", mountpoint="/"} '
+                '/ node_filesystem_size_bytes{fstype!~"tmpfs|ramfs|overlay", mountpoint="/"}))'
+            )
+            return f"{expr} {op} {threshold_value}"
+        raise HTTPException(status_code=400, detail=f"Unsupported infra_type '{infra}'.")
+
+    raise HTTPException(status_code=400, detail=f"Unsupported signal '{config.get('signal', '')}' in config.")
+
+
+SERVICE_SUFFIX = "-service"
+
+
+def _normalize_services(services: Optional[List[str]]) -> List[str]:
+    """
+    Normalize service(s) to a list of non-empty strings with '-service' suffix.
+    User inputs short names like 'asr', 'nmt', 'tts'; backend adds '-service' if not present.
+    Accepts list or single string (legacy).
+    """
+    if not services:
+        return []
+    if isinstance(services, str):
+        s = services.strip()
+        raw_list = [s] if s else []
+    else:
+        raw_list = [s.strip() for s in services if s and str(s).strip()]
+    result = []
+    for name in raw_list:
+        if not name:
+            continue
+        if name.endswith(SERVICE_SUFFIX):
+            result.append(name)
+        else:
+            result.append(f"{name}{SERVICE_SUFFIX}")
+    return result
+
+
+def inject_service_into_promql(promql_expr: str, services: Optional[List[str]]) -> str:
+    """
+    Inject service label into PromQL expression.
+    Finds all label selectors { ... } and adds service matcher.
+    - One service: service="<name>"
+    - Multiple services: service=~"<name1>|<name2>|..." (regex, names escaped)
+    """
+    import re
+    svc_list = _normalize_services(services)
+    if not svc_list:
+        return promql_expr
+
+    if 'service=' in promql_expr:
+        return promql_expr
+
+    if len(svc_list) == 1:
+        service_part = f'service="{svc_list[0]}"'
+    else:
+        # Regex match: escape each name and join with |
+        escaped = [re.escape(s) for s in svc_list]
+        pattern = "|".join(escaped)
+        service_part = f'service=~"{pattern}"'
+
+    def replace_selector(match):
+        selector = match.group(0)
+        if 'service=' in selector:
+            return selector
+        selector_content = selector[1:-1].strip()
+        if not selector_content:
+            return f'{{{service_part}}}'
+        return f'{{{selector_content}, {service_part}}}'
+
+    pattern_re = r'\{[^}]*\}'
+    return re.sub(pattern_re, replace_selector, promql_expr)
 
 
 def inject_organization_into_promql(promql_expr: str, organization: str) -> str:
@@ -661,33 +1020,70 @@ async def create_alert_definition(
     request: Optional[Request] = None,
     organization_for_audit: Optional[str] = None,
 ) -> AlertDefinitionResponse:
-    """Create a new alert definition. PromQL is built from alert_type and threshold_value/unit."""
+    """Create a new alert definition. PromQL is built from alert_type+threshold OR from sub_category/signal/signal_metric/condition_operator."""
     validate_organization(organization)
-    
-    # Build PromQL from threshold and alert_type (no organization filter; rules apply globally)
-    promql_expr_with_org = build_promql_from_threshold(
-        category=data.category,
-        alert_type=data.alert_type,
-        threshold_value=data.threshold_value,
-        threshold_unit=data.threshold_unit,
-        organization=None,
-    )
-    alert_type_display = _alert_type_to_display(data.alert_type, data.category)
-    
+    await ensure_db_pool()
+
+    use_signal_config = all([data.sub_category, data.signal, data.signal_metric, data.condition_operator])
+    services_list = _normalize_services(data.service)
+
+    if use_signal_config:
+        promql_expr_with_org = build_promql_from_signal_config(
+            category=data.category,
+            sub_category=data.sub_category,
+            signal=data.signal,
+            signal_metric=data.signal_metric,
+            condition_operator=data.condition_operator,
+            threshold_value=data.threshold_value,
+            threshold_unit=data.threshold_unit,
+            organization=None,
+        )
+        if services_list:
+            promql_expr_with_org = inject_service_into_promql(promql_expr_with_org, services_list)
+        # Display alert_type from signal for UI consistency (infrastructure: CPU, Memory, Disk)
+        sig_key = (data.signal or "").strip().lower().replace(" ", "_")
+        if (data.category or "").lower() == "infrastructure" and sig_key in ("cpu_utilization", "memory_utilization", "disk_utilization"):
+            alert_type_display = {"cpu_utilization": "CPU", "memory_utilization": "Memory", "disk_utilization": "Disk"}[sig_key]
+        else:
+            alert_type_display = SIGNALS_CONFIG.get(sig_key, {}).get("label") or data.signal
+        sub_category_val = (data.sub_category or "").strip()
+        signal_val = (data.signal or "").strip()
+        signal_metric_val = (data.signal_metric or "").strip()
+        condition_operator_val = (data.condition_operator or "").strip()
+    else:
+        promql_expr_with_org = build_promql_from_threshold(
+            category=data.category,
+            alert_type=data.alert_type,
+            threshold_value=data.threshold_value,
+            threshold_unit=data.threshold_unit,
+            organization=None,
+        )
+        if services_list:
+            promql_expr_with_org = inject_service_into_promql(promql_expr_with_org, services_list)
+        alert_type_display = _alert_type_to_display(data.alert_type, data.category)
+        sub_category_val = None
+        signal_val = None
+        signal_metric_val = None
+        condition_operator_val = None
+
     async with db_pool.acquire() as conn:
-        # Insert alert definition (threshold_value, threshold_unit stored for display and update; alert_type stored as "Latency", "Error Rate", "CPU", "Memory", "Disk")
+        # Insert alert definition (with optional new columns)
         row = await conn.fetchrow(
             """
             INSERT INTO alert_definitions (
                 organization, name, description, promql_expr, threshold_value, threshold_unit,
-                category, severity, urgency, alert_type, scope, evaluation_interval, for_duration,
+                category, severity, urgency, alert_type, sub_category, signal, signal_metric, condition_operator,
+                scope, service, evaluation_interval, for_duration,
                 enabled, created_by
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             RETURNING *
             """,
             organization, data.name, data.description, promql_expr_with_org,
             data.threshold_value, data.threshold_unit,
-            data.category, data.severity, data.urgency, alert_type_display, data.scope,
+            data.category, data.severity, data.urgency, alert_type_display,
+            sub_category_val, signal_val, signal_metric_val, condition_operator_val,
+            data.scope,
+            services_list if services_list else None,
             data.evaluation_interval, data.for_duration,
             data.enabled if data.enabled is not None else True,
             created_by
@@ -769,7 +1165,12 @@ async def get_alert_definition_by_id(alert_id: int, organization: Optional[str] 
             severity=row['severity'],
             urgency=row['urgency'],
             alert_type=row['alert_type'],
+            sub_category=row.get('sub_category'),
+            signal=row.get('signal'),
+            signal_metric=row.get('signal_metric'),
+            condition_operator=row.get('condition_operator'),
             scope=row['scope'],
+            service=_normalize_services(row.get('service')) or None,
             evaluation_interval=row['evaluation_interval'],
             for_duration=row['for_duration'],
             enabled=row['enabled'],
@@ -832,7 +1233,12 @@ async def list_alert_definitions(organization: Optional[str] = None, enabled_onl
                 severity=row['severity'],
                 urgency=row['urgency'],
                 alert_type=row['alert_type'],
+                sub_category=row.get('sub_category'),
+                signal=row.get('signal'),
+                signal_metric=row.get('signal_metric'),
+                condition_operator=row.get('condition_operator'),
                 scope=row['scope'],
+                service=_normalize_services(row.get('service')) or None,
                 evaluation_interval=row['evaluation_interval'],
                 for_duration=row['for_duration'],
                 enabled=row['enabled'],
@@ -886,23 +1292,69 @@ async def update_alert_definition(alert_id: int, organization: Optional[str], da
             updates.append(f"description = ${param_idx}")
             params.append(data.description)
             param_idx += 1
-        # Rebuild promql when threshold or type/category change (threshold-based alerts)
-        if data.threshold_value is not None or data.threshold_unit is not None or data.alert_type is not None or data.category is not None:
+        # Effective services: from update payload or existing definition (list)
+        effective_services = data.service if data.service is not None else _normalize_services(existing.get('service'))
+        # Effective new-path fields for PromQL rebuild
+        effective_sub = data.sub_category if data.sub_category is not None else existing.get('sub_category')
+        effective_signal = data.signal if data.signal is not None else existing.get('signal')
+        effective_signal_metric = data.signal_metric if data.signal_metric is not None else existing.get('signal_metric')
+        effective_operator = data.condition_operator if data.condition_operator is not None else existing.get('condition_operator')
+        use_signal_path = all([effective_sub, effective_signal, effective_signal_metric, effective_operator])
+        # Rebuild promql when threshold/type/category/service or any of the four new fields change
+        threshold_or_type_changed = (
+            data.threshold_value is not None or data.threshold_unit is not None
+            or data.alert_type is not None or data.category is not None
+        )
+        signal_path_changed = (
+            data.sub_category is not None or data.signal is not None
+            or data.signal_metric is not None or data.condition_operator is not None
+        )
+        service_changed = data.service is not None
+        if threshold_or_type_changed or service_changed or signal_path_changed:
             category_to_use = data.category if data.category is not None else existing['category']
-            alert_type_to_use = data.alert_type if data.alert_type is not None else existing['alert_type']
             thresh_val = data.threshold_value if data.threshold_value is not None else existing.get('threshold_value')
             thresh_unit = data.threshold_unit if data.threshold_unit is not None else existing.get('threshold_unit')
-            if thresh_val is not None and thresh_unit is not None and alert_type_to_use:
-                promql_expr_with_org = build_promql_from_threshold(
+            if use_signal_path and thresh_val is not None and thresh_unit is not None:
+                promql_expr_with_org = build_promql_from_signal_config(
                     category=category_to_use,
-                    alert_type=alert_type_to_use,
+                    sub_category=effective_sub,
+                    signal=effective_signal,
+                    signal_metric=effective_signal_metric,
+                    condition_operator=effective_operator,
                     threshold_value=float(thresh_val),
                     threshold_unit=thresh_unit,
                     organization=None,
                 )
+                if effective_services:
+                    promql_expr_with_org = inject_service_into_promql(promql_expr_with_org, effective_services)
                 updates.append(f"promql_expr = ${param_idx}")
                 params.append(promql_expr_with_org)
                 param_idx += 1
+                # Keep alert_type in sync for display (e.g. "Latency", "Error rate", "CPU", "Memory", "Disk")
+                sig_key = (effective_signal or "").strip().lower().replace(" ", "_")
+                if sig_key in SIGNALS_CONFIG:
+                    if category_to_use == "infrastructure" and sig_key in ("cpu_utilization", "memory_utilization", "disk_utilization"):
+                        display_type = {"cpu_utilization": "CPU", "memory_utilization": "Memory", "disk_utilization": "Disk"}[sig_key]
+                    else:
+                        display_type = SIGNALS_CONFIG[sig_key].get("label") or effective_signal
+                    updates.append(f"alert_type = ${param_idx}")
+                    params.append(display_type)
+                    param_idx += 1
+            elif not use_signal_path:
+                alert_type_to_use = data.alert_type if data.alert_type is not None else existing['alert_type']
+                if thresh_val is not None and thresh_unit is not None and alert_type_to_use:
+                    promql_expr_with_org = build_promql_from_threshold(
+                        category=category_to_use,
+                        alert_type=alert_type_to_use,
+                        threshold_value=float(thresh_val),
+                        threshold_unit=thresh_unit,
+                        organization=None,
+                    )
+                    if effective_services:
+                        promql_expr_with_org = inject_service_into_promql(promql_expr_with_org, effective_services)
+                    updates.append(f"promql_expr = ${param_idx}")
+                    params.append(promql_expr_with_org)
+                    param_idx += 1
         if data.threshold_value is not None:
             updates.append(f"threshold_value = ${param_idx}")
             params.append(data.threshold_value)
@@ -927,9 +1379,29 @@ async def update_alert_definition(alert_id: int, organization: Optional[str], da
             updates.append(f"alert_type = ${param_idx}")
             params.append(_alert_type_to_display(data.alert_type, existing['category']))
             param_idx += 1
+        if data.sub_category is not None:
+            updates.append(f"sub_category = ${param_idx}")
+            params.append(data.sub_category)
+            param_idx += 1
+        if data.signal is not None:
+            updates.append(f"signal = ${param_idx}")
+            params.append(data.signal)
+            param_idx += 1
+        if data.signal_metric is not None:
+            updates.append(f"signal_metric = ${param_idx}")
+            params.append(data.signal_metric)
+            param_idx += 1
+        if data.condition_operator is not None:
+            updates.append(f"condition_operator = ${param_idx}")
+            params.append(data.condition_operator)
+            param_idx += 1
         if data.scope is not None:
             updates.append(f"scope = ${param_idx}")
             params.append(data.scope)
+            param_idx += 1
+        if data.service is not None:
+            updates.append(f"service = ${param_idx}")
+            params.append(_normalize_services(data.service) or None)
             param_idx += 1
         if data.evaluation_interval is not None:
             updates.append(f"evaluation_interval = ${param_idx}")
@@ -1197,8 +1669,14 @@ async def create_notification_receiver(
             detail="Either 'email_to' or 'rbac_role' must be provided"
         )
     
-    # Auto-generate receiver name: <severity>-<category> (no organization; sync merges by this key)
-    receiver_name = f"{data.severity}-{data.category}"
+    # Auto-generate receiver name: <severity>-<category> optionally + --alerts-A|B and/or --tenant-<name> for uniqueness
+    base_name = f"{data.severity}-{data.category}"
+    suffix_parts = []
+    if data.alert_names:
+        suffix_parts.append("alerts-" + "|".join(sorted(n for n in data.alert_names if n and str(n).strip())))
+    if data.tenant and str(data.tenant).strip():
+        suffix_parts.append("tenant-" + str(data.tenant).strip())
+    receiver_name = base_name + ("--" + "--".join(suffix_parts) if suffix_parts else "")
     
     # Use default templates if not provided
     email_subject_template = data.email_subject_template or DEFAULT_EMAIL_SUBJECT_TEMPLATE
@@ -1218,61 +1696,60 @@ async def create_notification_receiver(
                 detail=f"Receiver with name '{receiver_name}' already exists."
             )
         
-        # Create the receiver (store both email_to and rbac_role)
+        # Create the receiver (store both email_to and rbac_role; optional alert_names, tenant, rule_name)
+        alert_names_arr = [n for n in (data.alert_names or []) if n and str(n).strip()]
+        tenant_val = str(data.tenant).strip() if data.tenant and str(data.tenant).strip() else None
+        rule_name_val = str(data.rule_name).strip() if data.rule_name and str(data.rule_name).strip() else None
         receiver_row = await conn.fetchrow(
             """
             INSERT INTO notification_receivers (
-                organization, receiver_name, email_to, rbac_role,
+                organization, receiver_name, rule_name, email_to, rbac_role,
+                alert_names, tenant,
                 email_subject_template, email_body_template, created_by
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING *
             """,
-            organization, receiver_name, email_to, rbac_role,
+            organization, receiver_name, rule_name_val, email_to, rbac_role,
+            alert_names_arr if alert_names_arr else None,
+            tenant_val,
             email_subject_template, email_body_template, created_by
         )
         
         receiver_id = receiver_row['id']
         
-        # Auto-create routing rule (rule_name = severity-category[-alert_type]). One rule per (severity, category, alert_type) globally.
-        rule_name = receiver_name
-        if data.alert_type:
-            rule_name = f"{rule_name}-{data.alert_type}"
+        # Auto-create routing rule: use rule_name from request if provided, else derive from severity/category/alert_type/alert_names/tenant
+        rule_name = rule_name_val
+        if rule_name is None:
+            rule_name = receiver_name
+            if data.alert_type and not rule_name.endswith(f"-{data.alert_type}"):
+                rule_name = f"{base_name}-{data.alert_type}" + ("--" + "--".join(suffix_parts) if suffix_parts else "")
         
-        # Check if a routing rule already exists for this (severity, category, alert_type) — no organization; global uniqueness.
+        # Check if a routing rule already exists for this (severity, category, alert_type, match_alert_names) — no organization; global uniqueness by receiver_id (one rule per receiver).
         existing_rule = await conn.fetchrow(
             """
             SELECT id FROM routing_rules 
-            WHERE match_severity = $1 
-            AND match_category = $2 
-            AND (match_alert_type = $3 OR (match_alert_type IS NULL AND $3 IS NULL))
+            WHERE receiver_id = $1
             """,
-            data.severity, data.category, data.alert_type
+            receiver_id
         )
         
         if existing_rule:
-            logger.warning(
-                f"Routing rule already exists for severity={data.severity}, category={data.category}, alert_type={data.alert_type}. "
-                f"Receiver created; skipping duplicate rule.",
-                extra={
-                    "context": {
-                        "severity": data.severity,
-                        "category": data.category,
-                        "alert_type": data.alert_type,
-                    }
-                }
-            )
+            pass  # One rule per receiver; we just created the receiver so there is no existing rule for this receiver_id
         else:
-            # Create routing rule (organization stored for DB/audit only; routing is by severity/category only)
+            # Create routing rule (organization stored for DB/audit only; routing is by severity/category/alert_names/tenant)
+            # match_tenant_id is resolved in sync service from receiver.tenant
             await conn.execute(
                 """
                 INSERT INTO routing_rules (
                     organization, rule_name, receiver_id, match_severity, match_category,
-                    match_alert_type, group_by, group_wait, group_interval, repeat_interval,
+                    match_alert_type, match_alert_names,
+                    group_by, group_wait, group_interval, repeat_interval,
                     continue_routing, priority, created_by
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                 """,
                 organization, rule_name, receiver_id, data.severity, data.category,
-                data.alert_type, 
+                data.alert_type,
+                alert_names_arr if alert_names_arr else None,
                 ["alertname", "category", "severity"],  # Default group_by (no organization)
                 "10s",  # Default group_wait
                 "10s",  # Default group_interval
@@ -1283,7 +1760,7 @@ async def create_notification_receiver(
             )
             logger.info(
                 f"Auto-created routing rule '{rule_name}' for receiver '{receiver_name}' "
-                f"(severity={data.severity}, category={data.category}, alert_type={data.alert_type})",
+                f"(severity={data.severity}, category={data.category}, alert_type={data.alert_type}, alert_names={alert_names_arr}, tenant={tenant_val})",
                 extra={
                     "context": {
                         "receiver_name": receiver_name,
@@ -1291,11 +1768,13 @@ async def create_notification_receiver(
                         "severity": data.severity,
                         "category": data.category,
                         "alert_type": data.alert_type,
+                        "alert_names": alert_names_arr,
+                        "tenant": tenant_val,
                     }
                 }
             )
         
-        result = NotificationReceiverResponse(**dict(receiver_row))
+        result = await _receiver_row_to_response(receiver_row)
         
         # Log audit event
         if AUDIT_LOGGING_AVAILABLE:
@@ -1341,7 +1820,7 @@ async def list_notification_receivers(organization: Optional[str] = None, enable
         query += " ORDER BY created_at DESC"
         
         rows = await conn.fetch(query, *params)
-        return [NotificationReceiverResponse(**dict(row)) for row in rows]
+        return [await _receiver_row_to_response(row) for row in rows]
 
 async def create_routing_rule(
     organization: str,
@@ -1368,13 +1847,16 @@ async def create_routing_rule(
             """
             INSERT INTO routing_rules (
                 organization, rule_name, receiver_id, match_severity, match_category,
-                match_alert_type, group_by, group_wait, group_interval, repeat_interval,
+                match_alert_type, match_alert_names, match_tenant_id,
+                group_by, group_wait, group_interval, repeat_interval,
                 continue_routing, priority, created_by
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING *
             """,
             organization, data.rule_name, data.receiver_id, data.match_severity,
-            data.match_category, data.match_alert_type, data.group_by,
+            data.match_category, data.match_alert_type,
+            data.match_alert_names, data.match_tenant_id,
+            data.group_by,
             data.group_wait, data.group_interval, data.repeat_interval,
             data.continue_routing, data.priority, created_by
         )
@@ -1422,7 +1904,7 @@ async def get_notification_receiver_by_id(receiver_id: int, organization: Option
         
         if not row:
             raise HTTPException(status_code=404, detail="Notification receiver not found")
-        return NotificationReceiverResponse(**dict(row))
+        return await _receiver_row_to_response(row)
 
 async def update_notification_receiver(receiver_id: int, organization: Optional[str], data: NotificationReceiverUpdate, updated_by: str, request: Optional[Request] = None) -> NotificationReceiverResponse:
     """
@@ -1482,6 +1964,18 @@ async def update_notification_receiver(receiver_id: int, organization: Optional[
             updates.append(f"receiver_name = ${param_idx}")
             params.append(data.receiver_name)
             param_idx += 1
+        if data.rule_name is not None:
+            updates.append(f"rule_name = ${param_idx}")
+            params.append(str(data.rule_name).strip() if str(data.rule_name).strip() else None)
+            param_idx += 1
+        if data.alert_names is not None:
+            updates.append(f"alert_names = ${param_idx}")
+            params.append([n for n in data.alert_names if n and str(n).strip()] or None)
+            param_idx += 1
+        if data.tenant is not None:
+            updates.append(f"tenant = ${param_idx}")
+            params.append(str(data.tenant).strip() if str(data.tenant).strip() else None)
+            param_idx += 1
         if email_to is not None:
             updates.append(f"email_to = ${param_idx}")
             params.append(email_to)
@@ -1517,6 +2011,21 @@ async def update_notification_receiver(receiver_id: int, organization: Optional[
                 WHERE id = ${param_idx} AND organization = ${param_idx + 1}
             """
             await conn.execute(query, *params)
+        
+        # When alert_names is updated, sync the linked routing rule(s) so match_alert_names stays in sync
+        if data.alert_names is not None:
+            alert_names_arr = [n for n in data.alert_names if n and str(n).strip()] or None
+            await conn.execute(
+                "UPDATE routing_rules SET match_alert_names = $1, updated_at = CURRENT_TIMESTAMP WHERE receiver_id = $2",
+                alert_names_arr, receiver_id
+            )
+        # When rule_name is updated, sync the linked routing rule(s) so rule_name stays in sync
+        if data.rule_name is not None:
+            new_rule_name = str(data.rule_name).strip() if str(data.rule_name).strip() else None
+            await conn.execute(
+                "UPDATE routing_rules SET rule_name = COALESCE($1, rule_name), updated_at = CURRENT_TIMESTAMP WHERE receiver_id = $2",
+                new_rule_name, receiver_id
+            )
         
         result = await get_notification_receiver_by_id(receiver_id, actual_organization)
         
@@ -1698,6 +2207,14 @@ async def update_routing_rule(rule_id: int, organization: Optional[str], data: R
         if data.match_alert_type is not None:
             updates.append(f"match_alert_type = ${param_idx}")
             params.append(data.match_alert_type)
+            param_idx += 1
+        if data.match_alert_names is not None:
+            updates.append(f"match_alert_names = ${param_idx}")
+            params.append(data.match_alert_names)
+            param_idx += 1
+        if data.match_tenant_id is not None:
+            updates.append(f"match_tenant_id = ${param_idx}")
+            params.append(data.match_tenant_id)
             param_idx += 1
         if data.group_by is not None:
             updates.append(f"group_by = ${param_idx}")

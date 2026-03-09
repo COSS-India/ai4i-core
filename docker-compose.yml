@@ -1014,6 +1014,7 @@ services:
       - ./infrastructure/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--web.enable-lifecycle"
     networks:
       - microservices-network
     restart: unless-stopped
