@@ -541,27 +541,20 @@ const LogsPage: React.FC = () => {
     }
   }, [logsData, services, appliedService]);
 
-  // Debug: Log authentication state
+  // Debug: Log authentication state (uses decrypted token from getJwtToken)
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const localToken = localStorage.getItem('access_token');
-      const sessionToken = sessionStorage.getItem('access_token');
-      const token = localToken || sessionToken;
+      const token = getJwtToken();
       console.log('Logs page auth state:', {
         isAuthenticated,
         authLoading,
-        hasLocalToken: !!localToken,
-        hasSessionToken: !!sessionToken,
         hasToken: !!token,
         tokenLength: token?.length || 0,
         tokenPreview: token ? `${token.substring(0, 20)}...` : 'none',
       });
-      
-      // Also check what getJwtToken returns
-      const jwtFromApi = getJwtToken();
       console.log('getJwtToken() result:', {
-        hasToken: !!jwtFromApi,
-        tokenLength: jwtFromApi?.length || 0,
+        hasToken: !!token,
+        tokenLength: token?.length || 0,
       });
     }
   }, [isAuthenticated, authLoading]);

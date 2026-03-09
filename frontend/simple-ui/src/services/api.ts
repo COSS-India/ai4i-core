@@ -1,6 +1,7 @@
 // Axios API client with interceptors for authentication and request tracking
 
 import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestConfig } from 'axios';
+import { getStoredAccessToken } from '../utils/tokenStorage';
 
 // API Base URL from environment.
 // For production this should be set to the browser-facing API gateway URL
@@ -14,12 +15,10 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   console.log('NEXT_PUBLIC_API_URL from env:', process.env.NEXT_PUBLIC_API_URL);
 }
 
-// Get JWT access token from localStorage or sessionStorage (stored after login)
-// This is used for Authorization: Bearer header
+// Get JWT access token (decrypted from storage)
 const getAuthToken = (): string | null => {
   if (typeof window !== 'undefined') {
-    // Check both localStorage and sessionStorage (same logic as getJwtToken)
-    const accessToken = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    const accessToken = getStoredAccessToken();
     if (accessToken && accessToken.trim() !== '') {
       return accessToken.trim();
     }
@@ -263,12 +262,10 @@ asrApiClient.interceptors.response.use(
   }
 );
 
-// Get JWT token from auth service
+// Get JWT token (decrypted from storage)
 export const getJwtToken = (): string | null => {
   if (typeof window === 'undefined') return null;
-  // Check both localStorage and sessionStorage for token (same logic as authService)
-  const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
-  // Return null if token is empty or whitespace
+  const token = getStoredAccessToken();
   return token && token.trim() !== '' ? token.trim() : null;
 };
 
