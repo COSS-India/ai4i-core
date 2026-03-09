@@ -14,6 +14,10 @@ OUTPUT="$CONF_DIR/apisix.yaml"
 APISIX_PUBLIC_ORIGIN="${APISIX_PUBLIC_ORIGIN:-http://localhost:3000}"
 APISIX_UPSTREAM_SUFFIX="${APISIX_UPSTREAM_SUFFIX:-.}"
 REDIS_HOST="${REDIS_HOST:-redis}"
+# For local Docker (trailing dot), use redis. so limit-count plugin resolves Redis correctly.
+if [ "$APISIX_UPSTREAM_SUFFIX" = "." ] && [ "$REDIS_HOST" = "redis" ]; then
+  REDIS_HOST="redis."
+fi
 REDIS_PASSWORD="${REDIS_PASSWORD:-}"
 
 if [ ! -f "$TEMPLATE" ]; then
