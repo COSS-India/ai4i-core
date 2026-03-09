@@ -246,7 +246,7 @@ services:
     profiles:
       - apisix
     ports:
-      - "9080:8080"
+      - "8080:8080"
       - "8443:8443"
     environment:
       APISIX_STAND_ALONE: "true"
@@ -1212,7 +1212,7 @@ services:
         # Browser talks directly to the API Gateway on host port 8080
         # NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
         
-        NEXT_PUBLIC_API_URL: http://localhost:9080
+        NEXT_PUBLIC_API_URL: ${API_GATEWAY_PUBLIC_URL}
         # Service-specific API keys from .env file (no hardcoding)
         NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
         NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
@@ -1226,13 +1226,13 @@ services:
 
     container_name: ai4v-simple-ui
     ports:
-      - "3002:3000"
+      - "3000:3000"
     environment:
       # HOSTNAME=0.0.0.0 tells Next.js standalone server to listen on all interfaces
       - HOSTNAME=0.0.0.0
       # Route all frontend API calls through the API Gateway on host
       # - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
-      - NEXT_PUBLIC_API_URL=http://localhost:9080
+      - NEXT_PUBLIC_API_URL=${API_GATEWAY_PUBLIC_URL}
 
       - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
       # Service-specific API keys for API Gateway authentication / RBAC
