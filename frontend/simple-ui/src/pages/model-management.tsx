@@ -1420,7 +1420,7 @@ const ModelManagementPage: React.FC = () => {
                       <CardHeader>
                         <HStack justify="space-between" align="center">
                           <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-                            Model Details: {selectedModel.name}
+                           {selectedModel.name}
                           </Heading>
                           <HStack spacing={2}>
                             {(selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && (
