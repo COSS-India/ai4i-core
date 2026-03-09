@@ -4,15 +4,9 @@ Provides CRUD operations for alert definitions, notification receivers, and rout
 """
 import os
 
-from ai4icore_logging import get_logger, configure_logging
+from ai4icore_logging import get_logger, LoggingConfig, register_logging_plugin
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-
-# Configure structured logging (same approach as nmt-service, ocr-service)
-configure_logging(
-    service_name=os.getenv("SERVICE_NAME", "alert-management-service"),
-    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
-)
 
 # Disable uvicorn access logger before uvicorn starts
 import logging
@@ -78,6 +72,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Initialize AI4ICore Logging Plugin
+logging_config = LoggingConfig.from_env()
+logging_config.service_name = os.getenv("SERVICE_NAME", "alert-management-service")
+logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true"
+register_logging_plugin(app, config=logging_config)
+logger.info("✅ AI4ICore Logging Plugin initialized for alert-management-service")
 
 # Distributed tracing (Jaeger) - same pattern as nmt-service, ocr-service
 # IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
