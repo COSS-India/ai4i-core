@@ -60,25 +60,28 @@ class PipelineService:
         request: PipelineInferenceRequest,
         jwt_token: Optional[str] = None,
         api_key: Optional[str] = None,
-        user_id: Optional[int] = None
+        user_id: Optional[int] = None,
+        gateway_headers: Optional[Dict[str, str]] = None
     ) -> PipelineInferenceResponse:
         """
         Execute a multi-task AI pipeline.
-        
+
         Args:
             request: Pipeline inference request with tasks and input data
             jwt_token: JWT token for authentication
             api_key: API key for authentication
             user_id: User ID for tenant routing in downstream services
-            
+            gateway_headers: Headers injected by API gateway (X-Validated, X-User-ID, etc.)
+                so downstream services (ASR, NMT, TTS) accept service-to-service calls.
+
         Returns:
             Pipeline inference response with outputs from each task
         """
         results = []
         previous_output = request.inputData.copy()
-        
+
         logger.info(f"🚀 Starting pipeline with {len(request.pipelineTasks)} tasks")
-        
+
         # Create a parent span for the entire pipeline if tracing is available
         if TRACING_AVAILABLE and tracer:
             # Create readable task names for the span
@@ -88,7 +91,7 @@ class PipelineService:
                 if task_name == "TRANSLATION":
                     task_name = "NMT"
                 task_names.append(task_name)
-            
+
             with tracer.start_as_current_span(
                 f"Pipeline: {' → '.join(task_names)}",
                 attributes={
@@ -97,11 +100,11 @@ class PipelineService:
                 }
             ):
                 return await self._execute_pipeline_tasks(
-                    request, results, previous_output, jwt_token, api_key, user_id
+                    request, results, previous_output, jwt_token, api_key, user_id, gateway_headers
                 )
         else:
             return await self._execute_pipeline_tasks(
-                request, results, previous_output, jwt_token, api_key, user_id
+                request, results, previous_output, jwt_token, api_key, user_id, gateway_headers
             )
     
     async def _execute_pipeline_tasks(
@@ -111,7 +114,8 @@ class PipelineService:
         previous_output: Dict[str, Any],
         jwt_token: Optional[str],
         api_key: Optional[str],
-        user_id: Optional[int] = None
+        user_id: Optional[int] = None,
+        gateway_headers: Optional[Dict[str, str]] = None
     ) -> PipelineInferenceResponse:
         """Execute all pipeline tasks in sequence."""
         # Execute each task in sequence
@@ -143,7 +147,8 @@ class PipelineService:
                             jwt_token=jwt_token,
                             api_key=api_key,
                             control_config=request.controlConfig,
-                            user_id=user_id
+                            user_id=user_id,
+                            gateway_headers=gateway_headers
                         )
                         
                         # Add success attributes to span
@@ -157,7 +162,8 @@ class PipelineService:
                         jwt_token=jwt_token,
                         api_key=api_key,
                         control_config=request.controlConfig,
-                        user_id=user_id
+                        user_id=user_id,
+                        gateway_headers=gateway_headers
                     )
                 
                 # Store result
@@ -349,7 +355,8 @@ class PipelineService:
         jwt_token: Optional[str] = None,
         api_key: Optional[str] = None,
         control_config: Optional[Dict[str, Any]] = None,
-        user_id: Optional[int] = None
+        user_id: Optional[int] = None,
+        gateway_headers: Optional[Dict[str, str]] = None
     ) -> PipelineTaskOutput:
         """Execute a single pipeline task with distributed tracing."""
         
@@ -396,7 +403,7 @@ class PipelineService:
                     call_span.set_attribute("asr.service_id", task.config.serviceId)
                     call_span.add_event("asr.request.started")
                     
-                    response = await self.service_client.call_asr_service(asr_request, jwt_token=jwt_token, api_key=api_key, user_id=user_id)
+                    response = await self.service_client.call_asr_service(asr_request, jwt_token=jwt_token, api_key=api_key, user_id=user_id, gateway_headers=gateway_headers)
                     
                     output_count = len(response.get("output", []))
                     call_span.set_attribute("asr.output_count", output_count)
@@ -471,7 +478,7 @@ class PipelineService:
                     call_span.set_attribute("nmt.service_id", task.config.serviceId)
                     call_span.add_event("nmt.request.started")
                     
-                    response = await self.service_client.call_nmt_service(nmt_request, jwt_token=jwt_token, api_key=api_key, user_id=user_id)
+                    response = await self.service_client.call_nmt_service(nmt_request, jwt_token=jwt_token, api_key=api_key, user_id=user_id, gateway_headers=gateway_headers)
                     
                     output_count = len(response.get("output", []))
                     call_span.set_attribute("nmt.output_count", output_count)
@@ -545,7 +552,7 @@ class PipelineService:
                     call_span.set_attribute("tts.service_id", task.config.serviceId)
                     call_span.add_event("tts.request.started")
                     
-                    response = await self.service_client.call_tts_service(tts_request, jwt_token=jwt_token, api_key=api_key, user_id=user_id)
+                    response = await self.service_client.call_tts_service(tts_request, jwt_token=jwt_token, api_key=api_key, user_id=user_id, gateway_headers=gateway_headers)
                     
                     audio_count = len(response.get("audio", []))
                     call_span.set_attribute("tts.audio_count", audio_count)

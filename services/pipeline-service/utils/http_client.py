@@ -180,12 +180,14 @@ class ServiceClient:
         except Exception as e:
             logger.warning(f"⚠️ Failed to inject trace context: {e}")
     
-    async def call_asr_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
+    async def call_asr_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None, user_id: Optional[int] = None, gateway_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """
         Call ASR service for speech-to-text conversion.
-        
+
         Propagates distributed tracing context to enable end-to-end observability.
         Also passes user_id for tenant routing in downstream services.
+        When the request was validated by the API gateway, pass gateway_headers
+        (X-Validated, X-User-ID, etc.) so downstream services accept the call.
         """
         await self._ensure_urls()
         headers = {}
@@ -199,7 +201,10 @@ class ServiceClient:
         # Add X-User-Id header for tenant routing (needed when JWT doesn't contain tenant info)
         if user_id is not None:
             headers['X-User-Id'] = str(user_id)
-        
+        # Forward gateway-injected headers so ASR (and other services) accept service-to-service calls
+        if gateway_headers:
+            headers.update(gateway_headers)
+
         # Inject trace context for distributed tracing
         self._inject_trace_context(headers)
         
@@ -345,12 +350,14 @@ class ServiceClient:
             logger.error(f"❌ ASR service HTTP error: {e}")
             raise ValueError(f"ASR service HTTP error: {str(e)}") from e
     
-    async def call_nmt_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
+    async def call_nmt_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None, user_id: Optional[int] = None, gateway_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """
         Call NMT service for translation.
-        
+
         Propagates distributed tracing context to enable end-to-end observability.
         Also passes user_id for tenant routing in downstream services.
+        When the request was validated by the API gateway, pass gateway_headers
+        (X-Validated, X-User-ID, etc.) so downstream services accept the call.
         """
         await self._ensure_urls()
         headers = {}
@@ -364,7 +371,10 @@ class ServiceClient:
         # Add X-User-Id header for tenant routing (needed when JWT doesn't contain tenant info)
         if user_id is not None:
             headers['X-User-Id'] = str(user_id)
-        
+        # Forward gateway-injected headers so NMT accepts service-to-service calls
+        if gateway_headers:
+            headers.update(gateway_headers)
+
         # Inject trace context for distributed tracing
         self._inject_trace_context(headers)
         
@@ -500,12 +510,14 @@ class ServiceClient:
             logger.error(f"❌ NMT service HTTP error: {e}")
             raise ValueError(f"NMT service HTTP error: {str(e)}") from e
     
-    async def call_tts_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
+    async def call_tts_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None, user_id: Optional[int] = None, gateway_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """
         Call TTS service for text-to-speech conversion.
-        
+
         Propagates distributed tracing context to enable end-to-end observability.
         Also passes user_id for tenant routing in downstream services.
+        When the request was validated by the API gateway, pass gateway_headers
+        (X-Validated, X-User-ID, etc.) so downstream services accept the call.
         """
         await self._ensure_urls()
         headers = {}
@@ -519,7 +531,10 @@ class ServiceClient:
         # Add X-User-Id header for tenant routing (needed when JWT doesn't contain tenant info)
         if user_id is not None:
             headers['X-User-Id'] = str(user_id)
-        
+        # Forward gateway-injected headers so TTS accepts service-to-service calls
+        if gateway_headers:
+            headers.update(gateway_headers)
+
         # Inject trace context for distributed tracing
         self._inject_trace_context(headers)
         
@@ -603,10 +618,6 @@ class ServiceClient:
                     headers=headers
                 )
                 elapsed_time = time.time() - start_time
-                response.raise_for_status()
-                result = response.json()
-                logger.info(f"✅ TTS service completed successfully in {elapsed_time:.2f}s")
-                return result
                 response.raise_for_status()
                 result = response.json()
                 logger.info(f"✅ TTS service completed successfully in {elapsed_time:.2f}s")

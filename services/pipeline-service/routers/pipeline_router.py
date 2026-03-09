@@ -13,6 +13,7 @@ from models.pipeline_request import PipelineInferenceRequest
 from models.pipeline_response import PipelineInferenceResponse
 from services.pipeline_service import PipelineService
 from utils.http_client import ServiceClient
+from utils.constants import GATEWAY_HEADER_NAMES
 from middleware.auth_provider import AuthProvider
 from middleware.exceptions import (
     PipelineError,
@@ -54,6 +55,20 @@ pipeline_router = APIRouter(
     tags=["Pipeline"],
     dependencies=[Depends(AuthProvider)]  # Enforce auth and permission checks on all routes
 )
+
+
+def _get_gateway_headers(request: Request) -> Optional[Dict[str, str]]:
+    """Extract gateway-injected headers from the request when present (request came through API gateway)."""
+    # Only forward when gateway has validated the request
+    validated = request.headers.get("X-Validated") or request.headers.get("x-validated")
+    if not validated or validated.lower() != "true":
+        return None
+    out = {}
+    for name in GATEWAY_HEADER_NAMES:
+        value = request.headers.get(name) or request.headers.get(name.lower())
+        if value is not None:
+            out[name] = value
+    return out if out else None
 
 
 def get_service_client() -> ServiceClient:
@@ -228,7 +243,10 @@ async def _execute_pipeline_request(
     # This is needed for tenant routing in downstream services (ASR, NMT, TTS)
     user_id = getattr(http_request.state, "user_id", None)
     
-    logger.info(f"🔐 Authentication extracted: JWT={'present' if jwt_token else 'absent'}, API_KEY={'present' if api_key else 'absent'}, USER_ID={user_id}")
+    # Forward gateway-injected headers so ASR/NMT/TTS accept service-to-service calls
+    gateway_headers = _get_gateway_headers(http_request)
+    
+    logger.info(f"🔐 Authentication extracted: JWT={'present' if jwt_token else 'absent'}, API_KEY={'present' if api_key else 'absent'}, USER_ID={user_id}, GATEWAY_HEADERS={'yes' if gateway_headers else 'no'}")
     
     # Get pipeline service
     pipeline_service = get_pipeline_service()
@@ -238,7 +256,8 @@ async def _execute_pipeline_request(
         request=request,
         jwt_token=jwt_token,
         api_key=api_key,
-        user_id=user_id
+        user_id=user_id,
+        gateway_headers=gateway_headers
     )
     
     logger.info("✅ Pipeline inference completed successfully")
