@@ -77,13 +77,12 @@ for handler in root_logger.handlers:
 # Get logger instance
 logger = get_logger(__name__)
 
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
 DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db"
+    "DATABASE_URL"
 )
 # Multi-tenant database URL for tenant schema routing
 MULTI_TENANT_DB_URL = os.getenv("MULTI_TENANT_DB_URL")
@@ -171,8 +170,8 @@ async def lifespan(app: FastAPI):
     # Service registry
     try:
         registry_client = ServiceRegistryHttpClient()
-        service_name = os.getenv("SERVICE_NAME", "language-detection-service")
-        service_port = int(os.getenv("SERVICE_PORT", "8090"))
+        service_name = os.getenv("SERVICE_NAME")
+        service_port = int(os.getenv("SERVICE_PORT"))
         public_base_url = os.getenv("SERVICE_PUBLIC_URL")
         if public_base_url:
             service_url = public_base_url.rstrip("/")
@@ -199,7 +198,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Language Detection Service...")
     try:
         if registry_client and registered_instance_id:
-            service_name = os.getenv("SERVICE_NAME", "language-detection-service")
+            service_name = os.getenv("SERVICE_NAME")
             await registry_client.deregister(service_name, registered_instance_id)
     except Exception as e:
         logger.warning("Service registry deregistration error: %s", e)
@@ -263,7 +262,7 @@ logger.info("✅ AI4ICore Observability Plugin initialized for Language Detectio
 # MUST be registered BEFORE app starts (before other middleware) to avoid "Cannot add middleware after application has started" error
 try:
     mm_config = ModelManagementConfig(
-        model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
+        model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL"),
         model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
         cache_ttl_seconds=300,
         triton_endpoint_cache_ttl=300,

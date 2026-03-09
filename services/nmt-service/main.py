@@ -86,8 +86,8 @@ for handler in root_logger.handlers:
 logger = get_logger(__name__)
 
 # Environment variables - Support both REDIS_PORT and REDIS_PORT_NUMBER for backward compatibility
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = int(os.getenv("REDIS_PORT"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
 DATABASE_URL = os.getenv( "DATABASE_URL")
@@ -335,15 +335,6 @@ app = FastAPI(
             "description": "Service health and readiness checks",
         },
     ],
-    contact={
-        "name": "Dhruva Platform Team",
-        "url": "https://github.com/AI4Bharat/Dhruva",
-        "email": "support@dhruva-platform.com",
-    },
-    license_info={
-        "name": "MIT",
-        "url": "https://opensource.org/licenses/MIT",
-    },
     lifespan=lifespan,
 )
 

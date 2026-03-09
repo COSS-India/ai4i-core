@@ -109,9 +109,9 @@ async def lifespan(app: FastAPI):
         # Initialize Redis connection
         if redis_client is None:
             try:
-                redis_host = os.getenv("REDIS_HOST", "redis")
-                redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
-                redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+                redis_host = os.getenv("REDIS_HOST")
+                redis_port = int(os.getenv("REDIS_PORT"))
+                redis_password = os.getenv("REDIS_PASSWORD")
                 
                 redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
                 redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
@@ -198,15 +198,6 @@ app = FastAPI(
             "description": "Service health and readiness checks"
         }
     ],
-    contact={
-        "name": "AI4ICore Team",
-        "url": "https://github.com/AI4X",
-        "email": "support@ai4x.com",
-    },
-    license_info={
-        "name": "MIT",
-        "url": "https://opensource.org/licenses/MIT",
-    },
     lifespan=lifespan
 )
 

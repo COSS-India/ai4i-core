@@ -74,9 +74,9 @@ async def lifespan(app: FastAPI):
         global redis_client
         if redis_client is None:
             # Fallback Redis initialization if not done earlier
-            redis_host = os.getenv("REDIS_HOST", "redis")
-            redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
-            redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+            redis_host = os.getenv("REDIS_HOST")
+            redis_port = int(os.getenv("REDIS_PORT"))
+            redis_password = os.getenv("REDIS_PASSWORD")
             
             redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
             redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
@@ -90,8 +90,7 @@ async def lifespan(app: FastAPI):
         # Initialize PostgreSQL async engine
         global db_engine, db_session_factory
         database_url = os.getenv(
-            "DATABASE_URL", 
-            "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db"
+            "DATABASE_URL"
         )
         
         db_pool_size = int(os.getenv("DB_POOL_SIZE", "20"))
@@ -276,15 +275,6 @@ app = FastAPI(
             "description": "ASR model management"
         }
     ],
-    contact={
-        "name": "Dhruva Platform Team",
-        "url": "https://github.com/AI4Bharat/Dhruva",
-        "email": "support@dhruva-platform.com"
-    },
-    license_info={
-        "name": "MIT",
-        "url": "https://opensource.org/licenses/MIT"
-    },
     lifespan=lifespan
 )
     
@@ -316,7 +306,7 @@ logger.info("✅ AI4ICore Logging Plugin initialized for ASR service")
 # so that Model Management runs first and Observability can use cached body
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
 model_mgmt_config = ModelManagementConfig(
-    model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
+    model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL"),
     model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
     cache_ttl_seconds=300,
     triton_endpoint_cache_ttl=300,
@@ -353,9 +343,9 @@ app.add_middleware(
 # Initialize Redis client early for middleware
 redis_client = None
 try:
-    redis_host = os.getenv("REDIS_HOST", "redis")
-    redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
-    redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+    redis_host = os.getenv("REDIS_HOST")
+    redis_port = int(os.getenv("REDIS_PORT"))
+    redis_password = os.getenv("REDIS_PASSWORD")
     
     redis_client = redis.Redis(
         host=redis_host,

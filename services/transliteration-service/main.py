@@ -86,8 +86,8 @@ for handler in root_logger.handlers:
 logger = get_logger(__name__)
 
 # Environment variables - Support both REDIS_PORT and REDIS_PORT_NUMBER for backward compatibility
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = int(os.getenv("REDIS_PORT"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -109,10 +109,6 @@ db_engine: Optional[AsyncEngine] = None
 db_session_factory: Optional[async_sessionmaker] = None
 registry_client: Optional[ServiceRegistryHttpClient] = None
 registered_instance_id: Optional[str] = None
-
-logger.info(f"Configuration loaded: REDIS_HOST={REDIS_HOST}, REDIS_PORT={REDIS_PORT}")
-logger.info(f"DATABASE_URL configured: {DATABASE_URL.split('@')[0]}@***")  # Mask password in logs
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -182,7 +178,6 @@ async def lifespan(app: FastAPI):
     # Initialize PostgreSQL
     try:
         logger.info("Connecting to PostgreSQL...")
-        logger.info(f"Using DATABASE_URL: {DATABASE_URL.split('@')[0]}@***")  # Mask password in logs
 
         db_engine = create_async_engine(
             DATABASE_URL,
@@ -336,15 +331,6 @@ app = FastAPI(
             "description": "Service health and readiness checks",
         },
     ],
-    contact={
-        "name": "AI4ICore Team",
-        "url": "https://github.com/AI4X",
-        "email": "support@ai4x.com",
-    },
-    license_info={
-        "name": "MIT",
-        "url": "https://opensource.org/licenses/MIT",
-    },
     lifespan=lifespan,
 )
 
