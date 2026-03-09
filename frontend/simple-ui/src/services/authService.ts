@@ -399,6 +399,10 @@ class AuthService {
 
         const rememberMe = typeof window !== 'undefined' && localStorage.getItem('remember_me') === 'true';
         this.setAccessToken(response.access_token, rememberMe);
+        // Token rotation: backend issues a new refresh token and revokes the old one — must store the new one
+        if (response.refresh_token) {
+          this.setRefreshToken(response.refresh_token, rememberMe);
+        }
 
         return response;
       } finally {
