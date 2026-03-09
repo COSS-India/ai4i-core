@@ -23,16 +23,6 @@ observabilityClient.interceptors.request.use(
       config.headers['Authorization'] = `Bearer ${jwtToken}`;
       config.headers['x-auth-source'] = 'BOTH';
       config.headers['X-Auth-Source'] = 'BOTH';
-      console.log('✅ Observability request with token:', {
-        url: config.url,
-        hasAuth: !!config.headers['Authorization'],
-        tokenLength: jwtToken.length,
-      });
-    } else {
-      console.error('❌ Observability request made WITHOUT JWT token:', config.url);
-      console.error('Token check:', {
-        getJwtToken: typeof window !== 'undefined' ? !!getJwtToken() : 'N/A',
-      });
     }
     return config;
   },
@@ -135,11 +125,9 @@ export const searchLogs = async (
     // Debug: Check token before making request
     const token = getJwtToken();
     if (!token) {
-      console.error('⚠️ searchLogs called without JWT token!');
       throw new Error('Authentication required. Please log in.');
     }
-    console.log('searchLogs: Making request with token (length:', token.length, ')');
-    
+
     const queryParams = new URLSearchParams();
     if (params.service) queryParams.append('service', params.service);
     if (params.level) queryParams.append('level', params.level);
