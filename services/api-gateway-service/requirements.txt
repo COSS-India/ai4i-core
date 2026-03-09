@@ -1,0 +1,45 @@
+# FastAPI and ASGI server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# HTTP client for downstream services
+httpx>=0.25.0
+
+# Redis for rate limiting and caching
+redis>=5.0.0
+
+# Data validation and settings
+# Pydantic v2 requires the compiled `pydantic-core` package. We pin a known-good
+# trio to avoid resolver backtracking surprises during image builds.
+pydantic==2.11.10
+pydantic-core==2.33.2
+pydantic-settings==2.6.1
+
+# JWT handling
+python-jose[cryptography]>=3.3.0
+
+# Rate limiting
+slowapi>=0.1.9
+
+# Metrics collection
+prometheus-client>=0.18.0
+
+# Form data handling
+python-multipart>=0.0.6
+
+# OpenTelemetry for distributed tracing
+opentelemetry-api>=1.21.0
+opentelemetry-sdk>=1.21.0
+opentelemetry-exporter-otlp-proto-grpc>=1.21.0
+opentelemetry-instrumentation-fastapi>=0.41b0
+opentelemetry-instrumentation-httpx>=0.41b0
+
+# For multi-tenant feature (email fields / validation)
+email-validator>=2.0.0
+
+# Development dependencies (commented out for production)
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+# black>=23.0.0
+# flake8>=6.0.0
+# mypy>=1.5.0

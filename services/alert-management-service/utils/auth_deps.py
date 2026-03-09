@@ -2,11 +2,14 @@
 FastAPI dependencies for alert-management-service auth (when used standalone, e.g. behind APISIX).
 Require Bearer JWT, validate via auth-service, check permission, set request.state.
 """
+import logging
 from typing import Optional
 from fastapi import Request, HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from utils.auth_client import verify_token
+
+logger = logging.getLogger(__name__)
 
 # Bearer token scheme (same as gateway: auto_error=False so we can return custom 401 body)
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -50,11 +53,18 @@ async def require_alert_permission(
         )
     user_permissions = payload.get("permissions", [])
     if permission not in user_permissions:
+        roles = payload.get("roles", [])
+        logger.warning(
+            "Alert auth: permission denied for user %s roles=%s; missing permission %s (has %s)",
+            payload.get("username"), roles, permission, user_permissions[:20] if user_permissions else [],
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
                 "error": "PERMISSION_DENIED",
                 "message": f"Permission '{permission}' required",
+                "hint": "Your token is valid but your role has no alerts permissions. "
+                        "Ensure auth_db is seeded (run auth_roles_permissions_seeder) and your user has the ADMIN (or MODERATOR) role assigned.",
             },
         )
     # Set request state so get_username_from_request and is_admin_user work

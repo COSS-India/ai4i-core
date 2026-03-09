@@ -273,6 +273,43 @@ services:
     dns_search: []
     restart: unless-stopped
 
+  api-gateway-service:
+    build:
+      context: .
+      dockerfile: ./services/api-gateway-service/Dockerfile
+    container_name: ai4v-api-gateway
+    ports:
+      - "9000:8080"
+    environment:
+      - ENV_FILE=.env
+      # Swagger/OpenAPI server URL used in the generated docs
+      # Prod: point Swagger to public API Gateway URL
+      - TRY_IT_LIMIT=5
+      - TRY_IT_TTL_SECONDS=3600
+    env_file:
+      - ./services/api-gateway-service/.env
+    volumes:
+      - ./services/api-gateway-service:/app
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
   auth-service:
     build:
       context: .
@@ -1295,6 +1332,7 @@ services:
 
   # Alert Configuration Sync Service
   # Generates Prometheus and Alertmanager YAML files from database and triggers hot reload
+  # Env loading: same as alert-management-service — env_file: ./.env + environment (Compose substitutes from .env)
   alert-config-sync-service:
     build:
       context: .
@@ -1307,6 +1345,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - AUTH_DB_NAME=auth_db
       - PROMETHEUS_URL=http://prometheus:9090
       - ALERTMANAGER_URL=http://alertmanager:9093
       - PROMETHEUS_APPLICATION_ALERTS_PATH=/etc/prometheus/rules/application-alerts.yml
@@ -1314,6 +1353,12 @@ services:
       - ALERTMANAGER_CONFIG_PATH=/etc/alertmanager/alertmanager.yml
       - SYNC_INTERVAL=60
       - PORT=8097
+      - SMTP_SMARTHOST=${SMTP_SMARTHOST:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_AUTH_USERNAME=${SMTP_AUTH_USERNAME:-}
+      - SMTP_AUTH_PASSWORD=${SMTP_AUTH_PASSWORD:-}
+    env_file:
+      - ./.env
     volumes:
       - ./services/alert-config-sync-service:/app/services/alert-config-sync-service
       - ./infrastructure:/app/infrastructure
