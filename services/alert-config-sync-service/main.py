@@ -3,6 +3,7 @@ Alert Configuration Sync Service
 Generates Prometheus and Alertmanager YAML files from database and triggers hot reload
 """
 import os
+
 import asyncio
 import asyncpg
 import yaml
@@ -283,10 +284,49 @@ DEFAULT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{ if eq .GroupLabels.severit
 <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
 """
 
+def get_global_config_from_env() -> Dict[str, Any]:
+    """
+    Build global SMTP config from environment variables.
+    In Docker, env comes from docker-compose env_file: ./.env and environment: SMTP_*=${SMTP_*} (same pattern as alert-management-service).
+    Keys with no value are omitted so the YAML does not contain 'key: null'.
+    """
+    out: Dict[str, Any] = {
+        'resolve_timeout': '5m',
+    }
+    smtp_smarthost = (os.getenv('SMTP_SMARTHOST') or '').strip()
+    smtp_from = (os.getenv('SMTP_FROM') or '').strip()
+    smtp_auth_username = (os.getenv('SMTP_AUTH_USERNAME') or '').strip()
+    smtp_auth_password = (os.getenv('SMTP_AUTH_PASSWORD') or '').strip()
+
+    if smtp_smarthost:
+        out['smtp_smarthost'] = smtp_smarthost
+    if smtp_from:
+        out['smtp_from'] = smtp_from
+    if smtp_auth_username:
+        out['smtp_auth_username'] = smtp_auth_username
+    if smtp_auth_password:
+        out['smtp_auth_password'] = smtp_auth_password
+    if 'smtp_smarthost' in out:
+        out['smtp_require_tls'] = True
+
+    # Log what we picked up (mask password) for debugging
+    if out.get('smtp_smarthost'):
+        logger.info(
+            "SMTP global config from env: smtp_smarthost=%s smtp_from=%s smtp_auth_username=%s auth_password_set=%s",
+            out.get('smtp_smarthost'), out.get('smtp_from'), out.get('smtp_auth_username'), bool(out.get('smtp_auth_password')),
+        )
+    else:
+        logger.warning(
+            "SMTP env vars not set (SMTP_SMARTHOST empty). Set SMTP_* in .env next to docker-compose and use env_file: ./.env (same as alert-management-service)."
+        )
+
+    return out
+
+
 def load_global_config_from_file() -> Dict[str, Any]:
     """
     Load global SMTP configuration from existing alertmanager.yml file.
-    Preserves only the global section (lines 1-7).
+    Preserves only the global section. Falls back to env if file missing/fails.
     """
     try:
         if os.path.exists(ALERTMANAGER_CONFIG_PATH):
@@ -296,16 +336,9 @@ def load_global_config_from_file() -> Dict[str, Any]:
                     logger.info("Loaded global SMTP config from existing alertmanager.yml")
                     return existing_config['global']
     except Exception as e:
-        logger.warning(f"Failed to load global config from file: {e}, using defaults")
-    
-    return {
-        'resolve_timeout': '5m',
-        'smtp_smarthost': os.getenv('SMTP_SMARTHOST'),
-        'smtp_from': os.getenv('SMTP_FROM'),
-        'smtp_auth_username': os.getenv('SMTP_AUTH_USERNAME'),
-        'smtp_auth_password': os.getenv('SMTP_AUTH_PASSWORD'),
-        'smtp_require_tls': True
-    }
+        logger.warning(f"Failed to load global config from file: {e}, using env defaults")
+    return get_global_config_from_env()
+
 
 def generate_alertmanager_yaml(
     receivers: List[Dict[str, Any]],
@@ -314,12 +347,12 @@ def generate_alertmanager_yaml(
 ) -> Dict[str, Any]:
     """
     Generate Alertmanager configuration from receivers and routing rules.
-    Preserves global SMTP config from existing file, everything else comes from database.
+    Global SMTP config is always taken from environment variables (SMTP_*) when writing.
     Always includes a default receiver 'default-admin' (ADMIN role, not tied to any organization).
     Only routes whose receiver still exists in the config are included (stale routes removed).
     """
-    # Load global config from existing file (preserves SMTP settings)
-    global_config = load_global_config_from_file()
+    # Always use env for global config when generating (so file updates get SMTP from env)
+    global_config = get_global_config_from_env()
     
     default_admin_emails = default_admin_emails or []
     default_receiver_name = "default-admin"
@@ -448,17 +481,23 @@ def generate_alertmanager_yaml(
         'group_interval': '10s',
         'repeat_interval': '12h'
     }
-    
+
     # Root default receiver is always default-admin (not tied to any organization, ADMIN role)
     route_config['receiver'] = default_receiver_name
-    
+
     # Routes: only include routes for receivers that exist in config
     if not root_routes:
         logger.info("No severity/category routes; all alerts will go to default-admin receiver.")
     route_config['routes'] = root_routes
-    
+
+    # Sanitize global: drop any key that is None or empty string so YAML never gets "key: null"
+    global_sanitized = {
+        k: v for k, v in global_config.items()
+        if v is not None and (v != '' if isinstance(v, str) else True)
+    }
+
     config = {
-        'global': global_config,
+        'global': global_sanitized,
         'route': route_config,
         'receivers': receivers_config
     }

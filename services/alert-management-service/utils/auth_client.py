@@ -3,8 +3,11 @@ Auth client for alert-management-service (standalone auth when not behind API ga
 Validates JWT via auth-service and returns user payload for permission checks.
 """
 import os
+import logging
 from typing import Optional, Dict, Any
 import httpx
+
+logger = logging.getLogger(__name__)
 
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
 _http_client: Optional[httpx.AsyncClient] = None
@@ -24,11 +27,20 @@ async def verify_token(token: str) -> Optional[Dict[str, Any]]:
     """
     try:
         client = _get_client()
+        url = f"{AUTH_SERVICE_URL.rstrip('/')}/api/v1/auth/validate"
         response = await client.post(
-            f"{AUTH_SERVICE_URL.rstrip('/')}/api/v1/auth/validate",
+            url,
             headers={"Authorization": f"Bearer {token}"},
         )
         if response.status_code != 200:
+            try:
+                body = response.text
+            except Exception:
+                body = ""
+            logger.warning(
+                "Alert auth: auth-service validate returned %s at %s. Body: %s",
+                response.status_code, url, body[:500] if body else "(empty)",
+            )
             return None
         data = response.json()
         user_id = str(data.get("user_id", data.get("sub", "")))
@@ -39,7 +51,14 @@ async def verify_token(token: str) -> Optional[Dict[str, Any]]:
             "permissions": data.get("permissions", []),
             "roles": data.get("roles", []),
         }
-    except (httpx.RequestError, Exception):
+    except httpx.ConnectError as e:
+        logger.warning(
+            "Alert auth: cannot reach auth-service at %s: %s. Is auth-service running?",
+            AUTH_SERVICE_URL, e,
+        )
+        return None
+    except (httpx.RequestError, Exception) as e:
+        logger.warning("Alert auth: request to auth-service failed: %s", e)
         return None
 
 
