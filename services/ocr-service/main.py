@@ -318,7 +318,12 @@ logger.info("✅ AI4ICore Observability Plugin initialized for OCR service")
 try:
     from ai4icore_model_management import ModelManagementConfig
     mm_config = ModelManagementConfig(
-        model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
+        # Prefer routing through the API gateway so Model Management receives the same
+        # gateway-auth headers (X-Validated, X-User-ID, etc.) even for service-to-service calls.
+        model_management_service_url=os.getenv(
+            "MODEL_MANAGEMENT_SERVICE_URL",
+            os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080"),
+        ),
         model_management_api_key=None,
         cache_ttl_seconds=300,
         triton_endpoint_cache_ttl=300,
