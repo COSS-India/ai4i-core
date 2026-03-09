@@ -13,18 +13,12 @@ from pydantic import BaseModel, Field
 from ai4icore_telemetry import (
     OpenSearchQueryClient,
     JaegerQueryClient,
-    get_organization_filter
+    get_organization_filter,
+    extract_user_info,
 )
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
-
-try:
-    from jose import jwt, JWTError
-    JWT_AVAILABLE = True
-except ImportError:
-    JWT_AVAILABLE = False
-    logger.warning("python-jose not available, JWT decoding will fail")
 
 router = APIRouter()
 
@@ -153,87 +147,24 @@ def map_subscription_to_service_name(subscription: str) -> str:
 
 async def extract_tenant_id_from_jwt(request: Request) -> Optional[str]:
     """
-    Extract tenant_id from JWT token.
-    
-    Args:
-        request: FastAPI request object
-        
-    Returns:
-        tenant_id if present in JWT, None otherwise
+    Extract tenant_id from request.
+    Prefers gateway-injected headers (gateway does not send tenant_id; returns None).
+    Otherwise from JWT payload. get_organization_filter uses tenant_id_fallback when None.
     """
-    if not JWT_AVAILABLE:
-        return None
-    
-    try:
-        # Get JWT secret key
-        secret_key = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
-        
-        # Extract JWT token from Authorization header
-        authorization = request.headers.get("Authorization") or request.headers.get("authorization")
-        if not authorization or not authorization.startswith("Bearer "):
-            return None
-        
-        token = authorization.split(" ", 1)[1]
-        
-        # Decode JWT token
-        payload = jwt.decode(
-            token,
-            secret_key,
-            algorithms=["HS256"],
-            options={"verify_signature": True, "verify_exp": True}
-        )
-        
-        # Extract tenant_id
-        tenant_id = payload.get("tenant_id")
-        return tenant_id
-        
-    except (JWTError, Exception) as e:
-        logger.warning(f"Error extracting tenant_id from JWT: {e}")
-        return None
+    info = extract_user_info(request)
+    return info.get("tenant_id") if info else None
 
 
 async def is_user_admin(request: Request) -> bool:
     """
-    Check if the authenticated user is an admin by extracting roles from JWT token.
-    
-    Args:
-        request: FastAPI request object
-        
-    Returns:
-        True if user is admin, False otherwise
+    Check if the authenticated user is an admin.
+    Prefers gateway-injected X-User-Roles; otherwise from JWT.
     """
-    if not JWT_AVAILABLE:
+    info = extract_user_info(request)
+    if not info:
         return False
-    
-    try:
-        # Get JWT secret key
-        secret_key = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
-        
-        # Extract JWT token from Authorization header
-        authorization = request.headers.get("Authorization") or request.headers.get("authorization")
-        if not authorization or not authorization.startswith("Bearer "):
-            return False
-        
-        token = authorization.split(" ", 1)[1]
-        
-        # Decode JWT token
-        payload = jwt.decode(
-            token,
-            secret_key,
-            algorithms=["HS256"],
-            options={"verify_signature": True, "verify_exp": True}
-        )
-        
-        # Extract roles
-        roles = payload.get("roles", [])
-        
-        # Check if user has ADMIN role
-        is_admin = "ADMIN" in roles or any(role.upper() == "ADMIN" for role in roles)
-        return is_admin
-        
-    except (JWTError, Exception) as e:
-        logger.warning(f"Error checking admin status: {e}")
-        return False
+    roles = info.get("roles", [])
+    return "ADMIN" in roles or any((r or "").upper() == "ADMIN" for r in roles)
 
 
 async def get_tenant_subscriptions(tenant_id: str) -> Optional[List[str]]:
