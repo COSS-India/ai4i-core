@@ -22,8 +22,8 @@ done
 echo "Unleash is ready, starting initialization..."
 
 # Set admin credentials
-UNLEASH_ADMIN_USER="${UNLEASH_ADMIN_USER:-admin}"
-UNLEASH_ADMIN_PASSWORD="${UNLEASH_ADMIN_PASSWORD:-unleash4all}"
+UNLEASH_ADMIN_USER="${UNLEASH_ADMIN_USER}"
+UNLEASH_ADMIN_PASSWORD="${UNLEASH_ADMIN_PASSWORD}"
 
 # Wait a bit more for Unleash to fully initialize
 echo "Waiting for Unleash to fully initialize..."

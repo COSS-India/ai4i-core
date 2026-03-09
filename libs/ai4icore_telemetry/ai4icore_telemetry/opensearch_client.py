@@ -429,4 +429,3 @@ class OpenSearchQueryClient:
         except Exception as e:
             logger.error(f"Error getting services with logs: {e}", exc_info=True)
             raise
-

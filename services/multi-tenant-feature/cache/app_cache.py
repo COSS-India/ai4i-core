@@ -46,9 +46,9 @@ def get_async_cache_connection():
     """
     import redis.asyncio as redis_async
     
-    redis_host = os.getenv("REDIS_HOST", "localhost")
-    redis_port = int(os.getenv("REDIS_PORT", 6379))
-    redis_db = int(os.getenv("REDIS_DB", 0))
+    redis_host = os.getenv("REDIS_HOST")
+    redis_port = int(os.getenv("REDIS_PORT"))
+    redis_db = int(os.getenv("REDIS_DB"))
     redis_password = os.getenv("REDIS_PASSWORD")
 
     try:

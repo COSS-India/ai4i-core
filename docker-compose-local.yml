@@ -31,7 +31,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ai4v-redis
-    command: redis-server /usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf --requirepass "${REDIS_PASSWORD}"
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     ports:
