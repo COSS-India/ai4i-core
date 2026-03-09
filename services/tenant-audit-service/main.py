@@ -186,7 +186,7 @@ async def health() -> Dict[str, str]:
 
 
 @app.get(
-    "/api/v1/tenant-service-data/latest",
+    "/api/v1/tenant-audit/tenant/service/data/latest",
     response_model=ServiceTableData,
     summary="Get latest tenant service table entry",
 )
@@ -250,7 +250,7 @@ async def get_tenant_service_data(
 
 
 @app.get(
-    "/api/v1/tenant-service-data/all",
+    "/api/v1/tenant-audit/tenant/service/data/all",
     response_model=ServiceTableData,
     summary="Get all tenant service table data",
 )
