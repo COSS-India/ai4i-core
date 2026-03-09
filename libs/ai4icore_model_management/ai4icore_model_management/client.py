@@ -119,8 +119,11 @@ class ModelManagementClient:
             # Forward all relevant headers
             for key, value in auth_headers.items():
                 key_lower = key.lower()
-                # Forward Authorization, X-API-Key, X-Auth-Source, and X-Try-It headers
-                if key_lower in ["authorization", "x-api-key", "x-auth-source", "x-try-it"]:
+                # Forward Authorization, X-API-Key, X-Auth-Source, X-Try-It, and gateway trust headers
+                if key_lower in [
+                    "authorization", "x-api-key", "x-auth-source", "x-try-it",
+                    "x-validated", "x-user-id", "x-user-email", "x-user-roles",
+                ]:
                     # Normalize header casing
                     if key_lower == "authorization":
                         header_name = "Authorization"
@@ -130,6 +133,14 @@ class ModelManagementClient:
                         header_name = "X-Auth-Source"
                     elif key_lower == "x-try-it":
                         header_name = "X-Try-It"
+                    elif key_lower == "x-validated":
+                        header_name = "X-Validated"
+                    elif key_lower == "x-user-id":
+                        header_name = "X-User-ID"
+                    elif key_lower == "x-user-email":
+                        header_name = "X-User-Email"
+                    elif key_lower == "x-user-roles":
+                        header_name = "X-User-Roles"
                     else:
                         header_name = key
                     headers[header_name] = value
