@@ -50,7 +50,16 @@ def extract_auth_headers(request: Request) -> Dict[str, str]:
     x_auth_source = request.headers.get("X-Auth-Source") or request.headers.get("x-auth-source")
     if x_auth_source:
         auth_headers["X-Auth-Source"] = x_auth_source
-    
+
+    # Forward gateway trust headers so Model Management accepts the request when inference is reached via gateway (8080)
+    x_validated = request.headers.get("X-Validated") or request.headers.get("x-validated")
+    if x_validated:
+        auth_headers["X-Validated"] = x_validated
+    for h in ("X-User-ID", "X-User-Email", "X-User-Roles"):
+        v = request.headers.get(h)
+        if v:
+            auth_headers[h] = v
+
     return auth_headers
 
 
