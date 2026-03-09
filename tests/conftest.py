@@ -14,8 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 # Test database URL - should be different from production
-TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_password@localhost:5432/auth_db")
-TEST_REDIS_URL = os.getenv("TEST_REDIS_URL", "redis://localhost:6379/1")
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
+TEST_REDIS_URL = os.getenv("TEST_REDIS_URL")
 
 # Create async engine for testing
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)

@@ -269,9 +269,9 @@ All configuration is done via environment variables. See `env.template` for the 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `REDIS_HOST` | Redis hostname | `redis` |
-| `REDIS_PORT` | Redis port | `6379` |
-| `REDIS_PASSWORD` | Redis password | `redis_secure_password_2024` |
+| `REDIS_HOST` | Redis hostname | - |
+| `REDIS_PORT` | Redis port | - |
+| `REDIS_PASSWORD` | Redis password | - |
 
 #### ZooKeeper Configuration
 
@@ -311,7 +311,7 @@ All configuration is done via environment variables. See `env.template` for the 
 | `UNLEASH_URL` | Unleash API URL | `http://unleash:4242/feature-flags/api` |
 | `UNLEASH_APP_NAME` | Application name | `config-service` |
 | `UNLEASH_INSTANCE_ID` | Instance identifier | `config-service-1` |
-| `UNLEASH_API_TOKEN` | API token (Admin token required) | `*:*.unleash-insecure-api-token` |
+| `UNLEASH_API_TOKEN` | API token (Admin token required) | - |
 | `UNLEASH_ENVIRONMENT` | SDK environment (optional) | - |
 | `UNLEASH_REFRESH_INTERVAL` | SDK refresh interval (seconds) | `15` |
 | `UNLEASH_METRICS_INTERVAL` | Metrics interval (seconds) | `60` |

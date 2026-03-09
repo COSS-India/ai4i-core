@@ -275,8 +275,8 @@ All configuration is done via environment variables. See `env.template` for the 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `JWT_SECRET_KEY` | Secret key for access tokens | `dhruva-jwt-secret-key-2024...` |
-| `JWT_REFRESH_SECRET_KEY` | Secret key for refresh tokens | `dhruva-refresh-secret-key-2024...` |
+| `JWT_SECRET_KEY` | Secret key for access tokens | - |
+| `JWT_REFRESH_SECRET_KEY` | Secret key for refresh tokens | - |
 | `JWT_ALGORITHM` | JWT signing algorithm | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Access token expiry | `15` |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh token expiry | `7` |
