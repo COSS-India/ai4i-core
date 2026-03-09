@@ -31,7 +31,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ai4v-redis
-    command: redis-server /usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf --requirepass "${REDIS_PASSWORD}"
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     ports:
@@ -286,6 +286,7 @@ services:
       - ./services/auth-service/.env
     volumes:
       - ./services/auth-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./services/constants:/app/services/constants

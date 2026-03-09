@@ -36,17 +36,17 @@ db_pool: Optional[asyncpg.Pool] = None
 auth_db_pool: Optional[asyncpg.Pool] = None
 
 # Database configuration
-DB_HOST = os.getenv("POSTGRES_HOST", "postgres")
-DB_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
-DB_USER = os.getenv("POSTGRES_USER", "dhruva_user")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "dhruva_secure_password_2024")
+DB_HOST = os.getenv("POSTGRES_HOST")
+DB_PORT = int(os.getenv("POSTGRES_PORT"))
+DB_USER = os.getenv("POSTGRES_USER")
+DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 DB_NAME = "alerting_db"
 
 # Auth database configuration (for querying users by role)
 AUTH_DB_NAME = "auth_db"
 
 # Sync service configuration
-SYNC_SERVICE_URL = os.getenv("ALERT_CONFIG_SYNC_SERVICE_URL", "http://alert-config-sync-service:8097")
+SYNC_SERVICE_URL = os.getenv("ALERT_CONFIG_SYNC_SERVICE_URL")
 SYNC_ENABLED = os.getenv("ALERT_SYNC_ENABLED", "true").lower() == "true"
 
 async def init_db_pool():

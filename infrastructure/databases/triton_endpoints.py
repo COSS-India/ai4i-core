@@ -109,10 +109,7 @@ def update_database():
         print("ERROR: psycopg2 not installed. Run: pip install psycopg2-binary")
         sys.exit(1)
 
-    db_url = os.getenv(
-        "DATABASE_URL",
-        "postgresql://dhruva_user:dhruva_secure_password_2024@localhost:5434/model_management_db",
-    )
+    db_url = os.getenv("DATABASE_URL")
 
     # Parse simple postgres URL
     conn = psycopg2.connect(db_url)

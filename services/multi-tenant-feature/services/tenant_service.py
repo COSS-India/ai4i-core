@@ -1574,20 +1574,6 @@ async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: Async
         )
     )
 
-    # Drop tables for removed services in tenant schema
-    if tenant.status == TenantStatus.ACTIVE and tenant.schema_name:
-        try:
-            await drop_service_tables_for_subscriptions(
-                schema_name=tenant.schema_name,
-                subscriptions=subscriptions,
-                db=db,  # Pass existing session to use same transaction
-            )
-            logger.info(f"Dropped tables for removed subscriptions {subscriptions} in schema '{tenant.schema_name}'")
-        except Exception as e:
-            logger.error(f"Failed to drop tables for removed subscriptions {subscriptions}: {e}")
-            logger.exception(f"Error details: {e}")
-            raise
-
     try:
         await db.commit()
         await db.refresh(tenant)

@@ -9,8 +9,7 @@ from models import Base, Role, Permission, UserRole, RolePermission
 async def create_tables():
     """Create all database tables"""
     database_url = os.getenv(
-        'DATABASE_URL', 
-        'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db'
+        'DATABASE_URL'
     )
     
     engine = create_async_engine(database_url, echo=True)
