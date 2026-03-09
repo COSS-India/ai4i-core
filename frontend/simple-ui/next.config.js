@@ -2,6 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
+  transpilePackages: ['crypto-js'],
   images: {
     domains: ["localhost", "api-gateway-service"],
   },
