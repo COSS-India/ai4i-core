@@ -4,8 +4,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ALEMBIC_INI="$PROJECT_ROOT/alembic.ini"
-REGISTRY_SCRIPT="$PROJECT_ROOT/alembic/migration_registry.py"
+# Alembic is now located under infrastructure/databases/migrations/postgres
+ALEMBIC_INI="$PROJECT_ROOT/infrastructure/databases/migrations/postgres/alembic.ini"
+ALEMBIC_DIR="$(cd "$(dirname "$ALEMBIC_INI")" && pwd)"
+REGISTRY_SCRIPT="$PROJECT_ROOT/infrastructure/databases/migrations/postgres/alembic/migration_registry.py"
 
 if [[ -n "${PYTHON_BIN:-}" ]]; then
   PYTHON_BIN="$PYTHON_BIN"
@@ -110,7 +112,7 @@ supports_autogenerate() {
 
 has_existing_revisions() {
   local db="$1"
-  find "$PROJECT_ROOT/alembic/versions/$db" -maxdepth 1 -type f -name "*.py" ! -name "__init__.py" | grep -q .
+  find "$PROJECT_ROOT/infrastructure/databases/migrations/postgres/alembic/versions/$db" -maxdepth 1 -type f -name "*.py" ! -name "__init__.py" | grep -q .
 }
 
 run_autogenerate_revision_if_supported() {
@@ -125,7 +127,8 @@ run_autogenerate_revision_if_supported() {
   revision_message="auto_$(date +%Y%m%d_%H%M%S)"
 
   local revision_args
-  revision_args=(revision --autogenerate --version-path "alembic/versions/$db")
+  # Let Alembic/env.py and the temp alembic.ini decide the correct version path
+  revision_args=(revision --autogenerate)
 
   if ! has_existing_revisions "$db"; then
     revision_args+=(--head base --splice)
@@ -158,7 +161,9 @@ run_alembic_with_db_config() {
   local db="$1"
   shift
   local temp_ini
-  temp_ini="$(mktemp)"
+  # IMPORTANT: create the temp ini in the same directory as ALEMBIC_INI
+  # so that %(here)s in alembic.ini resolves correctly to ALEMBIC_DIR
+  temp_ini="$(mktemp "$ALEMBIC_DIR/tmp_alembic_XXXXXX.ini")"
   "$PYTHON_BIN" - <<PY
 from pathlib import Path
 
@@ -270,7 +275,8 @@ case "$COMMAND" in
       fi
       ensure_database_exists "$DATABASE"
     fi
-    REVISION_ARGS=(revision --version-path "alembic/versions/$DATABASE")
+    # Let Alembic/env.py and the temp alembic.ini decide the correct version path
+    REVISION_ARGS=(revision)
     if ! has_existing_revisions "$DATABASE"; then
       REVISION_ARGS+=(--head base --splice)
     fi

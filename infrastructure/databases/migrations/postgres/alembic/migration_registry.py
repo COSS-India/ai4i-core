@@ -16,7 +16,19 @@ from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.orm import declarative_base
 
 ALEMBIC_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = ALEMBIC_DIR.parent
+# PROJECT_ROOT used to be the repository root when Alembic lived at the top level.
+# After moving Alembic under infrastructure/databases/migrations/postgres,
+# ALEMBIC_DIR is now .../infrastructure/databases/migrations/postgres/alembic.
+# We need PROJECT_ROOT to still point to the repo root so that paths like
+# PROJECT_ROOT / "services" / "<service-name>" / "models.py" continue to work.
+#
+# Repo layout (from ALEMBIC_DIR.parents):
+#   parents[0] = .../postgres
+#   parents[1] = .../migrations
+#   parents[2] = .../databases
+#   parents[3] = .../infrastructure
+#   parents[4] = .../ai4i-core   <-- actual project root
+PROJECT_ROOT = ALEMBIC_DIR.parents[4]
 
 load_dotenv(PROJECT_ROOT / ".env")
 load_dotenv(ALEMBIC_DIR / ".env", override=True)
