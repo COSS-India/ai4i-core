@@ -477,6 +477,38 @@ routes:
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+
+- uri: /api/v1/tenant-audit/*
+  name: tenant-audit-route
+
+  priority: 0
+  methods:
+  - GET
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      tenant-audit-service${APISIX_UPSTREAM_SUFFIX}:9003: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Service,X-Gateway
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: tenant-audit-service
+      body_base64: false
+      
 - uri: /api/v1/ner/*
   name: ner-route
 

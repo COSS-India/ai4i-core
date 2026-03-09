@@ -180,7 +180,7 @@ async def fetch_latest_table_rows(
     return [dict(row._mapping) for row in result]
 
 
-@app.get("/health")
+@app.get("/api/v1/tenant-audit/health")
 async def health() -> Dict[str, str]:
     return {"status": "healthy", "service": "tenant-audit-service"}
 

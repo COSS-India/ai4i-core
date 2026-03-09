@@ -31,6 +31,9 @@ services:
   multi-tenant-service:
     description: "Multi-Tenant"
     spec_file: "multi-tenant-service.yaml"
+  tenant-audit-service:
+    description: "Tenant-Audit-Service"
+    spec_file: "tenant-audit-service.yaml"
   ner-service:
     description: "NER (Named Entity Recognition)"
     spec_file: "ner-service.yaml"

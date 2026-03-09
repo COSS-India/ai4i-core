@@ -993,6 +993,31 @@ services:
           - multi-tenant-service
     restart: unless-stopped
 
+  tenant-audit-service:
+    build:
+      context: ./services/tenant-audit-service
+      dockerfile: Dockerfile
+    container_name: ai4v-tenant-audit-service
+    ports:
+      - "9010:9003"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/tenant-audit-service/.env
+    volumes:
+      - ./services/tenant-audit-service:/app
+    command: ["--reload"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      microservices-network:
+        aliases:
+          - tenant-audit-service
+    restart: unless-stopped
+
   transliteration-service:
     build:
       context: .

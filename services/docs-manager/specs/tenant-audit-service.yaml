@@ -1,0 +1,178 @@
+# Tenant Audit Service - Internal API
+openapi: 3.0.3
+info:
+  title: Tenant Audit Service
+  description: >
+    Internal service to inspect per-tenant request/result tables (NMT, TTS, ASR, OCR, etc.)
+    stored in tenant-specific schemas in the multi_tenant_db database.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: Tenant Audit
+paths:
+  /api/v1/tenant-audit/health:
+    get:
+      tags: [Tenant Audit]
+      summary: Health check
+      description: Returns basic health information for the Tenant Audit Service.
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  service:
+                    type: string
+                    example: tenant-audit-service
+
+  /api/v1/tenant-audit/tenant/service/data/latest:
+    get:
+      tags: [Tenant Audit]
+      summary: Get latest tenant service data
+      description: >
+        Given a tenant_id and service name, resolves the tenant schema and returns
+        only the latest entry (by created_at DESC) from the corresponding
+        request and result tables for that service in that tenant schema.
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          description: Logical tenant identifier (e.g. new-acme-corp-5f4bf7).
+          schema:
+            type: string
+        - name: service
+          in: query
+          required: true
+          description: >
+            Service name. One of:
+            nmt, tts, asr, ocr, ner, llm, transliteration,
+            language-detection / language_detection,
+            audio-lang-detection / audio_language_detection,
+            speaker-diarization / speaker_diarization,
+            language-diarization / language_diarization.
+          schema:
+            type: string
+            enum:
+              - nmt
+              - tts
+              - asr
+              - ocr
+              - ner
+              - llm
+              - transliteration
+              - language_detection
+              - audio_language_detection
+              - speaker_diarization
+              - language_diarization
+      responses:
+        "200":
+          description: Latest request/result entries for the tenant and service
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceTableData"
+        "400":
+          description: Invalid service value
+        "404":
+          description: Tenant not found
+
+  /api/v1/tenant-audit/tenant/service/data/all:
+    get:
+      tags: [Tenant Audit]
+      summary: Get all tenant service data
+      description: >
+        Given a tenant_id and service name, resolves the tenant schema and returns
+        all entries from the corresponding request and result tables for that
+        service in that tenant schema (ordered by created_at DESC).
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          description: Logical tenant identifier (e.g. new-acme-corp-5f4bf7).
+          schema:
+            type: string
+        - name: service
+          in: query
+          required: true
+          description: >
+            Service name. One of:
+            nmt, tts, asr, ocr, ner, llm, transliteration,
+            language-detection / language_detection,
+            audio-lang-detection / audio_language_detection,
+            speaker-diarization / speaker_diarization,
+            language-diarization / language_diarization.
+          schema:
+            type: string
+            enum:
+              - nmt
+              - tts
+              - asr
+              - ocr
+              - ner
+              - llm
+              - transliteration
+              - language_detection
+              - audio_language_detection
+              - speaker_diarization
+              - language_diarization
+      responses:
+        "200":
+          description: All request/result entries for the tenant and service
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceTableData"
+        "400":
+          description: Invalid service value
+        "404":
+          description: Tenant not found
+
+components:
+  schemas:
+    ServiceTableData:
+      type: object
+      properties:
+        tenant_id:
+          type: string
+          description: Logical tenant identifier.
+          example: new-acme-corp-5d448a
+        schema_name:
+          type: string
+          description: Tenant schema name in Postgres.
+          example: tenant_new_acme_corp_5d448a
+        service:
+          type: string
+          description: Service name used in the query.
+          example: nmt
+        request_table:
+          type: string
+          description: Name of the request table in the tenant schema.
+          example: nmt_requests
+        result_table:
+          type: string
+          description: Name of the result table in the tenant schema.
+          example: nmt_results
+        requests:
+          type: array
+          description: >
+            Raw rows from the request table for this tenant and service.
+            For /tenant-service-data this will contain at most one row.
+          items:
+            type: object
+            additionalProperties: true
+        results:
+          type: array
+          description: >
+            Raw rows from the result table for this tenant and service.
+            For /tenant-service-data this will contain at most one row.
+          items:
+            type: object
+            additionalProperties: true
+
