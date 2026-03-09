@@ -543,19 +543,9 @@ const LogsPage: React.FC = () => {
 
   // Debug: Log authentication state (uses decrypted token from getJwtToken)
   useEffect(() => {
+    // Auth state effect - no token data logged (security)
     if (typeof window !== 'undefined') {
-      const token = getJwtToken();
-      console.log('Logs page auth state:', {
-        isAuthenticated,
-        authLoading,
-        hasToken: !!token,
-        tokenLength: token?.length || 0,
-        tokenPreview: token ? `${token.substring(0, 20)}...` : 'none',
-      });
-      console.log('getJwtToken() result:', {
-        hasToken: !!token,
-        tokenLength: token?.length || 0,
-      });
+      getJwtToken(); // ensure token is available for requests
     }
   }, [isAuthenticated, authLoading]);
 
