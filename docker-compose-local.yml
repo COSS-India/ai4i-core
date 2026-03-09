@@ -271,6 +271,9 @@ services:
       microservices-network:
         aliases:
           - api-gateway-service
+    depends_on:
+      auth-service:
+        condition: service_healthy
     dns_search: []
     restart: unless-stopped
 

@@ -91,7 +91,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -158,7 +158,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -221,7 +221,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -378,7 +378,7 @@ routes:
       config-service${APISIX_UPSTREAM_SUFFIX}:8082: 1
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -441,7 +441,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -496,7 +496,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -563,7 +563,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -626,7 +626,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -686,7 +686,9 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      timeout: 10000
+      status_on_error: 502
       request_headers:
       - Authorization
       - X-API-Key
@@ -748,7 +750,7 @@ routes:
       multi-tenant-service${APISIX_UPSTREAM_SUFFIX}:8001: 1
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -814,7 +816,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -877,7 +879,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -893,6 +895,13 @@ routes:
       - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
         or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
       phase: rewrite
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Request-ID
+      allow_credential: true
     proxy-rewrite:
       headers:
         X-Gateway: apisix
@@ -933,7 +942,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -988,7 +997,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -1044,7 +1053,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -1100,7 +1109,7 @@ routes:
       config-service${APISIX_UPSTREAM_SUFFIX}:8082: 1
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -1163,7 +1172,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -1226,7 +1235,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -1281,7 +1290,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -1341,7 +1350,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -1414,7 +1423,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -1590,7 +1599,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -1676,7 +1685,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -1739,7 +1748,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -1806,7 +1815,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -1995,7 +2004,7 @@ routes:
     type: roundrobin
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key
@@ -2108,7 +2117,7 @@ routes:
       prometheus${APISIX_UPSTREAM_SUFFIX}:9090: 1
   plugins:
     forward-auth:
-      uri: http://auth-service:8081/api/v1/auth/validate
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
       - Authorization
       - X-API-Key

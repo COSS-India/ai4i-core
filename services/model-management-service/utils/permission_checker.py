@@ -118,7 +118,14 @@ async def require_permission(
         return
     
     # Get user info from request state (set by AuthProvider)
-    user_id = getattr(request.state, 'user_id', None)
+    user_id_raw = getattr(request.state, 'user_id', None)
+    # Gateway sends X-User-ID as string; DB user_roles.user_id is integer
+    user_id: Optional[int] = None
+    if user_id_raw is not None:
+        try:
+            user_id = int(user_id_raw) if not isinstance(user_id_raw, int) else user_id_raw
+        except (TypeError, ValueError):
+            pass
     is_authenticated = getattr(request.state, 'is_authenticated', False)
     
     if not is_authenticated:

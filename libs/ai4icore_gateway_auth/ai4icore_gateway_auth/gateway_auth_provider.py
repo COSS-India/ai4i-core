@@ -35,6 +35,7 @@ class GatewayAuthProvider:
         request.state.user_email = request.headers.get("X-User-Email")
         request.state.user_roles = [r.strip() for r in request.headers.get("X-User-Roles", "").split(",") if r.strip()]
         request.state.auth_source = request.headers.get("X-Auth-Source", "API_KEY")
+        request.state.is_authenticated = True
 
         # For backward compatibility with code that checks request.state.api_key_id or .api_key_user_id
         request.state.api_key_id = request.headers.get("X-API-Key-ID")
