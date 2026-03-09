@@ -1161,8 +1161,8 @@ services:
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--storage.tsdb.retention.time=30d'
       - '--web.enable-lifecycle'
-      - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
-      # - '--web.external-url=http://localhost:9090'
+      # - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
+      - '--web.external-url=http://localhost:9090'
       - '--web.route-prefix=/'
     networks:
       - microservices-network
@@ -1187,6 +1187,7 @@ services:
       - ./infrastructure/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--web.enable-lifecycle"
     networks:
       - microservices-network
     restart: unless-stopped
@@ -1195,6 +1196,46 @@ services:
       interval: 10s
       timeout: 10s
       retries: 3
+
+  # Alert Management Service
+  # Provides CRUD operations for alert definitions, notification receivers, and routing rules
+  alert-management-service:
+    build:
+      context: .
+      dockerfile: ./services/alert-management-service/Dockerfile
+    container_name: ai4v-alert-management-service
+    ports:
+      - "8104:8098"
+    environment:
+      - SERVICE_NAME=alert-management-service
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - ALERT_CONFIG_SYNC_SERVICE_URL=http://alert-config-sync-service:8097
+      - ALERT_SYNC_ENABLED=true
+      - PORT=8098
+    volumes:
+      - ./services/alert-management-service:/app
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8098/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
 
   # Alert Configuration Sync Service
   # Generates Prometheus and Alertmanager YAML files from database and triggers hot reload
@@ -1409,8 +1450,8 @@ services:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
       - ./infrastructure/fluent-bit/extract_context.lua:/fluent-bit/scripts/extract_context.lua:ro
-      # - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
+      # - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - microservices-network

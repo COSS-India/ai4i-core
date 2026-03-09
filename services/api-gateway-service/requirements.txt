@@ -9,8 +9,11 @@ httpx>=0.25.0
 redis>=5.0.0
 
 # Data validation and settings
-pydantic>=2.4.0
-pydantic-settings>=2.0.0
+# Pydantic v2 requires the compiled `pydantic-core` package. We pin a known-good
+# trio to avoid resolver backtracking surprises during image builds.
+pydantic==2.11.10
+pydantic-core==2.33.2
+pydantic-settings==2.6.1
 
 # JWT handling
 python-jose[cryptography]>=3.3.0
@@ -31,8 +34,8 @@ opentelemetry-exporter-otlp-proto-grpc>=1.21.0
 opentelemetry-instrumentation-fastapi>=0.41b0
 opentelemetry-instrumentation-httpx>=0.41b0
 
-#for multi-tenant feature
-pydantic[email]
+# For multi-tenant feature (email fields / validation)
+email-validator>=2.0.0
 
 # Development dependencies (commented out for production)
 # pytest>=7.4.0
