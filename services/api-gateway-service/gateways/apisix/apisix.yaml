@@ -297,7 +297,7 @@ routes:
       show_limit_quota_header: true
       key: remote_addr
       time_window: 300
-      allow_degradation: false
+      allow_degradation: true
       count: 5
 - uri: /api/v1/auth/register
   name: auth-register-rate-limit-route
@@ -331,7 +331,7 @@ routes:
       show_limit_quota_header: true
       key: remote_addr
       time_window: 3600
-      allow_degradation: false
+      allow_degradation: true
       count: 3
 - uri: /api/v1/auth/*
   name: auth-route
