@@ -642,6 +642,13 @@ routes:
       - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
         or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
       phase: rewrite
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Request-ID
+      allow_credential: true
     proxy-rewrite:
       headers:
         X-Gateway: apisix
@@ -1013,6 +1020,13 @@ routes:
       - 'return function(conf, ctx) local auth_source = ngx.var.http_x_auth_source
         or "API_KEY"; ngx.ctx.auth_mode = auth_source; end'
       phase: rewrite
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-User-ID,X-User-Email,X-User-Roles,X-Validated
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Request-ID
+      allow_credential: true
     proxy-rewrite:
       headers:
         X-Gateway: apisix
