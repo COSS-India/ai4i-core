@@ -194,5 +194,6 @@ All configuration can be set via environment variables:
 - `EXCLUDE_OPTIONS_LOGS`: Skip OPTIONS (CORS) logs (defaults to "true")
 - `ALLOWED_LOG_LEVELS`: Comma-separated levels to log (defaults to "DEBUG,INFO,WARNING,ERROR")
 - `MIN_LOG_LEVEL`: Minimum log level fallback (defaults to "INFO")
+- `REQUEST_LOG_INCLUDE_PATHS`: Comma-separated path allowlist; when set, only matching paths are logged
 - `INCLUDE_4XX_LOGS`: Include 4xx errors in logs (defaults to "false", gateway logs them)
 

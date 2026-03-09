@@ -45,6 +45,25 @@ def _parse_allowed_levels_env(raw: str) -> Set[int]:
     return allowed
 
 
+def _normalize_path_for_match(path: str) -> str:
+    normalized = (path or "").split("?")[0].strip().lower()
+    if normalized != "/":
+        normalized = normalized.rstrip("/")
+    return normalized or "/"
+
+
+def _parse_csv_paths_env(raw: str) -> Set[str]:
+    paths: Set[str] = set()
+    for item in (s.strip() for s in (raw or "").split(",")):
+        if not item:
+            continue
+        normalized = _normalize_path_for_match(item)
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        paths.add(normalized)
+    return paths
+
+
 class ServiceRequestLoggingMiddleware(BaseHTTPMiddleware):
     """
     Generic request logging middleware used by services.
@@ -55,6 +74,7 @@ class ServiceRequestLoggingMiddleware(BaseHTTPMiddleware):
     - EXCLUDE_OPTIONS_LOGS: skip OPTIONS logs (default: true)
     - ALLOWED_LOG_LEVELS: comma-separated list of levels (default: DEBUG,INFO,WARNING,ERROR)
     - MIN_LOG_LEVEL: fallback minimum level threshold if ALLOWED_LOG_LEVELS is empty (default: INFO)
+    - REQUEST_LOG_INCLUDE_PATHS: comma-separated path allowlist; if set, only these paths are logged
     - USE_KAFKA_LOGGING: if true, logs go to KafkaHandler (fallback stdout) else stdout
     """
 
@@ -73,6 +93,8 @@ class ServiceRequestLoggingMiddleware(BaseHTTPMiddleware):
         self.exclude_metrics_logs = _parse_bool_env("EXCLUDE_METRICS_LOGS", "false")
         self.exclude_options_logs = _parse_bool_env("EXCLUDE_OPTIONS_LOGS", "true")
         self.include_4xx = include_4xx
+        include_paths_raw = os.getenv("REQUEST_LOG_INCLUDE_PATHS", "")
+        self.include_paths = _parse_csv_paths_env(include_paths_raw)
 
         # Allowed levels configuration
         allowed_raw = os.getenv("ALLOWED_LOG_LEVELS", "DEBUG,INFO,WARNING,ERROR")
@@ -93,7 +115,11 @@ class ServiceRequestLoggingMiddleware(BaseHTTPMiddleware):
         self.extra_context_getter = extra_context_getter
 
     def _should_skip_logging(self, method: str, path: str) -> bool:
-        path_lower = (path or "").split("?")[0].lower().rstrip("/")
+        path_lower = _normalize_path_for_match(path)
+
+        # Optional allowlist mode for strict endpoint-only logging
+        if self.include_paths and path_lower not in self.include_paths:
+            return True
 
         # Skip CORS preflight logs by default (noise)
         if self.exclude_options_logs and method.upper() == "OPTIONS":
