@@ -31,8 +31,7 @@ observabilityClient.interceptors.request.use(
     } else {
       console.error('❌ Observability request made WITHOUT JWT token:', config.url);
       console.error('Token check:', {
-        localStorage: typeof window !== 'undefined' ? localStorage.getItem('access_token') : 'N/A',
-        sessionStorage: typeof window !== 'undefined' ? sessionStorage.getItem('access_token') : 'N/A',
+        getJwtToken: typeof window !== 'undefined' ? !!getJwtToken() : 'N/A',
       });
     }
     return config;
