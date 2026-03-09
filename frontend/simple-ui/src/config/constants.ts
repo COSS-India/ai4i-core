@@ -547,6 +547,9 @@ export const TRANSLITERATION_ERRORS = {
 /** Minimum Language Detection text length (characters) to be considered valid */
 export const MIN_LANGUAGE_DETECTION_TEXT_LENGTH = 2;
 
+/** Maximum total input length for Text Language Detection textarea */
+export const MAX_LANGUAGE_DETECTION_INPUT_LENGTH = 512;
+
 /** Language Detection error codes and user-facing messages */
 export const LANGUAGE_DETECTION_ERRORS = {
   // Input Errors
