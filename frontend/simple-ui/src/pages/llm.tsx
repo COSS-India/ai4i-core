@@ -74,11 +74,13 @@ const LLMPage: React.FC = () => {
 
   const availableLanguages = LLM_SUPPORTED_LANGUAGES.map((lang) => lang.code);
 
+  const MAX_LLM_INPUT_LENGTH = 512;
   const canTranslate =
     !!serviceId?.trim() &&
     !!inputLanguage?.trim() &&
     !!outputLanguage?.trim() &&
-    !!inputText?.trim();
+    !!inputText?.trim() &&
+    inputText.length <= MAX_LLM_INPUT_LENGTH;
 
   const handleTranslate = () => {
     if (!canTranslate) return;
@@ -194,7 +196,7 @@ const LLMPage: React.FC = () => {
                   <TextInput
                     inputText={inputText}
                     onInputChange={setInputText}
-                    maxLength={50000}
+                    maxLength={MAX_LLM_INPUT_LENGTH}
                     disabled={fetching}
                   />
                 </Box>
