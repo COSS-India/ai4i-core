@@ -34,11 +34,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         import logging
         exclude_health_env = os.getenv("EXCLUDE_HEALTH_LOGS", "false")
         exclude_metrics_env = os.getenv("EXCLUDE_METRICS_LOGS", "false")
+        # CORS preflight (OPTIONS) requests are common from browsers and usually add log noise.
+        # Default to excluding them unless explicitly disabled.
+        exclude_options_env = os.getenv("EXCLUDE_OPTIONS_LOGS", "true")
         allowed_log_levels_env = os.getenv("ALLOWED_LOG_LEVELS", "DEBUG,INFO,WARNING,ERROR")
         
         # Parse boolean values - handle "true", "True", "TRUE", "1", etc.
         self.exclude_health_logs = exclude_health_env.lower().strip() in ("true", "1", "yes", "on")
         self.exclude_metrics_logs = exclude_metrics_env.lower().strip() in ("true", "1", "yes", "on")
+        self.exclude_options_logs = exclude_options_env.lower().strip() in ("true", "1", "yes", "on")
         
         # Parse allowed log levels (comma-separated: "INFO,ERROR" or "DEBUG,INFO,WARNING,ERROR")
         allowed_levels_str = [level.strip().upper() for level in allowed_log_levels_env.split(",")]
@@ -56,10 +60,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Use DEBUG level to avoid cluttering OpenSearch with initialization logs
         logger.debug(
             f"RequestLoggingMiddleware initialized: EXCLUDE_HEALTH_LOGS={self.exclude_health_logs}, "
-            f"EXCLUDE_METRICS_LOGS={self.exclude_metrics_logs}, ALLOWED_LOG_LEVELS={allowed_levels_str}",
+            f"EXCLUDE_METRICS_LOGS={self.exclude_metrics_logs}, EXCLUDE_OPTIONS_LOGS={self.exclude_options_logs}, "
+            f"ALLOWED_LOG_LEVELS={allowed_levels_str}",
             extra={"context": {
                 "exclude_health_logs": self.exclude_health_logs,
                 "exclude_metrics_logs": self.exclude_metrics_logs,
+                "exclude_options_logs": self.exclude_options_logs,
                 "allowed_log_levels": allowed_levels_str,
             }}
         )
@@ -78,9 +84,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             "/api/v1/metrics",
         ]
     
-    def _should_skip_logging(self, path: str, status_code: int) -> bool:
+    def _should_skip_logging(self, method: str, path: str, status_code: int) -> bool:
         """Check if logging should be skipped based on path and configuration."""
         path_lower = path.lower().rstrip('/')
+
+        # Skip CORS preflight / OPTIONS requests (usually not useful to index in OpenSearch)
+        if self.exclude_options_logs and method.upper() == "OPTIONS":
+            return True
         
         # Check health endpoints - match any path containing /health
         if self.exclude_health_logs:
@@ -150,7 +160,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         
         # Check if logging should be skipped (health/metrics filtering)
         # IMPORTANT: This check MUST happen BEFORE any logging
-        should_skip = self._should_skip_logging(path, status_code)
+        should_skip = self._should_skip_logging(method, path, status_code)
         if should_skip:
             response.headers["X-Process-Time"] = f"{processing_time:.3f}"
             return response
