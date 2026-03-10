@@ -13,11 +13,11 @@ except Exception:
 load_dotenv()
 
 # Database connection settings
-DB_USER = str(os.getenv("APP_DB_USER", "dhruva_user"))
-DB_PASSWORD = str(os.getenv("APP_DB_PASSWORD", "dhruva_password"))
-DB_HOST = str(os.getenv("APP_DB_HOST", "localhost"))
-DB_PORT = int(os.getenv("APP_DB_PORT", 5434))
-DB_NAME = str(os.getenv("APP_DB_NAME", "model_management_db"))
+DB_USER = str(os.getenv("APP_DB_USER"))
+DB_PASSWORD = str(os.getenv("APP_DB_PASSWORD"))
+DB_HOST = str(os.getenv("APP_DB_HOST"))
+DB_PORT = int(os.getenv("APP_DB_PORT"))
+DB_NAME = str(os.getenv("APP_DB_NAME"))
 
 # PostgreSQL connection engine
 app_db_engine: AsyncEngine = None

@@ -63,8 +63,7 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
-from middleware.tenant_middleware import TenantMiddleware
-from middleware.tenant_schema_router import TenantSchemaRouter
+from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from models import database_models
 from models import auth_models  # Import to ensure auth tables are created
 
@@ -91,20 +90,18 @@ else:
     )
     logger = logging.getLogger(__name__)
 
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = int(os.getenv("REDIS_PORT"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
 
 DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db",
+    "DATABASE_URL"
 )
 
 # Multi-tenant database URL (for tenant schema routing)
 MULTI_TENANT_DB_URL = os.getenv(
-    "MULTI_TENANT_DB_URL",
-    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/multi_tenant_db",
+    "MULTI_TENANT_DB_URL"
 )
 
 # NOTE: Triton endpoint/model MUST come from Model Management for inference.
@@ -212,18 +209,7 @@ async def lifespan(app: FastAPI):
     # Triton endpoint/model resolved via Model Management middleware - no hardcoded fallback
     app.state.triton_api_key = TRITON_API_KEY
 
-    # Initialize tenant schema router for multi-tenant routing
-    # Use MULTI_TENANT_DB_URL for tenant schema routing (different from auth DATABASE_URL)
-    if not MULTI_TENANT_DB_URL:
-        logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
-        multi_tenant_db_url = DATABASE_URL
-    else:
-        multi_tenant_db_url = MULTI_TENANT_DB_URL
-
-    logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")  # Mask password in logs
-    tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
-    app.state.tenant_schema_router = tenant_schema_router
-    logger.info("Tenant schema router initialized with multi-tenant database")
+    # Tenant schema router is created by MultiTenantPlugin at registration time
 
     # Service registry
     try:
@@ -354,9 +340,9 @@ else:
 # Initialize Redis client early for middleware (synchronous for Model Management Plugin)
 redis_client_sync = None
 try:
-    redis_host = os.getenv("REDIS_HOST", "redis")
-    redis_port = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
-    redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+    redis_host = os.getenv("REDIS_HOST")
+    redis_port = int(os.getenv("REDIS_PORT"))
+    redis_password = os.getenv("REDIS_PASSWORD")
     
     redis_client_sync = redis_sync.Redis(
         host=redis_host,
@@ -414,9 +400,6 @@ if CorrelationMiddleware:
 # Request logging
 app.add_middleware(RequestLoggingMiddleware)
 
-# Tenant middleware (marks NER requests for tenant context extraction)
-app.add_middleware(TenantMiddleware)
-
 # Rate limiting (Redis client will be picked from app.state)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
@@ -429,6 +412,14 @@ app.add_middleware(
 
 # Error handlers
 add_error_handlers(app)
+
+# Multi-tenant plugin (tenant schema router + middleware)
+multi_tenant_db_url = MULTI_TENANT_DB_URL or DATABASE_URL
+multi_tenant_config = MultiTenantConfig.from_env()
+multi_tenant_config.tenant_paths = ["/api/v1/ner"]
+multi_tenant_plugin = MultiTenantPlugin(multi_tenant_config)
+multi_tenant_plugin.register_plugin(app, multi_tenant_db_url=multi_tenant_db_url)
+logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for NER service")
 
 # Routers
 app.include_router(inference_router)

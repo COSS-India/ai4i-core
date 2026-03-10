@@ -1181,23 +1181,25 @@ export const formatDuration = (seconds: number): string => {
 
 // Default configurations
 export const DEFAULT_ASR_CONFIG = {
-  language: "hi", // Default to Hindi since it's in the ASR supported list
+  language: "", // User must select; no default to avoid implicit preference
   sampleRate: 16000,
-  serviceId: "asr_am_ensemble",
+  serviceId: "", // User must select; no default to avoid implicit preference
   audioFormat: "wav",
   encoding: "base64",
 } as const;
 
 export const DEFAULT_TTS_CONFIG = {
-  language: "en",
-  gender: "female",
+  language: "", // User must select; no default to avoid implicit preference
+  gender: "",
   sampleRate: 22050,
-  audioFormat: "wav",
+  audioFormat: "", // User must select; no default to avoid implicit preference
 } as const;
 
 export const DEFAULT_NMT_CONFIG = {
-  sourceLanguage: "en",
-  targetLanguage: "hi",
+  sourceLanguage: "", // User must select; no default to avoid implicit preference
+  targetLanguage: "",
+  sourceScriptCode: "",
+  targetScriptCode: "",
 } as const;
 
 // API endpoints

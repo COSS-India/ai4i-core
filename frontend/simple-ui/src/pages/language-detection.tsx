@@ -20,6 +20,7 @@ import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
 import React, { useState, useEffect } from "react";
 import ContentLayout from "../components/common/ContentLayout";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performLanguageDetectionInference, listLanguageDetectionServices } from "../services/languageDetectionService";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { LANGUAGE_DETECTION_ERRORS, MIN_LANGUAGE_DETECTION_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
@@ -182,10 +183,10 @@ const LanguageDetectionPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Text Language Detection
+              {getServiceTitle("language-detection")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Automatically identify the language and script of any text input.
+              {getServiceDescription("language-detection")}
             </Text>
           </Box>
 

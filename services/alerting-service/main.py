@@ -81,16 +81,15 @@ async def startup_event():
     try:
         # Initialize Redis connection
         redis_client = redis.from_url(
-            f"redis://:{os.getenv('REDIS_PASSWORD', 'redis_secure_password_2024')}@"
-            f"{os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', '6379')}"
+            f"redis://:{os.getenv('REDIS_PASSWORD')}@"
+            f"{os.getenv('REDIS_HOST')}:{os.getenv('REDIS_PORT')}"
         )
         await redis_client.ping()
         logger.info("Connected to Redis")
         
         # Initialize PostgreSQL connection
         database_url = os.getenv(
-            'DATABASE_URL', 
-            'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/alerting_db'
+            'DATABASE_URL'
         )
         db_engine = create_async_engine(
             database_url,
@@ -106,7 +105,7 @@ async def startup_event():
         logger.info("Connected to PostgreSQL")
         
         # Initialize Kafka producer
-        kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
+        kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS')
         kafka_producer = AIOKafkaProducer(
             bootstrap_servers=kafka_servers,
             value_serializer=lambda v: str(v).encode('utf-8')

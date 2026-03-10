@@ -30,8 +30,7 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
-from middleware.tenant_schema_router import TenantSchemaRouter
-from middleware.tenant_middleware import TenantMiddleware
+from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 
 from models import database_models, auth_models
 
@@ -78,13 +77,12 @@ for handler in root_logger.handlers:
 # Get logger instance
 logger = get_logger(__name__)
 
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
 DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db"
+    "DATABASE_URL"
 )
 # Multi-tenant database URL for tenant schema routing
 MULTI_TENANT_DB_URL = os.getenv("MULTI_TENANT_DB_URL")
@@ -167,22 +165,13 @@ async def lifespan(app: FastAPI):
     # Triton endpoint/model resolved via Model Management middleware - no hardcoded fallback
     app.state.triton_api_key = TRITON_API_KEY
 
-    # Initialize tenant schema router for multi-tenant routing
-    if not MULTI_TENANT_DB_URL:
-        logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
-        multi_tenant_db_url = DATABASE_URL
-    else:
-        multi_tenant_db_url = MULTI_TENANT_DB_URL
-    logger.info("Using MULTI_TENANT_DB_URL: %s", (multi_tenant_db_url or "").split("@")[0] + "@***" if multi_tenant_db_url else "not set")
-    tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
-    app.state.tenant_schema_router = tenant_schema_router
-    logger.info("Tenant schema router initialized with multi-tenant database")
+    # Tenant schema router is created by MultiTenantPlugin at registration time
 
     # Service registry
     try:
         registry_client = ServiceRegistryHttpClient()
-        service_name = os.getenv("SERVICE_NAME", "language-detection-service")
-        service_port = int(os.getenv("SERVICE_PORT", "8090"))
+        service_name = os.getenv("SERVICE_NAME")
+        service_port = int(os.getenv("SERVICE_PORT"))
         public_base_url = os.getenv("SERVICE_PUBLIC_URL")
         if public_base_url:
             service_url = public_base_url.rstrip("/")
@@ -209,7 +198,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Language Detection Service...")
     try:
         if registry_client and registered_instance_id:
-            service_name = os.getenv("SERVICE_NAME", "language-detection-service")
+            service_name = os.getenv("SERVICE_NAME")
             await registry_client.deregister(service_name, registered_instance_id)
     except Exception as e:
         logger.warning("Service registry deregistration error: %s", e)
@@ -273,7 +262,7 @@ logger.info("✅ AI4ICore Observability Plugin initialized for Language Detectio
 # MUST be registered BEFORE app starts (before other middleware) to avoid "Cannot add middleware after application has started" error
 try:
     mm_config = ModelManagementConfig(
-        model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
+        model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL"),
         model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
         cache_ttl_seconds=300,
         triton_endpoint_cache_ttl=300,
@@ -291,10 +280,6 @@ try:
 except Exception as e:
     logger.warning(f"Failed to initialize Model Management Plugin: {e}")
 
-# Add tenant middleware (after auth, before routes)
-# This extracts tenant context from JWT or user_id
-app.add_middleware(TenantMiddleware)
-
 # Distributed Tracing (Jaeger)
 # IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
 tracer = setup_tracing("language-detection-service")
@@ -309,6 +294,14 @@ if tracer:
     logger.info("✅ FastAPI instrumentation enabled for tracing")
 else:
     logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
+
+# Multi-tenant plugin (tenant schema router + middleware)
+multi_tenant_db_url = MULTI_TENANT_DB_URL or DATABASE_URL
+multi_tenant_config = MultiTenantConfig.from_env()
+multi_tenant_config.tenant_paths = ["/api/v1/language-detection"]
+multi_tenant_plugin = MultiTenantPlugin(multi_tenant_config)
+multi_tenant_plugin.register_plugin(app, multi_tenant_db_url=multi_tenant_db_url)
+logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for Language Detection service")
 
 # Add rate limiting middleware (will use app.state.redis_client when available)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "100"))
