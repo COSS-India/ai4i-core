@@ -367,15 +367,11 @@ const HomePage: React.FC = () => {
                           isClosable: true,
                           position: "top",
                         });
-                        
-                        // Store redirect path
-                        if (typeof window !== "undefined") {
-                          sessionStorage.setItem("redirectAfterAuth", service.path);
-                        }
-                        
-                        // Redirect to auth page
                         setTimeout(() => {
-                          router.push("/auth");
+                          router.push(
+                            "/auth?redirect=" +
+                              encodeURIComponent(service.path)
+                          );
                         }, 500);
                       } else {
                         handleServiceClick(service.path, service.title);

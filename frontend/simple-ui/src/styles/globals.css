@@ -1,4 +1,5 @@
 /* Global CSS styles for Simple UI */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 /* CSS Reset */
 * {
@@ -11,9 +12,6 @@ html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-
-/* Font Import */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 /* Utility Classes */
 .dview-service-try-option-title {
