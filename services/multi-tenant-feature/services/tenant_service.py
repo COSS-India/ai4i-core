@@ -2,7 +2,7 @@ from fastapi import BackgroundTasks, HTTPException
 from datetime import datetime, timezone , timedelta , date
 
 from typing import Optional, List
-from sqlalchemy import insert , select , update , text , MetaData
+from sqlalchemy import insert , select , update , delete , text , MetaData
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError , NoResultFound
 
@@ -33,6 +33,7 @@ from models.db_models import (
     TenantUser,
     UserBillingRecord,
 )
+from models.auth_models import Role, UserRole
 
 from models.enum_tenant import  (
     SubscriptionType, 
@@ -1038,29 +1039,24 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     # Assign TENANT ADMIN role to the tenant admin user
     # The register endpoint assigns USER role by default, so we need to replace it with TENANT ADMIN
     try:
-        # Get TENANT ADMIN role ID from auth_db
+        # Get TENANT ADMIN role ID from auth_db using ORM
         role_result = await auth_db.execute(
-            text("SELECT id FROM roles WHERE name = 'TENANT ADMIN'")
+            select(Role.id).where(Role.name == "TENANT ADMIN")
         )
-        tenant_admin_role_row = role_result.first()
-        
-        if tenant_admin_role_row:
-            tenant_admin_role_id = tenant_admin_role_row[0]
-            
+        tenant_admin_role_id = role_result.scalar_one_or_none()
+
+        if tenant_admin_role_id is not None:
             # Delete any existing role assignments (auth-service only allows one role per user)
             await auth_db.execute(
-                text("DELETE FROM user_roles WHERE user_id = :user_id"),
-                {"user_id": admin_user_id}
+                delete(UserRole).where(UserRole.user_id == admin_user_id)
             )
-            
+
             # Insert TENANT ADMIN role assignment
-            await auth_db.execute(
-                text("""
-                    INSERT INTO user_roles (user_id, role_id, assigned_at)
-                    VALUES (:user_id, :role_id, CURRENT_TIMESTAMP)
-                    ON CONFLICT (user_id, role_id) DO NOTHING
-                """),
-                {"user_id": admin_user_id, "role_id": tenant_admin_role_id}
+            auth_db.add(
+                UserRole(
+                    user_id=admin_user_id,
+                    role_id=tenant_admin_role_id,
+                )
             )
             await auth_db.commit()
             logger.info(f"Assigned TENANT ADMIN role to tenant admin user_id={admin_user_id} for tenant {tenant.tenant_id}")
