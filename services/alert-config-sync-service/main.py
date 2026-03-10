@@ -61,6 +61,9 @@ PROMETHEUS_APPLICATION_ALERTS_PATH = os.getenv("PROMETHEUS_APPLICATION_ALERTS_PA
 PROMETHEUS_INFRASTRUCTURE_ALERTS_PATH = os.getenv("PROMETHEUS_INFRASTRUCTURE_ALERTS_PATH", "/etc/prometheus/rules/infrastructure-alerts.yml")
 ALERTMANAGER_CONFIG_PATH = os.getenv("ALERTMANAGER_CONFIG_PATH", "/etc/alertmanager/alertmanager.yml")
 
+# Alert history webhook: Alertmanager will POST here; alert-management-service records to DB
+ALERT_MANAGEMENT_SERVICE_URL = os.getenv("ALERT_MANAGEMENT_SERVICE_URL", "http://alert-management-service:8098").rstrip("/")
+
 # Sync interval (seconds)
 SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", "60"))
 
@@ -448,7 +451,16 @@ def generate_alertmanager_yaml(
     default_admin_emails = default_admin_emails or []
     default_receiver_name = "default-admin"
 
-    # Build receivers: first add the default receiver (not tied to any organization, ADMIN role)
+    # Alert history webhook receiver: first receiver so all alerts are also sent here for audit log
+    alert_history_webhook_url = f"{ALERT_MANAGEMENT_SERVICE_URL}/alerts/history/webhook"
+    receivers_config = [
+        {
+            "name": "alert-history-webhook",
+            "webhook_configs": [{"url": alert_history_webhook_url}],
+        }
+    ]
+
+    # Build receivers: add the default receiver (not tied to any organization, ADMIN role)
     receivers_config = []
     default_email_configs = []
     for email in default_admin_emails:
@@ -614,6 +626,12 @@ def generate_alertmanager_yaml(
         if rule.get('group_by'):
             route['group_by'] = rule['group_by']
         root_routes.append(route)
+    
+    # Prepend catch-all route so every alert is also sent to alert-history-webhook (continue so other routes still run)
+    root_routes.insert(0, {
+        "receiver": "alert-history-webhook",
+        "continue": True,
+    })
     
     # Deduplicate and ensure we don't have duplicate match sets (Alertmanager uses first match)
     # Only include routes whose receiver exists

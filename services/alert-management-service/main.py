@@ -33,6 +33,7 @@ from alert_management import init_db_pool, close_db_pool
 from routers.alert_definitions import router as alert_definitions_router
 from routers.receivers import router as receivers_router
 from routers.routing_rules import router as routing_rules_router
+from routers.alert_history import router as alert_history_router
 from utils.auth_client import close_auth_client
 
 @asynccontextmanager
@@ -93,6 +94,7 @@ else:
 app.include_router(alert_definitions_router)
 app.include_router(receivers_router)
 app.include_router(routing_rules_router)
+app.include_router(alert_history_router)
 
 
 @app.get("/")

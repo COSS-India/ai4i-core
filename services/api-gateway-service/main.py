@@ -4688,6 +4688,29 @@ async def delete_notification_receiver_endpoint(
         headers=headers
     )
 
+@app.get("/api/v1/alerts/history", tags=["Alerts", "Alert History"])
+async def list_alert_history_endpoint(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    category: Optional[str] = Query(None, description="Filter by category: application, infrastructure"),
+    severity: Optional[str] = Query(None, description="Filter by severity: critical, warning, info"),
+    date_from: Optional[str] = Query(None, description="Filter triggered_at >= (ISO 8601 or YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="Filter triggered_at <= (ISO 8601 or YYYY-MM-DD)"),
+    search: Optional[str] = Query(None, description="Search in alert name and notified audience"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """List alert history (audit log of triggered alerts) - proxied to alert-management-service"""
+    await check_permission("alerts.read", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key)
+    return await proxy_to_service(
+        request,
+        "/alerts/history",
+        "alert-management-service",
+        headers=headers
+    )
+
 @app.post("/api/v1/alerts/routing-rules", tags=["Alerts"])
 async def create_routing_rule_endpoint(
     payload: RoutingRuleCreate,
