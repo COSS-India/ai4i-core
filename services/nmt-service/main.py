@@ -342,8 +342,8 @@ app.add_middleware(
 # Initialize AI4ICore Logging Plugin
 # Register before observability to preserve existing middleware ordering behavior.
 logging_config = LoggingConfig.from_env()
-logging_config.service_name = os.getenv("SERVICE_NAME", "nmt-service")
-logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true"
+logging_config.service_name = os.getenv("SERVICE_NAME")
+logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
 register_logging_plugin(app, config=logging_config)
 logger.info("✅ AI4ICore Logging Plugin initialized for NMT service")
 

@@ -297,8 +297,8 @@ logger.info("✅ AI4ICore Observability Plugin initialized for ASR service")
 # Registers CorrelationMiddleware and ServiceRequestLoggingMiddleware
 # IMPORTANT: Must be registered AFTER ObservabilityPlugin so tenant_id is available
 logging_config = LoggingConfig.from_env()
-logging_config.service_name = os.getenv("SERVICE_NAME", "asr-service")
-logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true"
+logging_config.service_name = os.getenv("SERVICE_NAME")
+logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
 register_logging_plugin(app, config=logging_config)
 logger.info("✅ AI4ICore Logging Plugin initialized for ASR service")
 
