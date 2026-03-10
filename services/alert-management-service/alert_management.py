@@ -2535,3 +2535,162 @@ async def list_routing_rules(organization: Optional[str] = None, enabled_only: b
         rows = await conn.fetch(query, *params)
         return [RoutingRuleResponse(**dict(row)) for row in rows]
 
+
+# -----------------------------------------------------------------------------
+# Alert History (read-only audit log of triggered alerts)
+# -----------------------------------------------------------------------------
+
+async def record_alert_history_from_webhook(webhook_payload: Dict[str, Any]) -> int:
+    """
+    Process Alertmanager webhook payload and insert one row per alert into alert_history.
+    Payload format: Alertmanager v4 (receiver, status, alerts[], each alert has labels, startsAt, endsAt, fingerprint).
+    Returns number of rows inserted.
+    """
+    await ensure_db_pool()
+    receiver = (webhook_payload.get("receiver") or "unknown")
+    status = (webhook_payload.get("status") or "firing").lower()
+    alerts = webhook_payload.get("alerts") or []
+    if not alerts:
+        return 0
+
+    def _notified_display(recv: str, tenant: Optional[str], org: Optional[str]) -> str:
+        if tenant:
+            return f"Tenant: {tenant}"
+        if recv == "default-admin":
+            return "Global admin"
+        return recv
+
+    inserted = 0
+    async with db_pool.acquire() as conn:
+        for alert in alerts:
+            labels = alert.get("labels") or {}
+            annotations = alert.get("annotations") or {}
+            alert_name = labels.get("alertname") or "Unknown"
+            category = (labels.get("category") or "application").lower()
+            if category not in ("application", "infrastructure"):
+                category = "application"
+            severity = (labels.get("severity") or "warning").lower()
+            if severity not in ("critical", "warning", "info"):
+                severity = "warning"
+            triggered_at = alert.get("startsAt")
+            ends_at = alert.get("endsAt")
+            fingerprint = alert.get("fingerprint")
+            tenant = labels.get("tenant")
+            organization = labels.get("organization")
+            notified = _notified_display(receiver, tenant, organization)
+
+            if not triggered_at:
+                continue
+            try:
+                ts = datetime.fromisoformat(triggered_at.replace("Z", "+00:00"))
+            except Exception:
+                ts = datetime.utcnow()
+            resolved_ts = None
+            if ends_at and str(ends_at) != "0001-01-01T00:00:00Z":
+                try:
+                    resolved_ts = datetime.fromisoformat(ends_at.replace("Z", "+00:00"))
+                except Exception:
+                    pass
+
+            await conn.execute(
+                """
+                INSERT INTO alert_history (
+                    alert_name, category, severity, triggered_at, resolved_at, status,
+                    receiver, notified_display, tenant, organization, labels, annotations, fingerprint
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                """,
+                alert_name,
+                category,
+                severity,
+                ts,
+                resolved_ts,
+                status,
+                receiver,
+                notified,
+                tenant,
+                organization,
+                asyncpg.types.JSONB(labels),
+                asyncpg.types.JSONB(annotations),
+                fingerprint,
+            )
+            inserted += 1
+    return inserted
+
+
+async def list_alert_history(
+    category: Optional[str] = None,
+    severity: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple:
+    """
+    List alert history with optional filters. Chronological order (newest first).
+    Returns (list of items, total_count).
+    """
+    await ensure_db_pool()
+    conditions = []
+    params = []
+    param_idx = 1
+
+    if category:
+        conditions.append(f"category = ${param_idx}")
+        params.append(category.lower())
+        param_idx += 1
+    if severity:
+        conditions.append(f"severity = ${param_idx}")
+        params.append(severity.lower())
+        param_idx += 1
+    if date_from:
+        conditions.append(f"triggered_at >= ${param_idx}::timestamptz")
+        params.append(date_from)
+        param_idx += 1
+    if date_to:
+        conditions.append(f"triggered_at <= ${param_idx}::timestamptz")
+        params.append(date_to)
+        param_idx += 1
+    if search:
+        conditions.append(f"(alert_name ILIKE ${param_idx} OR notified_display ILIKE ${param_idx})")
+        params.append(f"%{search}%")
+        param_idx += 1
+
+    where = " AND ".join(conditions) if conditions else "1=1"
+    params_ext = params + [limit, offset]
+    query = f"""
+        SELECT id, alert_name, category, severity, triggered_at, resolved_at, status,
+               receiver, notified_display, tenant, organization, created_at
+        FROM alert_history
+        WHERE {where}
+        ORDER BY triggered_at DESC
+        LIMIT ${param_idx} OFFSET ${param_idx + 1}
+    """
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(query, *params_ext)
+        total_result = await conn.fetchval(
+            f"SELECT COUNT(*) FROM alert_history WHERE {where}",
+            *params
+        )
+
+    def _row_to_item(row) -> Dict[str, Any]:
+        triggered = row["triggered_at"]
+        triggered_str = triggered.strftime("%Y-%m-%d %H:%M:%S") if triggered else None
+        resolved = row["resolved_at"]
+        resolved_str = resolved.strftime("%Y-%m-%d %H:%M:%S") if resolved else None
+        return {
+            "id": row["id"],
+            "name": row["alert_name"],
+            "category": row["category"],
+            "severity": row["severity"],
+            "triggered_at": triggered_str,
+            "resolved_at": resolved_str,
+            "status": row["status"],
+            "receiver": row["receiver"],
+            "notified": row["notified_display"],
+            "tenant": row["tenant"],
+            "organization": row["organization"],
+            "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+        }
+
+    return [_row_to_item(r) for r in rows], (total_result or 0)

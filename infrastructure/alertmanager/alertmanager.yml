@@ -10,6 +10,7 @@ route:
   - alertname
   - category
   - severity
+  - tenant
   group_wait: 10s
   group_interval: 10s
   repeat_interval: 12h
@@ -18,9 +19,7 @@ route:
   - match:
       severity: warning
       category: application
-      alertname: HighMedianLatencyPerService
-      tenant: cloudsphere-analytics-2-4e7658
-    receiver: warning-application--alerts-HighMedianLatencyPerService--tenant-CloudSphere Analytics-2
+    receiver: warning-application
     group_wait: 10s
     group_interval: 10s
     repeat_interval: 12h
@@ -54,9 +53,21 @@ receivers:
       <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
       <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
       <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
-- name: warning-application--alerts-HighMedianLatencyPerService--tenant-CloudSphere Analytics-2
+- name: warning-application
   email_configs:
-  - to: bharathia6@gmail.com
+  - to: admin@ai4inclusion.org
+    send_resolved: true
+    headers:
+      Subject: '[{{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }}{{ with (index .Alerts 0).Labels.endpoint }} - {{ . }}{{ end }}'
+    html: |
+      <h2 style="color: {{ if eq .GroupLabels.severity "critical" }}#d32f2f{{ else if eq .GroupLabels.severity "warning" }}#f57c00{{ else }}#1976d2{{ end }};">
+        {{ if eq .GroupLabels.severity "critical" }}🚨 CRITICAL{{ else if eq .GroupLabels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
+      </h2>
+      <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
+      <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
+      <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
+      <p><strong>Inference endpoint(s):</strong> {{ range $i, $a := .Alerts }}{{ if index $a.Labels "endpoint" }}{{ if $i }}, {{ end }}{{ $a.Labels.endpoint }}{{ end }}{{ end }}</p>
+  - to: bharathi.alwar@tarento.com
     send_resolved: true
     headers:
       Subject: '[{{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }}{{ with (index .Alerts 0).Labels.endpoint }} - {{ . }}{{ end }}'

@@ -108,6 +108,26 @@ CREATE TABLE IF NOT EXISTS routing_rules (
     CONSTRAINT unique_organization_rule_name UNIQUE (organization, rule_name)
 );
 
+-- Alert History Table
+-- Read-only audit log of triggered alerts, populated from Alertmanager webhooks
+CREATE TABLE IF NOT EXISTS alert_history (
+    id BIGSERIAL PRIMARY KEY,
+    alert_name VARCHAR(255) NOT NULL,
+    category VARCHAR(50) NOT NULL,
+    severity VARCHAR(20) NOT NULL,
+    triggered_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    resolved_at TIMESTAMP WITH TIME ZONE NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'firing',
+    receiver VARCHAR(255) NOT NULL,
+    notified_display VARCHAR(500),
+    tenant VARCHAR(255),
+    organization VARCHAR(255),
+    labels JSONB,
+    annotations JSONB,
+    fingerprint VARCHAR(64),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Audit Log Table
 CREATE TABLE IF NOT EXISTS alert_config_audit_log (
     id SERIAL PRIMARY KEY,
@@ -143,6 +163,12 @@ CREATE INDEX IF NOT EXISTS idx_routing_rules_enabled ON routing_rules(enabled);
 CREATE INDEX IF NOT EXISTS idx_routing_rules_priority ON routing_rules(priority);
 CREATE INDEX IF NOT EXISTS idx_routing_rules_match_severity ON routing_rules(match_severity);
 CREATE INDEX IF NOT EXISTS idx_routing_rules_match_category ON routing_rules(match_category);
+
+CREATE INDEX IF NOT EXISTS idx_alert_history_triggered_at ON alert_history(triggered_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alert_history_category ON alert_history(category);
+CREATE INDEX IF NOT EXISTS idx_alert_history_severity ON alert_history(severity);
+CREATE INDEX IF NOT EXISTS idx_alert_history_alert_name ON alert_history(alert_name);
+CREATE INDEX IF NOT EXISTS idx_alert_history_tenant ON alert_history(tenant);
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_organization ON alert_config_audit_log(organization);
 CREATE INDEX IF NOT EXISTS idx_audit_log_table_record ON alert_config_audit_log(table_name, record_id);
@@ -310,3 +336,4 @@ COMMENT ON TABLE alert_annotations IS 'Stores annotations (summary, description,
 COMMENT ON TABLE notification_receivers IS 'Stores notification channel configurations (email, RBAC role) per organization; optional alert_names and tenant for scoped routing';
 COMMENT ON TABLE routing_rules IS 'Defines routing rules that match alerts to receivers based on severity/category/alert_names/tenant_id';
 COMMENT ON TABLE alert_config_audit_log IS 'Audit trail of all changes to alert configurations for compliance';
+COMMENT ON TABLE alert_history IS 'Read-only audit log of triggered alerts populated from Alertmanager webhooks';
