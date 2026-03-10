@@ -20,6 +20,7 @@ from utils.utils import (
     generate_service_id,
     generate_random_password,
     hash_password,
+    hash_email,
     encrypt_sensitive_data,
     decrypt_sensitive_data,
     DecryptionError,
@@ -703,34 +704,12 @@ async def create_new_tenant(
     """
 
     if payload.contact_email:
-        # Check for existing tenant by decrypting stored emails.
-        # Enforce uniqueness of contact_email across all domains.
-        # TODO: This is not efficient for very large datasets. Will add an email_hash column for indexed searches.
-        """
-        email_hash = Column(String, index=True, unique=True)
-        email_hash = hash_email(payload.contact_email)
+        # Use hashed email (normalized + SHA256) for fast, indexed duplicate detection.
+        email_hash_value = hash_email(payload.contact_email)
 
         existing = await db.scalar(
-            select(Tenant).where(Tenant.email_hash == email_hash)
+            select(Tenant).where(Tenant.email_hash == email_hash_value)
         )
-         
-        """
-        existing = None
-
-        tenants = await db.scalars(select(Tenant))
-        for tenant in tenants:
-            # skip tenants with no stored email
-            if not tenant.contact_email:
-                continue
-            try:
-                decrypted_email = decrypt_sensitive_data(tenant.contact_email)
-            except Exception:
-                # If decryption fails, fall back to raw comparison (backward compatibility)
-                decrypted_email = tenant.contact_email
-
-            if decrypted_email == payload.contact_email:
-                existing = tenant
-                break
 
         if existing:
             # Check status and raise appropriate errors
@@ -791,6 +770,8 @@ async def create_new_tenant(
         "tenant_id": tenant_id,
         "organization_name": payload.organization_name,
         "contact_email": encrypted_email,
+        # Store hash of normalized email for fast uniqueness checks
+        "email_hash": hash_email(payload.contact_email) if payload.contact_email else None,
         "phone_number": encrypted_phone,
         "domain": payload.domain,
         # "subdomain": subdomain,
@@ -2396,6 +2377,8 @@ async def update_tenant(
         if old_value != new_value:
             changes["contact_email"] = FieldChange(old=old_value, new=new_value)
             tenant.contact_email = encrypt_sensitive_data(new_value) if new_value else None
+            # Keep email_hash in sync with the (decrypted) contact_email
+            tenant.email_hash = hash_email(new_value) if new_value else None
             updated_fields.append("contact_email")
 
     # Handle phone_number update (store encrypted)
