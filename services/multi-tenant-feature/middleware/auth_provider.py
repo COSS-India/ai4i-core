@@ -6,9 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, Dict, Any, Tuple
 import hashlib
 import json
-import os
 
 import httpx
+from ai4icore_env import app_env
 
 from repositories.api_key_repository import ApiKeyRepository
 from repositories.user_repository import UserRepository
@@ -18,8 +18,8 @@ from middleware.exceptions import AuthenticationError, InvalidAPIKeyError, Expir
 from db_connection import get_auth_db_session
 from logger import logger
 
-AUTH_SERVICE_URL = str(os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081"))
-AUTH_HTTP_TIMEOUT = float(os.getenv("AUTH_HTTP_TIMEOUT", "10"))
+AUTH_SERVICE_URL = app_env.auth_service_url
+AUTH_HTTP_TIMEOUT = app_env.auth_http_timeout
 
 
 
@@ -42,11 +42,12 @@ def hash_api_key(api_key: str) -> str:
     return hashlib.sha256(api_key.encode()).hexdigest()
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
+def _str_to_bool(value, default: bool) -> bool:
     if value is None:
         return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 async def validate_api_key(api_key: str, db: AsyncSession, redis_client) -> Tuple[ApiKeyDB, UserDB]:
@@ -126,9 +127,9 @@ async def AuthProvider(
     db: AsyncSession = Depends(get_auth_db_session)
 ) -> Dict[str, Any]:
     """Authentication provider for multi-tenant routes. Uses AUTH_TOKEN (Bearer JWT) by default; API key not required."""
-    auth_enabled = _env_bool("AUTH_ENABLED", True)
-    require_api_key = _env_bool("REQUIRE_API_KEY", False)  # Multi-tenant: auth token only by default
-    allow_anonymous = _env_bool("ALLOW_ANONYMOUS_ACCESS", False)
+    auth_enabled = _str_to_bool(app_env.auth_enabled, True)
+    require_api_key = _str_to_bool(app_env.require_api_key, False)  # Multi-tenant: auth token only by default
+    allow_anonymous = app_env.allow_anonymous_access
     # Default to AUTH_TOKEN so all multi-tenant APIs work with Bearer token only; API key not required
     auth_source = (x_auth_source or "AUTH_TOKEN").upper()
 

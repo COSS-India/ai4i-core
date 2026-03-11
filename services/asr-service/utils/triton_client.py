@@ -1,17 +1,16 @@
 """
 Triton Inference Server client wrapper.
 
-Adapted from Dhruva-Platform-2 triton_utils_service.py and inference_gateway.py.
 """
 
 import logging
-import os
 from typing import List, Tuple, Optional, Dict
 import numpy as np
 import tritonclient.http as http_client
 from tritonclient.utils import np_to_triton_dtype
 import gevent.ssl
 
+from ai4icore_env import app_env
 from middleware.exceptions import (
     TritonInferenceError,
     ModelNotFoundError,
@@ -339,7 +338,7 @@ class TritonClient:
         )
         
         # Get result with timeout
-        timeout = int(os.getenv("TRITON_TIMEOUT", "20"))
+        timeout = int(app_env.triton_timeout)
         result = response.get_result(block=True, timeout=timeout)
         
         return result

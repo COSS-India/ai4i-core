@@ -3,11 +3,11 @@ FastAPI router for TTS inference endpoints.
 """
 
 import logging
-import os
 import time
 import traceback
 from typing import Dict, Any, Optional
 import httpx
+from ai4icore_env import app_env
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -96,14 +96,14 @@ from ai4icore_logging import get_correlation_id
 logger = logging.getLogger(__name__)
 
 # SMR Service Configuration
-SMR_ENABLED = os.getenv("SMR_ENABLED", "true").lower() == "true"
-SMR_SERVICE_URL = os.getenv("SMR_SERVICE_URL", "http://smr-service:8097")
+SMR_ENABLED = app_env.smr_enabled
+SMR_SERVICE_URL = app_env.smr_service_url
 
 # Use service name to get the same tracer instance as main.py
 tracer = trace.get_tracer("tts-service")
 
 #Tenant routing and service checks
-API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
+API_GATEWAY_URL = app_env.api_gateway_url
 
 
 # Create router
@@ -191,7 +191,7 @@ async def resolve_service_id_if_needed(
                         auth_headers["X-Auth-Source"] = x_auth_source
                     
                     # Check if we should bypass cache
-                    bypass_cache = os.getenv("BYPASS_CACHE", "false").lower() == "true"
+                    bypass_cache = app_env.bypass_cache
                     
                     service_info = await model_management_client.get_service(
                         service_id=service_id,
@@ -519,7 +519,7 @@ async def resolve_service_id_if_needed(
 
                 # Check if we should bypass cache (for debugging or after DB updates)
                 # You can set BYPASS_CACHE=true in environment to force fresh fetch
-                bypass_cache = os.getenv("BYPASS_CACHE", "false").lower() == "true"
+                bypass_cache = app_env.bypass_cache
                 
                 service_info = await model_management_client.get_service(
                     service_id=service_id,
@@ -845,7 +845,7 @@ async def switch_to_fallback_service(
             auth_headers["X-Auth-Source"] = x_auth_source
         
         # Check if we should bypass cache (for debugging or after DB updates)
-        bypass_cache = os.getenv("BYPASS_CACHE", "false").lower() == "true"
+        bypass_cache = app_env.bypass_cache
         
         service_info = await model_management_client.get_service(
             service_id=fallback_service_id,

@@ -1,5 +1,5 @@
 """
-Metrics collection system for Dhruva Observability Plugin
+Metrics collection system for AI4ICore Observability Plugin
 
 Handles Prometheus metrics collection, system monitoring, and business analytics.
 """
@@ -19,7 +19,7 @@ from prometheus_client import (
 
 
 class MetricsCollector:
-    """Metrics collector for Dhruva Observability."""
+    """Metrics collector for AI4ICore Observability."""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         """Initialize metrics collector."""

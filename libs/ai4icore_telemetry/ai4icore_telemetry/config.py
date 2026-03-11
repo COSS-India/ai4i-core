@@ -3,73 +3,62 @@ Configuration system for AI4ICore Telemetry Plugin
 
 Handles environment variables, defaults, and plugin configuration.
 """
-import os
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
+
+from ai4icore_env import app_env
 
 
 @dataclass
 class TelemetryConfig:
     """Configuration for AI4ICore Telemetry Plugin."""
-    
+
     # Core settings
     enabled: bool = True
     service_name: Optional[str] = None
     service_version: Optional[str] = None
-    
+
     # Jaeger/OTLP settings
     jaeger_endpoint: Optional[str] = None
-    
+
     # Instrumentation settings
     instrument_fastapi: bool = True
     instrument_httpx: bool = True
     instrument_requests: bool = False
-    
+
     # IP capture middleware settings
     ip_capture_enabled: bool = True
-    
+
     # Span filtering settings
     filter_http_spans: bool = True  # Filter out noisy http receive/send spans
-    
+
     def __post_init__(self):
-        """Initialize configuration from environment variables."""
-        # Core settings - read from environment, no hardcoded defaults
+        """Initialize configuration from app_env."""
+        # Core settings
         if self.service_name is None:
-            self.service_name = os.getenv("SERVICE_NAME")
+            self.service_name = app_env.service_name
         if self.service_version is None:
-            self.service_version = os.getenv("SERVICE_VERSION")
-        
+            self.service_version = app_env.service_version
+
         # Check if telemetry is enabled
-        enabled_env = os.getenv("TELEMETRY_ENABLED")
-        if enabled_env is not None:
-            self.enabled = enabled_env.lower() in ("true", "1", "yes", "on")
-        
-        # Jaeger/OTLP settings - read from environment, no hardcoded defaults
+        self.enabled = app_env.telemetry_enabled
+
+        # Jaeger/OTLP settings
         if self.jaeger_endpoint is None:
-            self.jaeger_endpoint = os.getenv("JAEGER_ENDPOINT")
-        
+            self.jaeger_endpoint = app_env.jaeger_endpoint or None
+
         # Instrumentation settings
-        instrument_fastapi_env = os.getenv("TELEMETRY_INSTRUMENT_FASTAPI")
-        if instrument_fastapi_env is not None:
-            self.instrument_fastapi = instrument_fastapi_env.lower() in ("true", "1", "yes", "on")
-        
-        instrument_httpx_env = os.getenv("TELEMETRY_INSTRUMENT_HTTPX")
-        if instrument_httpx_env is not None:
-            self.instrument_httpx = instrument_httpx_env.lower() in ("true", "1", "yes", "on")
-        
-        instrument_requests_env = os.getenv("TELEMETRY_INSTRUMENT_REQUESTS")
-        if instrument_requests_env is not None:
-            self.instrument_requests = instrument_requests_env.lower() in ("true", "1", "yes", "on")
-        
+        self.instrument_fastapi = app_env.telemetry_instrument_fastapi
+
+        self.instrument_httpx = app_env.telemetry_instrument_httpx
+
+        self.instrument_requests = app_env.telemetry_instrument_requests
+
         # IP capture middleware settings
-        ip_capture_env = os.getenv("TELEMETRY_IP_CAPTURE_ENABLED")
-        if ip_capture_env is not None:
-            self.ip_capture_enabled = ip_capture_env.lower() in ("true", "1", "yes", "on")
-        
+        self.ip_capture_enabled = app_env.telemetry_ip_capture_enabled
+
         # Span filtering settings
-        filter_http_spans_env = os.getenv("TELEMETRY_FILTER_HTTP_SPANS")
-        if filter_http_spans_env is not None:
-            self.filter_http_spans = filter_http_spans_env.lower() in ("true", "1", "yes", "on")
+        self.filter_http_spans = app_env.telemetry_filter_http_spans
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""

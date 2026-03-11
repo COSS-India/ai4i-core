@@ -1,7 +1,6 @@
 """
 Main TTS service class containing core inference logic.
 
-Adapted from Dhruva-Platform-2 run_tts_triton_inference method (lines 468-592).
 """
 
 import asyncio
@@ -72,7 +71,6 @@ class TTSService:
         """
         Run TTS inference for the given request.
         
-        Adapted from Dhruva-Platform-2 run_tts_triton_inference method.
         """
         if not tracer:
             # Fallback if tracing not available

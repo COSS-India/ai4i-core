@@ -2,7 +2,6 @@
 Authentication provider for FastAPI routes - supports JWT, API key, and BOTH.
 Performs local JWT verification and calls auth-service for API key permission checks.
 """
-import os
 import logging
 import hashlib
 from typing import Optional, Dict, Any, Tuple
@@ -13,6 +12,7 @@ from fastapi import Request, Header, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from jose import JWTError, jwt
 
+from ai4icore_env import app_env
 from middleware.exceptions import AuthenticationError, AuthorizationError
 from repositories.api_key_repository import ApiKeyRepository
 from repositories.ner_repository import get_db_session
@@ -41,11 +41,11 @@ def get_tracer():
         return None
 
 # JWT Configuration for local verification
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_SECRET_KEY = app_env.jwt_secret_key
+JWT_ALGORITHM = app_env.jwt_algorithm
 
-AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
-AUTH_HTTP_TIMEOUT = float(os.getenv("AUTH_HTTP_TIMEOUT", "5.0"))
+AUTH_SERVICE_URL = app_env.auth_service_url
+AUTH_HTTP_TIMEOUT = app_env.auth_http_timeout
 
 
 def get_api_key_from_header(authorization: Optional[str]) -> Optional[str]:
@@ -328,9 +328,9 @@ async def AuthProvider(
     tracer = get_tracer()
     
     # Environment-driven auth behavior (align with ASR service)
-    auth_enabled = os.getenv("AUTH_ENABLED", "true").lower() == "true"
-    require_api_key = os.getenv("REQUIRE_API_KEY", "true").lower() == "true"
-    allow_anonymous = os.getenv("ALLOW_ANONYMOUS_ACCESS", "false").lower() == "true"
+    auth_enabled = app_env.auth_enabled
+    require_api_key = app_env.require_api_key
+    allow_anonymous = app_env.allow_anonymous_access
 
     # Also check request headers directly in case FastAPI header parsing missed it
     # (API gateway might forward it with different casing)

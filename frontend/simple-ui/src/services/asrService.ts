@@ -65,12 +65,12 @@ export const transcribeAudio = async (
   config: ASRInferenceRequest['config']
 ): Promise<{ data: ASRInferenceResponse; responseTime: number }> => {
   try {
-    // Dhruva Platform ASR request schema
+    // AI4ICore ASR request schema
     const payload: ASRInferenceRequest = {
       audio: [{ audioContent }],
       config: {
         ...config,
-        encoding: 'base64', // Required for Dhruva Platform
+        encoding: 'base64', // Required for AI4ICore
         preProcessors: ['vad', 'denoise'], // Voice Activity Detection and denoising
         postProcessors: ['lm', 'punctuation'], // Language model and punctuation
       },

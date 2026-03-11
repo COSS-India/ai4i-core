@@ -28,6 +28,7 @@ from models.streaming_models import (
 from services.audio_service import AudioService
 from utils.triton_client import TritonClient
 from repositories.asr_repository import ASRRepository, get_db_session
+from ai4icore_env import app_env
 from middleware.auth_provider import validate_api_key, hash_api_key
 from middleware.exceptions import AuthenticationError, InvalidAPIKeyError
 
@@ -130,10 +131,9 @@ class StreamingASRService:
                         logger.warning(f"Invalid postProcessors JSON for session {sid}")
                 
                 # Check authentication settings
-                import os
-                auth_enabled = os.getenv("AUTH_ENABLED", "true").lower() == "true"
-                require_api_key = os.getenv("REQUIRE_API_KEY", "true").lower() == "true"
-                allow_anonymous = os.getenv("ALLOW_ANONYMOUS_ACCESS", "false").lower() == "true"
+                auth_enabled = (app_env.auth_enabled or "true").lower() == "true"
+                require_api_key = (app_env.require_api_key or "true").lower() == "true"
+                allow_anonymous = app_env.allow_anonymous_access
                 
                 # Validate API key if authentication is enabled and API key is provided
                 user_id = None

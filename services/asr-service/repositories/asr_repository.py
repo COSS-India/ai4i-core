@@ -1,7 +1,6 @@
 """
 Async repository for ASR database operations.
 
-Adapted from Dhruva-Platform-2 PostgreSQLBaseRepository for async SQLAlchemy.
 """
 
 import logging

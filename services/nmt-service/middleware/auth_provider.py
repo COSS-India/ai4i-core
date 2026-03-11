@@ -3,7 +3,6 @@ Authentication provider for FastAPI routes - supports JWT, API key, and BOTH wit
 Uses local JWT signature + expiry verification (no auth-service calls for JWT).
 Uses auth-service for API key permission validation.
 """
-import os
 from fastapi import Request, Header, Depends, HTTPException
 from typing import Optional, Dict, Any, Tuple
 import hashlib
@@ -15,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
+from ai4icore_env import app_env
 from repositories.api_key_repository import ApiKeyRepository
 from repositories.user_repository import UserRepository
 from repositories.nmt_repository import get_db_session
@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("nmt-service")
 
 # Constants for auth service communication
-AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
-AUTH_HTTP_TIMEOUT = float(os.getenv("AUTH_HTTP_TIMEOUT", "5.0"))
+AUTH_SERVICE_URL = app_env.auth_service_url
+AUTH_HTTP_TIMEOUT = app_env.auth_http_timeout
 
 
 def get_api_key_from_header(authorization: Optional[str] = Header(None)) -> Optional[str]:
@@ -97,8 +97,8 @@ def is_try_it_request(request: Request) -> bool:
 
 
 # JWT Configuration for local verification
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_SECRET_KEY = app_env.jwt_secret_key
+JWT_ALGORITHM = app_env.jwt_algorithm
 
 async def authenticate_bearer_token(request: Request, authorization: Optional[str]) -> Dict[str, Any]:
     """

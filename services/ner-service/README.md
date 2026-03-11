@@ -4,7 +4,7 @@ Named Entity Recognition microservice for AI4ICore.
 
 This service:
 - Exposes a ULCA-style NER endpoint at `/api/v1/ner/inference`
-- Forwards requests to a Dhruva NER Triton deployment (model name: `ner`)
+- Forwards requests to a NER Triton deployment (model name: `ner`)
 - Integrates with the AI4ICore Observability plugin for metrics and dashboards
 
 ## API Overview

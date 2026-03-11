@@ -5,7 +5,7 @@ Microservice for extracting text from images using Surya OCR via Triton Inferenc
 ## Features
 
 - **Batch OCR inference** (multiple images per request)
-- **ULCA-style request/response schema** consistent with other Dhruva services
+- **ULCA-style request/response schema** consistent with other AI4ICore services
 - **Surya OCR model** served through Triton (`IMAGE_DATA` → `OUTPUT_TEXT`)
 - **Redis + PostgreSQL ready** (for auth, rate limiting, and logging, same pattern as NMT/TTS/ASR)
 - **AI4ICore Observability Plugin** integrated for metrics and tracing

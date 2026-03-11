@@ -1,9 +1,9 @@
 """
 Metrics Collection Service - Collect and aggregate system metrics
 """
-import os
 import asyncio
 import logging
+from ai4icore_env import app_env
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,17 +47,12 @@ async def startup_event():
     
     try:
         # Initialize Redis connection
-        redis_client = redis.from_url(
-            f"redis://:{os.getenv('REDIS_PASSWORD')}@"
-            f"{os.getenv('REDIS_HOST')}:{os.getenv('REDIS_PORT')}"
-        )
+        redis_client = redis.from_url(app_env.get_redis_url())
         await redis_client.ping()
         logger.info("Connected to Redis")
         
         # Initialize PostgreSQL connection
-        database_url = os.getenv(
-            'DATABASE_URL'
-        )
+        database_url = app_env.get_database_url()
         db_engine = create_async_engine(
             database_url,
             pool_size=10,
@@ -72,9 +67,9 @@ async def startup_event():
         logger.info("Connected to PostgreSQL")
         
         # Initialize InfluxDB client
-        influx_url = os.getenv('INFLUXDB_URL')
-        influx_token = os.getenv('INFLUXDB_TOKEN')
-        influx_org = os.getenv('INFLUXDB_ORG')
+        influx_url = app_env.influxdb_url
+        influx_token = app_env.influxdb_token
+        influx_org = app_env.influxdb_org
         
         influx_client = InfluxDBClient(
             url=influx_url,

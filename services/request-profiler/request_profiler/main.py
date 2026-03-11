@@ -70,8 +70,8 @@ async def lifespan(app: FastAPI):
 
         MODEL_VERSION.info({
             "version": profiler.model_version,
-            "domain_model": str(settings.domain_model_path),
-            "complexity_model": str(settings.complexity_model_path),
+            "domain_model": str(app_env.domain_model_path),
+            "complexity_model": str(app_env.complexity_model_path),
         })
 
         app.state.healthy = True
@@ -266,7 +266,7 @@ async def profiler_error_handler(request: Request, exc: ProfilerError):
 
 
 @app.post("/api/v1/profile", response_model=ProfileResponse, status_code=status.HTTP_200_OK)
-@limiter.limit(f"{settings.rate_limit_per_minute}/minute")
+@limiter.limit(f"{app_env.rate_limit_per_minute}/minute")
 async def profile_text(request: Request, profile_request: ProfileRequest) -> ProfileResponse:
     """Profile a single translation request.
 
@@ -286,8 +286,8 @@ async def profile_text(request: Request, profile_request: ProfileRequest) -> Pro
     text = profile_request.text.strip()
     word_count = len(text.split())
 
-    if len(text) < 1 or len(text) > settings.max_text_length:
-        raise ValidationError(f"Text length must be between 1 and {settings.max_text_length} characters")
+    if len(text) < 1 or len(text) > app_env.max_text_length:
+        raise ValidationError(f"Text length must be between 1 and {app_env.max_text_length} characters")
 
     if word_count < 2:
         raise ValidationError("Text must contain at least 2 words")
@@ -339,7 +339,7 @@ async def profile_text(request: Request, profile_request: ProfileRequest) -> Pro
 
 
 @app.post("/api/v1/profile/batch", response_model=BatchProfileResponse, status_code=status.HTTP_200_OK)
-@limiter.limit(f"{settings.rate_limit_per_minute}/minute")
+@limiter.limit(f"{app_env.rate_limit_per_minute}/minute")
 async def profile_batch(request: Request, batch_request: BatchProfileRequest) -> BatchProfileResponse:
     """Profile multiple translation requests in batch.
 
@@ -356,9 +356,9 @@ async def profile_batch(request: Request, batch_request: BatchProfileRequest) ->
     start_time = time.time()
 
     # Validate batch size
-    if len(batch_request.texts) > settings.max_batch_size:
+    if len(batch_request.texts) > app_env.max_batch_size:
         raise BatchSizeExceededError(
-            f"Batch size {len(batch_request.texts)} exceeds maximum {settings.max_batch_size}"
+            f"Batch size {len(batch_request.texts)} exceeds maximum {app_env.max_batch_size}"
         )
 
     BATCH_SIZE.observe(len(batch_request.texts))
@@ -370,7 +370,7 @@ async def profile_batch(request: Request, batch_request: BatchProfileRequest) ->
     for idx, text in enumerate(batch_request.texts):
         try:
             text = text.strip()
-            if len(text) < 1 or len(text) > settings.max_text_length:
+            if len(text) < 1 or len(text) > app_env.max_text_length:
                 errors.append({"index": idx, "error": "Invalid text length"})
                 results.append(None)
                 continue

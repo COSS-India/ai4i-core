@@ -19,17 +19,17 @@ from middleware.exceptions import (
     AuthorizationError,
 )
 import httpx
-import os
 from jose import JWTError, jwt
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 
-AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
-AUTH_HTTP_TIMEOUT = float(os.getenv("AUTH_HTTP_TIMEOUT", "5.0"))
+AUTH_SERVICE_URL = app_env.auth_service_url
+AUTH_HTTP_TIMEOUT = app_env.auth_http_timeout
 
 # JWT Configuration for local verification (same as nmt-service)
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_SECRET_KEY = app_env.jwt_secret_key
+JWT_ALGORITHM = app_env.jwt_algorithm
 
 
 def get_api_key_from_header(authorization: Optional[str] = Header(None)) -> Optional[str]:

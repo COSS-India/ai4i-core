@@ -65,19 +65,19 @@ class RequestProfiler:
 
         try:
             # Validate model paths exist
-            if not settings.domain_model_path or not settings.domain_model_path.exists():
+            if not app_env.domain_model_path or not app_env.domain_model_path.exists():
                 raise FileNotFoundError(
-                    f"Domain model not found at: {settings.domain_model_path}"
+                    f"Domain model not found at: {app_env.domain_model_path}"
                 )
 
-            if not settings.complexity_model_path or not settings.complexity_model_path.exists():
+            if not app_env.complexity_model_path or not app_env.complexity_model_path.exists():
                 raise FileNotFoundError(
-                    f"Complexity model not found at: {settings.complexity_model_path}"
+                    f"Complexity model not found at: {app_env.complexity_model_path}"
                 )
 
             # Load domain classifier
-            logger.info(f"Loading domain classifier from {settings.domain_model_path}")
-            self.domain_model = joblib.load(settings.domain_model_path)
+            logger.info(f"Loading domain classifier from {app_env.domain_model_path}")
+            self.domain_model = joblib.load(app_env.domain_model_path)
 
             # Validate model has required methods
             if not hasattr(self.domain_model, 'predict_proba'):
@@ -87,8 +87,8 @@ class RequestProfiler:
                 )
 
             # Load complexity regressor
-            logger.info(f"Loading complexity regressor from {settings.complexity_model_path}")
-            self.complexity_model = joblib.load(settings.complexity_model_path)
+            logger.info(f"Loading complexity regressor from {app_env.complexity_model_path}")
+            self.complexity_model = joblib.load(app_env.complexity_model_path)
 
             # Validate model has required methods
             if not hasattr(self.complexity_model, 'predict'):
@@ -98,11 +98,11 @@ class RequestProfiler:
                 )
 
             # Load common words for terminology features (optional)
-            if settings.common_words_path.exists():
-                logger.info(f"Loading common words from {settings.common_words_path}")
-                load_common_words(settings.common_words_path)
+            if app_env.common_words_path.exists():
+                logger.info(f"Loading common words from {app_env.common_words_path}")
+                load_common_words(app_env.common_words_path)
             else:
-                logger.warning(f"Common words file not found: {settings.common_words_path}")
+                logger.warning(f"Common words file not found: {app_env.common_words_path}")
 
             self.models_loaded = True
             logger.info(f"✓ Models loaded successfully (version {self.model_version})")
@@ -111,7 +111,7 @@ class RequestProfiler:
             logger.error(f"Model file not found: {e}")
             raise ModelError(
                 f"Required model files not found: {e}",
-                details={"model_dir": str(settings.model_dir)},
+                details={"model_dir": str(app_env.model_dir)},
                 recoverable=True
             )
         except Exception as e:

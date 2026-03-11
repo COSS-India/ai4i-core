@@ -1,8 +1,8 @@
 """
 Global error handler middleware for consistent error responses.
 """
-import os
 from fastapi import FastAPI, Request, HTTPException
+from ai4icore_env import app_env
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from middleware.exceptions import (
@@ -488,8 +488,8 @@ def add_error_handlers(app: FastAPI) -> None:
                 pass
         
         # Check if health/metrics logs should be excluded
-        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
-        exclude_metrics_logs = os.getenv("EXCLUDE_METRICS_LOGS", "false").lower() == "true"
+        exclude_health_logs = app_env.exclude_health_logs
+        exclude_metrics_logs = app_env.exclude_metrics_logs
         
         path = request.url.path.lower().rstrip('/')
         should_skip = False

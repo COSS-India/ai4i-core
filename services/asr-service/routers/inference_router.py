@@ -5,7 +5,6 @@ FastAPI router for ASR inference endpoints.
 import logging
 import time
 import base64
-import os
 from typing import Dict, Any, Optional
 
 import httpx
@@ -52,6 +51,7 @@ from middleware.exceptions import (
     ServiceUnavailableError,
 )
 from middleware.auth_provider import AuthProvider
+from ai4icore_env import app_env
 from ai4icore_multi_tenant import (
     get_tenant_db_session_factory,
     try_get_tenant_context,
@@ -95,7 +95,6 @@ from services.constants.error_messages import (
 )
 
 from ai4icore_logging import get_correlation_id
-import os
 import httpx
 
 # Import OpenTelemetry for manual span creation
@@ -112,11 +111,11 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 #Tenant routing and service checks
-API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
+API_GATEWAY_URL = app_env.api_gateway_url
 
 # SMR Service Configuration
-SMR_ENABLED = os.getenv("SMR_ENABLED", "true").lower() == "true"
-SMR_SERVICE_URL = os.getenv("SMR_SERVICE_URL", "http://smr-service:8097")
+SMR_ENABLED = app_env.smr_enabled
+SMR_SERVICE_URL = app_env.smr_service_url
 
 # Create router with authentication dependency
 inference_router = APIRouter(

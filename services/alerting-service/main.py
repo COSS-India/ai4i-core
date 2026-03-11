@@ -1,9 +1,9 @@
 """
 Alerting Service - Proactive issue detection and notification
 """
-import os
 import asyncio
 import logging
+from ai4icore_env import app_env
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -80,17 +80,12 @@ async def startup_event():
     
     try:
         # Initialize Redis connection
-        redis_client = redis.from_url(
-            f"redis://:{os.getenv('REDIS_PASSWORD')}@"
-            f"{os.getenv('REDIS_HOST')}:{os.getenv('REDIS_PORT')}"
-        )
+        redis_client = redis.from_url(app_env.get_redis_url())
         await redis_client.ping()
         logger.info("Connected to Redis")
         
         # Initialize PostgreSQL connection
-        database_url = os.getenv(
-            'DATABASE_URL'
-        )
+        database_url = app_env.get_database_url()
         db_engine = create_async_engine(
             database_url,
             pool_size=10,
@@ -105,7 +100,7 @@ async def startup_event():
         logger.info("Connected to PostgreSQL")
         
         # Initialize Kafka producer
-        kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS')
+        kafka_servers = app_env.kafka_bootstrap_servers
         kafka_producer = AIOKafkaProducer(
             bootstrap_servers=kafka_servers,
             value_serializer=lambda v: str(v).encode('utf-8')

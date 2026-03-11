@@ -6,8 +6,7 @@ from fastapi import Request, Header, Depends
 from typing import Optional, Dict, Any, Tuple
 import logging
 import httpx
-import os
-
+from ai4icore_env import app_env
 from middleware.exceptions import AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError
 
 # Import OpenTelemetry for tracing
@@ -28,8 +27,8 @@ else:
     tracer = None
 
 # Constants for auth service communication
-AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
-AUTH_HTTP_TIMEOUT = float(os.getenv("AUTH_HTTP_TIMEOUT", "5.0"))
+AUTH_SERVICE_URL = app_env.auth_service_url
+AUTH_HTTP_TIMEOUT = app_env.auth_http_timeout
 
 
 def get_api_key_from_header(authorization: Optional[str] = Header(None)) -> Optional[str]:
@@ -102,8 +101,8 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
         span.set_attribute("auth.token_length", len(token))
         
         # JWT Configuration for local verification
-        JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
-        JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+        JWT_SECRET_KEY = app_env.jwt_secret_key
+        JWT_ALGORITHM = app_env.jwt_algorithm
 
         try:
             # Decision point: Verify JWT signature and expiry
@@ -225,8 +224,8 @@ async def _authenticate_bearer_token_impl(request: Request, authorization: Optio
     token = authorization.split(" ", 1)[1]
     
     # JWT Configuration for local verification
-    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
-    JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+    JWT_SECRET_KEY = app_env.jwt_secret_key
+    JWT_ALGORITHM = app_env.jwt_algorithm
 
     try:
         # Verify JWT signature and expiry locally

@@ -1,8 +1,5 @@
 """
 Core business logic for Audio Language Detection inference.
-
-This mirrors the behavior of Dhruva's /services/inference/audio-lang-detection
-while fitting into the microservice structure used by ASR/TTS/NMT/OCR in this repository.
 """
 
 import base64
