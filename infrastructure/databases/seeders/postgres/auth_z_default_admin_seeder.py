@@ -18,15 +18,17 @@ class AuthDefaultAdminSeeder(BaseSeeder):
         # Insert admin user if it doesn't exist, or update if it exists
         adapter.execute(
             """
-            INSERT INTO users (email, username, password_hash, is_active, is_verified, is_superuser)
-            VALUES (:email, :username, :password_hash, :is_active, :is_verified, :is_superuser)
+            INSERT INTO users (email, username, password_hash, is_active, is_verified, is_superuser, timezone, language)
+            VALUES (:email, :username, :password_hash, :is_active, :is_verified, :is_superuser, :timezone, :language)
             ON CONFLICT (email) DO UPDATE
             SET 
                 username = EXCLUDED.username,
                 password_hash = EXCLUDED.password_hash,
                 is_active = EXCLUDED.is_active,
                 is_verified = EXCLUDED.is_verified,
-                is_superuser = EXCLUDED.is_superuser
+                is_superuser = EXCLUDED.is_superuser,
+                timezone = EXCLUDED.timezone,
+                language = EXCLUDED.language
             """,
             {
                 'email': 'admin@ai4inclusion.org',
@@ -34,7 +36,9 @@ class AuthDefaultAdminSeeder(BaseSeeder):
                 'password_hash': '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW',
                 'is_active': True,
                 'is_verified': True,
-                'is_superuser': True
+                'is_superuser': True,
+                'timezone': 'UTC',
+                'language': 'en',
             }
         )
         print("    ✓ Created/updated default admin user (admin@ai4inclusion.org / Admin@123)")
@@ -43,8 +47,10 @@ class AuthDefaultAdminSeeder(BaseSeeder):
         adapter.execute(
             """
             UPDATE users 
-            SET is_superuser = true 
-            WHERE email = 'admin@ai4inclusion.org' AND is_superuser = false
+            SET is_superuser = true,
+                timezone = COALESCE(timezone, 'UTC'),
+                language = COALESCE(language, 'en')
+            WHERE email = 'admin@ai4inclusion.org'
             """
         )
         
