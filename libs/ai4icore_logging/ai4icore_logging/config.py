@@ -44,9 +44,9 @@ class LoggingConfig:
         """Initialize configuration from environment variables."""
         # Core settings
         if self.service_name is None:
-            self.service_name = os.getenv("SERVICE_NAME", "unknown")
+            self.service_name = os.getenv("SERVICE_NAME")
         if self.service_version is None:
-            self.service_version = os.getenv("SERVICE_VERSION", "1.0.0")
+            self.service_version = os.getenv("SERVICE_VERSION")
         if self.environment is None:
             self.environment = os.getenv("ENVIRONMENT", os.getenv("ENV", "development"))
         
