@@ -544,7 +544,7 @@ services:
       - AUTH_ENABLED=false
       - REQUIRE_API_KEY=false
       - ALLOW_ANONYMOUS_ACCESS=true
-      - TRITON_ENDPOINT=http://13.200.133.97:9000
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
       - TRITON_TIMEOUT=120
     env_file:
       - ./services/asr-service/.env
@@ -588,7 +588,7 @@ services:
       - "8088:8088"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=http://13.200.133.97:9000
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
     env_file:
       - ./services/tts-service/.env
     volumes:
@@ -754,7 +754,7 @@ services:
       - "8093:8090"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=http://3.235.56.233:8001
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
       - TRITON_TIMEOUT=300
     env_file:
       - ./services/llm-service/.env
@@ -1079,7 +1079,7 @@ services:
       - "8095:8095"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=http://65.1.35.3:8700
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
     volumes:
       - ./services/speaker-diarization-service:/app
       - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
@@ -1116,7 +1116,7 @@ services:
       - "9002:8090"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=65.1.35.3:8600
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
     env_file:
       - ./services/language-diarization-service/.env
     volumes:
@@ -1155,7 +1155,7 @@ services:
       - "8096:8096"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=65.1.35.3:8100
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
     env_file:
       - ./services/audio-lang-detection-service/.env
     volumes:
