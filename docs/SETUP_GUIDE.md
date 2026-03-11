@@ -74,6 +74,11 @@ cp services/telemetry-service/env.template services/telemetry-service/.env
 cp frontend/simple-ui/env.template frontend/simple-ui/.env
 ```
 
+**Alembic**
+```bash
+cp infrastructure/databases/migrations/postgres/alembic/env.template  infrastructure/databases/migrations/postgres/alembic/.env
+```
+
 **Note:** You can edit these `.env` files if you need to customize settings, but the defaults should work for initial setup.
 
 ## Step 3: Build Docker Images
