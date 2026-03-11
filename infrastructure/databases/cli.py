@@ -36,7 +36,7 @@ class MigrationCLI:
         'dashboard_db',
         'model_management_db', 
         'multi_tenant_db',
-        'dhruva_platform'
+        'dhruva_platform_db'
     ]
     
     # External service databases (managed by third-party services, not our migration framework)
@@ -337,7 +337,8 @@ Examples:
         # Databases that have seeders
         postgres_dbs_with_seeders = [
             'auth_db', 'config_db', 'alerting_db',
-            'dashboard_db', 'model_management_db', 'multi_tenant_db', 'dhruva_platform'
+            'dashboard_db', 'metrics_db', 'telemetry_db',
+            'model_management_db', 'multi_tenant_db', 'dhruva_platform_db'
         ]
         
         # Seed PostgreSQL databases
@@ -348,7 +349,7 @@ Examples:
                 manager = self._get_manager('postgres', db)
                 manager.seed()
             except Exception as e:
-                print(f"  ⚠️  No seeders or failed: {db}")
+                print(f"  ⚠️  Failed: {db} - {str(e)}")
         
         # Seed other databases
         print("\n📊 Other Databases:")
@@ -358,7 +359,7 @@ Examples:
                 manager = self._get_manager(db)
                 manager.seed()
             except Exception as e:
-                print(f"  ⚠️  No seeders or failed: {db}")
+                print(f"  ⚠️  Failed: {db} - {str(e)}")
         
         print("\n" + "="*80)
         print("✅ Seeding completed!")
