@@ -1311,7 +1311,7 @@ async def handle_context_aware_nmt(
     
     # Call translate API directly
     # Use environment variable for translate API URL, fallback to default
-    translate_api_url = app_env.llm_translate_api_url or "http://13.201.75.118:8000/api/translate"
+    translate_api_url = app_env.llm_translate_api_url
     try:
         translate_response = await http_client.post(
             translate_api_url,

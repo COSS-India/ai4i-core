@@ -473,7 +473,7 @@ async def list_services() -> Dict[str, Any]:
             {
                 "service_id": "ai4bharat/indicxlit",
                 "model_id": "ai4bharat/indicxlit",
-                "triton_endpoint": "13.200.133.97:8000",
+                "triton_endpoint": "",
                 "triton_model": "transliteration",
                 "provider": "AI4Bharat",
                 "description": "IndicXlit model supporting transliteration for 20+ Indic languages",
@@ -486,7 +486,7 @@ async def list_services() -> Dict[str, Any]:
             {
                 "service_id": "indicxlit",
                 "model_id": "ai4bharat/indicxlit",
-                "triton_endpoint": "13.200.133.97:8000",
+                "triton_endpoint": "",
                 "triton_model": "transliteration",
                 "provider": "AI4Bharat",
                 "description": "IndicXlit model supporting transliteration for 20+ Indic languages (alias)",

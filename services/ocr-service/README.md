@@ -44,7 +44,7 @@ Key variables (see `env.template` for full list):
 - `SERVICE_PORT` – default `8090`
 - `DATABASE_URL` – PostgreSQL connection string
 - `REDIS_HOST` / `REDIS_PORT` – Redis config
-- `TRITON_ENDPOINT` – Surya OCR Triton endpoint (e.g. `http://65.1.35.3:8400`)
+- `TRITON_ENDPOINT` – Surya OCR Triton endpoint (e.g. `http://<your-triton-host>:8400`)
 - `TRITON_API_KEY` – optional bearer token if your Triton is protected
 
 ## API

@@ -22,7 +22,7 @@ This service:
 
 ## Triton Integration
 
-The service calls a Triton server (default: `65.1.35.3:8300`) with:
+The service calls a Triton server (default: `<your-triton-host>:8300`) with:
 
 - Input tensors:
   - `INPUT_TEXT`: `[[text1], [text2], ...]`
@@ -36,7 +36,7 @@ Key environment variables (see `env.template`):
 
 - `SERVICE_NAME` (default: `ner-service`)
 - `SERVICE_PORT` (default: `8091`)
-- `TRITON_ENDPOINT` (default: `65.1.35.3:8300`)
+- `TRITON_ENDPOINT` (default: `<your-triton-host>:8300`)
 - `TRITON_API_KEY` (optional)
 
 

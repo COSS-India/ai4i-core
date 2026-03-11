@@ -5365,7 +5365,7 @@ async def nmt_inference(
                 extra={
                     "context": {
                         "translate_payload": translate_payload,
-                        "endpoint": "http://13.201.75.118:8000/api/translate"
+                        "endpoint": app_env.llm_translate_api_url
                     }
                 },
             )
@@ -5374,7 +5374,7 @@ async def nmt_inference(
             # Use a local client for this request
             async with httpx.AsyncClient(timeout=30.0) as client:
                 translate_response = await client.post(
-                    "http://13.201.75.118:8000/api/translate",
+                    app_env.llm_translate_api_url,
                     json=translate_payload,
                     headers={"Content-Type": "application/json"}
                 )

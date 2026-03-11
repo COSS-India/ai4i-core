@@ -54,7 +54,7 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}]'::jsonb,
                 '["general", "conversational"]'::jsonb,
                 'Apache-2.0',
-                '{{"schema": {{"modelProcessingType": {{"type": "asr"}}, "model_name": "asr_am_ensemble", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8001/asr/v1/recognize"}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "asr"}}, "model_name": "asr_am_ensemble", "request": {{}}, "response": {{}}}}, "callbackUrl": ""}}'::jsonb,
                 '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
@@ -76,7 +76,7 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'asr-hindi-prod',
                 '{generate_model_id("asr_am_ensemble", "1.0.0")}',
                 '1.0.0',
-                'http://localhost:8001/asr/v1/recognize',
+                '',
                 'Production ASR service for Hindi. UPDATE ENDPOINT to your actual service URL.',
                 'GPU: NVIDIA T4, RAM: 16GB',
                 {timestamp_ms},
@@ -101,7 +101,7 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 '[{{"sourceLanguage": "hi"}}]'::jsonb,
                 '["general"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "tts"}}, "model_name": "tts", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8002/tts/v1/synthesize"}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "tts"}}, "model_name": "tts", "request": {{}}, "response": {{}}}}, "callbackUrl": ""}}'::jsonb,
                 '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
@@ -123,7 +123,7 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'tts-hindi-prod',
                 '{generate_model_id("tts", "1.0.0")}',
                 '1.0.0',
-                'http://localhost:8002/tts/v1/synthesize',
+                '',
                 'Production TTS service for Hindi. UPDATE ENDPOINT to your actual service URL.',
                 'GPU: NVIDIA T4, RAM: 16GB',
                 {timestamp_ms},
@@ -192,7 +192,7 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 '[{{"sourceLanguage": "en", "targetLanguage": "hi"}}, {{"sourceLanguage": "hi", "targetLanguage": "en"}}]'::jsonb,
                 '["general", "news", "conversational"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "nmt"}}, "model_name": "nmt", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://13.200.133.97:8000"}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "nmt"}}, "model_name": "nmt", "request": {{}}, "response": {{}}}}, "callbackUrl": ""}}'::jsonb,
                 '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
@@ -205,7 +205,7 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                         true
                     ),
                     '{{callbackUrl}}',
-                    '"http://13.200.133.97:8000"'::jsonb,
+                    '""'::jsonb,
                     true
                 ),
                 updated_at = CURRENT_TIMESTAMP;
@@ -219,7 +219,7 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'gpu-t4',
                 '{generate_model_id("ai4bharat/indictrans", "1.0.0")}',
                 '1.0.0',
-                'http://13.200.133.97:8000',
+                '',
                 'IndicTrans NMT service on GPU T4.',
                 'GPU: NVIDIA T4, RAM: 16GB',
                 {timestamp_ms},
@@ -227,7 +227,7 @@ class ModelManagementDefaultSeeder(BaseSeeder):
             ) ON CONFLICT (service_id) DO UPDATE SET
                 model_id = '{generate_model_id("ai4bharat/indictrans", "1.0.0")}',
                 model_version = '1.0.0',
-                endpoint = 'http://13.200.133.97:8000',
+                endpoint = '',
                 updated_at = CURRENT_TIMESTAMP;
         """)
         print("    ✓ NMT model and service (including ai4bharat/indictrans--gpu-t4)")
