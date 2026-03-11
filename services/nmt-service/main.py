@@ -103,6 +103,7 @@ MODEL_MANAGEMENT_SERVICE_API_KEY = os.getenv(
     os.getenv("MODEL_MANAGEMENT_API_KEY", None)  # Backward-compatible alias
 )
 MODEL_MANAGEMENT_CACHE_TTL = int(os.getenv("MODEL_MANAGEMENT_CACHE_TTL", "300"))  # 5 minutes default
+MODEL_MANAGEMENT_TIMEOUT = float(os.getenv("MODEL_MANAGEMENT_TIMEOUT", "20"))  # seconds; avoid 503 on slow Model Management
 TRITON_ENDPOINT_CACHE_TTL = int(os.getenv("TRITON_ENDPOINT_CACHE_TTL", "300"))
 SMR_SERVICE_URL = os.getenv("SMR_SERVICE_URL", "http://smr-service:8097")
 
@@ -235,7 +236,8 @@ async def lifespan(app: FastAPI):
     model_management_client = ModelManagementClient(
         base_url=MODEL_MANAGEMENT_SERVICE_URL,
         api_key=MODEL_MANAGEMENT_SERVICE_API_KEY,
-        cache_ttl_seconds=MODEL_MANAGEMENT_CACHE_TTL
+        cache_ttl_seconds=MODEL_MANAGEMENT_CACHE_TTL,
+        timeout=MODEL_MANAGEMENT_TIMEOUT,
     )
     app.state.model_management_client = model_management_client
     

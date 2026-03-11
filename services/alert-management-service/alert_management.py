@@ -4,6 +4,7 @@ Provides CRUD operations for customer-specific alert definitions, receivers, and
 """
 import os
 import hashlib
+import json
 import asyncpg
 import httpx
 from typing import Optional, List, Dict, Any
@@ -1023,6 +1024,18 @@ async def create_alert_definition(
     """Create a new alert definition. PromQL is built from alert_type+threshold OR from sub_category/signal/signal_metric/condition_operator."""
     validate_organization(organization)
     await ensure_db_pool()
+
+    # Global uniqueness: alert name must be unique across all organizations
+    async with db_pool.acquire() as conn:
+        existing = await conn.fetchrow(
+            "SELECT id, organization FROM alert_definitions WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))",
+            data.name
+        )
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"An alert definition with name '{data.name}' already exists (id={existing['id']}). Alert names must be globally unique."
+            )
 
     use_signal_config = all([data.sub_category, data.signal, data.signal_metric, data.condition_operator])
     services_list = _normalize_services(data.service)
@@ -2547,24 +2560,33 @@ async def record_alert_history_from_webhook(webhook_payload: Dict[str, Any]) -> 
     Returns number of rows inserted.
     """
     await ensure_db_pool()
+    # Accept both "alerts" and "Alerts" (defensive for different JSON encoders)
+    alerts = webhook_payload.get("alerts") or webhook_payload.get("Alerts") or []
+    if not isinstance(alerts, list):
+        alerts = []
     receiver = (webhook_payload.get("receiver") or "unknown")
     status = (webhook_payload.get("status") or "firing").lower()
-    alerts = webhook_payload.get("alerts") or []
     if not alerts:
+        logger.warning(
+            "Alert history webhook payload has no alerts list; payload keys: %s",
+            list(webhook_payload.keys()),
+            extra={"context": {"receiver": receiver, "status": status}}
+        )
         return 0
 
-    def _notified_display(recv: str, tenant: Optional[str], org: Optional[str]) -> str:
-        if tenant:
-            return f"Tenant: {tenant}"
-        if recv == "default-admin":
-            return "Global admin"
-        return recv
+    def _notified_display(tenant: Optional[str]) -> str:
+        # No tenant or placeholder "unknown" → alert goes to Global Admin
+        if not tenant or str(tenant).strip().lower() == "unknown":
+            return "Admin"
+        return f"Tenant Admin - {tenant.strip()}"
 
     inserted = 0
     async with db_pool.acquire() as conn:
         for alert in alerts:
-            labels = alert.get("labels") or {}
-            annotations = alert.get("annotations") or {}
+            if not isinstance(alert, dict):
+                continue
+            labels = alert.get("labels") or alert.get("Labels") or {}
+            annotations = alert.get("annotations") or alert.get("Annotations") or {}
             alert_name = labels.get("alertname") or "Unknown"
             category = (labels.get("category") or "application").lower()
             if category not in ("application", "infrastructure"):
@@ -2572,48 +2594,53 @@ async def record_alert_history_from_webhook(webhook_payload: Dict[str, Any]) -> 
             severity = (labels.get("severity") or "warning").lower()
             if severity not in ("critical", "warning", "info"):
                 severity = "warning"
-            triggered_at = alert.get("startsAt")
-            ends_at = alert.get("endsAt")
+            triggered_at = alert.get("startsAt") or alert.get("StartsAt")
+            ends_at = alert.get("endsAt") or alert.get("EndsAt")
             fingerprint = alert.get("fingerprint")
             tenant = labels.get("tenant")
             organization = labels.get("organization")
-            notified = _notified_display(receiver, tenant, organization)
+            notified = _notified_display(tenant)
 
             if not triggered_at:
+                logger.debug("Skipping alert with no startsAt: %s", alert_name, extra={"context": {"alert_keys": list(alert.keys())}})
                 continue
             try:
-                ts = datetime.fromisoformat(triggered_at.replace("Z", "+00:00"))
+                ts = datetime.fromisoformat(str(triggered_at).replace("Z", "+00:00"))
             except Exception:
                 ts = datetime.utcnow()
             resolved_ts = None
             if ends_at and str(ends_at) != "0001-01-01T00:00:00Z":
                 try:
-                    resolved_ts = datetime.fromisoformat(ends_at.replace("Z", "+00:00"))
+                    resolved_ts = datetime.fromisoformat(str(ends_at).replace("Z", "+00:00"))
                 except Exception:
                     pass
 
-            await conn.execute(
-                """
-                INSERT INTO alert_history (
-                    alert_name, category, severity, triggered_at, resolved_at, status,
-                    receiver, notified_display, tenant, organization, labels, annotations, fingerprint
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-                """,
-                alert_name,
-                category,
-                severity,
-                ts,
-                resolved_ts,
-                status,
-                receiver,
-                notified,
-                tenant,
-                organization,
-                asyncpg.types.JSONB(labels),
-                asyncpg.types.JSONB(annotations),
-                fingerprint,
-            )
-            inserted += 1
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO alert_history (
+                        alert_name, category, severity, triggered_at, resolved_at, status,
+                        receiver, notified_display, tenant, organization, labels, annotations, fingerprint
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13)
+                    """,
+                    alert_name,
+                    category,
+                    severity,
+                    ts,
+                    resolved_ts,
+                    status,
+                    receiver,
+                    notified,
+                    tenant,
+                    organization,
+                    json.dumps(dict(labels)),
+                    json.dumps(dict(annotations)),
+                    fingerprint,
+                )
+                inserted += 1
+            except Exception as e:
+                logger.exception("Failed to insert alert_history row for %s: %s", alert_name, e)
+                raise
     return inserted
 
 
@@ -2678,6 +2705,13 @@ async def list_alert_history(
         triggered_str = triggered.strftime("%Y-%m-%d %H:%M:%S") if triggered else None
         resolved = row["resolved_at"]
         resolved_str = resolved.strftime("%Y-%m-%d %H:%M:%S") if resolved else None
+        notified_display = row["notified_display"] or ""
+        # Normalize for API: "Tenant: unknown" / "Global admin" / empty → "Admin"; "Tenant: X" → "Tenant Admin - X"
+        if not notified_display or notified_display.strip().lower() in ("unknown", "global admin") or notified_display.strip().lower().startswith("tenant: unknown"):
+            notified_display = "Admin"
+        elif notified_display.strip().lower().startswith("tenant:"):
+            tenant_part = notified_display.split(":", 1)[-1].strip()
+            notified_display = f"Tenant Admin - {tenant_part}" if tenant_part else "Admin"
         return {
             "id": row["id"],
             "name": row["alert_name"],
@@ -2687,7 +2721,7 @@ async def list_alert_history(
             "resolved_at": resolved_str,
             "status": row["status"],
             "receiver": row["receiver"],
-            "notified": row["notified_display"],
+            "notified": notified_display,
             "tenant": row["tenant"],
             "organization": row["organization"],
             "created_at": row["created_at"].isoformat() if row.get("created_at") else None,

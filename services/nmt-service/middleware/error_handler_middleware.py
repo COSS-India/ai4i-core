@@ -472,6 +472,11 @@ def add_error_handlers(app: FastAPI) -> None:
             code=exc.error_code,
             timestamp=time.time()
         )
+        # So request_logging middleware can include cause in 5xx log line
+        try:
+            request.state.error_detail = error_detail.dict()
+        except Exception:
+            pass
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": error_detail.dict()}
@@ -534,6 +539,11 @@ def add_error_handlers(app: FastAPI) -> None:
                 code="HTTP_ERROR"
             )
         
+        # So request_logging middleware can include cause in 5xx log line
+        try:
+            request.state.error_detail = error_detail.dict()
+        except Exception:
+            pass
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": error_detail.dict()}

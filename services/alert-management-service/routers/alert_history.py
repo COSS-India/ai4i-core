@@ -1,12 +1,15 @@
 """
 Router for alert history (read-only audit log of triggered alerts).
 """
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from typing import Optional, List, Any
 
 from alert_management import record_alert_history_from_webhook, list_alert_history
 from utils.auth_deps import require_alerts_read
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from ai4icore_logging import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(
     prefix="/alerts/history",
@@ -23,10 +26,17 @@ async def alert_history_webhook(payload: dict):
     No auth - called by Alertmanager. Ensure this URL is only reachable from your Alertmanager instance.
     """
     try:
+        alerts = (payload or {}).get("alerts") or (payload or {}).get("Alerts") or []
+        logger.info(
+            "Alert history webhook received",
+            extra={"context": {"receiver": (payload or {}).get("receiver"), "status": (payload or {}).get("status"), "alert_count": len(alerts), "payload_keys": list((payload or {}).keys())}}
+        )
         count = await record_alert_history_from_webhook(payload)
+        logger.info("Alert history webhook recorded", extra={"context": {"recorded": count}})
         return {"status": "ok", "recorded": count}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        logger.exception("Alert history webhook failed: %s", e, extra={"context": {"error": str(e)}})
+        raise HTTPException(status_code=500, detail={"status": "error", "message": str(e)})
 
 
 @router.get("")
