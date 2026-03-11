@@ -7,11 +7,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc curl && rm 
 # Copy logging and telemetry libs (logging -> OpenSearch via Fluent Bit; telemetry -> Jaeger tracing)
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
+COPY libs/ai4icore_env /app/libs/ai4icore_env
 COPY services/alert-management-service/requirements.txt /app/requirements.txt
 
 RUN pip install --no-cache-dir -r /app/requirements.txt
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_telemetry
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_env
 
 # Runtime stage
 FROM python:3.11-slim
@@ -22,11 +24,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 COPY --from=builder /usr/local /usr/local
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
+COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
 
 COPY services/alert-management-service/ /app/
 
 # Parent of the ai4icore_* packages (package dir is libs/<name>/<name>/)
-ENV PYTHONPATH="/app:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry"
+ENV PYTHONPATH="/app:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry:/app/libs/ai4icore_env"
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8098

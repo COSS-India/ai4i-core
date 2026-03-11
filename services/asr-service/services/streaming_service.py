@@ -30,7 +30,7 @@ from utils.triton_client import TritonClient
 from repositories.asr_repository import ASRRepository, get_db_session
 from ai4icore_env import app_env
 from middleware.auth_provider import validate_api_key, hash_api_key
-from middleware.exceptions import AuthenticationError, InvalidAPIKeyError
+from ai4icore_constants.exceptions import AuthenticationError, InvalidAPIKeyError
 
 logger = logging.getLogger(__name__)
 

@@ -21,7 +21,7 @@ from repositories.tts_repository import TTSRepository
 from services.audio_service import AudioService
 from services.text_service import TextService
 from utils.triton_client import TritonClient
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     TritonInferenceError,
     ModelNotFoundError,
     ServiceUnavailableError,

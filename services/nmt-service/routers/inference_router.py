@@ -28,7 +28,7 @@ from utils.validation_utils import (
     InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError
 )
 from middleware.auth_provider import AuthProvider
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     AuthenticationError,
     AuthorizationError,
     TritonInferenceError,
@@ -45,7 +45,7 @@ from ai4icore_multi_tenant import (
 
 get_tenant_db_session = get_tenant_db_session_factory()
 
-from services.constants.error_messages import (
+from ai4icore_constants.error_messages import (
     NO_TEXT_INPUT,
     NO_TEXT_INPUT_NMT_MESSAGE,
     TEXT_TOO_SHORT,
@@ -1371,7 +1371,7 @@ async def run_inference(
             ) from exc
 
         except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as exc:
-            from services.constants.static_fallback_responses import (
+            from ai4icore_constants.static_fallback_responses import (
                 is_static_fallback_enabled,
                 get_nmt_static_response,
             )
@@ -1504,7 +1504,7 @@ async def _run_nmt_inference_impl(
             http_request=http_request,
         )
     except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as exc:
-        from services.constants.static_fallback_responses import (
+        from ai4icore_constants.static_fallback_responses import (
             is_static_fallback_enabled,
             get_nmt_static_response,
         )

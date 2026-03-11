@@ -20,7 +20,7 @@ from repositories.asr_repository import ASRRepository
 from services.audio_service import AudioService
 from utils.triton_client import TritonClient
 from utils.audio_utils import get_audio_duration
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     TritonInferenceError,
     ModelNotFoundError,
     ServiceUnavailableError,

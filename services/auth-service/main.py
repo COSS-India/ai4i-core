@@ -39,7 +39,7 @@ REFRESH_TOKEN_EXPIRE_HOURS = app_env.refresh_token_expire_hours
 
 # Import error constants
 try:
-    from services.constants.error_messages import (
+    from ai4icore_constants.error_messages import (
         AUTHENTICATION_REQUIRED,
         AUTHENTICATION_REQUIRED_MESSAGE,
         INVALID_CREDENTIALS,
@@ -1141,7 +1141,7 @@ async def validate_api_key(
     # Map service names to permission resource names (for compatibility)
     # Permissions use resource names with underscores (e.g., "audio_lang_detection") 
     # but services may send names with hyphens (e.g., "audio-lang-detection")
-    from services.constants import get_resource_name
+    from ai4icore_constants import get_resource_name
     resource_name = get_resource_name(service)
     
     # Validate API key (existence, active/expired, permissions)

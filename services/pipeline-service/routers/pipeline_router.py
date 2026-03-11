@@ -14,7 +14,7 @@ from models.pipeline_response import PipelineInferenceResponse
 from services.pipeline_service import PipelineService
 from utils.http_client import ServiceClient
 from middleware.auth_provider import AuthProvider
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     PipelineError,
     PipelineTaskError,
     ServiceUnavailableError,

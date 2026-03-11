@@ -13,7 +13,7 @@ from tritonclient.http import InferInput, InferRequestedOutput
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from ai4icore_env import app_env
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     TritonInferenceError,
     ModelNotFoundError,
     ServiceUnavailableError

@@ -41,7 +41,7 @@ from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from middleware.error_handler_middleware import add_error_handlers
-from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
+from ai4icore_constants.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
 
 # Aggressively disable uvicorn access logger BEFORE uvicorn starts
@@ -402,8 +402,8 @@ async def root() -> Dict[str, Any]:
 async def streaming_info() -> Dict[str, Any]:
     """Get streaming endpoint information."""
     if not streaming_service:
-        from middleware.exceptions import ErrorDetail
-        from services.constants.error_messages import SERVICE_UNAVAILABLE, SERVICE_UNAVAILABLE_MESSAGE
+        from ai4icore_constants.exceptions import ErrorDetail
+        from ai4icore_constants.error_messages import SERVICE_UNAVAILABLE, SERVICE_UNAVAILABLE_MESSAGE
         import time
         error_detail = ErrorDetail(
             message=SERVICE_UNAVAILABLE_MESSAGE,

@@ -4,7 +4,7 @@ Global error handler middleware for consistent error responses.
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     AuthenticationError, 
     AuthorizationError, 
     RateLimitExceededError,

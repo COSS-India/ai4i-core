@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request, HTTPException
 from ai4icore_env import app_env
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     AuthenticationError, 
     AuthorizationError, 
     RateLimitExceededError,
@@ -16,7 +16,7 @@ from middleware.exceptions import (
     ServiceUnavailableError,
     AudioProcessingError
 )
-from services.constants.error_messages import (
+from ai4icore_constants.error_messages import (
     AUTH_FAILED,
     AUTH_FAILED_TTS_MESSAGE,
     RATE_LIMIT_EXCEEDED,

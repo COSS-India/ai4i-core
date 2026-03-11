@@ -42,7 +42,7 @@ from utils.validation_utils import (
     EmptyAudioFileError,
     UploadTimeoutError
 )
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     AuthenticationError,
     AuthorizationError,
     ErrorDetail,
@@ -59,7 +59,7 @@ from ai4icore_multi_tenant import (
 )
 
 get_tenant_db_session = get_tenant_db_session_factory()
-from services.constants.error_messages import (
+from ai4icore_constants.error_messages import (
     LANGUAGE_NOT_SUPPORTED,
     LANGUAGE_NOT_SUPPORTED_MESSAGE,
     SERVICE_UNAVAILABLE,
@@ -1284,7 +1284,7 @@ async def _run_asr_inference_internal(
                     }
                     
                     # Static fallback when Triton down (both primary and fallback failed)
-                    from services.constants.static_fallback_responses import (
+                    from ai4icore_constants.static_fallback_responses import (
                         is_static_fallback_enabled,
                         get_asr_static_response,
                     )
@@ -1302,7 +1302,7 @@ async def _run_asr_inference_internal(
                         raise TritonInferenceError(combined_error_message) from fallback_error
             else:
                 # No fallback service available - use static fallback if enabled
-                from services.constants.static_fallback_responses import (
+                from ai4icore_constants.static_fallback_responses import (
                     is_static_fallback_enabled,
                     get_asr_static_response,
                 )

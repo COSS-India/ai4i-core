@@ -119,9 +119,9 @@ configure_logging(
 
 logger = get_logger(__name__)
 
-# Define auth error constants (fallback if not available from services.constants)
+# Define auth error constants (fallback if not available from ai4icore_constants)
 try:
-    from services.constants.error_messages import AUTH_FAILED, AUTH_FAILED_MESSAGE
+    from ai4icore_constants.error_messages import AUTH_FAILED, AUTH_FAILED_MESSAGE
 except ImportError:
     AUTH_FAILED = "AUTH_FAILED"
     AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."

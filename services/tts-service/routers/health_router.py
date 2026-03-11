@@ -10,8 +10,8 @@ from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, status, Request
 from sqlalchemy import text
 from ai4icore_env import app_env
-from middleware.exceptions import ErrorDetail
-from services.constants.error_messages import (
+from ai4icore_constants.exceptions import ErrorDetail
+from ai4icore_constants.error_messages import (
     SERVICE_UNAVAILABLE,
     SERVICE_UNAVAILABLE_TTS_MESSAGE
 )

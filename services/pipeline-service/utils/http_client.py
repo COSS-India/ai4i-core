@@ -322,7 +322,7 @@ class ServiceClient:
                 error_lower = error_message.lower()
                 # If the error message suggests JWT failure, raise AuthenticationError
                 if any(indicator.lower() in error_lower for indicator in jwt_failure_indicators):
-                    from middleware.exceptions import AuthenticationError
+                    from ai4icore_constants.exceptions import AuthenticationError
                     raise AuthenticationError("Authentication failed. Please log in again.")
             
             error_detail = f"ASR service returned status {e.response.status_code}: {error_message}"
