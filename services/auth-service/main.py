@@ -61,16 +61,16 @@ except ImportError:
     UNAUTHORIZED_MESSAGE = "You don't have permission to access this service. Please contact your administrator."
 
 # Configure logging with ai4icore_logging
+LOGGING_AVAILABLE = False
 try:
-    from ai4icore_logging import get_logger, CorrelationMiddleware, RequestLoggingMiddleware
+    from ai4icore_logging import get_logger, LoggingConfig, register_logging_plugin
+    LOGGING_AVAILABLE = True
     logger = get_logger(__name__)
     logger.info("✅ Using ai4icore_logging for structured logging")
 except ImportError:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     logger.warning("⚠️ ai4icore_logging not available, using standard logging")
-    CorrelationMiddleware = None
-    RequestLoggingMiddleware = None
 
 # Import telemetry and tracing
 try:
@@ -118,26 +118,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Correlation middleware (MUST be before RequestLoggingMiddleware)
-# This extracts X-Correlation-ID from headers and sets it in logging context
-if CorrelationMiddleware:
-    app.add_middleware(CorrelationMiddleware)
-    logger.info("✅ CorrelationMiddleware added to auth-service")
-
-# Request logging middleware (logs all requests to OpenSearch)
-# This ensures login/logout endpoints are logged even though API Gateway skips successful requests
-if RequestLoggingMiddleware:
-    app.add_middleware(RequestLoggingMiddleware)
+# Initialize AI4ICore Logging Plugin
+if LOGGING_AVAILABLE:
+    logging_config = LoggingConfig.from_env()
+    logging_config.service_name = os.getenv("SERVICE_NAME")
+    logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+    register_logging_plugin(app, config=logging_config)
     logger.info(
-        "✅ RequestLoggingMiddleware added to auth-service",
-        extra={"context": {
-            "service": "auth-service",
-            "middleware": "RequestLoggingMiddleware",
-            "endpoints": ["/api/v1/auth/login", "/api/v1/auth/logout"]
-        }}
+        "✅ AI4ICore Logging Plugin initialized for auth-service",
+        extra={"context": {"service": "auth-service", "endpoints": ["/api/v1/auth/login", "/api/v1/auth/logout"]}},
     )
 else:
-    logger.warning("⚠️ RequestLoggingMiddleware not available - login/logout requests will not be logged to OpenSearch")
+    logger.warning("⚠️ Logging plugin not available - login/logout requests will not be logged to OpenSearch")
 
 # Setup Distributed Tracing (Jaeger)
 # IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
