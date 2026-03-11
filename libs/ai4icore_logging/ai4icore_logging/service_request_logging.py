@@ -89,26 +89,26 @@ class ServiceRequestLoggingMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
         # Filtering configuration
-        self.exclude_health_logs = _parse_bool_env("EXCLUDE_HEALTH_LOGS", "false")
-        self.exclude_metrics_logs = _parse_bool_env("EXCLUDE_METRICS_LOGS", "false")
-        self.exclude_options_logs = _parse_bool_env("EXCLUDE_OPTIONS_LOGS", "true")
+        self.exclude_health_logs = _parse_bool_env("EXCLUDE_HEALTH_LOGS")
+        self.exclude_metrics_logs = _parse_bool_env("EXCLUDE_METRICS_LOGS")
+        self.exclude_options_logs = _parse_bool_env("EXCLUDE_OPTIONS_LOGS")
         self.include_4xx = include_4xx
         include_paths_raw = os.getenv("REQUEST_LOG_INCLUDE_PATHS", "")
         self.include_paths = _parse_csv_paths_env(include_paths_raw)
 
         # Allowed levels configuration
-        allowed_raw = os.getenv("ALLOWED_LOG_LEVELS", "DEBUG,INFO,WARNING,ERROR")
+        allowed_raw = os.getenv("ALLOWED_LOG_LEVELS")
         self.allowed_log_levels = _parse_allowed_levels_env(allowed_raw)
 
         # Minimum log level fallback (only used when allowed_log_levels ends up empty)
-        min_log_level_str = os.getenv("MIN_LOG_LEVEL", "INFO").upper()
+        min_log_level_str = os.getenv("MIN_LOG_LEVEL").upper()
         self.min_log_level = getattr(logging, min_log_level_str, logging.INFO)
 
         # Logger configuration
-        use_kafka = os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true"
+        use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
         # If not provided, use a stable name per service for easier filtering
         if not logger_name:
-            svc = os.getenv("SERVICE_NAME", "service")
+            svc = os.getenv("SERVICE_NAME")
             logger_name = f"{svc}.request"
         self.logger = get_logger(logger_name, use_kafka=use_kafka)
 
