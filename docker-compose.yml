@@ -16,7 +16,7 @@ services:
       - ./infrastructure/postgres:/docker-entrypoint-initdb.d
     command: >
       postgres
-      -c password_encryption=md5
+      -c password_encryption=scram-sha-256
       -c listen_addresses='*'
       -c max_connections=300
     networks:
@@ -510,9 +510,9 @@ services:
       - ./services/asr-service/.env
     environment:
       - ENV_FILE=.env
-      - AUTH_ENABLED=false
-      - REQUIRE_API_KEY=false
-      - ALLOW_ANONYMOUS_ACCESS=true
+      - AUTH_ENABLED=true
+      - REQUIRE_API_KEY=true
+      - ALLOW_ANONYMOUS_ACCESS=false
       - TRITON_ENDPOINT=${TRITON_ENDPOINT}
       - TRITON_TIMEOUT=120
     depends_on:
