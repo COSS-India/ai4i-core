@@ -69,12 +69,17 @@ import {
   NumberIncrementStepper,
   NumberDecrementStepper,
   Divider,
-  Radio,
-  RadioGroup,
-  Stack,
   Tooltip,
   InputGroup,
   InputLeftElement,
+  Menu,
+  MenuButton,
+  MenuList,
+  MenuItem,
+  MenuDivider,
+  Radio,
+  RadioGroup,
+  Stack,
 } from "@chakra-ui/react";
 import { AddIcon, DeleteIcon, ViewIcon, EditIcon, SearchIcon } from "@chakra-ui/icons";
 import { useAlertDefinitions } from "./hooks/useAlertDefinitions";
@@ -85,6 +90,13 @@ import {
   SEVERITIES,
   URGENCIES,
   RBAC_ROLES,
+  SUB_CATEGORIES_BY_CATEGORY,
+  SIGNALS_BY_SUB_CATEGORY,
+  SIGNAL_METRICS_BY_SIGNAL,
+  TARGET_SERVICES,
+  CONDITION_OPERATORS,
+  LATENCY_THRESHOLD_UNITS,
+  PERCENTAGE_UNIT,
 } from "../../types/alerting";
 
 const EVAL_INTERVALS = ["30s", "1m", "5m"] as const;
@@ -101,6 +113,7 @@ function getAllowedForDurations(evalInterval: string | null | undefined): string
   const key = evalInterval ?? "30s";
   return [...(FOR_DURATION_BY_EVAL_INTERVAL[key] ?? FOR_DURATION_BY_EVAL_INTERVAL["30s"])];
 }
+
 const ALERT_TYPES_BY_CATEGORY: Record<string, { value: string; label: string }[]> = {
   application: [
     { value: "latency", label: "Latency" },
@@ -112,12 +125,6 @@ const ALERT_TYPES_BY_CATEGORY: Record<string, { value: string; label: string }[]
     { value: "Disk", label: "Disk" },
   ],
 };
-const THRESHOLD_UNITS = ["seconds", "percentage"] as const;
-
-/** Threshold unit is fixed by alert type: Latency → seconds, all others → percentage. User should not change it. */
-function getThresholdUnitForAlertType(alertType: string | null | undefined): "seconds" | "percentage" {
-  return alertType === "latency" ? "seconds" : "percentage";
-}
 
 function OptionSelector({
   options,
@@ -142,12 +149,12 @@ function OptionSelector({
           fontWeight="semibold"
           textAlign="center"
           cursor="pointer"
-          bg={value === opt ? "orange.500" : "white"}
+          bg={value === opt ? "black" : "white"}
           color={value === opt ? "white" : "gray.600"}
           borderRight="1px solid"
           borderRightColor="gray.200"
           _last={{ borderRight: "none" }}
-          _hover={{ bg: value === opt ? "orange.600" : "gray.50" }}
+          _hover={{ bg: value === opt ? "gray.900" : "gray.50" }}
           transition="all 0.15s"
           onClick={() => onChange(opt)}
           textTransform="capitalize"
@@ -301,12 +308,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <Table variant="simple" size="sm">
                   <Thead>
                     <Tr>
-                      <Th>Alert Definition</Th>
+                      <Th>Name</Th>
                       <Th>Category</Th>
-                      <Th>Alert Type</Th>
                       <Th>Severity</Th>
+                      <Th>Subcategory</Th>
                       <Th>Status</Th>
-                      <Th>Created On</Th>
+                      <Th>Created</Th>
                       <Th>Actions</Th>
                     </Tr>
                   </Thead>
@@ -319,20 +326,24 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       >
                         <Td fontWeight="semibold">{d.name}</Td>
                         <Td><Badge colorScheme={categoryColor(d.category)} textTransform="capitalize">{d.category}</Badge></Td>
-                        <Td><Text fontSize="sm">{alertTypeLabel(d.alert_type)}</Text></Td>
                         <Td><Badge colorScheme={severityColor(d.severity)} textTransform="capitalize">{d.severity}</Badge></Td>
-                    <Td>
-                      <Badge
-                        colorScheme={d.enabled ? "green" : "gray"}
-                        variant="subtle"
-                        fontSize="xs"
-                        px={2}
-                        py={0.5}
-                        borderRadius="full"
-                      >
-                        {d.enabled ? "Active" : "Inactive"}
-                      </Badge>
-                    </Td>
+                        <Td>
+                          <Text fontSize="sm">
+                            {d.sub_category ? titleCase(d.sub_category.replace(/_/g, " ")) : "—"}
+                          </Text>
+                        </Td>
+                        <Td>
+                          <Badge
+                            colorScheme={d.enabled ? "green" : "gray"}
+                            variant="subtle"
+                            fontSize="xs"
+                            px={2}
+                            py={0.5}
+                            borderRadius="full"
+                          >
+                            {d.enabled ? "Active" : "Inactive"}
+                          </Badge>
+                        </Td>
                         <Td fontSize="sm">{new Date(d.created_at).toLocaleDateString()}</Td>
                         <Td>
                           <HStack spacing={1} className="row-actions" opacity={0} transition="opacity 0.15s">
@@ -399,163 +410,351 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <Text fontSize="lg" fontWeight="bold">Create Alert Definition</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
-            <VStack spacing={6} align="stretch">
-              {/* ── Identity ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Identity</Text>
-                <VStack spacing={4} align="stretch">
-                  <FormControl isRequired isInvalid={!!defs.createErrors?.name}>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Alert Definition Name</FormLabel>
-                    <Input
-                      placeholder="e.g. HighLatency-ASR-Production"
-                      value={defs.createForm.name}
-                      onChange={(e) => defs.setCreateForm({ ...defs.createForm, name: e.target.value })}
-                      bg="white"
-                    />
-                    <FormErrorMessage>{defs.createErrors?.name}</FormErrorMessage>
-                  </FormControl>
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
-                    <Textarea
-                      placeholder="Optional description..."
-                      value={defs.createForm.description ?? ""}
-                      onChange={(e) => defs.setCreateForm({ ...defs.createForm, description: e.target.value || null })}
-                      bg="white"
-                      rows={3}
-                    />
-                  </FormControl>
-                  <FormControl isRequired isInvalid={!!defs.createErrors?.category}>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
-                    <OptionSelector
-                      options={CATEGORIES}
-                      value={defs.createForm.category ?? "application"}
-                      onChange={(v) => defs.setCreateForm({ ...defs.createForm, category: v, alert_type: null, scope: "percentage" })}
-                    />
-                    <FormErrorMessage>{defs.createErrors?.category}</FormErrorMessage>
-                  </FormControl>
-                  <FormControl isRequired isInvalid={!!defs.createErrors?.severity}>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
-                    <OptionSelector
-                      options={SEVERITIES}
-                      value={defs.createForm.severity}
-                      onChange={(v) => defs.setCreateForm({ ...defs.createForm, severity: v })}
-                    />
-                    <FormErrorMessage>{defs.createErrors?.severity}</FormErrorMessage>
-                  </FormControl>
-                </VStack>
-              </Box>
+            <VStack spacing={5} align="stretch">
+              <FormControl isRequired isInvalid={!!defs.createErrors?.name}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Alert Name</FormLabel>
+                <Input
+                  placeholder="e.g. High Latency — ASR Global"
+                  value={defs.createForm.name}
+                  onChange={(e) => defs.setCreateForm({ ...defs.createForm, name: e.target.value })}
+                  bg="white"
+                />
+                <FormErrorMessage>{defs.createErrors?.name}</FormErrorMessage>
+              </FormControl>
+
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
+                <Textarea
+                  placeholder="Additional context about this alert and why it exists."
+                  value={defs.createForm.description ?? ""}
+                  onChange={(e) => defs.setCreateForm({ ...defs.createForm, description: e.target.value || null })}
+                  bg="white"
+                  rows={3}
+                />
+              </FormControl>
 
               <Divider />
 
-              {/* ── Detection ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Detection</Text>
-                <VStack spacing={4} align="stretch">
-                  <FormControl isRequired isInvalid={!!defs.createErrors?.alert_type}>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Alert Type</FormLabel>
-                    <Select
-                      value={defs.createForm.alert_type ?? ""}
-                      onChange={(e) => {
-                        const newAlertType = e.target.value || null;
-                        const newScope = getThresholdUnitForAlertType(newAlertType);
-                        defs.setCreateForm({ ...defs.createForm, alert_type: newAlertType, scope: newScope });
-                      }}
+              <FormControl isRequired isInvalid={!!defs.createErrors?.category}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+                <OptionSelector
+                  options={CATEGORIES}
+                  value={defs.createForm.category ?? "application"}
+                  onChange={(v) => defs.setCreateForm({
+                    ...defs.createForm,
+                    category: v,
+                    sub_category: null,
+                    signal: null,
+                    signal_metric: null,
+                  })}
+                />
+                <FormErrorMessage>{defs.createErrors?.category}</FormErrorMessage>
+              </FormControl>
+
+              <FormControl isRequired isInvalid={!!defs.createErrors?.sub_category}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Subcategory</FormLabel>
+                <Select
+                  value={defs.createForm.sub_category ?? ""}
+                  onChange={(e) => defs.setCreateForm({
+                    ...defs.createForm,
+                    sub_category: e.target.value || null,
+                    signal: null,
+                    signal_metric: null,
+                    threshold_unit: undefined,
+                  })}
+                  bg="white"
+                  placeholder={defs.createForm.category ? "Select subcategory..." : "Select a category first"}
+                  isDisabled={!defs.createForm.category}
+                >
+                  {(SUB_CATEGORIES_BY_CATEGORY[defs.createForm.category ?? ""] ?? []).map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Select>
+                <FormErrorMessage>{defs.createErrors?.sub_category}</FormErrorMessage>
+              </FormControl>
+
+              <FormControl isRequired isInvalid={!!defs.createErrors?.signal}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Signal</FormLabel>
+                <Select
+                  value={defs.createForm.signal ?? ""}
+                  onChange={(e) => {
+                    const sig = e.target.value || null;
+                    defs.setCreateForm({
+                      ...defs.createForm,
+                      signal: sig,
+                      signal_metric: null,
+                      threshold_unit: sig === "latency" ? "ms" : sig ? PERCENTAGE_UNIT : undefined,
+                    });
+                  }}
+                  bg="white"
+                  placeholder={defs.createForm.sub_category ? "Select signal..." : "Select a subcategory first"}
+                  isDisabled={!defs.createForm.sub_category}
+                >
+                  {(SIGNALS_BY_SUB_CATEGORY[defs.createForm.sub_category ?? ""] ?? []).map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Select>
+                <FormErrorMessage>{defs.createErrors?.signal}</FormErrorMessage>
+              </FormControl>
+
+              <FormControl isRequired isInvalid={!!defs.createErrors?.signal_metric}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Signal Metric</FormLabel>
+                <Select
+                  value={defs.createForm.signal_metric ?? ""}
+                  onChange={(e) => defs.setCreateForm({ ...defs.createForm, signal_metric: e.target.value || null })}
+                  bg="white"
+                  placeholder={defs.createForm.signal ? "Select metric..." : "Select a signal type first"}
+                  isDisabled={!defs.createForm.signal}
+                >
+                  {(SIGNAL_METRICS_BY_SIGNAL[defs.createForm.signal ?? ""] ?? []).map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Select>
+                <FormErrorMessage>{defs.createErrors?.signal_metric}</FormErrorMessage>
+              </FormControl>
+
+              <FormControl isRequired={defs.createForm.category !== "infrastructure"} isInvalid={!!defs.createErrors?.service}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Target</FormLabel>
+                {defs.createForm.category === "infrastructure" ? (
+                  <Box
+                    px={3}
+                    py={2}
+                    bg="gray.100"
+                    borderRadius="md"
+                    borderWidth="1px"
+                    borderColor="gray.200"
+                    color="gray.600"
+                    fontSize="sm"
+                  >
+                    All services (infrastructure monitors the full stack)
+                  </Box>
+                ) : (
+                  <Menu closeOnSelect={false} matchWidth>
+                    <MenuButton
+                      as={Button}
+                      w="100%"
                       bg="white"
-                      placeholder="Select alert type..."
+                      borderWidth="1px"
+                      borderColor="gray.200"
+                      borderRadius="md"
+                      fontWeight="normal"
+                      textAlign="left"
+                      _hover={{ borderColor: "gray.400" }}
+                      _active={{ bg: "white" }}
+                      rightIcon={<Text fontSize="xs" color="gray.500">▾</Text>}
                     >
-                      {(ALERT_TYPES_BY_CATEGORY[defs.createForm.category ?? "application"] || []).map((t) => (
-                        <option key={t.value} value={t.value}>{t.label}</option>
+                      {(() => {
+                        const sel = defs.createForm.service ?? [];
+                        if (sel.length === 0) return <Text color="gray.400">Select targets...</Text>;
+                        if (sel.length === TARGET_SERVICES.length) return "All services selected";
+                        return sel.map((v) => TARGET_SERVICES.find((t) => t.value === v)?.label ?? v).join(", ");
+                      })()}
+                    </MenuButton>
+                    <MenuList w="100%" maxH="300px" overflowY="auto">
+                      <MenuItem closeOnSelect={false} px={4} py={2}>
+                        <Checkbox
+                          isChecked={(defs.createForm.service ?? []).length === TARGET_SERVICES.length}
+                          isIndeterminate={
+                            (defs.createForm.service ?? []).length > 0 &&
+                            (defs.createForm.service ?? []).length < TARGET_SERVICES.length
+                          }
+                          onChange={(e) => {
+                            defs.setCreateForm({
+                              ...defs.createForm,
+                              service: e.target.checked ? TARGET_SERVICES.map((t) => t.value) : [],
+                            });
+                          }}
+                          fontWeight="semibold"
+                        >
+                          All services
+                        </Checkbox>
+                      </MenuItem>
+                      <MenuDivider my={1} />
+                      {TARGET_SERVICES.map((opt) => (
+                        <MenuItem key={opt.value} closeOnSelect={false} px={4} py={2}>
+                          <Checkbox
+                            isChecked={(defs.createForm.service ?? []).includes(opt.value)}
+                            onChange={(e) => {
+                              const current = defs.createForm.service ?? [];
+                              defs.setCreateForm({
+                                ...defs.createForm,
+                                service: e.target.checked
+                                  ? [...current, opt.value]
+                                  : current.filter((s) => s !== opt.value),
+                              });
+                            }}
+                          >
+                            {opt.label}
+                          </Checkbox>
+                        </MenuItem>
+                      ))}
+                    </MenuList>
+                  </Menu>
+                )}
+                <FormErrorMessage>{defs.createErrors?.service}</FormErrorMessage>
+              </FormControl>
+
+              <Divider />
+
+              <FormControl isRequired isInvalid={!!defs.createErrors?.condition_operator || !!defs.createErrors?.threshold_value || !!defs.createErrors?.threshold_unit}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Condition + Threshold</FormLabel>
+                <SimpleGrid columns={3} spacing={3} mb={1}>
+                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Condition</Text>
+                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Threshold</Text>
+                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Unit</Text>
+                </SimpleGrid>
+                <SimpleGrid columns={3} spacing={3}>
+                  <Select
+                    value={defs.createForm.condition_operator ?? ""}
+                    onChange={(e) => defs.setCreateForm({ ...defs.createForm, condition_operator: e.target.value || null })}
+                    bg="white"
+                    placeholder="—"
+                  >
+                    {CONDITION_OPERATORS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </Select>
+                  <NumberInput
+                    value={defs.createForm.threshold_value ?? ""}
+                    onChange={(_s, val) => defs.setCreateForm({ ...defs.createForm, threshold_value: Number.isNaN(val) ? null : val })}
+                    min={0}
+                    bg="white"
+                  >
+                    <NumberInputField placeholder="Enter value" />
+                    <NumberInputStepper>
+                      <NumberIncrementStepper />
+                      <NumberDecrementStepper />
+                    </NumberInputStepper>
+                  </NumberInput>
+                  {defs.createForm.signal === "latency" ? (
+                    <Select
+                      value={defs.createForm.threshold_unit ?? "ms"}
+                      onChange={(e) => defs.setCreateForm({ ...defs.createForm, threshold_unit: e.target.value || "ms" })}
+                      bg="white"
+                    >
+                      {LATENCY_THRESHOLD_UNITS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
                     </Select>
-                    <FormErrorMessage>{defs.createErrors?.alert_type}</FormErrorMessage>
-                  </FormControl>
-                  <FormControl isRequired isInvalid={!!defs.createErrors?.threshold_value}>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Threshold Configuration</FormLabel>
-                    <SimpleGrid columns={2} spacing={3}>
-                      <NumberInput
-                        value={defs.createForm.promql_expr}
-                        onChange={(val) => defs.setCreateForm({ ...defs.createForm, promql_expr: val })}
-                        min={0}
-                        bg="white"
-                      >
-                        <NumberInputField placeholder="Enter value (e.g., 500, 85, 95)" />
-                        <NumberInputStepper>
-                          <NumberIncrementStepper />
-                          <NumberDecrementStepper />
-                        </NumberInputStepper>
-                      </NumberInput>
-                      <Select
-                        value={getThresholdUnitForAlertType(defs.createForm.alert_type)}
-                        isDisabled
-                        bg="gray.200"
-                        color="gray.700"
-                        cursor="not-allowed"
-                        borderColor="gray.300"
-                      >
-                        <option value={getThresholdUnitForAlertType(defs.createForm.alert_type)}>
-                          {getThresholdUnitForAlertType(defs.createForm.alert_type).charAt(0).toUpperCase() + getThresholdUnitForAlertType(defs.createForm.alert_type).slice(1)}
-                        </option>
-                      </Select>
-                    </SimpleGrid>
-                    <FormErrorMessage>{defs.createErrors?.threshold_value}</FormErrorMessage>
-                  </FormControl>
-                  <SimpleGrid columns={2} spacing={4}>
-                    <FormControl isRequired>
-                      <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
-                      <Select
-                        value={defs.createForm.evaluation_interval ?? "30s"}
-                        onChange={(e) => {
-                          const newEval = e.target.value;
-                          const allowed = getAllowedForDurations(newEval);
-                          const currentFor = defs.createForm.for_duration ?? "5m";
-                          const newFor = allowed.includes(currentFor) ? currentFor : allowed[0];
-                          defs.setCreateForm({ ...defs.createForm, evaluation_interval: newEval, for_duration: newFor });
-                        }}
-                        bg="white"
-                      >
-                        {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
-                      </Select>
-                      <Text fontSize="xs" color="gray.500" mt={1}>How often to check this condition</Text>
-                    </FormControl>
-                    <FormControl isRequired>
-                      <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
-                      <Select
-                        value={(() => {
-                          const allowed = getAllowedForDurations(defs.createForm.evaluation_interval);
-                          const cur = defs.createForm.for_duration ?? "5m";
-                          return allowed.includes(cur) ? cur : allowed[0];
-                        })()}
-                        onChange={(e) => defs.setCreateForm({ ...defs.createForm, for_duration: e.target.value })}
-                        bg="white"
-                      >
-                        {getAllowedForDurations(defs.createForm.evaluation_interval).map((v) => (
-                          <option key={v} value={v}>{v}</option>
-                        ))}
-                      </Select>
-                      <Text fontSize="xs" color="gray.500" mt={1}>How long the condition must persist before triggering</Text>
-                    </FormControl>
-                  </SimpleGrid>
-                </VStack>
-              </Box>
+                  ) : (
+                    <Box
+                      px={3}
+                      py={2}
+                      bg="gray.100"
+                      borderRadius="md"
+                      borderWidth="1px"
+                      borderColor="gray.200"
+                      textAlign="center"
+                      fontSize="sm"
+                      color={defs.createForm.signal ? "gray.700" : "gray.400"}
+                      fontWeight="medium"
+                    >
+                      {defs.createForm.signal ? PERCENTAGE_UNIT : "—"}
+                    </Box>
+                  )}
+                </SimpleGrid>
+                <FormErrorMessage>
+                  {defs.createErrors?.condition_operator ?? defs.createErrors?.threshold_value ?? defs.createErrors?.threshold_unit}
+                </FormErrorMessage>
+              </FormControl>
 
               <Divider />
 
-              {/* ── Status ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Status</Text>
-                <FormControl isRequired>
-                  <RadioGroup value={(defs.createForm.enabled !== false) ? "active" : "inactive"} onChange={(val) => defs.setCreateForm({ ...defs.createForm, enabled: val === "active" })}>
-                    <HStack spacing={4}>
-                      <Radio value="active" colorScheme="green">
-                        <Text fontSize="sm" fontWeight="medium">Active</Text>
-                      </Radio>
-                      <Radio value="inactive" colorScheme="gray">
-                        <Text fontSize="sm" fontWeight="medium">Inactive</Text>
-                      </Radio>
-                    </HStack>
-                  </RadioGroup>
+              <FormControl isRequired isInvalid={!!defs.createErrors?.severity}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+                <HStack spacing={2}>
+                  {SEVERITIES.map((s) => {
+                    const isActive = defs.createForm.severity === s;
+                    const colors = s === "critical"
+                      ? { activeBg: "red.100", activeBorder: "red.600", activeText: "red.700", hoverBg: "red.50" }
+                      : s === "warning"
+                      ? { activeBg: "yellow.100", activeBorder: "yellow.600", activeText: "yellow.700", hoverBg: "yellow.50" }
+                      : { activeBg: "blue.100", activeBorder: "blue.600", activeText: "blue.700", hoverBg: "blue.50" };
+                    return (
+                      <Box
+                        key={s}
+                        as="button"
+                        type="button"
+                        flex="1"
+                        py={2}
+                        px={3}
+                        fontSize="sm"
+                        fontWeight="semibold"
+                        textAlign="center"
+                        cursor="pointer"
+                        borderRadius="full"
+                        borderWidth="2px"
+                        borderColor={isActive ? colors.activeBorder : "gray.200"}
+                        bg={isActive ? colors.activeBg : "white"}
+                        color={isActive ? colors.activeText : "gray.500"}
+                        _hover={{ bg: isActive ? colors.activeBg : colors.hoverBg, borderColor: colors.activeBorder }}
+                        transition="all 0.15s"
+                        onClick={() => defs.setCreateForm({ ...defs.createForm, severity: s })}
+                        textTransform="capitalize"
+                      >
+                        {s}
+                      </Box>
+                    );
+                  })}
+                </HStack>
+                <FormErrorMessage>{defs.createErrors?.severity}</FormErrorMessage>
+              </FormControl>
+
+              <Divider />
+
+              <SimpleGrid columns={2} spacing={4}>
+                <FormControl isRequired isInvalid={!!defs.createErrors?.evaluation_interval}>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
+                  <Select
+                    value={defs.createForm.evaluation_interval ?? "30s"}
+                    onChange={(e) => {
+                      const newEval = e.target.value;
+                      const allowed = getAllowedForDurations(newEval);
+                      const currentFor = defs.createForm.for_duration ?? "1m";
+                      const newFor = allowed.includes(currentFor) ? currentFor : allowed[0];
+                      defs.setCreateForm({ ...defs.createForm, evaluation_interval: newEval, for_duration: newFor });
+                    }}
+                    bg="white"
+                  >
+                    {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
+                  </Select>
+                  <Text fontSize="xs" color="gray.500" mt={1}>How often to check</Text>
+                  <FormErrorMessage>{defs.createErrors?.evaluation_interval}</FormErrorMessage>
                 </FormControl>
-              </Box>
+
+                <FormControl isRequired isInvalid={!!defs.createErrors?.for_duration}>
+                  <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
+                  <Select
+                    value={(() => {
+                      const allowed = getAllowedForDurations(defs.createForm.evaluation_interval);
+                      const cur = defs.createForm.for_duration ?? "1m";
+                      return allowed.includes(cur) ? cur : allowed[0];
+                    })()}
+                    onChange={(e) => defs.setCreateForm({ ...defs.createForm, for_duration: e.target.value })}
+                    bg="white"
+                  >
+                    {getAllowedForDurations(defs.createForm.evaluation_interval).map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </Select>
+                  <Text fontSize="xs" color="gray.500" mt={1}>Alert fires only after the condition is met continuously for this duration.</Text>
+                  <FormErrorMessage>{defs.createErrors?.for_duration}</FormErrorMessage>
+                </FormControl>
+              </SimpleGrid>
+
+              <Divider />
+
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm">Status</FormLabel>
+                <HStack>
+                  <Switch
+                    isChecked={defs.createForm.enabled !== false}
+                    onChange={(e) => defs.setCreateForm({ ...defs.createForm, enabled: e.target.checked })}
+                    colorScheme="green"
+                  />
+                  <Text fontSize="sm">Enable this alert</Text>
+                </HStack>
+              </FormControl>
             </VStack>
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
@@ -574,50 +773,74 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <Text fontSize="lg" fontWeight="bold">Alert Definition Details</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
-            {defs.viewItem && (
-              <VStack spacing={5} align="stretch">
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Name</Text>
-                  <Text fontWeight="medium">{defs.viewItem.name}</Text>
+            {defs.viewItem && (() => {
+              const v = defs.viewItem;
+              const signalMetricLabel = v.signal_metric
+                ? (SIGNAL_METRICS_BY_SIGNAL[v.signal ?? ""]?.find((m) => m.value === v.signal_metric)?.label
+                    ?? titleCase(v.signal_metric.replace(/_/g, " ")))
+                : "—";
+              const signalLabel = v.signal
+                ? titleCase(v.signal.replace(/_/g, " "))
+                : v.alert_type ? alertTypeLabel(v.alert_type) : "—";
+              const targetLabel = v.service && v.service.length > 0
+                ? v.service.map((s) => TARGET_SERVICES.find((t) => t.value === s)?.label ?? s).join(", ")
+                : "All services";
+              const conditionThreshold = v.condition_operator && v.threshold_value != null
+                ? `${v.condition_operator} ${v.threshold_value} ${v.threshold_unit ?? ""}`.trim()
+                : formatThreshold(v);
+              const DetailRow = ({ label, children }: { label: string; children: React.ReactNode }) => (
+                <Box borderBottomWidth="1px" borderColor="gray.100" pb={3}>
+                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>{label}</Text>
+                  {children}
                 </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Description</Text>
-                  <Text>{defs.viewItem.description || "—"}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Category</Text>
-                  <Text>{titleCase(defs.viewItem.category)}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Severity</Text>
-                  <Badge colorScheme={severityColor(defs.viewItem.severity)} textTransform="capitalize">{defs.viewItem.severity}</Badge>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Alert Type</Text>
-                  <Text>{alertTypeLabel(defs.viewItem.alert_type)}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Threshold</Text>
-                  <Text>{formatThreshold(defs.viewItem)}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Eval Interval</Text>
-                  <Text fontFamily="mono">{defs.viewItem.evaluation_interval}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>For Duration</Text>
-                  <Text fontFamily="mono">{defs.viewItem.for_duration}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Status</Text>
-                  <Badge colorScheme={defs.viewItem.enabled ? "green" : "gray"} variant="subtle" fontSize="sm" px={2} py={0.5} borderRadius="full">{defs.viewItem.enabled ? "Active" : "Inactive"}</Badge>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Created On</Text>
-                  <Text fontSize="sm">{new Date(defs.viewItem.created_at).toLocaleDateString()}</Text>
-                </Box>
-              </VStack>
-            )}
+              );
+              return (
+                <VStack spacing={4} align="stretch">
+                  <DetailRow label="Alert Name">
+                    <Text fontWeight="semibold" fontSize="md">{v.name}</Text>
+                  </DetailRow>
+                  <DetailRow label="Description">
+                    <Text color={v.description ? "gray.800" : "gray.400"}>{v.description || "—"}</Text>
+                  </DetailRow>
+                  <DetailRow label="Category">
+                    <Text>{titleCase(v.category)}</Text>
+                  </DetailRow>
+                  <DetailRow label="Severity">
+                    <Badge colorScheme={severityColor(v.severity)} textTransform="capitalize" px={3} py={1} borderRadius="full" fontSize="sm">{v.severity}</Badge>
+                  </DetailRow>
+                  <DetailRow label="Signal">
+                    <Text>{signalLabel}</Text>
+                  </DetailRow>
+                  <DetailRow label="Signal Metric">
+                    <Text>{signalMetricLabel}</Text>
+                  </DetailRow>
+                  <DetailRow label="Target">
+                    <Text>{targetLabel}</Text>
+                  </DetailRow>
+                  <DetailRow label="Condition & Threshold">
+                    <Text fontFamily="mono" fontWeight="semibold" fontSize="md">{conditionThreshold}</Text>
+                  </DetailRow>
+                  <DetailRow label="Evaluation Interval">
+                    <Text fontFamily="mono">{v.evaluation_interval}</Text>
+                  </DetailRow>
+                  <DetailRow label="For Duration">
+                    <Text fontFamily="mono">{v.for_duration}</Text>
+                  </DetailRow>
+                  <DetailRow label="Status">
+                    <Badge
+                      colorScheme={v.enabled ? "green" : "gray"}
+                      variant="subtle"
+                      fontSize="sm"
+                      px={3}
+                      py={1}
+                      borderRadius="full"
+                    >
+                      {v.enabled ? "Active" : "Inactive"}
+                    </Badge>
+                  </DetailRow>
+                </VStack>
+              );
+            })()}
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
             <Button variant="outline" mr={3} onClick={() => { defs.closeView(); if (defs.viewItem) defs.openUpdate(defs.viewItem); }}>Edit</Button>
@@ -635,147 +858,299 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <Text fontSize="lg" fontWeight="bold">Update Alert Definition</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
-            <VStack spacing={6} align="stretch">
-              {/* ── Identity ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Identity</Text>
-                <VStack spacing={4} align="stretch">
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Name</FormLabel>
-                    <Input value={defs.updateItem?.name ?? ""} isReadOnly bg="gray.50" cursor="not-allowed" />
-                  </FormControl>
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
-                    <Textarea value={defs.updateForm.description ?? ""} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, description: e.target.value || null })} bg="white" rows={3} />
-                  </FormControl>
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
-                    <OptionSelector
-                      options={CATEGORIES}
-                      value={defs.updateForm.category ?? "application"}
-                      onChange={(v) => defs.setUpdateForm({ ...defs.updateForm, category: v, alert_type: null, scope: "percentage" })}
-                    />
-                  </FormControl>
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
-                    <OptionSelector
-                      options={SEVERITIES}
-                      value={defs.updateForm.severity ?? "warning"}
-                      onChange={(v) => defs.setUpdateForm({ ...defs.updateForm, severity: v })}
-                    />
-                  </FormControl>
-                </VStack>
-              </Box>
-
+            <VStack spacing={5} align="stretch">
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Name</FormLabel>
+                <Input value={defs.updateItem?.name ?? ""} isReadOnly bg="gray.50" cursor="not-allowed" />
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
+                <Textarea value={defs.updateForm.description ?? ""} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, description: e.target.value || null })} bg="white" rows={3} />
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+                <OptionSelector
+                  options={CATEGORIES}
+                  value={defs.updateForm.category ?? "application"}
+                  onChange={(v) => defs.setUpdateForm({ ...defs.updateForm, category: v, sub_category: undefined, signal: undefined, signal_metric: undefined })}
+                />
+              </FormControl>
               <Divider />
-
-              {/* ── Detection ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Detection</Text>
-                <VStack spacing={4} align="stretch">
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Alert Type</FormLabel>
-                    <Select
-                      value={defs.updateForm.alert_type ?? ""}
-                      onChange={(e) => {
-                        const newAlertType = e.target.value || null;
-                        const newScope = getThresholdUnitForAlertType(newAlertType);
-                        defs.setUpdateForm({ ...defs.updateForm, alert_type: newAlertType, scope: newScope });
-                      }}
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Subcategory</FormLabel>
+                <Select
+                  value={defs.updateForm.sub_category ?? ""}
+                  onChange={(e) => defs.setUpdateForm({
+                    ...defs.updateForm,
+                    sub_category: e.target.value || undefined,
+                    signal: undefined,
+                    signal_metric: undefined,
+                    threshold_unit: undefined,
+                  })}
+                  bg="white"
+                  placeholder={defs.updateForm.category ? "Select subcategory..." : "Select a category first"}
+                  isDisabled={!defs.updateForm.category}
+                >
+                  {(SUB_CATEGORIES_BY_CATEGORY[defs.updateForm.category ?? ""] ?? []).map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Signal</FormLabel>
+                <Select
+                  value={defs.updateForm.signal ?? ""}
+                  onChange={(e) => {
+                    const sig = e.target.value || undefined;
+                    defs.setUpdateForm({
+                      ...defs.updateForm,
+                      signal: sig,
+                      signal_metric: undefined,
+                      threshold_unit: sig === "latency" ? "ms" : sig ? PERCENTAGE_UNIT : undefined,
+                    });
+                  }}
+                  bg="white"
+                  placeholder={defs.updateForm.sub_category ? "Select signal..." : "Select a subcategory first"}
+                  isDisabled={!defs.updateForm.sub_category}
+                >
+                  {(SIGNALS_BY_SUB_CATEGORY[defs.updateForm.sub_category ?? ""] ?? []).map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Signal Metric</FormLabel>
+                <Select
+                  value={defs.updateForm.signal_metric ?? ""}
+                  onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, signal_metric: e.target.value || undefined })}
+                  bg="white"
+                  placeholder={defs.updateForm.signal ? "Select metric..." : "Select a signal first"}
+                  isDisabled={!defs.updateForm.signal}
+                >
+                  {(SIGNAL_METRICS_BY_SIGNAL[defs.updateForm.signal ?? ""] ?? []).map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Select>
+              </FormControl>
+              <Divider />
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Target</FormLabel>
+                {defs.updateForm.category === "infrastructure" ? (
+                  <Box
+                    px={3}
+                    py={2}
+                    bg="gray.100"
+                    borderRadius="md"
+                    borderWidth="1px"
+                    borderColor="gray.200"
+                    color="gray.600"
+                    fontSize="sm"
+                  >
+                    All services (infrastructure monitors the full stack)
+                  </Box>
+                ) : (
+                  <Menu closeOnSelect={false} matchWidth>
+                    <MenuButton
+                      as={Button}
+                      w="100%"
                       bg="white"
-                      placeholder="Select alert type..."
+                      borderWidth="1px"
+                      borderColor="gray.200"
+                      borderRadius="md"
+                      fontWeight="normal"
+                      textAlign="left"
+                      _hover={{ borderColor: "gray.400" }}
+                      _active={{ bg: "white" }}
+                      rightIcon={<Text fontSize="xs" color="gray.500">▾</Text>}
                     >
-                      {(ALERT_TYPES_BY_CATEGORY[defs.updateForm.category ?? "application"] || []).map((t) => (
-                        <option key={t.value} value={t.value}>{t.label}</option>
+                      {(() => {
+                        const sel = defs.updateForm.service ?? [];
+                        if (sel.length === 0) return <Text color="gray.400">Select targets...</Text>;
+                        if (sel.length === TARGET_SERVICES.length) return "All services selected";
+                        return sel.map((v) => TARGET_SERVICES.find((t) => t.value === v)?.label ?? v).join(", ");
+                      })()}
+                    </MenuButton>
+                    <MenuList w="100%" maxH="300px" overflowY="auto">
+                      <MenuItem closeOnSelect={false} px={4} py={2}>
+                        <Checkbox
+                          isChecked={(defs.updateForm.service ?? []).length === TARGET_SERVICES.length}
+                          isIndeterminate={
+                            (defs.updateForm.service ?? []).length > 0 &&
+                            (defs.updateForm.service ?? []).length < TARGET_SERVICES.length
+                          }
+                          onChange={(e) => {
+                            defs.setUpdateForm({
+                              ...defs.updateForm,
+                              service: e.target.checked ? TARGET_SERVICES.map((t) => t.value) : [],
+                            });
+                          }}
+                          fontWeight="semibold"
+                        >
+                          All services
+                        </Checkbox>
+                      </MenuItem>
+                      <MenuDivider my={1} />
+                      {TARGET_SERVICES.map((opt) => (
+                        <MenuItem key={opt.value} closeOnSelect={false} px={4} py={2}>
+                          <Checkbox
+                            isChecked={(defs.updateForm.service ?? []).includes(opt.value)}
+                            onChange={(e) => {
+                              const current = defs.updateForm.service ?? [];
+                              defs.setUpdateForm({
+                                ...defs.updateForm,
+                                service: e.target.checked
+                                  ? [...current, opt.value]
+                                  : current.filter((s) => s !== opt.value),
+                              });
+                            }}
+                          >
+                            {opt.label}
+                          </Checkbox>
+                        </MenuItem>
+                      ))}
+                    </MenuList>
+                  </Menu>
+                )}
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Condition + Threshold</FormLabel>
+                <SimpleGrid columns={3} spacing={3} mb={1}>
+                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Condition</Text>
+                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Threshold</Text>
+                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Unit</Text>
+                </SimpleGrid>
+                <SimpleGrid columns={3} spacing={3}>
+                  <Select
+                    value={defs.updateForm.condition_operator ?? ""}
+                    onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, condition_operator: e.target.value || undefined })}
+                    bg="white"
+                    placeholder="—"
+                  >
+                    {CONDITION_OPERATORS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </Select>
+                  <NumberInput
+                    value={defs.updateForm.threshold_value ?? ""}
+                    onChange={(_s, val) => defs.setUpdateForm({ ...defs.updateForm, threshold_value: Number.isNaN(val) ? undefined : val })}
+                    min={0}
+                    bg="white"
+                  >
+                    <NumberInputField placeholder="Value" />
+                    <NumberInputStepper>
+                      <NumberIncrementStepper />
+                      <NumberDecrementStepper />
+                    </NumberInputStepper>
+                  </NumberInput>
+                  {defs.updateForm.signal === "latency" ? (
+                    <Select
+                      value={defs.updateForm.threshold_unit ?? "ms"}
+                      onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, threshold_unit: e.target.value || "ms" })}
+                      bg="white"
+                    >
+                      {LATENCY_THRESHOLD_UNITS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
                     </Select>
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Threshold Configuration</FormLabel>
-                    <SimpleGrid columns={2} spacing={3}>
-                      <NumberInput
-                        value={defs.updateForm.promql_expr ?? ""}
-                        onChange={(val) => defs.setUpdateForm({ ...defs.updateForm, promql_expr: val })}
-                        min={0}
-                        bg="white"
+                  ) : (
+                    <Box
+                      px={3}
+                      py={2}
+                      bg="gray.100"
+                      borderRadius="md"
+                      borderWidth="1px"
+                      borderColor="gray.200"
+                      textAlign="center"
+                      fontSize="sm"
+                      color={defs.updateForm.signal ? "gray.700" : "gray.400"}
+                      fontWeight="medium"
+                    >
+                      {defs.updateForm.signal ? PERCENTAGE_UNIT : "—"}
+                    </Box>
+                  )}
+                </SimpleGrid>
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+                <HStack spacing={2}>
+                  {SEVERITIES.map((s) => {
+                    const isActive = (defs.updateForm.severity ?? "") === s;
+                    const colors = s === "critical"
+                      ? { activeBg: "red.100", activeBorder: "red.600", activeText: "red.700", hoverBg: "red.50" }
+                      : s === "warning"
+                      ? { activeBg: "yellow.100", activeBorder: "yellow.600", activeText: "yellow.700", hoverBg: "yellow.50" }
+                      : { activeBg: "blue.100", activeBorder: "blue.600", activeText: "blue.700", hoverBg: "blue.50" };
+                    return (
+                      <Box
+                        key={s}
+                        as="button"
+                        type="button"
+                        flex="1"
+                        py={2}
+                        px={3}
+                        fontSize="sm"
+                        fontWeight="semibold"
+                        textAlign="center"
+                        cursor="pointer"
+                        borderRadius="full"
+                        borderWidth="2px"
+                        borderColor={isActive ? colors.activeBorder : "gray.200"}
+                        bg={isActive ? colors.activeBg : "white"}
+                        color={isActive ? colors.activeText : "gray.500"}
+                        _hover={{ bg: isActive ? colors.activeBg : colors.hoverBg, borderColor: colors.activeBorder }}
+                        transition="all 0.15s"
+                        onClick={() => defs.setUpdateForm({ ...defs.updateForm, severity: s })}
+                        textTransform="capitalize"
                       >
-                        <NumberInputField placeholder="Enter value (e.g., 500, 85, 95)" />
-                        <NumberInputStepper>
-                          <NumberIncrementStepper />
-                          <NumberDecrementStepper />
-                        </NumberInputStepper>
-                      </NumberInput>
-                      <Select
-                        value={getThresholdUnitForAlertType(defs.updateForm.alert_type)}
-                        isDisabled
-                        bg="gray.200"
-                        color="gray.700"
-                        cursor="not-allowed"
-                        borderColor="gray.300"
-                      >
-                        <option value={getThresholdUnitForAlertType(defs.updateForm.alert_type)}>
-                          {getThresholdUnitForAlertType(defs.updateForm.alert_type).charAt(0).toUpperCase() + getThresholdUnitForAlertType(defs.updateForm.alert_type).slice(1)}
-                        </option>
-                      </Select>
-                    </SimpleGrid>
-                  </FormControl>
-                  <SimpleGrid columns={2} spacing={4}>
-                    <FormControl isRequired>
-                      <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
-                      <Select
-                        value={defs.updateForm.evaluation_interval ?? "30s"}
-                        onChange={(e) => {
-                          const newEval = e.target.value;
-                          const allowed = getAllowedForDurations(newEval);
-                          const currentFor = defs.updateForm.for_duration ?? "5m";
-                          const newFor = allowed.includes(currentFor) ? currentFor : allowed[0];
-                          defs.setUpdateForm({ ...defs.updateForm, evaluation_interval: newEval, for_duration: newFor });
-                        }}
-                        bg="white"
-                      >
-                        {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
-                      </Select>
-                      <Text fontSize="xs" color="gray.500" mt={1}>How often to check this condition</Text>
-                    </FormControl>
-                    <FormControl isRequired>
-                      <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
-                      <Select
-                        value={(() => {
-                          const allowed = getAllowedForDurations(defs.updateForm.evaluation_interval);
-                          const cur = defs.updateForm.for_duration ?? "5m";
-                          return allowed.includes(cur) ? cur : allowed[0];
-                        })()}
-                        onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, for_duration: e.target.value })}
-                        bg="white"
-                      >
-                        {getAllowedForDurations(defs.updateForm.evaluation_interval).map((v) => (
-                          <option key={v} value={v}>{v}</option>
-                        ))}
-                      </Select>
-                      <Text fontSize="xs" color="gray.500" mt={1}>How long the condition must persist before triggering</Text>
-                    </FormControl>
-                  </SimpleGrid>
-                </VStack>
-              </Box>
-
-              <Divider />
-
-              {/* ── Status ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Status</Text>
-                <FormControl isRequired>
-                  <RadioGroup value={(defs.updateForm.enabled ?? true) ? "active" : "inactive"} onChange={(val) => defs.setUpdateForm({ ...defs.updateForm, enabled: val === "active" })}>
-                    <HStack spacing={4}>
-                      <Radio value="active" colorScheme="green">
-                        <Text fontSize="sm" fontWeight="medium">Active</Text>
-                      </Radio>
-                      <Radio value="inactive" colorScheme="gray">
-                        <Text fontSize="sm" fontWeight="medium">Inactive</Text>
-                      </Radio>
-                    </HStack>
-                  </RadioGroup>
-                </FormControl>
-              </Box>
+                        {s}
+                      </Box>
+                    );
+                  })}
+                </HStack>
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
+                <Select
+                  value={defs.updateForm.evaluation_interval ?? "30s"}
+                  onChange={(e) => {
+                    const newEval = e.target.value;
+                    const allowed = getAllowedForDurations(newEval);
+                    const currentFor = defs.updateForm.for_duration ?? "5m";
+                    const newFor = allowed.includes(currentFor) ? currentFor : allowed[0];
+                    defs.setUpdateForm({ ...defs.updateForm, evaluation_interval: newEval, for_duration: newFor });
+                  }}
+                  bg="white"
+                >
+                  {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
+                </Select>
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
+                <Select
+                  value={(() => {
+                    const allowed = getAllowedForDurations(defs.updateForm.evaluation_interval);
+                    const cur = defs.updateForm.for_duration ?? "5m";
+                    return allowed.includes(cur) ? cur : allowed[0];
+                  })()}
+                  onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, for_duration: e.target.value })}
+                  bg="white"
+                >
+                  {getAllowedForDurations(defs.updateForm.evaluation_interval).map((v) => (
+                    <option key={v} value={v}>{v}</option>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Status</FormLabel>
+                <HStack>
+                  <Switch
+                    isChecked={defs.updateForm.enabled ?? true}
+                    onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, enabled: e.target.checked })}
+                    colorScheme="green"
+                  />
+                  <Text fontSize="sm">Enable this alert</Text>
+                </HStack>
+              </FormControl>
             </VStack>
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
