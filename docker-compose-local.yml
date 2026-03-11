@@ -373,8 +373,8 @@ services:
 
   metrics-service:
     build:
-      context: ./services/metrics-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/metrics-service/Dockerfile
     container_name: ai4v-metrics-service
     ports:
       - "8083:8083"
@@ -512,8 +512,8 @@ services:
 
   dashboard-service:
     build:
-      context: ./services/dashboard-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/dashboard-service/Dockerfile
     container_name: ai4v-dashboard-service
     ports:
       - "8090:8086"
@@ -865,8 +865,8 @@ services:
 
   model-management-service:
     build:
-      context: ./services/model-management-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/model-management-service/Dockerfile
     container_name: ai4v-model-management-service
     ports:
       - "8094:8091"
@@ -913,15 +913,17 @@ services:
   # Policy Engine
   policy-engine:
     build:
-      context: ./services/policy-engine
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/policy-engine/Dockerfile
     container_name: ai4v-policy-engine
     ports:
       - "8102:8095"
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     volumes:
+      - ./services/policy-engine:/app
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
+    command: ["sh", "-c", "pip install --no-cache-dir -e /app/libs/ai4icore_env && uvicorn main:app --host 0.0.0.0 --port 8095 --workers 1 --reload"]
     networks:
       - microservices-network
     restart: unless-stopped
@@ -1007,8 +1009,8 @@ services:
   
   multi-tenant-service:
     build:
-      context: ./services/multi-tenant-feature
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/multi-tenant-feature/Dockerfile
     container_name: ai4v-multi-tenant-service
     ports:
       - "8100:8001"
