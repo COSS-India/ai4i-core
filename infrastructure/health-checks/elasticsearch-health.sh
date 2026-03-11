@@ -8,7 +8,7 @@ set -e
 echo "Checking Elasticsearch health..."
 
 # Check Elasticsearch cluster health
-CLUSTER_HEALTH=$(curl -s -u "${ELASTIC_USERNAME:-elastic}:${ELASTIC_PASSWORD:-elastic_secure_password_2024}" \
+CLUSTER_HEALTH=$(curl -s -u "${ELASTIC_USERNAME}:${ELASTIC_PASSWORD}" \
     http://localhost:9200/_cluster/health | \
     grep -o '"status":"[^"]*"' | cut -d'"' -f4)
 
@@ -21,7 +21,7 @@ fi
 REQUIRED_INDICES=("logs" "traces")
 
 for index in "${REQUIRED_INDICES[@]}"; do
-    if ! curl -s -u "${ELASTIC_USERNAME:-elastic}:${ELASTIC_PASSWORD:-elastic_secure_password_2024}" \
+    if ! curl -s -u "${ELASTIC_USERNAME}:${ELASTIC_PASSWORD}" \
         http://localhost:9200/_cat/indices | \
         grep -q "$index"; then
         echo "Required index $index does not exist"
@@ -30,14 +30,14 @@ for index in "${REQUIRED_INDICES[@]}"; do
 done
 
 # Verify that index templates are configured
-if ! curl -s -u "${ELASTIC_USERNAME:-elastic}:${ELASTIC_PASSWORD:-elastic_secure_password_2024}" \
+if ! curl -s -u "${ELASTIC_USERNAME}:${ELASTIC_PASSWORD}" \
     http://localhost:9200/_index_template | \
     grep -q "logs_template"; then
     echo "Logs index template is not configured"
     exit 1
 fi
 
-if ! curl -s -u "${ELASTIC_USERNAME:-elastic}:${ELASTIC_PASSWORD:-elastic_secure_password_2024}" \
+if ! curl -s -u "${ELASTIC_USERNAME}:${ELASTIC_PASSWORD}" \
     http://localhost:9200/_index_template | \
     grep -q "traces_template"; then
     echo "Traces index template is not configured"
@@ -45,7 +45,7 @@ if ! curl -s -u "${ELASTIC_USERNAME:-elastic}:${ELASTIC_PASSWORD:-elastic_secure
 fi
 
 # Check node availability
-NODE_COUNT=$(curl -s -u "${ELASTIC_USERNAME:-elastic}:${ELASTIC_PASSWORD:-elastic_secure_password_2024}" \
+NODE_COUNT=$(curl -s -u "${ELASTIC_USERNAME}:${ELASTIC_PASSWORD}" \
     http://localhost:9200/_cat/nodes | wc -l)
 
 if [ "$NODE_COUNT" -eq 0 ]; then

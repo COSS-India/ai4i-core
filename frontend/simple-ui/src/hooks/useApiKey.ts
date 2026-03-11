@@ -26,19 +26,20 @@ export const useApiKey = (): UseApiKeyReturn => {
   }, []);
 
   /**
-   * Set API key and store in localStorage
-   * @param key - API key to set
+   * Set API key and store in localStorage. Pass empty string to clear (e.g. when unselecting).
+   * @param key - API key to set, or '' to clear
    */
   const setApiKey = (key: string): void => {
+    if (typeof window === 'undefined') return;
     if (!key || key.trim() === '') {
-      throw new Error('API key cannot be empty');
+      localStorage.removeItem('api_key');
+      setApiKeyState(null);
+      setIsAuthenticated(false);
+      return;
     }
-
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('api_key', key);
-      setApiKeyState(key);
-      setIsAuthenticated(true);
-    }
+    localStorage.setItem('api_key', key);
+    setApiKeyState(key);
+    setIsAuthenticated(true);
   };
 
   /**

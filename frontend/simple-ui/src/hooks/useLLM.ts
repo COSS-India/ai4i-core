@@ -10,17 +10,12 @@ import { UseLLMReturn, LLMInferenceRequest } from '../types/llm';
 import { extractErrorInfo } from '../utils/errorHandler';
 
 const MAX_TEXT_LENGTH = 50000;
-const DEFAULT_LLM_CONFIG = {
-  serviceId: 'llm',
-  inputLanguage: 'en',
-  outputLanguage: 'hi',
-};
 
 export const useLLM = (serviceId?: string): UseLLMReturn => {
   // State
-  const [selectedModelId, setSelectedModelId] = useState<string>('llm');
-  const [inputLanguage, setInputLanguage] = useState<string>('en');
-  const [outputLanguage, setOutputLanguage] = useState<string>('hi');
+  const [selectedModelId, setSelectedModelId] = useState<string>('');
+  const [inputLanguage, setInputLanguage] = useState<string>('');
+  const [outputLanguage, setOutputLanguage] = useState<string>('');
   const [inputText, setInputText] = useState<string>('');
   const [outputText, setOutputText] = useState<string>('');
   const [nmtOutputText, setNmtOutputText] = useState<string>('');
@@ -127,6 +122,18 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
       return;
     }
 
+    // Validate that source and target languages are selected
+    if (!inputLanguage?.trim() || !outputLanguage?.trim()) {
+      toast({
+        title: 'Language Required',
+        description: 'Please select both source and target languages.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     try {
       setIsDualMode(false);
       setFetching(true);
@@ -169,6 +176,18 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
       toast({
         title: 'Service Required',
         description: 'Please select an LLM service.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    // Validate that source and target languages are selected
+    if (!inputLanguage?.trim() || !outputLanguage?.trim()) {
+      toast({
+        title: 'Language Required',
+        description: 'Please select both source and target languages.',
         status: 'warning',
         duration: 3000,
         isClosable: true,

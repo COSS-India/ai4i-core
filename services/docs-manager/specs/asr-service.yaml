@@ -24,6 +24,8 @@ paths:
       summary: ASR inference
       description: Convert speech to text for one or more audio inputs.
       operationId: asrInference
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
       security:
         - BearerAuth: []
       requestBody:
@@ -86,6 +88,17 @@ components:
       scheme: bearer
       bearerFormat: API Key
       description: API key in Authorization header (Bearer &lt;key&gt;)
+
+  parameters:
+    XAuthSource:
+      name: x-auth-source
+      in: header
+      required: false
+      description: Auth mode. Use BOTH when sending both Bearer token and X-API-Key.
+      schema:
+        type: string
+        enum: [API_KEY, AUTH_TOKEN, BOTH]
+        default: BOTH
 
   schemas:
     ASRInferenceRequest:

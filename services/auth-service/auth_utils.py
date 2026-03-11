@@ -210,9 +210,13 @@ class AuthUtils:
         if not api_key_obj:
             return False, None, "Invalid API key"
         
+        # Check if API key has been permanently revoked
+        if getattr(api_key_obj, "is_revoked", False):
+            return False, None, "API key has been revoked"
+        
         # Check if API key is active
         if not api_key_obj.is_active:
-            return False, None, "API key has been revoked"
+            return False, None, "API key is inactive"
         
         # Check if API key has expired (use timezone-aware comparison)
         now_utc = datetime.now(timezone.utc)
@@ -251,15 +255,17 @@ class AuthUtils:
             # Preserve existing detailed error semantics for callers
             # Filter permissions for this service
             service_permissions = [p for p in permissions if p.startswith(f"{service}.")]
-
+            
             if not service_permissions:
                 # No permissions for this service at all
-                return False, None, (
+                # IMPORTANT: return api_key_obj so callers can still inspect ownership
+                return False, api_key_obj, (
                     f"Invalid API key: This key does not have access to {service.upper()} service"
                 )
-
+            
             # Has some permissions for this service but not the required inference one
-            return False, None, (
+            # IMPORTANT: return api_key_obj so callers can still inspect ownership
+            return False, api_key_obj, (
                 f"Invalid API key: This key does not have '{required_permission}' permission. "
                 f"Available permissions: {', '.join(service_permissions)}"
             )

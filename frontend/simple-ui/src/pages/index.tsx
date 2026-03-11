@@ -33,6 +33,7 @@ import {
   IoPricetagOutline,
 } from "react-icons/io5";
 import ContentLayout from "../components/common/ContentLayout";
+import { getServiceDescription, getServiceTitle, type ServiceId } from "../config/serviceMetadata";
 import { useAuth } from "../hooks/useAuth";
 import { useFeatureFlagsBulk, ALL_UI_FEATURE_FLAG_NAMES } from "../hooks/useFeatureFlag";
 import DoubleMicrophoneIcon from "../components/common/DoubleMicrophoneIcon";
@@ -166,115 +167,23 @@ const HomePage: React.FC = () => {
   });
 
   const services = [
-    {
-      id: "asr",
-      title: "Automatic Speech Recognition (ASR)",
-      description: "Convert spoken audio into accurate text in multiple Indic languages.",
-      icon: FaMicrophone,
-      path: "/asr",
-      color: "orange",
-      enabled: flags["asr-enabled"] ?? true,
-    },
-    {
-      id: "tts",
-      title: "Text-to-Speech (TTS)",
-      description: "Generate natural-sounding speech from text in various Indic languages.",
-      icon: IoVolumeHighOutline,
-      path: "/tts",
-      color: "blue",
-      enabled: flags["tts-enabled"] ?? true,
-    },
-    {
-      id: "nmt",
-      title: "Neural Machine Translation (NMT)",
-      description: "Translate text instantly between 22+ Indic languages.",
-      icon: IoLanguageOutline,
-      path: "/nmt",
-      color: "green",
-      enabled: flags["nmt-enabled"] ?? true,
-    },
-    {
-      id: "llm",
-      title: "Large Language Model (LLM)",
-      description: "Use advanced AI models for contextual translation and language tasks.",
-      icon: IoSparklesOutline,
-      path: "/llm",
-      color: "pink",
-      enabled: flags["llm-enabled"] ?? true,
-    },
-    {
-      id: "pipeline",
-      title: "Speech to Speech\nPipeline",
-      description: "Create workflows by chaining together multiple AI language services.",
-      icon: DoubleMicrophoneIcon,
-      path: "/pipeline",
-      color: "purple",
-      enabled: flags["pipeline-enabled"] ?? true,
-    },
-    {
-      id: "ocr",
-      title: "Optical Character Recognition (OCR)",
-      description: "Extract editable text from images, scanned documents, and photos.",
-      icon: IoDocumentTextOutline,
-      path: "/ocr",
-      color: "indigo",
-      enabled: flags["ocr-enabled"] ?? true,
-    },
-    {
-      id: "transliteration",
-      title: "Transliteration Service",
-      description: "Convert text from one script to another while keeping pronunciation intact.",
-      icon: IoSwapHorizontalOutline,
-      path: "/transliteration",
-      color: "cyan",
-      enabled: flags["transliteration-enabled"] ?? true,
-    },
-    {
-      id: "language-detection",
-      title: "Language Detection",
-      description: "Automatically identify the language and script of any given text.",
-      icon: IoGlobeOutline,
-      path: "/language-detection",
-      color: "teal",
-      enabled: flags["language-detection-enabled"] ?? true,
-    },
-    {
-      id: "speaker-diarization",
-      title: "Speaker Diarization",
-      description: "Separate conversations into segments based on who is speaking.",
-      icon: IoPeopleOutline,
-      path: "/speaker-diarization",
-      color: "red",
-      enabled: flags["speaker-diarization-enabled"] ?? true,
-    },
-    {
-      id: "language-diarization",
-      title: "Language Diarization",
-      description: "Identify when language changes occur within spoken audio.",
-      icon: IoLanguageOutline,
-      path: "/language-diarization",
-      color: "yellow",
-      enabled: flags["language-diarization-enabled"] ?? true,
-    },
-    {
-      id: "audio-language-detection",
-      title: "Audio Language Detection",
-      description: "Detect the spoken language directly from an audio file.",
-      icon: IoRadioOutline,
-      path: "/audio-language-detection",
-      color: "gray",
-      enabled: flags["audio-language-detection-enabled"] ?? true,
-    },
-    {
-      id: "ner",
-      title: "Named Entity Recognition (NER)",
-      description: "Identify key entities like names, locations, and organizations in text.",
-      icon: IoPricetagOutline,
-      path: "/ner",
-      color: "rose",
-      enabled: flags["ner-enabled"] ?? true,
-    },
-  ].filter((service) => flagsLoading || service.enabled);
+    { id: "asr" as ServiceId, icon: FaMicrophone, path: "/asr", color: "orange", enabled: flags["asr-enabled"] ?? true },
+    { id: "tts" as ServiceId, icon: IoVolumeHighOutline, path: "/tts", color: "blue", enabled: flags["tts-enabled"] ?? true },
+    { id: "nmt" as ServiceId, icon: IoLanguageOutline, path: "/nmt", color: "green", enabled: flags["nmt-enabled"] ?? true },
+    { id: "llm" as ServiceId, icon: IoSparklesOutline, path: "/llm", color: "pink", enabled: flags["llm-enabled"] ?? true },
+    { id: "pipeline" as ServiceId, icon: DoubleMicrophoneIcon, path: "/pipeline", color: "purple", enabled: flags["pipeline-enabled"] ?? true },
+    { id: "ocr" as ServiceId, icon: IoDocumentTextOutline, path: "/ocr", color: "indigo", enabled: flags["ocr-enabled"] ?? true },
+    { id: "transliteration" as ServiceId, icon: IoSwapHorizontalOutline, path: "/transliteration", color: "cyan", enabled: flags["transliteration-enabled"] ?? true },
+    { id: "language-detection" as ServiceId, icon: IoGlobeOutline, path: "/language-detection", color: "teal", enabled: flags["language-detection-enabled"] ?? true },
+    { id: "speaker-diarization" as ServiceId, icon: IoPeopleOutline, path: "/speaker-diarization", color: "red", enabled: flags["speaker-diarization-enabled"] ?? true },
+    { id: "language-diarization" as ServiceId, icon: IoLanguageOutline, path: "/language-diarization", color: "yellow", enabled: flags["language-diarization-enabled"] ?? true },
+    { id: "audio-language-detection" as ServiceId, icon: IoRadioOutline, path: "/audio-language-detection", color: "gray", enabled: flags["audio-language-detection-enabled"] ?? true },
+    { id: "ner" as ServiceId, icon: IoPricetagOutline, path: "/ner", color: "rose", enabled: flags["ner-enabled"] ?? true },
+  ].filter((service) => flagsLoading || service.enabled).map((s) => ({
+    ...s,
+    title: getServiceTitle(s.id),
+    description: getServiceDescription(s.id),
+  }));
 
 
   return (
@@ -364,11 +273,12 @@ const HomePage: React.FC = () => {
                   opacity={isDisabledForAnonymous ? 0.3 : 1}
                 />
 
-                <CardHeader textAlign="center" pb={2} pt={4} px={4} flexShrink={0}>
+                <CardHeader textAlign="center" pb={1} pt={4} px={4} flexShrink={0}>
                   <VStack spacing={2} align="center" w="full">
                     <Box position="relative">
                       <Box
-                        p={3}
+                      // p={3}
+                        boxSize={14}
                         borderRadius="full"
                         bg={getColor(service, 50)}
                         _dark={{ bg: getColor(service, 600) }}
@@ -376,10 +286,11 @@ const HomePage: React.FC = () => {
                         alignItems="center"
                         justifyContent="center"
                         flexShrink={0}
+                        overflow="hidden"
                       >
-                        <Icon 
-                          as={service.icon} 
-                          boxSize={7} 
+                        <Icon
+                          as={service.icon}
+                          boxSize={service.id === "pipeline" ? 8 : 7}
                           color={getColor(service, 600)}
                           opacity={isDisabledForAnonymous ? 0.4 : 1}
                         />
@@ -456,15 +367,11 @@ const HomePage: React.FC = () => {
                           isClosable: true,
                           position: "top",
                         });
-                        
-                        // Store redirect path
-                        if (typeof window !== "undefined") {
-                          sessionStorage.setItem("redirectAfterAuth", service.path);
-                        }
-                        
-                        // Redirect to auth page
                         setTimeout(() => {
-                          router.push("/auth");
+                          router.push(
+                            "/auth?redirect=" +
+                              encodeURIComponent(service.path)
+                          );
                         }, 500);
                       } else {
                         handleServiceClick(service.path, service.title);

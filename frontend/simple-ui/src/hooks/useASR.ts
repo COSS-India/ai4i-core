@@ -26,6 +26,7 @@ export const useASR = (): UseASRReturn => {
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
   const [timer, setTimer] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const [pendingAudio, setPendingAudio] = useState<string | null>(null);
 
   // Refs
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -162,6 +163,7 @@ export const useASR = (): UseASRReturn => {
         setFetched(true);
         setFetching(false);
         setError(null);
+        setPendingAudio(null);
         // Mark that we just completed a request to prevent language change effect from clearing results
         justCompletedRequestRef.current = true;
         // Reset the flag after a short delay to allow language change effect to run if needed
@@ -286,6 +288,7 @@ export const useASR = (): UseASRReturn => {
 
     try {
       setError(null);
+      setPendingAudio(null);
       setRecording(true);
       setTimer(0);
       audioChunksRef.current = [];
@@ -420,12 +423,7 @@ export const useASR = (): UseASRReturn => {
               throw new Error('Failed to extract base64 data');
             }
             console.log(`${blobToSend.type} Base64 data length:`, base64Data.length);
-            console.log('Calling performInference...');
-            
-            // Use the same approach as file upload - call performInference directly
-            if (performInferenceRef.current) {
-              performInferenceRef.current(base64Data);
-            }
+            setPendingAudio(base64Data);
           };
           reader.onerror = (error) => {
             console.error('FileReader error:', error);
@@ -499,13 +497,26 @@ export const useASR = (): UseASRReturn => {
   // Perform inference
   const performInference = useCallback(async (audioContent: string) => {
     try {
+      const currentServiceId = serviceIdRef.current;
+      const currentLanguage = languageRef.current;
+      if (!currentServiceId || !currentLanguage) {
+        toast({
+          title: 'Selection required',
+          description: 'Please select an ASR service and language before recording or uploading.',
+          status: 'warning',
+          duration: 4000,
+          isClosable: true,
+        });
+        return;
+      }
+
       console.log('=== ASR Inference Start ===');
       console.log('performInference called with audio content length:', audioContent.length);
       console.log('Current language state:', language);
       console.log('Current language ref:', languageRef.current);
       
       // Track the language for this request BEFORE starting
-      const requestLanguage = languageRef.current;
+      const requestLanguage = currentLanguage;
       currentRequestLanguageRef.current = requestLanguage;
       console.log('Request language set to:', requestLanguage);
       
@@ -542,7 +553,7 @@ export const useASR = (): UseASRReturn => {
         console.log('Ignoring error - language changed during request');
       }
     }
-  }, [asrMutation, language]);
+  }, [asrMutation, language, toast]);
 
   // Stop recording
   const stopRecording = useCallback(() => {
@@ -827,7 +838,13 @@ export const useASR = (): UseASRReturn => {
     setRequestTime('0');
     setFetched(false);
     setError(null);
+    setPendingAudio(null);
   }, []);
+
+  const runTranscribe = useCallback(() => {
+    if (!pendingAudio) return;
+    performInference(pendingAudio);
+  }, [performInference, pendingAudio]);
 
   // Reset timer
   const resetTimer = useCallback(() => {
@@ -929,12 +946,15 @@ export const useASR = (): UseASRReturn => {
     audioStream,
     timer,
     error,
-    
+    pendingAudio,
+
     // Methods
     startRecording,
     stopRecording,
     handleFileUpload,
     performInference,
+    setPendingAudio,
+    runTranscribe,
     setLanguage,
     setSampleRate,
     setServiceId,

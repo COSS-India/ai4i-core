@@ -18,7 +18,8 @@ import { FiEdit2, FiCheck, FiX } from "react-icons/fi";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { useUserDetails } from "./hooks/useUserDetails";
-import { TIMEZONES, LANGUAGES } from "./types";
+import { TIMEZONES } from "./types";
+import { maskPhoneForDisplay } from "../../utils/helpers";
 
 export default function UserDetailsTab() {
   const { user, updateUser } = useAuth();
@@ -109,7 +110,7 @@ export default function UserDetailsTab() {
           <FormControl isInvalid={!!ud.errors.phone_number}>
             <FormLabel fontWeight="semibold">Phone Number</FormLabel>
             <Input
-              value={ud.isEditingUser ? (ud.userFormData.phone_number || "") : (user.phone_number || "")}
+              value={ud.isEditingUser ? (ud.userFormData.phone_number || "") : maskPhoneForDisplay(user.phone_number)}
               isReadOnly={!ud.isEditingUser}
               onChange={(e) => ud.handleInputChange("phone_number", e.target.value)}
               bg={ud.isEditingUser ? "white" : inputReadOnlyBg}
@@ -147,28 +148,6 @@ export default function UserDetailsTab() {
                 <Input value={user.timezone || "N/A"} isReadOnly bg={inputReadOnlyBg} />
               )}
             </FormControl>
-            <FormControl flex={1}>
-              <FormLabel fontWeight="semibold">Language</FormLabel>
-              {ud.isEditingUser ? (
-                <Select
-                  value={ud.userFormData.language || "en"}
-                  onChange={(e) => ud.handleInputChange("language", e.target.value)}
-                  bg="white"
-                >
-                  {LANGUAGES.map((lang) => (
-                    <option key={lang.value} value={lang.value}>
-                      {lang.label}
-                    </option>
-                  ))}
-                </Select>
-              ) : (
-                <Input
-                  value={LANGUAGES.find((l) => l.value === user.language)?.label || user.language || "N/A"}
-                  isReadOnly
-                  bg={inputReadOnlyBg}
-                />
-              )}
-            </FormControl>
           </HStack>
 
           <HStack spacing={4}>
@@ -184,7 +163,7 @@ export default function UserDetailsTab() {
 
           {user.created_at && (
             <FormControl>
-              <FormLabel fontWeight="semibold">Member Since</FormLabel>
+              <FormLabel fontWeight="semibold">Account Created On</FormLabel>
               <Input
                 value={new Date(user.created_at).toLocaleDateString()}
                 isReadOnly

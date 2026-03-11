@@ -23,6 +23,13 @@ import {
   Permission,
 } from '../types/auth';
 import { API_BASE_URL } from './api';
+import {
+  getStoredAccessToken,
+  getStoredRefreshToken,
+  setStoredAccessToken,
+  setStoredRefreshToken,
+  clearTokenStorage,
+} from '../utils/tokenStorage';
 
 class AuthService {
   private baseUrl: string;
@@ -136,67 +143,28 @@ class AuthService {
     }
   }
 
-  // Token management with remember me support
-  private getStorage(): Storage {
-    if (typeof window === 'undefined') return localStorage;
-    // Check if remember_me preference is stored
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
-    return rememberMe ? localStorage : sessionStorage;
-  }
-
+  // Token management with remember me support (encrypted at rest via tokenStorage)
   public getAccessToken(): string | null {
-    if (typeof window === 'undefined') return null;
-    // Check both storages (for backward compatibility and migration)
-    return localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    return getStoredAccessToken();
   }
 
   public setAccessToken(token: string, rememberMe: boolean = true): void {
     if (typeof window === 'undefined') return;
-    // Store remember_me preference
-    localStorage.setItem('remember_me', rememberMe ? 'true' : 'false');
-    // Clear from both storages first
-    localStorage.removeItem('access_token');
-    sessionStorage.removeItem('access_token');
-    // Store in appropriate storage
-    if (rememberMe) {
-      localStorage.setItem('access_token', token);
-    } else {
-      sessionStorage.setItem('access_token', token);
-    }
-    // Store login timestamp for session expiry tracking (7 days if remember_me, else 24 hours)
+    setStoredAccessToken(token, rememberMe);
     this.setLoginTimestamp();
   }
 
   public getRefreshToken(): string | null {
-    if (typeof window === 'undefined') return null;
-    // Check both storages (for backward compatibility and migration)
-    return localStorage.getItem('refresh_token') || sessionStorage.getItem('refresh_token');
+    return getStoredRefreshToken();
   }
 
   public setRefreshToken(token: string, rememberMe: boolean = true): void {
     if (typeof window === 'undefined') return;
-    // Store remember_me preference
-    localStorage.setItem('remember_me', rememberMe ? 'true' : 'false');
-    // Clear from both storages first
-    localStorage.removeItem('refresh_token');
-    sessionStorage.removeItem('refresh_token');
-    // Store in appropriate storage
-    if (rememberMe) {
-      localStorage.setItem('refresh_token', token);
-    } else {
-      sessionStorage.setItem('refresh_token', token);
-    }
+    setStoredRefreshToken(token, rememberMe);
   }
 
   private clearTokens(): void {
-    if (typeof window === 'undefined') return;
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    sessionStorage.removeItem('access_token');
-    sessionStorage.removeItem('refresh_token');
-    localStorage.removeItem('remember_me');
-    localStorage.removeItem('login_timestamp');
-    sessionStorage.removeItem('login_timestamp');
+    clearTokenStorage();
   }
 
   public clearAuthTokens(): void {
@@ -598,9 +566,9 @@ class AuthService {
     }
   }
 
-  /** Persist the selected API key for the current user (used to restore selection on next login). */
-  async selectApiKey(apiKeyId: number): Promise<{ selected_api_key_id: number }> {
-    return this.request<{ selected_api_key_id: number }>('/api-keys/select', {
+  /** Persist the selected API key for the current user (used to restore selection on next login). Pass null to clear selection. */
+  async selectApiKey(apiKeyId: number | null): Promise<{ selected_api_key_id: number | null; message?: string }> {
+    return this.request<{ selected_api_key_id: number | null; message?: string }>('/api-keys/select', {
       method: 'POST',
       body: JSON.stringify({ api_key_id: apiKeyId }),
       headers: {

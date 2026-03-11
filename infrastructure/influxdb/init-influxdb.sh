@@ -18,11 +18,11 @@ echo "InfluxDB is ready, starting initialization..."
 
 # Set environment variables
 INFLUXDB_URL="http://localhost:8086"
-INFLUXDB_ADMIN_USER="${INFLUXDB_ADMIN_USER:-admin}"
-INFLUXDB_ADMIN_PASSWORD="${INFLUXDB_ADMIN_PASSWORD:-influx_secure_password_2024}"
-INFLUXDB_ORG="${INFLUXDB_ORG:-dhruva-org}"
-INFLUXDB_BUCKET="${INFLUXDB_BUCKET:-metrics}"
-INFLUXDB_ADMIN_TOKEN="${INFLUXDB_ADMIN_TOKEN:-dhruva-influx-token-2024}"
+INFLUXDB_ADMIN_USER="${INFLUXDB_ADMIN_USER}"
+INFLUXDB_ADMIN_PASSWORD="${INFLUXDB_ADMIN_PASSWORD}"
+INFLUXDB_ORG="${INFLUXDB_ORG}"
+INFLUXDB_BUCKET="${INFLUXDB_BUCKET}"
+INFLUXDB_ADMIN_TOKEN="${INFLUXDB_ADMIN_TOKEN}"
 
 # Create organization if it doesn't exist
 echo "Creating organization: $INFLUXDB_ORG"

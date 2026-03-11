@@ -208,6 +208,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
   const cancelRef = useRef<HTMLButtonElement>(null);
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
+  const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
 
   const tm = useTenantManagement({ user: user ?? null });
 
@@ -504,7 +505,12 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   </Thead>
                   <Tbody>
                     {tm.filteredTenants.map((t) => (
-                      <Tr key={t.id}>
+                      <Tr
+                        key={t.id}
+                        cursor="pointer"
+                        _hover={{ bg: tableRowHoverBg }}
+                        onClick={() => tm.handleViewTenant(t)}
+                      >
                         <Td fontWeight="medium">{t.organization_name || "—"}</Td>
                         <Td>{t.tenant_id || "—"}</Td>
                         <Td><Text fontSize="sm">{t.email}</Text></Td>
@@ -600,7 +606,12 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 </Thead>
                 <Tbody>
                   {tm.filteredTenantUsers.map((u) => (
-                    <Tr key={u.id}>
+                    <Tr
+                      key={u.id}
+                      cursor="pointer"
+                      _hover={{ bg: tableRowHoverBg }}
+                      onClick={() => tm.handleViewUser(u)}
+                    >
                       <Td fontWeight="medium">{u.username || "—"}</Td>
                       <Td>{u.email}</Td>
                       <Td fontSize="sm">{u.tenant_id}</Td>

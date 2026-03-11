@@ -120,6 +120,12 @@ const LogsPage: React.FC = () => {
   
   // Check if user is admin
   const isAdmin = user?.roles?.includes('ADMIN') || false;
+  // Check if user has USER role - hide logs UI for them
+  const isUser = user?.roles?.includes('USER') || false;
+  // Check if admin is super admin (no tenant_id) or tenant admin (has tenant_id)
+  const tenantIdFromToken = getTenantIdFromToken();
+  const isSuperAdmin = isAdmin && !tenantIdFromToken; // Super admin: admin without tenant_id
+  const isTenantAdmin = isAdmin && !!tenantIdFromToken; // Tenant admin: admin with tenant_id
   
   const cardBg = useColorModeValue("white", "gray.800");
   const borderColor = useColorModeValue("gray.200", "gray.700");
@@ -140,11 +146,23 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, authLoading, router, toast]);
 
-  // Redirect if user doesn't have tenant_id (but allow admins)
+  // Redirect if user has USER role or doesn't have tenant_id (but allow admins)
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
+      // Hide logs for users with USER role
+      if (isUser) {
+        toast({
+          title: "Access Denied",
+          description: "You do not have permission to view logs.",
+          status: "error",
+          duration: 5000,
+          isClosable: true,
+        });
+        router.push("/");
+        return;
+      }
+      // Also check tenant_id for non-admin users
       const tenantId = getTenantIdFromToken();
-      const isAdmin = user?.roles?.includes('ADMIN') || false;
       if (!tenantId && !isAdmin) {
         toast({
           title: "Access Denied",
@@ -156,7 +174,7 @@ const LogsPage: React.FC = () => {
         router.push("/");
       }
     }
-  }, [isAuthenticated, authLoading, user, router, toast]);
+  }, [isAuthenticated, authLoading, user, isUser, isAdmin, router, toast]);
 
   // Static list of all services (not dependent on OpenSearch logs)
   // This ensures all services are always available in the dropdown
@@ -181,7 +199,7 @@ const LogsPage: React.FC = () => {
   const servicesLoading = false;
   const servicesError = null;
 
-  // Fetch tenants list (only for admins)
+  // Fetch tenants list (only for super admins - admins without tenant_id)
   const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } = useQuery({
     queryKey: ["tenants-list"],
     queryFn: async () => {
@@ -206,7 +224,7 @@ const LogsPage: React.FC = () => {
         throw error; // Re-throw to let React Query handle it
       }
     },
-    enabled: isAuthenticated && isAdmin,
+    enabled: isAuthenticated && isSuperAdmin, // Only fetch for super admins
     staleTime: 5 * 60 * 1000, // 5 minutes
     retry: 1, // Retry once on failure
   });
@@ -347,6 +365,8 @@ const LogsPage: React.FC = () => {
       });
       
       // First, fetch page 1 to get total count
+      // Only super admins (admin without tenant_id) can filter by tenant_id parameter
+      // Tenant admins are automatically filtered by their tenant_id from JWT
       const firstPage = await searchLogs({
         page: 1,
         size: fetchSize,
@@ -355,7 +375,7 @@ const LogsPage: React.FC = () => {
         search_text: appliedSearchText && appliedSearchText.trim() !== "" ? appliedSearchText : undefined,
         start_time: apiStartTime,
         end_time: apiEndTime,
-        tenant_id: isAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
+        tenant_id: isSuperAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
       });
       
       // Ensure logs is always an array
@@ -393,7 +413,7 @@ const LogsPage: React.FC = () => {
                   search_text: appliedSearchText && appliedSearchText.trim() !== "" ? appliedSearchText : undefined,
                   start_time: apiStartTime,
                   end_time: apiEndTime,
-                  tenant_id: isAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
+                  tenant_id: isSuperAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
                 }).catch((error) => {
                 console.error(`Error fetching page ${page}:`, error);
                 return { logs: [] }; // Return empty logs on error
@@ -521,28 +541,11 @@ const LogsPage: React.FC = () => {
     }
   }, [logsData, services, appliedService]);
 
-  // Debug: Log authentication state
+  // Debug: Log authentication state (uses decrypted token from getJwtToken)
   useEffect(() => {
+    // Auth state effect - no token data logged (security)
     if (typeof window !== 'undefined') {
-      const localToken = localStorage.getItem('access_token');
-      const sessionToken = sessionStorage.getItem('access_token');
-      const token = localToken || sessionToken;
-      console.log('Logs page auth state:', {
-        isAuthenticated,
-        authLoading,
-        hasLocalToken: !!localToken,
-        hasSessionToken: !!sessionToken,
-        hasToken: !!token,
-        tokenLength: token?.length || 0,
-        tokenPreview: token ? `${token.substring(0, 20)}...` : 'none',
-      });
-      
-      // Also check what getJwtToken returns
-      const jwtFromApi = getJwtToken();
-      console.log('getJwtToken() result:', {
-        hasToken: !!jwtFromApi,
-        tokenLength: jwtFromApi?.length || 0,
-      });
+      getJwtToken(); // ensure token is available for requests
     }
   }, [isAuthenticated, authLoading]);
 
@@ -840,32 +843,48 @@ const LogsPage: React.FC = () => {
 
       <ContentLayout>
         <VStack spacing={6} w="full" align="stretch">
-          {/* Page Header */}
-          <Box textAlign="center" mb={2}>
-            <Heading size="lg" color="gray.800" mb={1}>
-              Logs Dashboard
-            </Heading>
-            <Text color="gray.600" fontSize="sm">
-              View and search logs from OpenSearch
-            </Text>
-          </Box>
+          {/* Hide logs UI for users with USER role */}
+          {!authLoading && isAuthenticated && isUser ? (
+            <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
+              <CardBody>
+                <Flex direction="column" align="center" justify="center" py={12}>
+                  <Text fontSize="lg" color="gray.500" fontWeight="medium" mb={2}>
+                    Access Denied
+                  </Text>
+                  <Text fontSize="sm" color="gray.400" textAlign="center">
+                    You do not have permission to view logs.
+                  </Text>
+                </Flex>
+              </CardBody>
+            </Card>
+          ) : (
+            <>
+              {/* Page Header */}
+              <Box textAlign="center" mb={2}>
+                <Heading size="lg" color="gray.800" mb={1}>
+                  Logs Dashboard
+                </Heading>
+                <Text color="gray.600" fontSize="sm">
+                  View and search logs from OpenSearch
+                </Text>
+              </Box>
 
-          {/* Show auth warning if not authenticated */}
-          {!authLoading && !isAuthenticated && (
-            <Alert status="warning">
-              <AlertIcon />
-              <AlertDescription>
-                Please log in to view logs. <Button
-                  size="sm"
-                  colorScheme="blue"
-                  ml={4}
-                  onClick={() => router.push("/auth")}
-                >
-                  Log In
-                </Button>
-              </AlertDescription>
-            </Alert>
-          )}
+              {/* Show auth warning if not authenticated */}
+              {!authLoading && !isAuthenticated && (
+                <Alert status="warning">
+                  <AlertIcon />
+                  <AlertDescription>
+                    Please log in to view logs. <Button
+                      size="sm"
+                      colorScheme="blue"
+                      ml={4}
+                      onClick={() => router.push("/auth")}
+                    >
+                      Log In
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              )}
 
           {/* Show error messages */}
           {logsError && (
@@ -1026,8 +1045,8 @@ const LogsPage: React.FC = () => {
             <CardBody>
               <Heading size="sm" mb={4} color="gray.700">Filters</Heading>
               <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} w="full">
-                {/* Tenant Filter - Admin Only */}
-                {isAdmin && (
+                {/* Tenant Filter - Super Admin Only (admin without tenant_id) */}
+                {isSuperAdmin && (
                   <FormControl>
                     <FormLabel fontWeight="medium">Tenant</FormLabel>
                     <Select
@@ -1440,6 +1459,8 @@ const LogsPage: React.FC = () => {
               )}
             </CardBody>
           </Card>
+            </>
+          )}
         </VStack>
       </ContentLayout>
     </>

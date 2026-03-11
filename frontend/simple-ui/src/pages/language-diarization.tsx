@@ -17,9 +17,10 @@ import {
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performLanguageDiarizationInference, listLanguageDiarizationServices } from "../services/languageDiarizationService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
@@ -40,15 +41,6 @@ const LanguageDiarizationPage: React.FC = () => {
     queryFn: listLanguageDiarizationServices,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
-
-  // Auto-select first available Language Diarization service when list loads
-  useEffect(() => {
-    if (!languageDiarizationServices || languageDiarizationServices.length === 0) return;
-    if (!serviceId) {
-      // If no service selected, select first available
-      setServiceId(languageDiarizationServices[0].service_id);
-    }
-  }, [languageDiarizationServices, serviceId]);
 
   const {
     isRecording,
@@ -179,10 +171,10 @@ const LanguageDiarizationPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Language Diarization
+              {getServiceTitle("language-diarization")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Identify when language changes occur within spoken audio. Segment audio based on the language being spoken.
+              {getServiceDescription("language-diarization")}
             </Text>
           </Box>
 
@@ -199,7 +191,8 @@ const LanguageDiarizationPage: React.FC = () => {
               {/* Service Selection */}
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  Language Diarization Service:
+                  Language Diarization Service{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 {servicesLoading ? (
                   <HStack spacing={2} p={2}>
@@ -250,7 +243,8 @@ const LanguageDiarizationPage: React.FC = () => {
 
               <Box>
                 <Text mb={4} fontSize="sm" fontWeight="semibold">
-                  Audio Input:
+                  Audio Input{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </Text>
                 <AudioRecorder
                   onAudioReady={handleAudioReady}
@@ -277,6 +271,11 @@ const LanguageDiarizationPage: React.FC = () => {
                 </Box>
               )}
 
+              {/* Instruction above Submit (consistent with other services) */}
+              <Text fontSize="sm" color="gray.600">
+                Record audio or upload a file above, then click &quot;Submit for Diarization&quot; to detect language switches in the audio.
+              </Text>
+
               {/* Submit Button */}
               <Button
                 colorScheme="orange"
@@ -285,7 +284,7 @@ const LanguageDiarizationPage: React.FC = () => {
                 loadingText="Processing..."
                 size="md"
                 w="full"
-                isDisabled={!audioData || fetching}
+                isDisabled={!audioData || !serviceId || fetching}
               >
                 Submit for Diarization
               </Button>

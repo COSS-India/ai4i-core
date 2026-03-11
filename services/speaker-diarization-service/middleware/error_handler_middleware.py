@@ -155,21 +155,12 @@ def add_error_handlers(app: FastAPI) -> None:
                 },
             )
         
-        # PRIORITY 3: For invalid API key errors in BOTH mode, check if we have Bearer token
-        # If we have Bearer token (BOTH mode) and error is about invalid API key, it's likely ownership
+        # PRIORITY 3: For invalid API key errors, always surface the actual "Invalid API key"
+        # message from auth-service instead of converting it to an ownership error.
+        # This ensures that when an invalid/unknown API key is provided, clients see
+        # an "Invalid API key" style message rather than
+        # "API key does not belong to the authenticated user".
         if "Invalid API key" in (error_msg or ""):
-            has_bearer_token = authorization_provided and raw_headers.get("authorization", "").startswith("Bearer ")
-            # In BOTH mode, if we have JWT token and API key validation fails, it's ownership issue
-            if has_bearer_token:
-                return JSONResponse(
-                    status_code=401,
-                    content={
-                        "detail": {
-                            "error": "AUTHORIZATION_ERROR",
-                            "message": ownership_msg,
-                        }
-                    },
-                )
             clean_message = _strip_status_prefix(error_msg or "Invalid API key")
             return JSONResponse(
                 status_code=401,

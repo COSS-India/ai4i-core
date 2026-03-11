@@ -36,8 +36,7 @@ from services.text_service import TextService
 from services.voice_service import VoiceService
 from utils.triton_client import TritonClient
 from repositories.tts_repository import TTSRepository
-from middleware.tenant_schema_router import TenantSchemaRouter
-from middleware.tenant_middleware import TenantMiddleware
+from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 
 # Try to import streaming service, but make it optional
 try:
@@ -129,9 +128,9 @@ async def lifespan(app: FastAPI):
     try:
         # Initialize Redis connection
         global redis_client
-        redis_host = os.getenv("REDIS_HOST", "redis")
-        redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
-        redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+        redis_host = os.getenv("REDIS_HOST")
+        redis_port = int(os.getenv("REDIS_PORT"))
+        redis_password = os.getenv("REDIS_PASSWORD")
         
         redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
         redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
@@ -143,8 +142,7 @@ async def lifespan(app: FastAPI):
         # Initialize PostgreSQL async engine
         global db_engine, db_session_factory
         database_url = os.getenv(
-            "DATABASE_URL", 
-            "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db"
+            "DATABASE_URL"
         )
         
         db_pool_size = int(os.getenv("DB_POOL_SIZE", "20"))
@@ -180,15 +178,7 @@ async def lifespan(app: FastAPI):
         app.state.db_session_factory = db_session_factory
         app.state.db_engine = db_engine
 
-         # Initialize tenant schema router for multi-tenant routing
-        multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL")
-        if not multi_tenant_db_url:
-            logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
-            multi_tenant_db_url = database_url
-        logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")
-        tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
-        app.state.tenant_schema_router = tenant_schema_router
-        logger.info("Tenant schema router initialized with multi-tenant database")
+        # Tenant schema router is created by MultiTenantPlugin at registration time
         
         # Update rate limiting middleware with Redis client
         for middleware in app.user_middleware:
@@ -202,7 +192,7 @@ async def lifespan(app: FastAPI):
             audio_service = AudioService()
             text_service = TextService()
             voice_service = VoiceService()
-            triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
+            triton_url = os.getenv("TRITON_ENDPOINT")
             # Strip http:// or https:// scheme from URL (like ASR service)
             if triton_url.startswith(('http://', 'https://')):
                 triton_url = triton_url.split('://', 1)[1]
@@ -294,6 +284,12 @@ async def lifespan(app: FastAPI):
             await db_engine.dispose()
             logger.info("PostgreSQL connection closed")
         
+        # Close tenant schema router connections
+        tenant_router = getattr(app.state, "tenant_schema_router", None)
+        if tenant_router:
+            await tenant_router.close_all()
+            logger.info("Tenant schema router connections closed")
+        
         logger.info("TTS Service shutdown complete")
         
     except Exception as e:
@@ -322,15 +318,6 @@ app = FastAPI(
             "description": "Service health and readiness checks"
         }
     ],
-    contact={
-        "name": "AI4ICore Team",
-        "url": "https://github.com/AI4X",
-        "email": "support@ai4x.com"
-    },
-    license_info={
-        "name": "MIT",
-        "url": "https://opensource.org/licenses/MIT"
-    },
     lifespan=lifespan
 )
 
@@ -383,9 +370,9 @@ app.add_middleware(CorrelationMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 
 # Synchronous Redis client for Model Management middleware (A/B testing, service resolution)
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = int(os.getenv("REDIS_PORT"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 redis_client_sync = None
 try:
     import redis as redis_sync
@@ -430,9 +417,14 @@ model_mgmt_plugin.register_plugin(app, redis_client=redis_client_sync)
 app.add_middleware(AuthContextMiddleware, path_prefixes=model_mgmt_config.middleware_paths or ["/api/v1"])
 logger.info("Model Management Plugin initialized for TTS service (A/B experiments + metrics)")
 
-# Add tenant middleware (after auth, before routes)
-# This extracts tenant context from JWT or user_id
-app.add_middleware(TenantMiddleware)
+# Multi-tenant plugin (tenant schema router + middleware)
+# db_session_factory is set in app.state during lifespan
+multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL")
+multi_tenant_config = MultiTenantConfig.from_env()
+multi_tenant_config.tenant_paths = ["/api/v1/tts"]
+multi_tenant_plugin = MultiTenantPlugin(multi_tenant_config)
+multi_tenant_plugin.register_plugin(app, multi_tenant_db_url=multi_tenant_db_url)
+logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for TTS service")
 
 
 # Add rate limiting middleware (will be configured with Redis in lifespan)
