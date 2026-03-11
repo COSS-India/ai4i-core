@@ -6,9 +6,10 @@ Formats log records as structured JSON for easy parsing and searching.
 
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+
+from ai4icore_env import app_env
 
 from .context import get_trace_id, get_organization
 
@@ -51,9 +52,9 @@ class JSONFormatter(logging.Formatter):
         """
         super().__init__()
         
-        self.service_name = service_name or os.getenv("SERVICE_NAME", "unknown")
-        self.service_version = service_version or os.getenv("SERVICE_VERSION", "1.0.0")
-        self.environment = environment or os.getenv("ENVIRONMENT", "development")
+        self.service_name = service_name or app_env.service_name or "unknown"
+        self.service_version = service_version or app_env.service_version or "1.0.0"
+        self.environment = environment or app_env.environment or "development"
         self.include_hostname = include_hostname
         
         if include_hostname:

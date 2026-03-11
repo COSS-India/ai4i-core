@@ -1,7 +1,6 @@
 """
 Pydantic models for ASR inference requests.
 
-Adapted from Dhruva-Platform-2 ULCA schemas for ASR service.
 """
 
 from enum import Enum

@@ -21,8 +21,8 @@ from ai4icore_multi_tenant import (
 )
 
 get_tenant_db_session = get_tenant_db_session_factory()
-import os
 import httpx
+from ai4icore_env import app_env
 from middleware.exceptions import ErrorDetail
 from fastapi import Depends
 
@@ -38,7 +38,7 @@ inference_router = APIRouter(
 
 
 #Tenant routing and service checks
-API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
+API_GATEWAY_URL = app_env.api_gateway_url
 
 
 async def get_language_detection_service(

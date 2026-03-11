@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from ai4icore_env import app_env
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig, AuthContextMiddleware
 
@@ -74,26 +75,24 @@ if LOGGING_AVAILABLE:
     uvicorn_access.setLevel(logging.CRITICAL + 1)
 else:
     logging.basicConfig(
-        level=os.getenv("LOG_LEVEL", "INFO"),
+        level=app_env.log_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     logger = logging.getLogger(__name__)
 
-REDIS_HOST = os.getenv("REDIS_HOST")
-REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
-REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
+REDIS_HOST = app_env.redis_host
+REDIS_PORT = app_env.redis_port
+REDIS_PASSWORD = app_env.redis_password
+REDIS_TIMEOUT = app_env.redis_timeout
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL"
-)
+DATABASE_URL = app_env.get_database_url()
 
 # Multi-tenant database URL for tenant schema routing
-MULTI_TENANT_DB_URL = os.getenv("MULTI_TENANT_DB_URL")
+MULTI_TENANT_DB_URL = app_env.get_multi_tenant_db_url()
 
-TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "")
-TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
-TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT", "300.0"))
+TRITON_ENDPOINT = app_env.triton_endpoint or ""
+TRITON_API_KEY = app_env.triton_api_key
+TRITON_TIMEOUT = app_env.triton_timeout
 
 redis_client: Optional[redis.Redis] = None
 db_engine: Optional[AsyncEngine] = None
@@ -201,16 +200,16 @@ async def lifespan(app: FastAPI):
     # Service registry
     try:
         registry_client = ServiceRegistryHttpClient()
-        service_name = os.getenv("SERVICE_NAME", "language-diarization-service")
-        service_port = int(os.getenv("SERVICE_PORT", "9002"))
-        public_base_url = os.getenv("SERVICE_PUBLIC_URL")
+        service_name = app_env.service_name or "language-diarization-service"
+        service_port = app_env.service_port
+        public_base_url = app_env.service_public_url
         if public_base_url:
             service_url = public_base_url.rstrip("/")
         else:
-            service_host = os.getenv("SERVICE_HOST", service_name)
+            service_host = app_env.service_host or service_name
             service_url = f"http://{service_host}:{service_port}"
         health_url = service_url + "/health"
-        instance_id = os.getenv("SERVICE_INSTANCE_ID", f"{service_name}-{os.getpid()}")
+        instance_id = app_env.service_instance_id or f"{service_name}-{os.getpid()}"
         registered_instance_id = await registry_client.register(
             service_name=service_name,
             service_url=service_url,
@@ -238,7 +237,7 @@ async def lifespan(app: FastAPI):
     try:
         try:
             if registry_client and registered_instance_id:
-                service_name = os.getenv("SERVICE_NAME", "language-diarization-service")
+                service_name = app_env.service_name or "language-diarization-service"
                 await registry_client.deregister(service_name, registered_instance_id)
         except Exception as e:
             logger.warning("Service registry deregistration error: %s", e)
@@ -305,8 +304,8 @@ else:
 # Model Management Plugin - single source of truth for Triton endpoint/model (no env fallback)
 try:
     mm_config = ModelManagementConfig(
-        model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
-        model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
+        model_management_service_url=app_env.model_management_service_url,
+        model_management_api_key=app_env.model_management_service_api_key,
         cache_ttl_seconds=300,
         triton_endpoint_cache_ttl=300,
         default_triton_endpoint="",
@@ -334,14 +333,14 @@ app.add_middleware(
 # Initialize AI4ICore Logging Plugin
 if LOGGING_AVAILABLE and register_logging_plugin and LoggingConfig:
     logging_config = LoggingConfig.from_env()
-    logging_config.service_name = os.getenv("SERVICE_NAME")
-    logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+    logging_config.service_name = app_env.service_name
+    logging_config.use_kafka = app_env.use_kafka_logging
     register_logging_plugin(app, config=logging_config)
     logger.info("✅ AI4ICore Logging Plugin initialized for Language Diarization service")
 
 # Rate limiting (Redis client will be picked from app.state)
-rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+rate_limit_per_minute = app_env.rate_limit_per_minute
+rate_limit_per_hour = app_env.rate_limit_per_hour
 app.add_middleware(
     RateLimitMiddleware,
     redis_client=None,
@@ -381,7 +380,7 @@ async def health(request: Request):
     triton_ok = False
 
     # Check if health logs should be excluded
-    exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+    exclude_health_logs = app_env.exclude_health_logs
     
     try:
         rc = getattr(request.app.state, "redis_client", None)
@@ -428,8 +427,8 @@ async def health(request: Request):
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("SERVICE_PORT", "9002"))
-    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    port = app_env.service_port
+    log_level = app_env.log_level.lower()
 
     uvicorn.run(
         "main:app",

@@ -28,6 +28,7 @@ from ai4icore_logging import (
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig, AuthContextMiddleware
+from ai4icore_env import app_env
 
 # Import streaming service components
 from services.streaming_service import StreamingASRService
@@ -74,12 +75,7 @@ async def lifespan(app: FastAPI):
         global redis_client
         if redis_client is None:
             # Fallback Redis initialization if not done earlier
-            redis_host = os.getenv("REDIS_HOST")
-            redis_port = int(os.getenv("REDIS_PORT"))
-            redis_password = os.getenv("REDIS_PASSWORD")
-            
-            redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
-            redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
+            redis_client = redis.from_url(app_env.get_redis_url(), encoding="utf-8", decode_responses=True)
             
             # Test Redis connection
             await redis_client.ping()
@@ -89,12 +85,10 @@ async def lifespan(app: FastAPI):
         
         # Initialize PostgreSQL async engine
         global db_engine, db_session_factory
-        database_url = os.getenv(
-            "DATABASE_URL"
-        )
+        database_url = app_env.get_database_url()
         
-        db_pool_size = int(os.getenv("DB_POOL_SIZE", "20"))
-        db_max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+        db_pool_size = app_env.db_pool_size
+        db_max_overflow = app_env.db_max_overflow
         
         db_engine = create_async_engine(
             database_url,
@@ -117,9 +111,9 @@ async def lifespan(app: FastAPI):
         
         # NOTE: Triton endpoint/model MUST come from Model Management for inference.
         # No environment variable fallback - all resolution via Model Management database.
-        TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
-        TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT", "300.0"))
-        
+        TRITON_API_KEY = app_env.triton_api_key
+        TRITON_TIMEOUT = app_env.triton_timeout
+
         # Store Triton config in app state (for use by routers after Model Management resolution)
         app.state.triton_api_key = TRITON_API_KEY
         app.state.triton_timeout = TRITON_TIMEOUT
@@ -144,7 +138,7 @@ async def lifespan(app: FastAPI):
                 # NOTE: Streaming service requires Model Management for Triton client resolution
                 # For now, skip streaming service initialization if Triton client is not available
                 if triton_client:
-                    response_frequency_ms = int(os.getenv("STREAMING_RESPONSE_FREQUENCY_MS", "2000"))
+                    response_frequency_ms = app_env.streaming_response_frequency_ms
                     streaming_service = StreamingASRService(
                         audio_service=audio_service,
                         triton_client=triton_client,
@@ -173,13 +167,13 @@ async def lifespan(app: FastAPI):
         
         # NOTE: Triton endpoint/model MUST come from Model Management for inference.
         # No environment variable fallback - all resolution via Model Management database.
-        TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
-        TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT", "300.0"))
-        
+        TRITON_API_KEY = app_env.triton_api_key
+        TRITON_TIMEOUT = app_env.triton_timeout
+
         # Store Triton config in app state (for use by routers after Model Management resolution)
         app.state.triton_api_key = TRITON_API_KEY
         app.state.triton_timeout = TRITON_TIMEOUT
-        
+
         # NOTE: Error handlers are registered AFTER app starts (outside lifespan)
         # to match NMT/TTS pattern and ensure proper registration order
         # to ensure middleware can be added. See line ~330 for registration.
@@ -188,16 +182,16 @@ async def lifespan(app: FastAPI):
         try:
             global registry_client, registered_instance_id
             registry_client = ServiceRegistryHttpClient()
-            service_name = os.getenv("SERVICE_NAME", "asr-service")
-            service_port = int(os.getenv("SERVICE_PORT", "8087"))
-            public_base_url = os.getenv("SERVICE_PUBLIC_URL")
+            service_name = app_env.service_name or "asr-service"
+            service_port = app_env.service_port
+            public_base_url = app_env.service_public_url
             if public_base_url:
                 service_url = public_base_url.rstrip("/")
             else:
-                service_host = os.getenv("SERVICE_HOST", service_name)
+                service_host = app_env.service_host or service_name
                 service_url = f"http://{service_host}:{service_port}"
             health_url = service_url + "/health"
-            instance_id = os.getenv("SERVICE_INSTANCE_ID", f"{service_name}-{os.getpid()}")
+            instance_id = app_env.service_instance_id or f"{service_name}-{os.getpid()}"
             registered_instance_id = await registry_client.register(
                 service_name=service_name,
                 service_url=service_url,
@@ -226,7 +220,7 @@ async def lifespan(app: FastAPI):
         # Deregister from registry if previously registered
         try:
             if registry_client and registered_instance_id:
-                service_name = os.getenv("SERVICE_NAME", "asr-service")
+                service_name = app_env.service_name or "asr-service"
                 await registry_client.deregister(service_name, registered_instance_id)
         except Exception as e:
             logger.warning("Service registry deregistration error: %s", e)
@@ -297,17 +291,17 @@ logger.info("✅ AI4ICore Observability Plugin initialized for ASR service")
 # Registers CorrelationMiddleware and ServiceRequestLoggingMiddleware
 # IMPORTANT: Must be registered AFTER ObservabilityPlugin so tenant_id is available
 logging_config = LoggingConfig.from_env()
-logging_config.service_name = os.getenv("SERVICE_NAME")
-logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+logging_config.service_name = app_env.service_name
+logging_config.use_kafka = app_env.use_kafka_logging
 register_logging_plugin(app, config=logging_config)
 logger.info("✅ AI4ICore Logging Plugin initialized for ASR service")
 
 # Model Management Plugin - registered AFTER Observability
 # so that Model Management runs first and Observability can use cached body
-TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
+TRITON_API_KEY = app_env.triton_api_key
 model_mgmt_config = ModelManagementConfig(
-    model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL"),
-    model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
+    model_management_service_url=app_env.model_management_service_url,
+    model_management_api_key=app_env.model_management_service_api_key,
     cache_ttl_seconds=300,
     triton_endpoint_cache_ttl=300,
     default_triton_endpoint="",  # No fallback - must come from Model Management
@@ -343,14 +337,10 @@ app.add_middleware(
 # Initialize Redis client early for middleware
 redis_client = None
 try:
-    redis_host = os.getenv("REDIS_HOST")
-    redis_port = int(os.getenv("REDIS_PORT"))
-    redis_password = os.getenv("REDIS_PASSWORD")
-    
     redis_client = redis.Redis(
-        host=redis_host,
-        port=redis_port,
-        password=redis_password,
+        host=app_env.redis_host,
+        port=app_env.redis_port,
+        password=app_env.redis_password,
         decode_responses=True,
         socket_connect_timeout=5,
         socket_timeout=5,
@@ -373,7 +363,7 @@ multi_tenant_config.tenant_paths = ["/api/v1/asr"]
 multi_tenant_plugin = MultiTenantPlugin(multi_tenant_config)
 multi_tenant_plugin.register_plugin(
     app,
-    multi_tenant_db_url=os.getenv("MULTI_TENANT_DB_URL") or os.getenv("DATABASE_URL"),
+    multi_tenant_db_url=app_env.get_multi_tenant_db_url() or app_env.get_database_url(),
 )
 logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for ASR service")
 
@@ -382,8 +372,8 @@ logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for ASR service")
 
 # Add rate limiting middleware (if Redis is available)
 if redis_client:
-    rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-    rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+    rate_limit_per_minute = app_env.rate_limit_per_minute
+    rate_limit_per_hour = app_env.rate_limit_per_hour
     app.add_middleware(
         RateLimitMiddleware,
         redis_client=redis_client,
@@ -457,7 +447,7 @@ async def health_check() -> Dict[str, Any]:
     }
     
     # Check if health logs should be excluded
-    exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+    exclude_health_logs = app_env.exclude_health_logs
     
     try:
         import time
@@ -546,8 +536,8 @@ except ImportError as e:
 if __name__ == "__main__":
     import uvicorn
     
-    port = int(os.getenv("SERVICE_PORT", "8087"))
-    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    port = app_env.service_port
+    log_level = app_env.log_level.lower()
     
     uvicorn.run(
         "main:app",

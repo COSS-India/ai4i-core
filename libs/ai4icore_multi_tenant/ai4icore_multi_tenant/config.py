@@ -1,8 +1,9 @@
 """
 Multi-Tenant Plugin Configuration
 """
-import os
 from typing import List, Optional
+
+from ai4icore_env import app_env
 
 
 class MultiTenantConfig:
@@ -23,11 +24,11 @@ class MultiTenantConfig:
     @classmethod
     def from_env(cls) -> "MultiTenantConfig":
         """Load configuration from environment variables."""
-        api_gateway_url = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
-        multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL")
-        tenant_paths_str = os.getenv("TENANT_PATHS", "/api/v1")
+        api_gateway_url = app_env.api_gateway_url
+        multi_tenant_db_url = app_env.get_multi_tenant_db_url()
+        tenant_paths_str = app_env.tenant_paths or "/api/v1"
         tenant_paths = [p.strip() for p in tenant_paths_str.split(",") if p.strip()]
-        enabled = os.getenv("MULTI_TENANT_ENABLED", "true").lower() == "true"
+        enabled = app_env.multi_tenant_enabled
 
         return cls(
             api_gateway_url=api_gateway_url,

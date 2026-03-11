@@ -3,7 +3,6 @@ Global error handler middleware for consistent error responses.
 
 
 """
-import os
 import time
 import logging
 import traceback
@@ -14,6 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+from ai4icore_env import app_env
 from ai4icore_logging import get_correlation_id, get_logger
 
 from middleware.exceptions import (
@@ -409,8 +409,8 @@ def add_error_handlers(app: FastAPI) -> None:
             return await http_exception_handler(request, actual_exc)
         
         # Check if health/metrics logs should be excluded
-        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
-        exclude_metrics_logs = os.getenv("EXCLUDE_METRICS_LOGS", "false").lower() == "true"
+        exclude_health_logs = app_env.exclude_health_logs
+        exclude_metrics_logs = app_env.exclude_metrics_logs
         
         path = request.url.path.lower().rstrip('/')
         should_skip = False

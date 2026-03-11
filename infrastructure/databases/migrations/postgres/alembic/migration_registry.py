@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import quote_plus
 
+from ai4icore_env import app_env
 from dotenv import load_dotenv
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.orm import declarative_base
@@ -50,7 +51,7 @@ DATABASE_ORDER = [
     "auth_db",
     "config_db",
     "dashboard_db",
-    "dhruva_platform_db",
+    "ai4i_platform_db",
     "metrics_db",
     "model_management_db",
     "multi_tenant_db",
@@ -227,7 +228,7 @@ def _load_multi_tenant_metadata():
     return _with_temp_module("db_connection", fake_db_connection, loader)
 
 
-def _load_dhruva_platform_metadata():
+def _load_ai4i_platform_metadata():
     module = _load_module(
         "ai4i_alembic_dynamic.policy_engine.db_models",
         PROJECT_ROOT / "services" / "policy-engine" / "app" / "db_models.py",
@@ -272,14 +273,14 @@ DATABASE_SPECS = {
         database_name_key="DASHBOARD_DB_NAME",
         metadata_loader=None,
     ),
-    "dhruva_platform_db": DatabaseSpec(
-        name="dhruva_platform_db",
+    "ai4i_platform_db": DatabaseSpec(
+        name="ai4i_platform_db",
         user_key="POSTGRES_USER",
         password_key="POSTGRES_PASSWORD",
         host_key="POSTGRES_HOST",
         port_key="POSTGRES_PORT",
-        database_name_key="DHRUVA_PLATFORM_DB_NAME",
-        metadata_loader=_load_dhruva_platform_metadata,
+        database_name_key="AI4I_PLATFORM_DB_NAME",
+        metadata_loader=_load_ai4i_platform_metadata,
     ),
     "metrics_db": DatabaseSpec(
         name="metrics_db",
@@ -380,8 +381,8 @@ def supports_autogenerate(name: str) -> bool:
 def ensure_database_exists(name: str) -> None:
     parts = get_connection_parts(name)
     target_database = parts["database"]
-    dhruva_platform_db = os.getenv("DHRUVA_PLATFORM_DB_NAME", "dhruva_platform")
-    maintenance_databases = ("postgres", dhruva_platform_db, target_database)
+    ai4i_platform_db = app_env.ai4i_platform_db_name
+    maintenance_databases = ("postgres", ai4i_platform_db, target_database)
     last_error: Exception | None = None
 
     for maintenance_db in maintenance_databases:

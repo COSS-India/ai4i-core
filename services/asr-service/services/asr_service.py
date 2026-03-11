@@ -1,7 +1,6 @@
 """
 Main ASR service class containing core inference logic.
 
-Adapted from Dhruva-Platform-2 run_asr_triton_inference method.
 """
 
 import asyncio

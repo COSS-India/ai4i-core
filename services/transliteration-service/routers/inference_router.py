@@ -41,8 +41,8 @@ from middleware.exceptions import (
     TextProcessingError,
     ErrorDetail
 )
-import os
 import httpx
+from ai4icore_env import app_env
 
 from services.constants.error_messages import (
     NO_TEXT_INPUT,
@@ -68,7 +68,7 @@ from services.constants.error_messages import (
 )
 
 
-API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
+API_GATEWAY_URL = app_env.api_gateway_url
 
 
 logger = logging.getLogger(__name__)

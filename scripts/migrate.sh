@@ -29,7 +29,7 @@ DATABASES=(
   "auth_db"
   "config_db"
   "dashboard_db"
-  "dhruva_platform_db"
+  "ai4i_platform_db"
   "metrics_db"
   "model_management_db"
   "multi_tenant_db"
