@@ -48,17 +48,20 @@ class LoggingConfig:
         if self.service_version is None:
             self.service_version = os.getenv("SERVICE_VERSION")
         if self.environment is None:
-            self.environment = os.getenv("ENVIRONMENT", os.getenv("ENV", "development"))
+            self.environment = os.getenv("ENVIRONMENT", os.getenv("ENV"))
         
         # Logging settings
         if self.log_level is None:
-            log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
+            log_level_str = os.getenv("LOG_LEVEL").upper()
             self.log_level = getattr(logging, log_level_str, logging.INFO)
         if self.root_level is None:
-            root_level_str = os.getenv("ROOT_LOG_LEVEL", "WARNING").upper()
-            self.root_level = getattr(logging, root_level_str, logging.WARNING)
+            root_level_str = os.getenv("ROOT_LOG_LEVEL")
+            if root_level_str:
+                self.root_level = getattr(logging, root_level_str.upper(), logging.WARNING)
+            else:
+                self.root_level = logging.WARNING
         
-        use_kafka_env = os.getenv("USE_KAFKA_LOGGING", "false")
+        use_kafka_env = os.getenv("USE_KAFKA_LOGGING")
         self.use_kafka = use_kafka_env.lower() in ("true", "1", "yes", "on")
         
         self.kafka_topic = os.getenv("KAFKA_LOG_TOPIC", self.kafka_topic)
@@ -77,22 +80,22 @@ class LoggingConfig:
             self.request_logging_middleware_enabled = request_logging_enabled_env.lower() in ("true", "1", "yes", "on")
         
         # Request logging filtering
-        exclude_health_env = os.getenv("EXCLUDE_HEALTH_LOGS", "false")
+        exclude_health_env = os.getenv("EXCLUDE_HEALTH_LOGS")
         self.exclude_health_logs = exclude_health_env.lower() in ("true", "1", "yes", "on")
         
-        exclude_metrics_env = os.getenv("EXCLUDE_METRICS_LOGS", "false")
+        exclude_metrics_env = os.getenv("EXCLUDE_METRICS_LOGS")
         self.exclude_metrics_logs = exclude_metrics_env.lower() in ("true", "1", "yes", "on")
         
-        exclude_options_env = os.getenv("EXCLUDE_OPTIONS_LOGS", "true")
+        exclude_options_env = os.getenv("EXCLUDE_OPTIONS_LOGS")
         self.exclude_options_logs = exclude_options_env.lower() in ("true", "1", "yes", "on")
         
         if self.allowed_log_levels is None:
-            self.allowed_log_levels = os.getenv("ALLOWED_LOG_LEVELS", "DEBUG,INFO,WARNING,ERROR")
+            self.allowed_log_levels = os.getenv("ALLOWED_LOG_LEVELS")
         
         if self.min_log_level is None:
-            self.min_log_level = os.getenv("MIN_LOG_LEVEL", "INFO")
+            self.min_log_level = os.getenv("MIN_LOG_LEVEL")
         
-        include_4xx_env = os.getenv("INCLUDE_4XX_LOGS", "false")
+        include_4xx_env = os.getenv("INCLUDE_4XX_LOGS")
         self.include_4xx_logs = include_4xx_env.lower() in ("true", "1", "yes", "on")
         
         # Correlation middleware settings
