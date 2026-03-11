@@ -24,7 +24,7 @@ from ai4icore_multi_tenant import (
 )
 
 get_tenant_db_session = get_tenant_db_session_factory()
-from middleware.exceptions import ErrorDetail
+from ai4icore_constants.exceptions import ErrorDetail
 from fastapi import Depends
 
 
@@ -105,7 +105,7 @@ async def run_inference(
         
     except Exception as e:
         from utils.triton_client import TritonInferenceError
-        from services.constants.static_fallback_responses import (
+        from ai4icore_constants.static_fallback_responses import (
             is_static_fallback_enabled,
             get_llm_static_response_batch,
         )

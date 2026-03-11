@@ -16,7 +16,7 @@ from opentelemetry.trace import Status, StatusCode
 from ai4icore_env import app_env
 from ai4icore_logging import get_correlation_id, get_logger
 
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     AuthenticationError,
     AuthorizationError,
     RateLimitExceededError,
@@ -27,7 +27,7 @@ from middleware.exceptions import (
     ServiceUnavailableError,
     AudioProcessingError,
 )
-from services.constants.error_messages import (
+from ai4icore_constants.error_messages import (
     AUTH_FAILED,
     AUTH_FAILED_MESSAGE,
     RATE_LIMIT_EXCEEDED,

@@ -39,7 +39,7 @@ from utils.validation_utils import (
     LanguageMismatchError,
     VoiceNotAvailableError
 )
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     AuthenticationError,
     AuthorizationError,
     ErrorDetail,
@@ -47,7 +47,7 @@ from middleware.exceptions import (
     ModelNotFoundError,
     ServiceUnavailableError,
 )
-from services.constants.error_messages import (
+from ai4icore_constants.error_messages import (
     NO_TEXT_INPUT,
     NO_TEXT_INPUT_MESSAGE,
     TEXT_TOO_SHORT,
@@ -79,7 +79,7 @@ from services.constants.error_messages import (
     SERVICE_UNPUBLISHED,
     SERVICE_UNPUBLISHED_MESSAGE,
 )
-from middleware.exceptions import AuthenticationError, AuthorizationError
+from ai4icore_constants.exceptions import AuthenticationError, AuthorizationError
 from middleware.auth_provider import AuthProvider
 from ai4icore_multi_tenant import (
     get_tenant_db_session_factory,
@@ -1504,7 +1504,7 @@ async def run_inference(
                         }
                         
                         # Static fallback when Triton down (both primary and fallback failed)
-                        from services.constants.static_fallback_responses import (
+                        from ai4icore_constants.static_fallback_responses import (
                             is_static_fallback_enabled,
                             get_tts_static_response,
                         )
@@ -1522,7 +1522,7 @@ async def run_inference(
                             raise TritonInferenceError(combined_error_message) from fallback_error
                 else:
                     # No fallback service available - use static fallback if enabled
-                    from services.constants.static_fallback_responses import (
+                    from ai4icore_constants.static_fallback_responses import (
                         is_static_fallback_enabled,
                         get_tts_static_response,
                     )
@@ -1721,7 +1721,7 @@ async def run_inference(
             )
             
             # Import AudioProcessingError if not already imported
-            from middleware.exceptions import AudioProcessingError
+            from ai4icore_constants.exceptions import AudioProcessingError
             
             # Check if it's already a service-specific error
             if isinstance(exc, (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, AudioProcessingError)):

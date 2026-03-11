@@ -9,7 +9,7 @@ from typing import Dict
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from middleware.exceptions import RateLimitExceededError
+from ai4icore_constants.exceptions import RateLimitExceededError
 import logging
 
 logger = logging.getLogger(__name__)

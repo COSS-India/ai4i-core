@@ -289,7 +289,8 @@ services:
       - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./services/constants:/app/services/constants
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
@@ -323,6 +324,8 @@ services:
       - ./services/config-service/.env
     volumes:
       - ./services/config-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -381,6 +384,7 @@ services:
       - ./services/metrics-service/.env
     volumes:
       - ./services/metrics-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
     command: ["--reload"]
     depends_on:
       postgres:
@@ -412,6 +416,7 @@ services:
       - ./services/telemetry-service/.env
     volumes:
       - ./services/telemetry-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
@@ -448,6 +453,7 @@ services:
       - ./services/alerting-service/.env
     volumes:
       - ./services/alerting-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -487,6 +493,10 @@ services:
       - PORT=8098
     env_file:
       - ./.env
+    volumes:
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
     depends_on:
       postgres:
         condition: service_healthy
@@ -514,6 +524,7 @@ services:
       - ./services/dashboard-service/.env
     volumes:
       - ./services/dashboard-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
     command: ["--reload"]
     depends_on:
       postgres:
@@ -555,7 +566,9 @@ services:
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
-      - ./services/constants:/app/services/constants
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./services/multi-tenant-feature:/app/services/multi-tenant-feature
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
@@ -598,7 +611,9 @@ services:
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
-      - ./services/constants:/app/services/constants
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -639,7 +654,9 @@ services:
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
-      - ./services/constants:/app/services/constants
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -680,6 +697,9 @@ services:
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -723,6 +743,9 @@ services:
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -765,6 +788,9 @@ services:
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -806,6 +832,9 @@ services:
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -866,6 +895,9 @@ services:
       - ALLOW_DEPRECATED_MODEL_CHANGES=${ALLOW_DEPRECATED_MODEL_CHANGES:-true}
     volumes:
       - ./services/model-management-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
     command: ["--reload"]
     depends_on:
       postgres:
@@ -888,6 +920,8 @@ services:
       - "8102:8095"
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    volumes:
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
     networks:
       - microservices-network
     restart: unless-stopped
@@ -914,6 +948,9 @@ services:
       - REQUEST_PROFILER_SERVICE_URL=http://request-profiler-service:8000
     env_file:
       - ./services/smr-service/.env
+    volumes:
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
     depends_on:
       policy-engine:
         condition: service_started
@@ -981,6 +1018,9 @@ services:
       - ./services/multi-tenant-feature/.env
     volumes:
       - ./services/multi-tenant-feature:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
     command: ["--reload"]
     depends_on:
       postgres:
@@ -1011,7 +1051,9 @@ services:
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
-      - ./services/constants:/app/services/constants
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -1050,6 +1092,9 @@ services:
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -1087,6 +1132,9 @@ services:
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -1126,6 +1174,9 @@ services:
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -1165,6 +1216,9 @@ services:
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -1316,6 +1370,8 @@ services:
       - PORT=8097
     volumes:
       - ./services/alert-config-sync-service:/app/services/alert-config-sync-service
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./infrastructure:/app/infrastructure
       # Mount Prometheus rules directory (writable so sync service can write YAML files)
       - ./infrastructure/prometheus/rules:/etc/prometheus/rules

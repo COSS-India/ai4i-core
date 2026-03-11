@@ -11,7 +11,7 @@ import tritonclient.http as http_client
 from tritonclient.utils import np_to_triton_dtype
 import gevent.ssl
 
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     TritonInferenceError,
     ModelNotFoundError,
     ServiceUnavailableError

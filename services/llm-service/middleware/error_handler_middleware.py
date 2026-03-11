@@ -6,7 +6,7 @@ Global error handler middleware for consistent error responses.
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     AuthenticationError,
     AuthorizationError,
     RateLimitExceededError,
@@ -212,7 +212,7 @@ def add_error_handlers(app: FastAPI) -> None:
     async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle generic HTTP exceptions."""
         # Handle AuthenticationError here if it wasn't caught by the specific handler
-        from middleware.exceptions import AuthenticationError
+        from ai4icore_constants.exceptions import AuthenticationError
         if isinstance(exc, AuthenticationError):
             # Check for ownership error message
             raw_message = (

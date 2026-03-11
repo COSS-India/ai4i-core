@@ -28,7 +28,7 @@ get_tenant_db_session = get_tenant_db_session_factory()
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 from ai4icore_env import app_env
-from middleware.exceptions import ErrorDetail
+from ai4icore_constants.exceptions import ErrorDetail
 from fastapi import Depends
 
 logger = logging.getLogger(__name__)
@@ -259,7 +259,7 @@ async def run_inference(
             ) from exc
         except TritonInferenceError as exc:
             try:
-                from services.constants.static_fallback_responses import (
+                from ai4icore_constants.static_fallback_responses import (
                     is_static_fallback_enabled,
                     get_ner_static_response,
                 )
@@ -384,7 +384,7 @@ async def _run_ner_inference_impl(
     ner_service: NerService,
 ) -> NerInferenceResponse:
     """Fallback implementation when tracing is not available."""
-    from services.constants.static_fallback_responses import (
+    from ai4icore_constants.static_fallback_responses import (
         is_static_fallback_enabled,
         get_ner_static_response,
     )
