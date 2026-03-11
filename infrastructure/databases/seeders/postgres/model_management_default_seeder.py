@@ -3,7 +3,28 @@ Model Management Default Seeder
 Seeds default AI models and services for all task types in model_management_db
 """
 from infrastructure.databases.core.base_seeder import BaseSeeder
+import hashlib
 import time
+import uuid
+
+
+def generate_model_id(model_name: str, version: str) -> str:
+    normalized_name = model_name.strip().lower()
+    normalized_version = version.strip().lower()
+    return hashlib.sha256(f"{normalized_name}:{normalized_version}".encode("utf-8")).hexdigest()[:32]
+
+
+def generate_service_id(model_name: str, model_version: str, service_name: str) -> str:
+    normalized_model_name = model_name.strip().lower()
+    normalized_model_version = model_version.strip().lower()
+    normalized_service_name = service_name.strip().lower()
+    raw = f"{normalized_model_name}:{normalized_model_version}:{normalized_service_name}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def generate_uuid(*parts: str) -> str:
+    raw = ":".join(part.strip().lower() for part in parts)
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
 
 
 class ModelManagementDefaultSeeder(BaseSeeder):
@@ -22,9 +43,10 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         # 1. ASR (Automatic Speech Recognition) Model and Service
         # ========================================================================
         adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+            INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('asr_am_ensemble', '1.0.0'),
+                '{generate_uuid("model", "asr_am_ensemble", "1.0.0")}',
+                '{generate_model_id("asr_am_ensemble", "1.0.0")}',
                 '1.0.0',
                 'asr_am_ensemble',
                 'Automatic Speech Recognition model for Hindi language using Conformer architecture. UPDATE ENDPOINT before use.',
@@ -47,11 +69,12 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         """)
         
         adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+            INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('asr_am_ensemble', '1.0.0', 'asr-hindi-prod'),
+                '{generate_uuid("service", "asr_am_ensemble", "1.0.0", "asr-hindi-prod")}',
+                '{generate_service_id("asr_am_ensemble", "1.0.0", "asr-hindi-prod")}',
                 'asr-hindi-prod',
-                generate_model_id('asr_am_ensemble', '1.0.0'),
+                '{generate_model_id("asr_am_ensemble", "1.0.0")}',
                 '1.0.0',
                 'http://localhost:8001/asr/v1/recognize',
                 'Production ASR service for Hindi. UPDATE ENDPOINT to your actual service URL.',
@@ -67,9 +90,10 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         # 2. TTS (Text-to-Speech) Model and Service
         # ========================================================================
         adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+            INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('tts', '1.0.0'),
+                '{generate_uuid("model", "tts", "1.0.0")}',
+                '{generate_model_id("tts", "1.0.0")}',
                 '1.0.0',
                 'tts',
                 'Text-to-Speech model for Hindi language using FastPitch architecture. UPDATE ENDPOINT before use.',
@@ -92,11 +116,12 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         """)
         
         adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+            INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('tts', '1.0.0', 'tts-hindi-prod'),
+                '{generate_uuid("service", "tts", "1.0.0", "tts-hindi-prod")}',
+                '{generate_service_id("tts", "1.0.0", "tts-hindi-prod")}',
                 'tts-hindi-prod',
-                generate_model_id('tts', '1.0.0'),
+                '{generate_model_id("tts", "1.0.0")}',
                 '1.0.0',
                 'http://localhost:8002/tts/v1/synthesize',
                 'Production TTS service for Hindi. UPDATE ENDPOINT to your actual service URL.',
@@ -112,9 +137,10 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         # 3. NMT (Neural Machine Translation) Model and Service
         # ========================================================================
         adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+            INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('nmt', '1.0.0'),
+                '{generate_uuid("model", "nmt", "1.0.0")}',
+                '{generate_model_id("nmt", "1.0.0")}',
                 '1.0.0',
                 'nmt',
                 'Neural Machine Translation model for English to Hindi using IndicTrans2. UPDATE ENDPOINT before use.',
@@ -137,11 +163,12 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         """)
         
         adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+            INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('nmt', '1.0.0', 'nmt-en-hi-prod'),
+                '{generate_uuid("service", "nmt", "1.0.0", "nmt-en-hi-prod")}',
+                '{generate_service_id("nmt", "1.0.0", "nmt-en-hi-prod")}',
                 'nmt-en-hi-prod',
-                generate_model_id('nmt', '1.0.0'),
+                '{generate_model_id("nmt", "1.0.0")}',
                 '1.0.0',
                 'http://localhost:8003/nmt/v1/translate',
                 'Production NMT service for English-Hindi translation. UPDATE ENDPOINT to your actual service URL.',
@@ -154,9 +181,10 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         
         # Add ai4bharat/indictrans model and service for compatibility with frontend
         adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+            INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('ai4bharat/indictrans', '1.0.0'),
+                '{generate_uuid("model", "ai4bharat/indictrans", "1.0.0")}',
+                '{generate_model_id("ai4bharat/indictrans", "1.0.0")}',
                 '1.0.0',
                 'ai4bharat/indictrans',
                 'IndicTrans - Neural Machine Translation model supporting multiple Indic languages.',
@@ -184,11 +212,12 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         """)
         
         adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+            INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                'ai4bharat/indictrans--gpu-t4',
+                '{generate_uuid("service", "ai4bharat/indictrans", "1.0.0", "gpu-t4")}',
+                '{generate_service_id("ai4bharat/indictrans", "1.0.0", "gpu-t4")}',
                 'gpu-t4',
-                generate_model_id('ai4bharat/indictrans', '1.0.0'),
+                '{generate_model_id("ai4bharat/indictrans", "1.0.0")}',
                 '1.0.0',
                 'http://13.200.133.97:8000',
                 'IndicTrans NMT service on GPU T4.',
@@ -196,7 +225,7 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 {timestamp_ms},
                 false
             ) ON CONFLICT (service_id) DO UPDATE SET
-                model_id = generate_model_id('ai4bharat/indictrans', '1.0.0'),
+                model_id = '{generate_model_id("ai4bharat/indictrans", "1.0.0")}',
                 model_version = '1.0.0',
                 endpoint = 'http://13.200.133.97:8000',
                 updated_at = CURRENT_TIMESTAMP;
@@ -207,9 +236,10 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         # 4. LLM (Large Language Model) Model and Service
         # ========================================================================
         adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+            INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('llm', '1.0.0'),
+                '{generate_uuid("model", "llm", "1.0.0")}',
+                '{generate_model_id("llm", "1.0.0")}',
                 '1.0.0',
                 'llm',
                 'Large Language Model for Indic languages chat/completion. UPDATE ENDPOINT before use.',
@@ -232,11 +262,12 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         """)
         
         adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+            INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('llm', '1.0.0', 'llm-indic-prod'),
+                '{generate_uuid("service", "llm", "1.0.0", "llm-indic-prod")}',
+                '{generate_service_id("llm", "1.0.0", "llm-indic-prod")}',
                 'llm-indic-prod',
-                generate_model_id('llm', '1.0.0'),
+                '{generate_model_id("llm", "1.0.0")}',
                 '1.0.0',
                 'http://localhost:8004/llm/v1/completions',
                 'Production LLM service for Indic languages. UPDATE ENDPOINT to your actual service URL.',
@@ -252,9 +283,10 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         # 5. Transliteration Model and Service
         # ========================================================================
         adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+            INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('transliteration', '1.0.0'),
+                '{generate_uuid("model", "transliteration", "1.0.0")}',
+                '{generate_model_id("transliteration", "1.0.0")}',
                 '1.0.0',
                 'transliteration',
                 'Transliteration model for Indic scripts using IndicXlit. UPDATE ENDPOINT before use.',
@@ -277,11 +309,12 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         """)
         
         adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+            INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('transliteration', '1.0.0', 'xlit-indic-prod'),
+                '{generate_uuid("service", "transliteration", "1.0.0", "xlit-indic-prod")}',
+                '{generate_service_id("transliteration", "1.0.0", "xlit-indic-prod")}',
                 'xlit-indic-prod',
-                generate_model_id('transliteration', '1.0.0'),
+                '{generate_model_id("transliteration", "1.0.0")}',
                 '1.0.0',
                 'http://localhost:8005/transliteration/v1/transliterate',
                 'Production Transliteration service. UPDATE ENDPOINT to your actual service URL.',
@@ -297,9 +330,10 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         # 6. Language Detection Model and Service
         # ========================================================================
         adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+            INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('indiclid', '1.0.0'),
+                '{generate_uuid("model", "indiclid", "1.0.0")}',
+                '{generate_model_id("indiclid", "1.0.0")}',
                 '1.0.0',
                 'indiclid',
                 'Text language detection model for Indic languages. UPDATE ENDPOINT before use.',
@@ -322,11 +356,12 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         """)
         
         adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+            INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('indiclid', '1.0.0', 'langdetect-prod'),
+                '{generate_uuid("service", "indiclid", "1.0.0", "langdetect-prod")}',
+                '{generate_service_id("indiclid", "1.0.0", "langdetect-prod")}',
                 'langdetect-prod',
-                generate_model_id('indiclid', '1.0.0'),
+                '{generate_model_id("indiclid", "1.0.0")}',
                 '1.0.0',
                 'http://localhost:8006/langdetect/v1/detect',
                 'Production Language Detection service. UPDATE ENDPOINT to your actual service URL.',
@@ -342,9 +377,10 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         # 7. Speaker Diarization Model and Service
         # ========================================================================
         adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+            INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('speaker_diarization', '1.0.0'),
+                '{generate_uuid("model", "speaker_diarization", "1.0.0")}',
+                '{generate_model_id("speaker_diarization", "1.0.0")}',
                 '1.0.0',
                 'speaker_diarization',
                 'Speaker diarization model using Pyannote. UPDATE ENDPOINT before use.',
@@ -367,11 +403,12 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         """)
         
         adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+            INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('speaker_diarization', '1.0.0', 'speaker-diarize-prod'),
+                '{generate_uuid("service", "speaker_diarization", "1.0.0", "speaker-diarize-prod")}',
+                '{generate_service_id("speaker_diarization", "1.0.0", "speaker-diarize-prod")}',
                 'speaker-diarize-prod',
-                generate_model_id('speaker_diarization', '1.0.0'),
+                '{generate_model_id("speaker_diarization", "1.0.0")}',
                 '1.0.0',
                 'http://localhost:8007/speaker-diarization/v1/diarize',
                 'Production Speaker Diarization service. UPDATE ENDPOINT to your actual service URL.',
@@ -387,9 +424,10 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         # 8. Audio Language Detection Model and Service
         # ========================================================================
         adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+            INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('AudioLangDetect-Whisper', '1.0.0'),
+                '{generate_uuid("model", "AudioLangDetect-Whisper", "1.0.0")}',
+                '{generate_model_id("AudioLangDetect-Whisper", "1.0.0")}',
                 '1.0.0',
                 'AudioLangDetect-Whisper',
                 'Audio language detection model using Whisper. UPDATE ENDPOINT before use.',
@@ -412,11 +450,12 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         """)
         
         adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+            INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('AudioLangDetect-Whisper', '1.0.0', 'audio-langdetect-prod'),
+                '{generate_uuid("service", "AudioLangDetect-Whisper", "1.0.0", "audio-langdetect-prod")}',
+                '{generate_service_id("AudioLangDetect-Whisper", "1.0.0", "audio-langdetect-prod")}',
                 'audio-langdetect-prod',
-                generate_model_id('AudioLangDetect-Whisper', '1.0.0'),
+                '{generate_model_id("AudioLangDetect-Whisper", "1.0.0")}',
                 '1.0.0',
                 'http://localhost:8008/audio-langdetect/v1/detect',
                 'Production Audio Language Detection service. UPDATE ENDPOINT to your actual service URL.',
@@ -432,9 +471,10 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         # 9. Language Diarization Model and Service
         # ========================================================================
         adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+            INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('lang_diarization', '1.0.0'),
+                '{generate_uuid("model", "lang_diarization", "1.0.0")}',
+                '{generate_model_id("lang_diarization", "1.0.0")}',
                 '1.0.0',
                 'lang_diarization',
                 'Language diarization model for multi-language audio. UPDATE ENDPOINT before use.',
@@ -457,11 +497,12 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         """)
         
         adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+            INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('lang_diarization', '1.0.0', 'lang-diarize-prod'),
+                '{generate_uuid("service", "lang_diarization", "1.0.0", "lang-diarize-prod")}',
+                '{generate_service_id("lang_diarization", "1.0.0", "lang-diarize-prod")}',
                 'lang-diarize-prod',
-                generate_model_id('lang_diarization', '1.0.0'),
+                '{generate_model_id("lang_diarization", "1.0.0")}',
                 '1.0.0',
                 'http://localhost:8009/lang-diarization/v1/diarize',
                 'Production Language Diarization service. UPDATE ENDPOINT to your actual service URL.',
@@ -477,9 +518,10 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         # 10. OCR (Optical Character Recognition) Model and Service
         # ========================================================================
         adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+            INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('surya_ocr', '1.0.0'),
+                '{generate_uuid("model", "surya_ocr", "1.0.0")}',
+                '{generate_model_id("surya_ocr", "1.0.0")}',
                 '1.0.0',
                 'surya_ocr',
                 'Optical Character Recognition model for Indic scripts. UPDATE ENDPOINT before use.',
@@ -502,11 +544,12 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         """)
         
         adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+            INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('surya_ocr', '1.0.0', 'ocr-indic-prod'),
+                '{generate_uuid("service", "surya_ocr", "1.0.0", "ocr-indic-prod")}',
+                '{generate_service_id("surya_ocr", "1.0.0", "ocr-indic-prod")}',
                 'ocr-indic-prod',
-                generate_model_id('surya_ocr', '1.0.0'),
+                '{generate_model_id("surya_ocr", "1.0.0")}',
                 '1.0.0',
                 'http://localhost:8010/ocr/v1/recognize',
                 'Production OCR service for Indic scripts. UPDATE ENDPOINT to your actual service URL.',
@@ -522,9 +565,10 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         # 11. NER (Named Entity Recognition) Model and Service
         # ========================================================================
         adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+            INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('ner', '1.0.0'),
+                '{generate_uuid("model", "ner", "1.0.0")}',
+                '{generate_model_id("ner", "1.0.0")}',
                 '1.0.0',
                 'ner',
                 'Named Entity Recognition model for Indic languages. UPDATE ENDPOINT before use.',
@@ -547,11 +591,12 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         """)
         
         adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+            INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('ner', '1.0.0', 'ner-indic-prod'),
+                '{generate_uuid("service", "ner", "1.0.0", "ner-indic-prod")}',
+                '{generate_service_id("ner", "1.0.0", "ner-indic-prod")}',
                 'ner-indic-prod',
-                generate_model_id('ner', '1.0.0'),
+                '{generate_model_id("ner", "1.0.0")}',
                 '1.0.0',
                 'http://localhost:8011/ner/v1/extract',
                 'Production NER service for Indic languages. UPDATE ENDPOINT to your actual service URL.',

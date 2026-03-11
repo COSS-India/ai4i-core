@@ -18,7 +18,7 @@ import {
   Badge,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
@@ -30,7 +30,7 @@ import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 const NERPage: React.FC = () => {
   const toast = useToastWithDeduplication();
   const [inputText, setInputText] = useState("");
-  const [sourceLanguage, setSourceLanguage] = useState("en");
+  const [sourceLanguage, setSourceLanguage] = useState("");
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -49,12 +49,12 @@ const NERPage: React.FC = () => {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  // Auto-select first service when services are loaded
-  useEffect(() => {
-    if (services.length > 0 && !selectedServiceId) {
-      setSelectedServiceId(services[0].service_id);
-    }
-  }, [services, selectedServiceId]);
+  const canDetect =
+    !!selectedServiceId?.trim() &&
+    !!sourceLanguage?.trim() &&
+    !!inputText?.trim() &&
+    inputText.length <= MAX_TEXT_LENGTH &&
+    !fetching;
 
   const handleProcess = async () => {
     const trimmedText = inputText.trim();
@@ -100,6 +100,17 @@ const NERPage: React.FC = () => {
       toast({
         title: "No Service Selected",
         description: "Please select a NER service.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (!sourceLanguage?.trim()) {
+      toast({
+        title: "Language Required",
+        description: "Please select a language.",
         status: "warning",
         duration: 3000,
         isClosable: true,
@@ -163,7 +174,7 @@ const NERPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>NER - Named Entity Recognition | AI4Inclusion Console</title>
+        <title>Named Entity Recognition (NER) | AI4Inclusion Console</title>
         <meta
           name="description"
           content="Test Named Entity Recognition to identify entities in text"
@@ -196,7 +207,8 @@ const NERPage: React.FC = () => {
               {/* Service Selection */}
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  NER Service:
+                  NER Service{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 {isLoadingServices ? (
                   <HStack spacing={2} p={2}>
@@ -215,7 +227,7 @@ const NERPage: React.FC = () => {
                   <Select
                     value={selectedServiceId}
                     onChange={(e) => setSelectedServiceId(e.target.value)}
-                    placeholder="Select a NER service"
+                    placeholder={isLoadingServices ? "Loading..." : "Select"}
                     disabled={fetching}
                     size="md"
                     borderColor="gray.300"
@@ -255,13 +267,20 @@ const NERPage: React.FC = () => {
 
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  Select Language:
+                  Language{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 <Select
                   value={sourceLanguage}
                   onChange={(e) => setSourceLanguage(e.target.value)}
                   isDisabled={fetching}
                   size="md"
+                  placeholder="Select"
+                  borderColor="gray.300"
+                  _focus={{
+                    borderColor: "orange.400",
+                    boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
+                  }}
                 >
                   <option value="en">English</option>
                   <option value="hi">Hindi</option>
@@ -278,9 +297,10 @@ const NERPage: React.FC = () => {
                 </Select>
               </FormControl>
 
-              <FormControl>
+              <FormControl isInvalid={inputText.length > MAX_TEXT_LENGTH}>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  Enter text to identify entities:
+                  Source Text{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 <Textarea
                   value={inputText}
@@ -289,20 +309,41 @@ const NERPage: React.FC = () => {
                   rows={6}
                   isDisabled={fetching}
                   bg="white"
-                  borderColor="gray.300"
+                  maxLength={MAX_TEXT_LENGTH}
+                  borderColor={inputText.length > MAX_TEXT_LENGTH ? "red.400" : "gray.300"}
                 />
+                {inputText.length > MAX_TEXT_LENGTH && (
+                  <Text fontSize="sm" color="red.500" mt={1}>
+                    Text exceeds the maximum limit of {MAX_TEXT_LENGTH} characters. Please reduce the length.
+                  </Text>
+                )}
+                <Box display="flex" justifyContent="flex-end" mt={1}>
+                  <Text
+                    fontSize="sm"
+                    color={inputText.length > MAX_TEXT_LENGTH ? "red.500" : "gray.500"}
+                    fontWeight={inputText.length > MAX_TEXT_LENGTH ? "semibold" : "normal"}
+                  >
+                    {inputText.length} / {MAX_TEXT_LENGTH}
+                  </Text>
+                </Box>
               </FormControl>
 
-                <Button
-                  colorScheme="orange"
-                  onClick={handleProcess}
-                  isLoading={fetching}
-                  loadingText="Processing..."
-                  size="md"
-                  w="full"
-                >
-                  {fetching ? "Processing..." : "Detect Entities"}
-                </Button>
+              {/* Instruction above Detect Entities (consistent with other services) */}
+              <Text fontSize="sm" color="gray.600">
+                Enter text and select language above, then click &quot;Detect Entities&quot; to extract entities.
+              </Text>
+
+              <Button
+                colorScheme="orange"
+                onClick={handleProcess}
+                isLoading={fetching}
+                loadingText="Processing..."
+                size="md"
+                w="full"
+                isDisabled={!canDetect}
+              >
+                {fetching ? "Processing..." : "Detect Entities"}
+              </Button>
               </VStack>
             </GridItem>
 

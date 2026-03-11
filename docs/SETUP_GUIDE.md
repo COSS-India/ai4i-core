@@ -147,14 +147,8 @@ This creates the `unleash` database for the Unleash feature flag service.
 
 Run migrations for all databases at once.
 
-**Linux/macOS:**
 ```bash
-python3 infrastructure/databases/cli.py migrate:all
-```
-
-**Windows:**
-```bash
-python infrastructure/databases/cli.py migrate:all
+./scripts/migrate.sh all upgrade
 ```
 
 This command will:
