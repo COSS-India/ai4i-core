@@ -273,6 +273,43 @@ services:
     dns_search: []
     restart: unless-stopped
 
+  api-gateway-service:
+    build:
+      context: .
+      dockerfile: ./services/api-gateway-service/Dockerfile
+    container_name: ai4v-api-gateway
+    ports:
+      - "9000:8080"
+    environment:
+      - ENV_FILE=.env
+      # Swagger/OpenAPI server URL used in the generated docs
+      # Prod: point Swagger to public API Gateway URL
+      - TRY_IT_LIMIT=5
+      - TRY_IT_TTL_SECONDS=3600
+    env_file:
+      - ./services/api-gateway-service/.env
+    volumes:
+      - ./services/api-gateway-service:/app
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
   auth-service:
     build:
       context: .
@@ -468,38 +505,6 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  alert-management-service:
-    build:
-      context: .
-      dockerfile: ./services/alert-management-service/Dockerfile
-    container_name: ai4v-alert-management-service
-    ports:
-      - "8104:8098"
-    environment:
-      - SERVICE_NAME=alert-management-service
-      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - ALERT_CONFIG_SYNC_SERVICE_URL=http://alert-config-sync-service:8097
-      - ALERT_SYNC_ENABLED=true
-      - PORT=8098
-    env_file:
-      - ./.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - microservices-network
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8098/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    restart: unless-stopped
-
   dashboard-service:
     build:
       context: ./services/dashboard-service
@@ -630,6 +635,10 @@ services:
       - "8091:8089"
     environment:
       - ENV_FILE=.env
+      - API_GATEWAY_URL=http://api-gateway-service:8080
+      - MODEL_MANAGEMENT_SERVICE_URL=http://model-management-service:8091
+      - MODEL_MANAGEMENT_TIMEOUT=20
+      - PYTHONPATH=/app:/app/libs/ai4icore_multi_tenant:/app/libs/ai4icore_observability:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry:/app/libs/ai4icore_model_management:/home/app/.local/lib/python3.11/site-packages
     env_file:
       - ./services/nmt-service/.env
     volumes:
@@ -644,8 +653,12 @@ services:
       - ./shared:/app/shared
     command: ["--reload"]
     depends_on:
+      api-gateway-service:
+        condition: service_healthy
       config-service:
         condition: service_healthy
+      model-management-service:
+        condition: service_started
       postgres:
         condition: service_healthy
       redis:
@@ -1276,7 +1289,7 @@ services:
 
   # Observability: Alertmanager (POC)
   alertmanager:
-    image: prom/alertmanager:v0.27.0
+    image: prom/alertmanager:v0.26.0
     container_name: ai4v-alertmanager
     ports:
       - "9095:9093"
@@ -1284,7 +1297,6 @@ services:
       - ./infrastructure/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
-      - "--web.enable-lifecycle"
     networks:
       - microservices-network
     restart: unless-stopped
@@ -1348,6 +1360,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - AUTH_DB_NAME=auth_db
       - PROMETHEUS_URL=http://prometheus:9090
       - ALERTMANAGER_URL=http://alertmanager:9093
       - PROMETHEUS_APPLICATION_ALERTS_PATH=/etc/prometheus/rules/application-alerts.yml
@@ -1355,6 +1368,12 @@ services:
       - ALERTMANAGER_CONFIG_PATH=/etc/alertmanager/alertmanager.yml
       - SYNC_INTERVAL=60
       - PORT=8097
+      - SMTP_SMARTHOST=${SMTP_SMARTHOST:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_AUTH_USERNAME=${SMTP_AUTH_USERNAME:-}
+      - SMTP_AUTH_PASSWORD=${SMTP_AUTH_PASSWORD:-}
+    env_file:
+      - ./.env
     volumes:
       - ./services/alert-config-sync-service:/app/services/alert-config-sync-service
       - ./infrastructure:/app/infrastructure

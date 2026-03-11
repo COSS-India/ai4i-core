@@ -25,7 +25,7 @@ CREATE DATABASE alerting_db;
 -- =============================================================================
 
 -- Alert Definitions Table
--- Stores complete PromQL expressions per organization with all metadata
+-- Stores complete PromQL expressions with all metadata. Alert name is globally unique (not per-organization).
 CREATE TABLE IF NOT EXISTS alert_definitions (
     id SERIAL PRIMARY KEY,
     organization VARCHAR(100) NOT NULL,
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS alert_definitions (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     created_by VARCHAR(100),
     updated_by VARCHAR(100),
-    CONSTRAINT unique_organization_alert_name UNIQUE (organization, name)
+    CONSTRAINT unique_alert_name UNIQUE (name)
 );
 
 -- Annotations for alert definitions (summary, description, impact, action)

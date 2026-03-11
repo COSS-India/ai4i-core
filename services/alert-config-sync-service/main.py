@@ -405,10 +405,48 @@ DEFAULT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{ if eq .GroupLabels.severit
 <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
 """
 
+def get_global_config_from_env() -> Dict[str, Any]:
+    """
+    Build global SMTP config from environment variables.
+    In Docker, env comes from docker-compose env_file: ./.env and environment: SMTP_*=${SMTP_*} (same pattern as alert-management-service).
+    Keys with no value are omitted so the YAML does not contain 'key: null'.
+    """
+    out: Dict[str, Any] = {
+        'resolve_timeout': '5m',
+    }
+    smtp_smarthost = (os.getenv('SMTP_SMARTHOST') or '').strip()
+    smtp_from = (os.getenv('SMTP_FROM') or '').strip()
+    smtp_auth_username = (os.getenv('SMTP_AUTH_USERNAME') or '').strip()
+    smtp_auth_password = (os.getenv('SMTP_AUTH_PASSWORD') or '').strip()
+
+    if smtp_smarthost:
+        out['smtp_smarthost'] = smtp_smarthost
+    if smtp_from:
+        out['smtp_from'] = smtp_from
+    if smtp_auth_username:
+        out['smtp_auth_username'] = smtp_auth_username
+    if smtp_auth_password:
+        out['smtp_auth_password'] = smtp_auth_password
+    if 'smtp_smarthost' in out:
+        out['smtp_require_tls'] = True
+
+    if out.get('smtp_smarthost'):
+        logger.info(
+            "SMTP global config from env: smtp_smarthost=%s smtp_from=%s smtp_auth_username=%s auth_password_set=%s",
+            out.get('smtp_smarthost'), out.get('smtp_from'), out.get('smtp_auth_username'), bool(out.get('smtp_auth_password')),
+        )
+    else:
+        logger.warning(
+            "SMTP env vars not set (SMTP_SMARTHOST empty). Set SMTP_* in .env next to docker-compose and use env_file: ./.env (same as alert-management-service)."
+        )
+
+    return out
+
+
 def load_global_config_from_file() -> Dict[str, Any]:
     """
     Load global SMTP configuration from existing alertmanager.yml file.
-    Preserves only the global section (lines 1-7).
+    Preserves only the global section. Falls back to env if file missing/fails.
     """
     try:
         if os.path.exists(ALERTMANAGER_CONFIG_PATH):
@@ -418,16 +456,8 @@ def load_global_config_from_file() -> Dict[str, Any]:
                     logger.info("Loaded global SMTP config from existing alertmanager.yml")
                     return existing_config['global']
     except Exception as e:
-        logger.warning(f"Failed to load global config from file: {e}, using defaults")
-    
-    return {
-        'resolve_timeout': '5m',
-        'smtp_smarthost': os.getenv('SMTP_SMARTHOST'),
-        'smtp_from': os.getenv('SMTP_FROM'),
-        'smtp_auth_username': os.getenv('SMTP_AUTH_USERNAME'),
-        'smtp_auth_password': os.getenv('SMTP_AUTH_PASSWORD'),
-        'smtp_require_tls': True
-    }
+        logger.warning("Failed to load global config from file: %s, using env defaults", e)
+    return get_global_config_from_env()
 
 def generate_alertmanager_yaml(
     receivers: List[Dict[str, Any]],
@@ -437,20 +467,20 @@ def generate_alertmanager_yaml(
 ) -> Dict[str, Any]:
     """
     Generate Alertmanager configuration from receivers and routing rules.
-    Preserves global SMTP config from existing file, everything else comes from database.
+    Global SMTP config is always taken from environment variables (SMTP_*) when writing.
     Always includes a default receiver 'default-admin' (ADMIN role, not tied to any organization).
     Only routes whose receiver still exists in the config are included (stale routes removed).
     When receiver has optional alert_names or tenant, uses unique receiver_name; otherwise merges by severity-category.
     tenant_resolution_map: optional map tenant_name -> (tenant_id, [emails]) for receivers with tenant set.
     """
     tenant_resolution_map = tenant_resolution_map or {}
-    # Load global config from existing file (preserves SMTP settings)
-    global_config = load_global_config_from_file()
+    # Always use env for global config when generating (so SMTP is never hardcoded)
+    global_config = get_global_config_from_env()
     
     default_admin_emails = default_admin_emails or []
     default_receiver_name = "default-admin"
 
-    # Alert history webhook receiver: first receiver so all alerts are also sent here for audit log
+    # Alert history webhook receiver: include so all alerts are also sent here for audit log
     alert_history_webhook_url = f"{ALERT_MANAGEMENT_SERVICE_URL}/alerts/history/webhook"
     receivers_config = [
         {
@@ -460,7 +490,6 @@ def generate_alertmanager_yaml(
     ]
 
     # Build receivers: add the default receiver (not tied to any organization, ADMIN role)
-    receivers_config = []
     default_email_configs = []
     for email in default_admin_emails:
         if email and str(email).strip():
@@ -648,9 +677,15 @@ def generate_alertmanager_yaml(
     
     if not root_routes:
         logger.info("No severity/category routes; all alerts will go to default-admin receiver.")
-    
+
+    # Sanitize global: drop any key that is None or empty string so YAML never gets "key: null"
+    global_sanitized = {
+        k: v for k, v in global_config.items()
+        if v is not None and (v != '' if isinstance(v, str) else True)
+    }
+
     config = {
-        'global': global_config,
+        'global': global_sanitized,
         'route': route_config,
         'receivers': receivers_config
     }
@@ -822,10 +857,8 @@ async def trigger_prometheus_reload() -> bool:
         return False
 
 async def trigger_alertmanager_reload() -> bool:
-    """Trigger Alertmanager configuration reload"""
+    """Trigger Alertmanager configuration reload via POST /-/reload (enabled by default in Alertmanager)."""
     try:
-        # Alertmanager can reload via HTTP API or SIGHUP
-        # Try HTTP API first (Alertmanager 0.16+)
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(f"{ALERTMANAGER_URL}/-/reload")
@@ -833,16 +866,24 @@ async def trigger_alertmanager_reload() -> bool:
                     logger.info("Alertmanager configuration reloaded successfully via HTTP API")
                     return True
                 else:
-                    logger.warning(f"Alertmanager reload returned status {response.status_code}: {response.text}")
+                    logger.warning(
+                        "Alertmanager reload returned status %s: %s. "
+                        "Config was written but not loaded; restart the alertmanager container to apply.",
+                        response.status_code,
+                        response.text,
+                    )
+                    return False
         except Exception as e:
-            logger.debug(f"Alertmanager HTTP reload not available: {e}")
-        
-        # Fallback: Alertmanager watches config file for changes
-        # File modification will trigger automatic reload
-        logger.info("Alertmanager will reload automatically when config file changes")
-        return True
+            logger.debug("Alertmanager HTTP reload not available: %s", e)
+
+        # Reload API unreachable - config will not reload until container restart
+        logger.warning(
+            "Alertmanager config was written but reload request failed. "
+            "Restart the alertmanager container to apply the new config."
+        )
+        return False
     except Exception as e:
-        logger.error(f"Failed to trigger Alertmanager reload: {e}")
+        logger.error("Failed to trigger Alertmanager reload: %s", e)
         return False
 
 async def sync_configuration(blocking: bool = True) -> None:

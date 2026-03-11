@@ -225,6 +225,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         if output_details:
             log_context["output_details"] = output_details
 
+        # For 5xx: include error_detail in log if set by exception handler (e.g. 503 cause)
+        if status_code >= 500:
+            error_detail = getattr(request.state, "error_detail", None)
+            if error_detail:
+                log_context["error_detail"] = error_detail
+
         # Log with appropriate level using structured logging
         # Skip logging 400-series errors - these are logged at gateway level only
         # Log 200-series (success) and 500-series (server errors) at service level
@@ -237,6 +243,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             # Don't log 400-series errors - gateway handles this to avoid duplicates
             pass
         else:
+            # 5xx: log here; the 503/500 is produced by the route or exception handler, not by this middleware
             logger.error(
                 f"{method} {path} - {status_code} - {processing_time:.3f}s",
                 extra={"context": log_context}

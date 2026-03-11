@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import (
 load_dotenv()
 
 
-
 DB_USER     = str(os.getenv("APP_DB_USER"))
 DB_PASSWORD = str(os.getenv("APP_DB_PASSWORD"))
 DB_HOST     = str(os.getenv("APP_DB_HOST"))
