@@ -1893,9 +1893,19 @@ class TenantUserDeleteResponse(BaseModel):
 
 
 
+def _parse_redis_dict(raw: str) -> dict:
+    """Safely parse a dict stored in Redis.
+    Tries JSON first; falls back to ast.literal_eval for legacy Python-repr data."""
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        import ast
+        return ast.literal_eval(raw)
+
+
 class ServiceRegistry:
     """Redis-based service instance management"""
-    
+
     def __init__(self, redis_client: redis.Redis):
         self.redis = redis_client
         self.service_ttl = app_env.service_registry_ttl
@@ -1912,7 +1922,7 @@ class ServiceRegistry:
         }
         
         # Store instance data
-        await self.redis.hset(f"service:{service_name}:instances", instance_id, str(instance_data))
+        await self.redis.hset(f"service:{service_name}:instances", instance_id, json.dumps(instance_data))
         
         # Add to active instances sorted set (scored by response time)
         await self.redis.zadd(f"service:{service_name}:active", {instance_id: 0.0})
@@ -1933,7 +1943,7 @@ class ServiceRegistry:
             return
         
         # Parse and update instance data
-        instance_data = eval(instance_data_raw.decode()) if isinstance(instance_data_raw, bytes) else instance_data_raw
+        instance_data = _parse_redis_dict(instance_data_raw.decode() if isinstance(instance_data_raw, bytes) else instance_data_raw)
         instance_data['health_status'] = 'healthy' if is_healthy else 'unhealthy'
         instance_data['last_check_timestamp'] = str(int(time.time()))
         
@@ -1958,7 +1968,7 @@ class ServiceRegistry:
                 logger.warning(f"Instance {instance_id} removed from active pool due to {failures} consecutive failures")
         
         # Update instance data
-        await self.redis.hset(instance_key, instance_id, str(instance_data))
+        await self.redis.hset(instance_key, instance_id, json.dumps(instance_data))
     
     async def get_healthy_instances(self, service_name: str) -> List[Tuple[str, str]]:
         """Get healthy instances sorted by response time (best first)"""
@@ -1968,7 +1978,7 @@ class ServiceRegistry:
         for instance_id, score in active_instances:
             instance_data_raw = await self.redis.hget(f"service:{service_name}:instances", instance_id)
             if instance_data_raw:
-                instance_data = eval(instance_data_raw.decode()) if isinstance(instance_data_raw, bytes) else instance_data_raw
+                instance_data = _parse_redis_dict(instance_data_raw.decode() if isinstance(instance_data_raw, bytes) else instance_data_raw)
                 if instance_data.get('health_status') == 'healthy':
                     instances.append((instance_id, instance_data['url']))
         
@@ -3392,7 +3402,7 @@ async def health_monitor():
                     
                     try:
                         # Parse instance data
-                        instance_data = eval(instance_data_raw) if isinstance(instance_data_raw, str) else instance_data_raw
+                        instance_data = _parse_redis_dict(instance_data_raw) if isinstance(instance_data_raw, str) else instance_data_raw
                         instance_url = instance_data.get('url')
                         
                         if not instance_url:

@@ -189,10 +189,7 @@ class JSONFormatter(logging.Formatter):
         if tenant_id:
             log_data["tenant_id"] = tenant_id
         else:
-            # Last resort: use default tenant_id to prevent logs without tenant_id
-            # This should only happen for system logs or when tenant_id is not set in context
-            # TODO: Consider making this configurable or removing once all services set tenant_id properly
-            log_data["tenant_id"] = "new-organization-487578"
+            log_data["tenant_id"] = "system"
         
         # Add service metadata
         log_data["service_version"] = self.service_version
