@@ -62,9 +62,6 @@ COPY libs/ai4icore_constants /app/libs/ai4icore_constants
 # Install ai4icore_constants in editable mode
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_constants
 
-# Create __init__.py file to make services a Python package
-RUN touch /app/services/__init__.py
-
 # Copy application code from service context
 COPY services/auth-service .
 
