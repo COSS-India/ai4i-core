@@ -43,6 +43,7 @@ import {
   AlertDialogOverlay,
   Checkbox,
   CheckboxGroup,
+  Tooltip,
 } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
 import { useApiKeyManagementTab } from "./hooks/useApiKeyManagementTab";
@@ -243,16 +244,23 @@ export default function ApiKeyManagementTab({
                             >
                               View
                             </Button>
-                            <Button
-                              size="xs"
-                              colorScheme="green"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                mgmt.handleOpenUpdateModal(key);
-                              }}
+                            <Tooltip
+                              hasArrow
+                              label="This API key has been revoked and cannot be reactivated."
+                              isDisabled={key.is_active}
                             >
-                              Update
-                            </Button>
+                              <Button
+                                size="xs"
+                                colorScheme="green"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  mgmt.handleOpenUpdateModal(key);
+                                }}
+                                isDisabled={!key.is_active}
+                              >
+                                Update
+                              </Button>
+                            </Tooltip>
                             <Button
                               size="xs"
                               colorScheme="red"
