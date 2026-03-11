@@ -10,6 +10,7 @@ Structured JSON logging library for AI4ICore microservices with trace correlatio
 - Service metadata injection
 - Context-aware logging
 - Correlation middleware for FastAPI
+- **Plugin pattern** for one-line registration (recommended)
 
 ## Installation
 
@@ -19,23 +20,76 @@ pip install -e libs/ai4icore_logging
 
 ## Quick Start
 
-### 1. Add Correlation Middleware to FastAPI App
+### Recommended: Plugin Pattern (One-Line Registration)
 
 ```python
 from fastapi import FastAPI
-from ai4icore_logging import CorrelationMiddleware, get_logger
+from ai4icore_logging import register_logging_plugin, get_logger
 
 app = FastAPI()
 
-# Add correlation middleware (extracts X-Correlation-ID from headers)
-app.add_middleware(CorrelationMiddleware)
+# One-line registration: configures logging + adds middleware
+register_logging_plugin(app)
 
 # Get logger
 logger = get_logger("my-service")
 
 @app.get("/api/endpoint")
 async def my_endpoint():
-    # Logs automatically include trace_id from correlation middleware
+    # Logs automatically include trace_id, tenant_id, correlation_id
+    logger.info("Processing request", extra={"user_id": "user_123"})
+    return {"status": "ok"}
+```
+
+**With custom configuration:**
+
+```python
+from fastapi import FastAPI
+from ai4icore_logging import LoggingConfig, register_logging_plugin
+
+app = FastAPI()
+
+# Create custom config
+config = LoggingConfig(
+    service_name="my-service",
+    use_kafka=True,
+    exclude_health_logs=True,
+)
+
+# Register plugin with config
+register_logging_plugin(app, config=config)
+```
+
+### Alternative: Manual Middleware Setup (Legacy)
+
+If you prefer manual control, you can still add middleware individually:
+
+```python
+from fastapi import FastAPI
+from ai4icore_logging import (
+    configure_logging,
+    CorrelationMiddleware,
+    ServiceRequestLoggingMiddleware,
+    get_logger
+)
+
+app = FastAPI()
+
+# Step 1: Configure logging
+configure_logging(
+    service_name="my-service",
+    use_kafka=False,
+)
+
+# Step 2: Add middleware manually
+app.add_middleware(CorrelationMiddleware)
+app.add_middleware(ServiceRequestLoggingMiddleware)
+
+# Get logger
+logger = get_logger("my-service")
+
+@app.get("/api/endpoint")
+async def my_endpoint():
     logger.info("Processing request", extra={"user_id": "user_123"})
     return {"status": "ok"}
 ```
@@ -92,11 +146,54 @@ All logs are formatted as JSON:
 
 ## Configuration
 
-Set environment variables:
+### Using LoggingConfig Class (Recommended)
 
-- `SERVICE_NAME`: Service name (defaults to logger name)
+```python
+from ai4icore_logging import LoggingConfig, register_logging_plugin
+
+# Create config from environment variables
+config = LoggingConfig.from_env()
+
+# Or create with custom values
+config = LoggingConfig(
+    service_name="my-service",
+    service_version="2.0.0",
+    environment="production",
+    use_kafka=True,
+    exclude_health_logs=True,
+    exclude_metrics_logs=True,
+)
+
+register_logging_plugin(app, config=config)
+```
+
+### Environment Variables
+
+All configuration can be set via environment variables:
+
+**Core Settings:**
+- `SERVICE_NAME`: Service name (defaults to "unknown")
 - `SERVICE_VERSION`: Service version (defaults to "1.0.0")
 - `ENVIRONMENT`: Environment name (defaults to "development")
 - `LOG_LEVEL`: Log level (defaults to "INFO")
-- `KAFKA_BOOTSTRAP_SERVERS`: Kafka servers (defaults to "localhost:9092")
+- `ROOT_LOG_LEVEL`: Root logger level (defaults to "WARNING")
+
+**Kafka Settings:**
+- `USE_KAFKA_LOGGING`: Enable Kafka handler (defaults to "false")
+- `KAFKA_LOG_TOPIC`: Kafka topic name (defaults to "logs")
+
+**Middleware Settings:**
+- `LOGGING_PLUGIN_ENABLED`: Enable plugin (defaults to "true")
+- `CORRELATION_MIDDLEWARE_ENABLED`: Enable correlation middleware (defaults to "true")
+- `REQUEST_LOGGING_MIDDLEWARE_ENABLED`: Enable request logging middleware (defaults to "true")
+- `CORRELATION_HEADER_NAME`: Header name for correlation ID (defaults to "X-Correlation-ID")
+
+**Request Logging Filtering:**
+- `EXCLUDE_HEALTH_LOGS`: Skip /health endpoint logs (defaults to "false")
+- `EXCLUDE_METRICS_LOGS`: Skip /metrics endpoint logs (defaults to "false")
+- `EXCLUDE_OPTIONS_LOGS`: Skip OPTIONS (CORS) logs (defaults to "true")
+- `ALLOWED_LOG_LEVELS`: Comma-separated levels to log (defaults to "DEBUG,INFO,WARNING,ERROR")
+- `MIN_LOG_LEVEL`: Minimum log level fallback (defaults to "INFO")
+- `REQUEST_LOG_INCLUDE_PATHS`: Comma-separated path allowlist; when set, only matching paths are logged
+- `INCLUDE_4XX_LOGS`: Include 4xx errors in logs (defaults to "false", gateway logs them)
 

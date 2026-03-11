@@ -49,11 +49,11 @@ except ImportError:
 
 # Logging imports
 LOGGING_AVAILABLE = False
-configure_logging = None
 get_logger = None
-CorrelationMiddleware = None
+LoggingConfig = None
+register_logging_plugin = None
 try:
-    from ai4icore_logging import configure_logging, get_logger, CorrelationMiddleware
+    from ai4icore_logging import get_logger, LoggingConfig, register_logging_plugin
     LOGGING_AVAILABLE = True
 except ImportError:
     pass
@@ -61,7 +61,6 @@ except ImportError:
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from models import database_models
@@ -69,10 +68,6 @@ from models import auth_models  # Import to ensure auth tables are created
 
 # Configure structured logging (to OpenSearch, with correlation IDs)
 if LOGGING_AVAILABLE:
-    configure_logging(
-        service_name=os.getenv("SERVICE_NAME", "ner-service"),
-        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
-    )
     logger = get_logger(__name__)
     
     # Aggressively disable uvicorn access logger BEFORE uvicorn starts
@@ -392,13 +387,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Correlation middleware (MUST be before RequestLoggingMiddleware)
-# This extracts X-Correlation-ID from headers and sets it in logging context
-if CorrelationMiddleware:
-    app.add_middleware(CorrelationMiddleware)
-
-# Request logging
-app.add_middleware(RequestLoggingMiddleware)
+# Initialize AI4ICore Logging Plugin
+if LOGGING_AVAILABLE and register_logging_plugin and LoggingConfig:
+    logging_config = LoggingConfig.from_env()
+    logging_config.service_name = os.getenv("SERVICE_NAME")
+    logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+    register_logging_plugin(app, config=logging_config)
+    logger.info("✅ AI4ICore Logging Plugin initialized for NER service")
 
 # Rate limiting (Redis client will be picked from app.state)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
