@@ -6,7 +6,7 @@ This guide provides step-by-step instructions for setting up and running the AI4
 
 - **[Docker](https://docs.docker.com/get-started/get-docker/)** and **[Docker Compose](https://docs.docker.com/compose/install/)** installed
 - **[Git](https://git-scm.com/install/)** installed
-- **[Python 3](https://www.python.org/downloads/)** and **[pip3](https://pip.pypa.io/en/stable/installation/)** installed
+- **[Python](https://www.python.org/downloads/)** and **[pip](https://pip.pypa.io/en/stable/installation/)** installed
 - At least **8GB RAM** and **20GB disk space**
 
 ## Important Note
@@ -36,10 +36,7 @@ Copy the environment template for each service and the frontend:
 
 
 **Core Services**
-
-**Core Services**
 ```bash
-cp services/api-gateway-service/env.template services/api-gateway-service/.env
 cp services/auth-service/env.template services/auth-service/.env
 cp services/config-service/env.template services/config-service/.env
 cp services/model-management-service/env.template services/model-management-service/.env
@@ -150,14 +147,8 @@ This creates the `unleash` database for the Unleash feature flag service.
 
 Run migrations for all databases at once.
 
-**Linux/macOS:**
 ```bash
-python3 infrastructure/databases/cli.py migrate:all
-```
-
-**Windows:**
-```bash
-python infrastructure/databases/cli.py migrate:all
+./scripts/migrate.sh all upgrade
 ```
 
 This command will:
@@ -251,7 +242,7 @@ Once all services are running, use the table below to find URLs and ports. The *
 | Telemetry Service | telemetry-service | http://localhost:8084/docs | 8084 |
 | Alerting Service | alerting-service | http://localhost:8085/docs | 8085 |
 | Dashboard Service | dashboard-service | http://localhost:8090/docs | 8090 |
-| API Gateway | api-gateway-service | http://localhost:9000 | 9000 |
+| API Gateway | api-gateway-service | http://localhost:8080 | 8080 |
 | Prometheus | prometheus | http://localhost:9090 | 9090 |
 | Grafana | grafana | http://localhost:3001 | 3001 |
 | Jaeger | jaeger | http://localhost:16686 | 16686 |
@@ -394,8 +385,6 @@ If inference calls return a response like `"code": "SERVICE_UNAVAILABLE"` (e.g. 
 
 This `docker-compose-local.yml` configuration is optimized for local development:
 
-- **Direct service communication**: Services communicate directly without an API gateway layer
-- **Kong API Gateway**: Not included in local setup (production only)
 - **Health checks**: Configured with 6-hour intervals to reduce overhead
 - **Monitoring stack**: Full observability with Prometheus, Grafana, Jaeger, and OpenSearch
 - **Feature flags**: Unleash for gradual feature rollout
@@ -406,7 +395,7 @@ For production deployment with Kong API Gateway, load balancing, and enhanced se
 
 ## Next Steps
 
-- Explore the API using Swagger documentation at http://localhost:9000/docs
+- Explore the API using Swagger documentation at http://localhost:8080/docs
 - Test the frontend at http://localhost:3000
 - Configure feature flags in Unleash (optional)
 - Review service logs and metrics in Grafana

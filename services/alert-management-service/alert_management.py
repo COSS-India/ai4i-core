@@ -36,17 +36,17 @@ db_pool: Optional[asyncpg.Pool] = None
 auth_db_pool: Optional[asyncpg.Pool] = None
 
 # Database configuration
-DB_HOST = os.getenv("POSTGRES_HOST", "postgres")
-DB_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
-DB_USER = os.getenv("POSTGRES_USER", "dhruva_user")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "dhruva_secure_password_2024")
+DB_HOST = os.getenv("POSTGRES_HOST")
+DB_PORT = int(os.getenv("POSTGRES_PORT"))
+DB_USER = os.getenv("POSTGRES_USER")
+DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 DB_NAME = "alerting_db"
 
 # Auth database configuration (for querying users by role)
 AUTH_DB_NAME = "auth_db"
 
 # Sync service configuration
-SYNC_SERVICE_URL = os.getenv("ALERT_CONFIG_SYNC_SERVICE_URL", "http://alert-config-sync-service:8097")
+SYNC_SERVICE_URL = os.getenv("ALERT_CONFIG_SYNC_SERVICE_URL")
 SYNC_ENABLED = os.getenv("ALERT_SYNC_ENABLED", "true").lower() == "true"
 
 async def init_db_pool():
@@ -1207,15 +1207,15 @@ async def create_notification_receiver(
     await ensure_db_pool()
     
     async with db_pool.acquire() as conn:
-        # Check if receiver with this name already exists
+        # Reject if receiver with this name already exists globally (no organization)
         existing = await conn.fetchrow(
-            "SELECT id FROM notification_receivers WHERE organization = $1 AND receiver_name = $2",
-            organization, receiver_name
+            "SELECT id FROM notification_receivers WHERE receiver_name = $1",
+            receiver_name
         )
         if existing:
             raise HTTPException(
                 status_code=409,
-                detail=f"Receiver with name '{receiver_name}' already exists for organization '{organization}'"
+                detail=f"Receiver with name '{receiver_name}' already exists."
             )
         
         # Create the receiver (store both email_to and rbac_role)

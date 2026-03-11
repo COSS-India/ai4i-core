@@ -16,10 +16,11 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performAudioLanguageDetectionInference, listAudioLanguageDetectionServices } from "../services/audioLanguageDetectionService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { extractErrorInfo } from "../utils/errorHandler";
@@ -46,13 +47,6 @@ const AudioLanguageDetectionPage: React.FC = () => {
     queryFn: listAudioLanguageDetectionServices,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
-
-  // Auto-select first service when services are loaded
-  useEffect(() => {
-    if (services.length > 0 && !selectedServiceId) {
-      setSelectedServiceId(services[0].service_id);
-    }
-  }, [services, selectedServiceId]);
 
   const {
     isRecording,
@@ -172,10 +166,10 @@ const AudioLanguageDetectionPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Audio Language Detection
+              {getServiceTitle("audio-language-detection")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Detect the spoken language directly from an audio file. Identify which language is being spoken in audio recordings.
+              {getServiceDescription("audio-language-detection")}
             </Text>
           </Box>
 
@@ -193,7 +187,8 @@ const AudioLanguageDetectionPage: React.FC = () => {
               {/* Service Selection */}
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  Audio Language Detection Service:
+                  Audio Language Detection Service{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 {isLoadingServices ? (
                   <HStack spacing={2} p={2}>
@@ -212,7 +207,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
                   <Select
                     value={selectedServiceId}
                     onChange={(e) => setSelectedServiceId(e.target.value)}
-                    placeholder="Select a Audio Language Detection service"
+                    placeholder={isLoadingServices ? "Loading..." : "Select"}
                     disabled={fetching}
                     size="md"
                     borderColor="gray.300"
@@ -252,7 +247,8 @@ const AudioLanguageDetectionPage: React.FC = () => {
 
               <Box>
                 <Text mb={4} fontSize="sm" fontWeight="semibold">
-                  Audio Input:
+                  Audio Input{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </Text>
                 <AudioRecorder
                   onAudioReady={handleAudioReady}
@@ -279,6 +275,11 @@ const AudioLanguageDetectionPage: React.FC = () => {
                 </Box>
               )}
 
+              {/* Instruction above Submit (consistent with other services) */}
+              <Text fontSize="sm" color="gray.600">
+                Record audio or upload a file above, then click &quot;Submit for Detection&quot; to identify the spoken language.
+              </Text>
+
               {/* Submit Button */}
               <Button
                 colorScheme="orange"
@@ -287,7 +288,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
                 loadingText="Processing..."
                 size="md"
                 w="full"
-                isDisabled={!audioData || fetching}
+                isDisabled={!audioData || !selectedServiceId || fetching}
               >
                 Submit for Detection
               </Button>

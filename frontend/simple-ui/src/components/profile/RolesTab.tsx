@@ -1,5 +1,11 @@
-import React from "react";
+import React, { useMemo, useRef } from "react";
 import {
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogContent,
+  AlertDialogOverlay,
   Box,
   Card,
   CardBody,
@@ -41,11 +47,20 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
   const cardBorder = useColorModeValue("gray.200", "gray.700");
   const inputReadOnlyBg = useColorModeValue("gray.50", "gray.700");
 
+  const sortedUsers = useMemo(() => {
+    return [...users].sort((a, b) => {
+      const nameA = (a.full_name || a.username || "").toLowerCase();
+      const nameB = (b.full_name || b.username || "").toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+  }, [users]);
+
   const rt = useRolesTab({
     user: user ?? null,
     users,
     isLoadingUsers,
   });
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
   return (
     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
@@ -94,7 +109,7 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
                 bg="white"
                 isDisabled={isLoadingUsers}
               >
-                {users.map((u) => (
+                {sortedUsers.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.username} ({u.email})
                   </option>
@@ -151,7 +166,7 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
                   <Select
                     value={rt.selectedRole}
                     onChange={(e) => rt.setSelectedRole(e.target.value)}
-                    placeholder="Select a role to assign"
+                    placeholder="Select a role to assign to this user"
                     bg="white"
                   >
                     {rt.roles
@@ -170,7 +185,7 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
                 </FormControl>
                 <Button
                   colorScheme="green"
-                  onClick={rt.handleAssignRole}
+                  onClick={rt.openAssignConfirm}
                   isLoading={rt.isAssigningRole}
                   loadingText="Assigning..."
                   isDisabled={!rt.selectedRole || rt.isModeratorOnly}
@@ -223,6 +238,44 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
           </Alert>
         </VStack>
       </CardBody>
+
+      <AlertDialog
+        isOpen={rt.isAssignConfirmOpen}
+        leastDestructiveRef={cancelRef}
+        onClose={rt.closeAssignConfirm}
+      >
+        <AlertDialogOverlay>
+          <AlertDialogContent>
+            <AlertDialogHeader fontSize="lg" fontWeight="bold">
+              Assign role to user
+            </AlertDialogHeader>
+            <AlertDialogBody>
+              <Text>
+                Are you sure you want to assign the role <strong>{rt.selectedRole}</strong> to{" "}
+                <strong>{rt.selectedUser?.username}</strong>? This will update the user&apos;s permissions.
+              </Text>
+            </AlertDialogBody>
+            <AlertDialogFooter>
+              <Button
+                ref={cancelRef}
+                onClick={rt.closeAssignConfirm}
+                isDisabled={rt.isAssigningRole}
+              >
+                Cancel
+              </Button>
+              <Button
+                colorScheme="green"
+                onClick={rt.handleConfirmAssignRole}
+                ml={3}
+                isLoading={rt.isAssigningRole}
+                loadingText="Assigning..."
+              >
+                Confirm
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialogOverlay>
+      </AlertDialog>
     </Card>
   );
 }

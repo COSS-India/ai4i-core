@@ -250,15 +250,15 @@ All configuration is done via environment variables. See `env.template` for the 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `REDIS_HOST` | Redis hostname | `redis` |
-| `REDIS_PORT` | Redis port | `6379` |
-| `REDIS_PASSWORD` | Redis password | `redis_secure_password_2024` |
+| `REDIS_HOST` | Redis hostname | - |
+| `REDIS_PORT` | Redis port | - |
+| `REDIS_PASSWORD` | Redis password | - |
 
 #### Triton Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `TRITON_ENDPOINT` | Triton server URL | `http://13.220.11.146:8000` |
+| `TRITON_ENDPOINT` | Triton server URL | - |
 | `TRITON_API_KEY` | Triton API key | - |
 | `TRITON_TIMEOUT` | Request timeout (seconds) | `300` |
 | `TRITON_CONCURRENCY` | Max concurrent requests | `20` |

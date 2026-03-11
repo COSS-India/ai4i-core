@@ -27,6 +27,10 @@ if _env_file.exists():
 
 class MigrationConfig:
     """Configuration for database migrations"""
+
+    POSTGRES_DB_ALIASES = {
+        "dhruva_platform_db": os.getenv("DHRUVA_PLATFORM_DB_NAME", "dhruva_platform"),
+    }
     
     @staticmethod
     def get_postgres_config(database: str = 'auth_db') -> Dict[str, Any]:
@@ -36,7 +40,7 @@ class MigrationConfig:
             'port': int(os.getenv('POSTGRES_PORT', 5434)),
             'user': os.getenv('POSTGRES_USER', 'dhruva_user'),
             'password': os.getenv('POSTGRES_PASSWORD', 'dhruva_secure_password_2024'),
-            'database': database,
+            'database': MigrationConfig.POSTGRES_DB_ALIASES.get(database, database),
             'async': False
         }
     
@@ -137,5 +141,8 @@ class MigrationConfig:
             raise ValueError(f"Unsupported database type: {database_type}")
         
         config = config_methods[database_type](**kwargs)
-        config.update(kwargs)
+        passthrough_kwargs = dict(kwargs)
+        if database_type == 'postgres':
+            passthrough_kwargs.pop('database', None)
+        config.update(passthrough_kwargs)
         return config

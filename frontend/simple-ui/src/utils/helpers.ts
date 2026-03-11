@@ -1,4 +1,17 @@
 // Utility helper functions for Simple UI
+import { getStoredAccessToken } from './tokenStorage';
+
+/**
+ * Masks phone for view mode: only last 4 digits visible, e.g. "+91 xxxxxx1234"
+ * Used consistently across user profile and tenant/contact views.
+ */
+export function maskPhoneForDisplay(phone: string | undefined): string {
+  if (!phone || !phone.trim()) return "—";
+  const digits = phone.replace(/\D/g, "");
+  const last4 = digits.slice(-4);
+  if (last4.length === 0) return "—";
+  return `+91 xxxxxx${last4}`;
+}
 
 /**
  * Decode JWT token and extract tenant_id
@@ -8,8 +21,7 @@ export const getTenantIdFromToken = (): string | null => {
   if (typeof window === 'undefined') return null;
   
   try {
-    // Get token from localStorage or sessionStorage
-    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    const token = getStoredAccessToken();
     if (!token || token.trim() === '') {
       return null;
     }

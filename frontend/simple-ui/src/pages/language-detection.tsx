@@ -1,4 +1,4 @@
-// Language Detection service testing page
+// Text Language Detection testing page
 
 import {
   Box,
@@ -18,11 +18,12 @@ import {
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import ContentLayout from "../components/common/ContentLayout";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performLanguageDetectionInference, listLanguageDetectionServices } from "../services/languageDetectionService";
 import { extractErrorInfo } from "../utils/errorHandler";
-import { LANGUAGE_DETECTION_ERRORS, MIN_LANGUAGE_DETECTION_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
+import { LANGUAGE_DETECTION_ERRORS, MIN_LANGUAGE_DETECTION_TEXT_LENGTH, MAX_TEXT_LENGTH, MAX_LANGUAGE_DETECTION_INPUT_LENGTH } from "../config/constants";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const LanguageDetectionPage: React.FC = () => {
@@ -35,26 +36,31 @@ const LanguageDetectionPage: React.FC = () => {
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch available Language Detection services
   const { data: languageDetectionServices, isLoading: servicesLoading } = useQuery({
     queryKey: ["language-detection-services"],
     queryFn: listLanguageDetectionServices,
-    staleTime: 10 * 60 * 1000, // 10 minutes
+    staleTime: 10 * 60 * 1000,
   });
 
-  // Auto-select first available Language Detection service when list loads
-  useEffect(() => {
-    if (!languageDetectionServices || languageDetectionServices.length === 0) return;
-    if (!serviceId) {
-      // If no service selected, select first available
-      setServiceId(languageDetectionServices[0].service_id);
-    }
-  }, [languageDetectionServices, serviceId]);
+  const canDetect =
+    !!serviceId?.trim() &&
+    !!inputTexts?.trim() &&
+    inputTexts.length <= MAX_LANGUAGE_DETECTION_INPUT_LENGTH &&
+    !fetching;
 
   const handleProcess = async () => {
+    if (!serviceId?.trim()) {
+      toast({
+        title: "Service Required",
+        description: "Please select a service before detecting language.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     const trimmedText = inputTexts.trim();
-    
-    // Validate input text
     if (!trimmedText) {
       const err = LANGUAGE_DETECTION_ERRORS.TEXT_REQUIRED;
       toast({
@@ -100,13 +106,11 @@ const LanguageDetectionPage: React.FC = () => {
       return;
     }
     
-    // Validate maximum text length
-    const tooLongTexts = texts.filter(t => t.length > MAX_TEXT_LENGTH);
-    if (tooLongTexts.length > 0) {
-      const err = LANGUAGE_DETECTION_ERRORS.TEXT_TOO_LONG;
+    // Validate total input length
+    if (trimmedText.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH) {
       toast({
-        title: err.title,
-        description: err.description,
+        title: "Input too long",
+        description: `Total text must not exceed ${MAX_LANGUAGE_DETECTION_INPUT_LENGTH} characters.`,
         status: "error",
         duration: 3000,
         isClosable: true,
@@ -114,11 +118,14 @@ const LanguageDetectionPage: React.FC = () => {
       return;
     }
 
-    if (!serviceId) {
+    // Validate maximum text length per segment
+    const tooLongTexts = texts.filter(t => t.length > MAX_TEXT_LENGTH);
+    if (tooLongTexts.length > 0) {
+      const err = LANGUAGE_DETECTION_ERRORS.TEXT_TOO_LONG;
       toast({
-        title: "Service Required",
-        description: "Please select a Language Detection service.",
-        status: "warning",
+        title: err.title,
+        description: err.description,
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -165,15 +172,13 @@ const LanguageDetectionPage: React.FC = () => {
     setError(null);
   };
 
-  const wordCount = inputTexts.trim() ? inputTexts.trim().split(/\s+/).length : 0;
-
   return (
     <>
       <Head>
-        <title>Language Detection | AI4Inclusion Console</title>
+        <title>Text Language Detection | AI4Inclusion Console</title>
         <meta
           name="description"
-          content="Test Language Detection to identify text language and script"
+          content="Detect the language of any text input using Text Language Detection"
         />
       </Head>
 
@@ -182,10 +187,10 @@ const LanguageDetectionPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Text Language Detection
+              {getServiceTitle("language-detection")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              A lightweight language identification service for detecting the language of input text across multiple Indian languages.
+              {getServiceDescription("language-detection")}
             </Text>
           </Box>
 
@@ -197,12 +202,12 @@ const LanguageDetectionPage: React.FC = () => {
           mx="auto"
         >
             {/* Configuration Panel */}
-          <GridItem>
-            <VStack spacing={6} align="stretch">
+          <GridItem pt={0} mt={0} alignSelf="flex-start">
+            <VStack spacing={6} align="stretch" pt={0} mt={0}>
               {/* Service Selection */}
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  Language Detection Service:
+                  Service <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 {servicesLoading ? (
                   <HStack spacing={2} p={2}>
@@ -213,7 +218,7 @@ const LanguageDetectionPage: React.FC = () => {
                   <Select
                     value={serviceId}
                     onChange={(e) => setServiceId(e.target.value)}
-                    placeholder="Select a Language Detection service"
+                    placeholder={servicesLoading ? "Loading..." : "Select"}
                     disabled={fetching}
                     size="md"
                     borderColor="gray.300"
@@ -251,9 +256,9 @@ const LanguageDetectionPage: React.FC = () => {
                 )}
               </FormControl>
 
-              <FormControl>
+              <FormControl isInvalid={inputTexts.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH}>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  Enter text to detect language:
+                  Source Text <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 <Textarea
                   value={inputTexts}
@@ -262,58 +267,45 @@ const LanguageDetectionPage: React.FC = () => {
                   rows={6}
                   isDisabled={fetching}
                   bg="white"
-                  borderColor="gray.300"
+                  maxLength={MAX_LANGUAGE_DETECTION_INPUT_LENGTH}
+                  borderColor={inputTexts.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH ? "red.400" : "gray.300"}
                 />
+                {inputTexts.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH && (
+                  <Text fontSize="sm" color="red.500" mt={1}>
+                    Text exceeds the maximum limit of {MAX_LANGUAGE_DETECTION_INPUT_LENGTH} characters. Please reduce the length.
+                  </Text>
+                )}
               </FormControl>
-
-              {/* Metrics Box */}
-              {(fetched || inputTexts.trim()) && (
-                <Box
-                  p={4}
-                  bg="orange.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="orange.200"
+              <Box display="flex" justifyContent="flex-end">
+                <Text
+                  fontSize="sm"
+                  color={inputTexts.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH ? "red.500" : "gray.500"}
+                  fontWeight={inputTexts.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH ? "semibold" : "normal"}
                 >
-                  <HStack spacing={6}>
-                    <VStack align="start" spacing={0}>
-                      <Text fontSize="xs" color="gray.600">
-                        Word Count
-                      </Text>
-                      <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                        {wordCount}
-                      </Text>
-                    </VStack>
-                    {fetched && (
-                      <VStack align="start" spacing={0}>
-                        <Text fontSize="xs" color="gray.600">
-                          Response Time
-                        </Text>
-                        <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                          {responseTime.toFixed(2)} seconds
-                        </Text>
-                      </VStack>
-                    )}
-                  </HStack>
-                </Box>
-              )}
+                  {inputTexts.length} / {MAX_LANGUAGE_DETECTION_INPUT_LENGTH}
+                </Text>
+              </Box>
 
-                <Button
-                  colorScheme="orange"
-                  onClick={handleProcess}
-                  isLoading={fetching}
-                  loadingText="Processing..."
-                  size="md"
-                  w="full"
-                >
-                  Detect Language
-                </Button>
+              <Text fontSize="sm" color="gray.600">
+                Configure service and enter text, then click Detect Language.
+              </Text>
+              <Button
+                colorScheme="orange"
+                onClick={handleProcess}
+                isLoading={fetching}
+                loadingText="Processing..."
+                size="md"
+                w="full"
+                isDisabled={!canDetect}
+              >
+                Detect Language
+              </Button>
               </VStack>
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Progress Indicator */}
               {fetching && (
                 <Box>
@@ -338,38 +330,6 @@ const LanguageDetectionPage: React.FC = () => {
                   </Text>
                 </Box>
               )}
-
-                {/* Metrics Box */}
-                {(fetched || inputTexts.trim()) && (
-                  <Box
-                    p={4}
-                    bg="orange.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="orange.200"
-                  >
-                    <HStack spacing={6}>
-                      <VStack align="start" spacing={0}>
-                        <Text fontSize="xs" color="gray.600">
-                          Word Count
-                        </Text>
-                        <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                          {wordCount}
-                        </Text>
-                      </VStack>
-                      {fetched && (
-                        <VStack align="start" spacing={0}>
-                          <Text fontSize="xs" color="gray.600">
-                            Response Time
-                          </Text>
-                          <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                            {responseTime.toFixed(2)} seconds
-                          </Text>
-                        </VStack>
-                      )}
-                    </HStack>
-                  </Box>
-                )}
 
                 {/* Language Detection Results */}
               {fetched && result && result.output && result.output.length > 0 && (
@@ -422,17 +382,42 @@ const LanguageDetectionPage: React.FC = () => {
                             Text: {item.source}
                           </Text>
                         )}
-                        <VStack align="start" spacing={1}>
-                          <Text fontSize="md" fontWeight="semibold" color="blue.700">
-                            {detectedLanguage}
-                            {detectedScript && ` (${detectedScript} script)`}
-                          </Text>
-                          {langCode && (
-                            <Text fontSize="xs" color="gray.500">
-                              Code: {langCode}
-                              {confidence !== undefined &&
-                                ` • Confidence: ${(confidence * 100).toFixed(1)}%`}
+                        <VStack align="start" spacing={3}>
+                          <Box>
+                            <Text fontSize="xs" color="gray.600" mb={1}>
+                              Language
                             </Text>
+                            <Text fontSize="md" fontWeight="semibold" color="blue.700">
+                              {detectedLanguage}
+                              {detectedScript && ` (${detectedScript} script)`}
+                              {langCode && ` (${langCode})`}
+                            </Text>
+                          </Box>
+                          {confidence !== undefined && (
+                            <Box w="full">
+                              <Text fontSize="xs" color="gray.600" mb={1}>
+                                Confidence Score
+                              </Text>
+                              <HStack spacing={2} align="center">
+                                <Text fontSize="lg" fontWeight="semibold" color="gray.800">
+                                  {(confidence * 100).toFixed(2)}%
+                                </Text>
+                                <Box
+                                  flex={1}
+                                  h="8px"
+                                  bg="gray.200"
+                                  borderRadius="full"
+                                  overflow="hidden"
+                                >
+                                  <Box
+                                    h="100%"
+                                    bg="orange.500"
+                                    w={`${confidence * 100}%`}
+                                    transition="width 0.3s"
+                                  />
+                                </Box>
+                              </HStack>
+                            </Box>
                           )}
                         </VStack>
                       </Box>

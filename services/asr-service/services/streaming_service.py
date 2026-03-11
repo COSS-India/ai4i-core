@@ -93,7 +93,12 @@ class StreamingASRService:
                 service_id = query_params.get('serviceId', [None])[0]
                 language = query_params.get('language', [None])[0]
                 sampling_rate = query_params.get('samplingRate', ['16000'])[0]
-                api_key = query_params.get('apiKey', [None])[0]
+                # Prefer token from Socket.IO auth payload; fall back to query for backward compatibility
+                api_key = None
+                if isinstance(auth, dict) and auth.get('token'):
+                    api_key = auth['token']
+                if not api_key:
+                    api_key = query_params.get('apiKey', [None])[0]
                 
                 # Extract optional parameters
                 preprocessors = query_params.get('preProcessors', [None])[0]

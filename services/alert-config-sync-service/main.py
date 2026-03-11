@@ -41,17 +41,17 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 # Configuration
-DB_HOST = os.getenv("POSTGRES_HOST", "postgres")
-DB_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
-DB_USER = os.getenv("POSTGRES_USER", "dhruva_user")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "dhruva_secure_password_2024")
+DB_HOST = os.getenv("POSTGRES_HOST")
+DB_PORT = int(os.getenv("POSTGRES_PORT"))
+DB_USER = os.getenv("POSTGRES_USER")
+DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 DB_NAME = "alerting_db"
 
 # Auth DB (same host/user/password, different database) - for resolving ADMIN emails for default receiver
-AUTH_DB_NAME = os.getenv("AUTH_DB_NAME", "auth_db")
+AUTH_DB_NAME = os.getenv("AUTH_DB_NAME")
 
-PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
-ALERTMANAGER_URL = os.getenv("ALERTMANAGER_URL", "http://alertmanager:9093")
+PROMETHEUS_URL = os.getenv("PROMETHEUS_URL")
+ALERTMANAGER_URL = os.getenv("ALERTMANAGER_URL")
 
 # Paths for YAML files (mounted volumes)
 PROMETHEUS_APPLICATION_ALERTS_PATH = os.getenv("PROMETHEUS_APPLICATION_ALERTS_PATH", "/etc/prometheus/rules/application-alerts.yml")
@@ -208,8 +208,7 @@ def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], cat
     If category is specified, only generates alerts for that category.
     Otherwise generates all alerts grouped by category.
     
-    Key insight: Each customer gets their own alert rule, even if monitoring the same metric.
-    This ensures customer isolation and allows different thresholds per customer.
+    Alerts are global: no organization in labels or annotations; alertname is the definition name only.
     """
     # Filter by category if specified
     if category:
@@ -299,13 +298,12 @@ def load_global_config_from_file() -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"Failed to load global config from file: {e}, using defaults")
     
-    # Fallback to defaults if file doesn't exist or can't be read
     return {
         'resolve_timeout': '5m',
-        'smtp_smarthost': os.getenv('SMTP_SMARTHOST', 'smtp.gmail.com:587'),
-        'smtp_from': os.getenv('SMTP_FROM', 'bharathia0704@gmail.com'),
-        'smtp_auth_username': os.getenv('SMTP_AUTH_USERNAME', 'bharathia0704@gmail.com'),
-        'smtp_auth_password': os.getenv('SMTP_AUTH_PASSWORD', 'ypuaofsbatebvwye'),
+        'smtp_smarthost': os.getenv('SMTP_SMARTHOST'),
+        'smtp_from': os.getenv('SMTP_FROM'),
+        'smtp_auth_username': os.getenv('SMTP_AUTH_USERNAME'),
+        'smtp_auth_password': os.getenv('SMTP_AUTH_PASSWORD'),
         'smtp_require_tls': True
     }
 
