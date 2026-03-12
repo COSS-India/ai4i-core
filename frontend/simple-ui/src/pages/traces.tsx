@@ -657,7 +657,6 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     const categorized = categorizeSpan(span, serviceName, traceStartTime);
     return categorized;
   });
-
   // Detect VAD fallback pattern: VAD failed but ASR preprocessing succeeded with single chunk
   // This indicates graceful degradation - VAD failed but processing continued with fallback
   const detectVadFallback = () => {
@@ -678,17 +677,17 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     failedVadSpans.forEach(vadSpan => {
       const vadSpanId = vadSpan.span.spanID;
       const parentId = spanToParent.get(vadSpanId);
-      
+
       if (parentId) {
         const parentSpan = processed.find(p => p.span.spanID === parentId);
-        
+
         if (parentSpan) {
           const parentOpName = parentSpan.span.operationName.toLowerCase();
           const parentTags = parentSpan.span.tags || [];
           const chunksCount = parentTags.find(t => t.key.toLowerCase() === "asr.chunks_count");
           const isAsrPreprocess = (parentOpName.includes("preprocess") || parentOpName.includes("asr.preprocess")) &&
                                   parentSpan.serviceName.toLowerCase().includes("asr");
-          
+
           // If parent is ASR preprocessing that succeeded with single chunk, VAD error was handled
           if (isAsrPreprocess && !parentSpan.hasError && chunksCount && parseInt(String(chunksCount.value)) === 1) {
             // Mark VAD span as not important - it's a handled error, don't show it prominently

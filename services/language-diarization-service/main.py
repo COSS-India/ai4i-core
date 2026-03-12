@@ -33,11 +33,11 @@ from ai4icore_model_management import ModelManagementPlugin, ModelManagementConf
 
 # Logging imports (structured JSON logging to OpenSearch via ai4icore_logging)
 LOGGING_AVAILABLE = False
-configure_logging = None
 get_logger = None
-CorrelationMiddleware = None
+LoggingConfig = None
+register_logging_plugin = None
 try:
-    from ai4icore_logging import configure_logging, get_logger, CorrelationMiddleware
+    from ai4icore_logging import get_logger, LoggingConfig, register_logging_plugin
     LOGGING_AVAILABLE = True
 except ImportError:
     pass
@@ -57,19 +57,13 @@ from routers import inference_router
 from models import database_models, auth_models
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
-from middleware.tenant_middleware import TenantMiddleware
-from middleware.tenant_schema_router import TenantSchemaRouter
+from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from utils.triton_client import TritonClient
 
 # Configure structured logging (JSON) so Fluent Bit can forward logs to OpenSearch.
 # Fallback to basic logging if ai4icore_logging is not available.
 if LOGGING_AVAILABLE:
-    configure_logging(
-        service_name=os.getenv("SERVICE_NAME", "language-diarization-service"),
-        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
-    )
     logger = get_logger(__name__)
 
     # Disable uvicorn access logger to avoid duplicate plain-text logs
@@ -85,14 +79,13 @@ else:
     )
     logger = logging.getLogger(__name__)
 
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
 
 DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db",
+    "DATABASE_URL"
 )
 
 # Multi-tenant database URL for tenant schema routing
@@ -199,19 +192,7 @@ async def lifespan(app: FastAPI):
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
     
-    # Initialize tenant schema router for multi-tenant routing
-    # Use MULTI_TENANT_DB_URL for tenant schema routing (different from auth DATABASE_URL)
-    if not MULTI_TENANT_DB_URL:
-        logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
-        # Fallback to DATABASE_URL but log warning
-        multi_tenant_db_url = DATABASE_URL
-    else:
-        multi_tenant_db_url = MULTI_TENANT_DB_URL
-    
-    logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")  # Mask password in logs
-    tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
-    app.state.tenant_schema_router = tenant_schema_router
-    logger.info("Tenant schema router initialized with multi-tenant database")
+    # Tenant schema router is created by MultiTenantPlugin at registration time
     
     app.state.triton_endpoint = TRITON_ENDPOINT
     app.state.triton_api_key = TRITON_API_KEY
@@ -269,6 +250,11 @@ async def lifespan(app: FastAPI):
         if db_engine:
             await db_engine.dispose()
             logger.info("PostgreSQL connection closed")
+
+        tenant_router = getattr(app.state, "tenant_schema_router", None)
+        if tenant_router:
+            await tenant_router.close_all()
+            logger.info("Tenant schema router connections closed")
     except Exception as e:
         logger.error("Error during shutdown: %s", e)
 
@@ -287,15 +273,6 @@ app = FastAPI(
         {"name": "Language Diarization Inference", "description": "Language diarization inference endpoints"},
         {"name": "Health", "description": "Service health and readiness checks"},
     ],
-    contact={
-        "name": "AI4ICore Team",
-        "url": "https://github.com/AI4X",
-        "email": "support@ai4x.com",
-    },
-    license_info={
-        "name": "MIT",
-        "url": "https://opensource.org/licenses/MIT",
-    },
     lifespan=lifespan,
 )
 
@@ -354,11 +331,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Request logging
-app.add_middleware(RequestLoggingMiddleware)
-
-# Tenant middleware (must be before rate limiting to mark tenant-aware endpoints)
-app.add_middleware(TenantMiddleware)
+# Initialize AI4ICore Logging Plugin
+if LOGGING_AVAILABLE and register_logging_plugin and LoggingConfig:
+    logging_config = LoggingConfig.from_env()
+    logging_config.service_name = os.getenv("SERVICE_NAME")
+    logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+    register_logging_plugin(app, config=logging_config)
+    logger.info("✅ AI4ICore Logging Plugin initialized for Language Diarization service")
 
 # Rate limiting (Redis client will be picked from app.state)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
@@ -372,6 +351,14 @@ app.add_middleware(
 
 # Error handlers
 add_error_handlers(app)
+
+# Multi-tenant plugin (tenant schema router + middleware)
+multi_tenant_db_url = MULTI_TENANT_DB_URL or DATABASE_URL
+multi_tenant_config = MultiTenantConfig.from_env()
+multi_tenant_config.tenant_paths = ["/api/v1/language-diarization"]
+multi_tenant_plugin = MultiTenantPlugin(multi_tenant_config)
+multi_tenant_plugin.register_plugin(app, multi_tenant_db_url=multi_tenant_db_url)
+logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for Language Diarization service")
 
 # Routers
 app.include_router(inference_router.inference_router)

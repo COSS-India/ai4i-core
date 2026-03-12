@@ -48,16 +48,15 @@ async def startup_event():
     try:
         # Initialize Redis connection
         redis_client = redis.from_url(
-            f"redis://:{os.getenv('REDIS_PASSWORD', 'redis_secure_password_2024')}@"
-            f"{os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', '6379')}"
+            f"redis://:{os.getenv('REDIS_PASSWORD')}@"
+            f"{os.getenv('REDIS_HOST')}:{os.getenv('REDIS_PORT')}"
         )
         await redis_client.ping()
         logger.info("Connected to Redis")
         
         # Initialize PostgreSQL connection
         database_url = os.getenv(
-            'DATABASE_URL', 
-            'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/metrics_db'
+            'DATABASE_URL'
         )
         db_engine = create_async_engine(
             database_url,
@@ -73,9 +72,9 @@ async def startup_event():
         logger.info("Connected to PostgreSQL")
         
         # Initialize InfluxDB client
-        influx_url = os.getenv('INFLUXDB_URL', 'http://influxdb:8086')
-        influx_token = os.getenv('INFLUXDB_TOKEN', 'dhruva-influx-token-2024')
-        influx_org = os.getenv('INFLUXDB_ORG', 'dhruva-org')
+        influx_url = os.getenv('INFLUXDB_URL')
+        influx_token = os.getenv('INFLUXDB_TOKEN')
+        influx_org = os.getenv('INFLUXDB_ORG')
         
         influx_client = InfluxDBClient(
             url=influx_url,

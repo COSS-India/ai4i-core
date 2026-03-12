@@ -24,8 +24,8 @@ from sqlalchemy.ext.asyncio import (
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
 from ai4icore_logging import (
     get_logger,
-    CorrelationMiddleware,
-    configure_logging,
+    LoggingConfig,
+    register_logging_plugin,
 )
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -34,18 +34,9 @@ from ai4icore_model_management import ModelManagementPlugin, ModelManagementConf
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
-from middleware.tenant_middleware import TenantMiddleware
-from middleware.tenant_schema_router import TenantSchemaRouter
+from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from models import database_models
-
-# Configure structured logging
-# This also configures uvicorn loggers to use our formatter and disables access logs
-configure_logging(
-    service_name=os.getenv("SERVICE_NAME", "ocr-service"),
-    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
-)
 
 # Aggressively disable uvicorn access logger BEFORE uvicorn starts
 # This must happen before uvicorn imports/creates its loggers
@@ -82,14 +73,13 @@ for handler in root_logger.handlers:
 # Get logger instance
 logger = get_logger(__name__)
 
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = int(os.getenv("REDIS_PORT"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
 
 DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db",
+    "DATABASE_URL"
 )
 
 
@@ -198,15 +188,7 @@ async def lifespan(app: FastAPI):
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
     
-    # Initialize tenant schema router for multi-tenant routing
-    multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL")
-    if not multi_tenant_db_url:
-        logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
-        multi_tenant_db_url = DATABASE_URL
-    logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")
-    tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
-    app.state.tenant_schema_router = tenant_schema_router
-    logger.info("Tenant schema router initialized with multi-tenant database")
+    # Tenant schema router is created by MultiTenantPlugin at registration time
     
     # Triton endpoint/model resolved via Model Management middleware - no hardcoded fallback
     app.state.triton_api_key = TRITON_API_KEY
@@ -263,6 +245,11 @@ async def lifespan(app: FastAPI):
         if db_engine:
             await db_engine.dispose()
             logger.info("PostgreSQL connection closed")
+
+        tenant_router = getattr(app.state, "tenant_schema_router", None)
+        if tenant_router:
+            await tenant_router.close_all()
+            logger.info("Tenant schema router connections closed")
     except Exception as e:
         logger.error("Error during shutdown: %s", e)
 
@@ -281,15 +268,6 @@ app = FastAPI(
         {"name": "OCR Inference", "description": "OCR inference endpoints"},
         {"name": "Health", "description": "Service health and readiness checks"},
     ],
-    contact={
-        "name": "AI4ICore Team",
-        "url": "https://github.com/AI4X",
-        "email": "support@ai4x.com",
-    },
-    license_info={
-        "name": "MIT",
-        "url": "https://opensource.org/licenses/MIT",
-    },
     lifespan=lifespan,
 )
 
@@ -304,18 +282,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Tenant middleware (MUST be before other middleware to mark tenant-aware endpoints)
-# This marks /api/v1/ocr requests for tenant context extraction
-app.add_middleware(TenantMiddleware)
-
-# Correlation middleware (MUST be before RequestLoggingMiddleware)
-# This extracts X-Correlation-ID from headers and sets it in logging context
-app.add_middleware(CorrelationMiddleware)
-
-# Request logging (added BEFORE ObservabilityMiddleware)
-# FastAPI middleware runs in REVERSE order, so this will run AFTER ObservabilityMiddleware
-# This ensures organization is set in context before logging
-app.add_middleware(RequestLoggingMiddleware)
+# Initialize AI4ICore Logging Plugin
+# Register before observability to preserve existing middleware ordering behavior.
+logging_config = LoggingConfig.from_env()
+logging_config.service_name = os.getenv("SERVICE_NAME")
+logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+register_logging_plugin(app, config=logging_config)
+logger.info("✅ AI4ICore Logging Plugin initialized for OCR service")
 
 # Observability (MUST be added AFTER RequestLoggingMiddleware)
 # FastAPI middleware runs in REVERSE order, so this will run FIRST
@@ -357,6 +330,14 @@ try:
     logger.info("✅ Auth context middleware registered for user_id from JWT (A/B sticky variant)")
 except Exception as e:
     logger.warning(f"Failed to initialize Model Management Plugin: {e}")
+
+# Multi-tenant plugin (tenant schema router + middleware)
+multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL") or DATABASE_URL
+multi_tenant_config = MultiTenantConfig.from_env()
+multi_tenant_config.tenant_paths = ["/api/v1/ocr"]
+multi_tenant_plugin = MultiTenantPlugin(multi_tenant_config)
+multi_tenant_plugin.register_plugin(app, multi_tenant_db_url=multi_tenant_db_url)
+logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for OCR service")
 
 # Distributed Tracing (Jaeger)
 # IMPORTANT: Setup tracing BEFORE instrumenting FastAPI

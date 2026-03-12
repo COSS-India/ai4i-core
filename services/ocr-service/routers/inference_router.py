@@ -14,13 +14,18 @@ from opentelemetry.trace import Status, StatusCode
 from ai4icore_logging import get_correlation_id
 
 from models.ocr_request import OCRInferenceRequest
-from models.ocr_response import OCRInferenceResponse
+from models.ocr_response import OCRInferenceResponse, TextOutput
 from services.ocr_service import OCRService
 from repositories.ocr_repository import OCRRepository
 from utils.triton_client import TritonClient, TritonInferenceError
 from middleware.auth_provider import AuthProvider
-from middleware.tenant_db_dependency import get_tenant_db_session
-from middleware.tenant_context import try_get_tenant_context
+from ai4icore_multi_tenant import (
+    get_tenant_db_session_factory,
+    try_get_tenant_context,
+    enforce_tenant_and_service_checks,
+)
+
+get_tenant_db_session = get_tenant_db_session_factory()
 from sqlalchemy.ext.asyncio import AsyncSession
 import os
 import httpx
@@ -37,6 +42,7 @@ inference_router = APIRouter(
 )
 
 
+#Tenant routing and service checks
 API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
 
 
@@ -117,123 +123,18 @@ async def get_ocr_service(
     return OCRService(repository=repository, triton_client=ocr_triton_client, model_name=model_name)
 
 
-
-async def _enforce_tenant_and_service_checks(http_request: Request, service_name: str = "ocr"):
-    """
-    Enforce tenant subscription, tenant status (ACTIVE) and global service active flag.
-    Execution order:
-      1) If tenant context exists, ensure tenant subscribes to this service
-      2) Ensure the service is globally active via /list/services
-      3) If tenant context exists, ensure tenant.status == ACTIVE
-    """
-    auth_header = http_request.headers.get("Authorization") or http_request.headers.get("authorization")
-
-    # Build headers to forward
-    headers = {}
-    if auth_header:
-        headers["Authorization"] = auth_header
-    x_api_key = http_request.headers.get("X-API-Key") or http_request.headers.get("x-api-key")
-    if x_api_key:
-        headers["X-API-Key"] = x_api_key
-    x_auth_source = http_request.headers.get("X-Auth-Source") or http_request.headers.get("x-auth-source")
-    if x_auth_source:
-        headers["X-Auth-Source"] = x_auth_source
-
-    # Determine tenant context in a best-effort way.
-    tenant_context = getattr(http_request.state, "tenant_context", None)
-    jwt_payload = getattr(http_request.state, "jwt_payload", None)
-    tenant_id_from_jwt = jwt_payload.get("tenant_id") if jwt_payload else None
-
-    tenant_data = tenant_context if tenant_context else None
-    tenant_id = tenant_context.get("tenant_id") if tenant_context else (tenant_id_from_jwt or None)
-
-    # If still no tenant info, attempt best-effort resolution (returns None for normal users)
-    if not tenant_id:
-        try:
-            resolved = await try_get_tenant_context(http_request)
-            if resolved:
-                tenant_context = resolved
-                tenant_id = tenant_context.get("tenant_id")
-                tenant_data = tenant_context
-            else:
-                tenant_id = None
-        except Exception as e:
-            logger.debug(f"try_get_tenant_context discovery failed: {e}")
-
-
-    # tenant_data may already be populated from tenant_context; only call API gateway if we still need tenant info
-    if tenant_id:
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/admin/view/tenant", params={"tenant_id": tenant_id}, headers=headers)
-                if resp.status_code == 200:
-                    tenant_data = resp.json()
-                    subscriptions = [str(s).lower() for s in (tenant_data.get("subscriptions") or [])]
-                    if service_name.lower() not in subscriptions:
-                        raise HTTPException(status_code=403, detail={"code": "SERVICE_NOT_SUBSCRIBED", "message": f"Tenant '{tenant_id}' is not subscribed to '{service_name}'"})
-                elif resp.status_code == 404:
-                    raise HTTPException(status_code=403, detail={"code": "TENANT_NOT_FOUND", "message": "Tenant not found"})
-                else:
-                    raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant information"})
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning(f"Failed to retrieve tenant info for tenant_id={tenant_id}: {e}")
-            raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant information"})
-
-    # Next, ensure the service is globally active
-    # Multi-tenant endpoints only require Bearer token (not API key)
-    # Create headers with only Authorization for multi-tenant service check
-    service_check_headers = {}
-    if headers and (headers.get("Authorization") or headers.get("authorization")):
-        service_check_headers["Authorization"] = headers.get("Authorization") or headers.get("authorization")
-    # Don't forward X-API-Key or X-Auth-Source for multi-tenant endpoints
-    
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            svc_resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/list/services", headers=service_check_headers if service_check_headers else None)
-            if svc_resp.status_code == 200:
-                services = svc_resp.json().get("services", [])
-                svc_entry = next((s for s in services if str(s.get("service_name")).lower() == service_name.lower()), None)
-                if not svc_entry or not svc_entry.get("is_active", False):
-                    raise HTTPException(status_code=503, detail=ErrorDetail(code="SERVICE_UNAVAILABLE", message="OCR service is not active at the moment. Please contact your administrator").dict())
-            else:
-                raise HTTPException(status_code=503, detail=ErrorDetail(code="SERVICE_UNAVAILABLE", message="Cannot detect service availability. Please contact your administrator").dict())
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=503, detail=ErrorDetail(code="SERVICE_UNAVAILABLE", message="OCR service is temporarily unavailable. Please try again in a few minutes.").dict())
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.warning(f"Failed to verify service active state for '{service_name}': {e}")
-        raise HTTPException(status_code=503, detail=ErrorDetail(code="SERVICE_UNAVAILABLE", message="OCR service is temporarily unavailable. Please try again in a few minutes.").dict())
-
-    # Finally, if tenant context present, enforce tenant status (must be ACTIVE)
-    if tenant_id:
-        try:
-            if not tenant_data:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/admin/view/tenant", params={"tenant_id": tenant_id}, headers=headers)
-                    if resp.status_code == 200:
-                        tenant_data = resp.json()
-                    elif resp.status_code == 404:
-                        raise HTTPException(status_code=403, detail={"code": "TENANT_NOT_FOUND", "message": "Tenant not found"})
-                    else:
-                        raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant status"})
-
-            status_val = (tenant_data.get("status") or "").upper()
-            if status_val != "ACTIVE":
-                raise HTTPException(status_code=403, detail={"code": "TENANT_INACTIVE", "message": f"Tenant status is {status_val}. Access denied."})
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning(f"Failed to verify tenant status for tenant_id={tenant_id}: {e}")
-            raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant status"})
-
-
 async def enforce_ocr_checks(request: Request):
     """FastAPI dependency that enforces tenant and service checks for OCR before other dependencies run."""
     # the service name is coming from multitenant SubscriptionType enum
-    await _enforce_tenant_and_service_checks(request, service_name="ocr")
+    await enforce_tenant_and_service_checks(
+        request,
+        service_name="ocr",
+        service_unavailable_code="SERVICE_UNAVAILABLE",
+        service_inactive_message="OCR service is not active at the moment. Please contact your administrator",
+        cannot_detect_message="Cannot detect OCR service availability. Please contact your administrator",
+        timeout_message="OCR service is temporarily unavailable. Please try again in a few minutes.",
+        generic_unavailable_message="OCR service is temporarily unavailable. Please try again in a few minutes.",
+    )
 
 # Add as a router-level dependency so it runs before path-operation dependencies like get_ocr_service
 inference_router.dependencies.append(Depends(enforce_ocr_checks))
@@ -359,6 +260,18 @@ async def run_inference(
                 detail=str(exc),
             ) from exc
         except TritonInferenceError as exc:
+            from services.constants.static_fallback_responses import (
+                is_static_fallback_enabled,
+                get_ocr_static_response,
+            )
+            if is_static_fallback_enabled():
+                num_inputs = len(request_body.image)
+                static_data = get_ocr_static_response(num_inputs)
+                output = [TextOutput(**o) for o in static_data["output"]]
+                span.add_event("ocr.inference.static_fallback", {"reason": "Triton unreachable"})
+                span.set_status(Status(StatusCode.OK))
+                logger.info("Returning static OCR fallback (Triton unreachable)")
+                return OCRInferenceResponse(output=output)
             span.set_attribute("error", True)
             span.set_attribute("error.type", "TritonInferenceError")
             span.set_attribute("error.message", str(exc))
@@ -441,12 +354,26 @@ async def _run_inference_impl(
 
     # Log removed - middleware handles request/response logging
 
-    response = await ocr_service.run_inference(
-        request_body,
-        user_id=user_id,
-        api_key_id=api_key_id,
-        session_id=session_id
-    )
+    try:
+        response = await ocr_service.run_inference(
+            request_body,
+            user_id=user_id,
+            api_key_id=api_key_id,
+            session_id=session_id
+        )
+    except TritonInferenceError as exc:
+        from services.constants.static_fallback_responses import (
+            is_static_fallback_enabled,
+            get_ocr_static_response,
+        )
+        if is_static_fallback_enabled():
+            num_inputs = len(request_body.image)
+            static_data = get_ocr_static_response(num_inputs)
+            from models.ocr_response import TextOutput
+            output = [TextOutput(**o) for o in static_data["output"]]
+            logger.info("Returning static OCR fallback (Triton unreachable)")
+            return OCRInferenceResponse(output=output)
+        raise
     # Log removed - middleware handles request/response logging
     return response
 

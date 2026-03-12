@@ -22,8 +22,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
 from ai4icore_logging import (
     get_logger,
-    CorrelationMiddleware,
-    configure_logging,
+    register_logging_plugin,
+    LoggingConfig,
 )
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -38,29 +38,20 @@ from repositories.asr_repository import ASRRepository
 # Import middleware components
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.request_logging import RequestLoggingMiddleware
-from middleware.tenant_schema_router import TenantSchemaRouter
-from middleware.tenant_middleware import TenantMiddleware
+from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
 
-# Configure structured logging (to OpenSearch, with correlation IDs)
-configure_logging(
-    service_name=os.getenv("SERVICE_NAME", "asr-service"),
-    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
-)
-
 # Aggressively disable uvicorn access logger BEFORE uvicorn starts
 # This must happen before uvicorn imports/creates its loggers
-
 uvicorn_access = logging.getLogger("uvicorn.access")
 uvicorn_access.handlers.clear()
 uvicorn_access.propagate = False
 uvicorn_access.disabled = True
 uvicorn_access.setLevel(logging.CRITICAL + 1)
 
-# Get logger instance
+# Get logger instance (will be properly configured by LoggingPlugin)
 logger = get_logger(__name__)
 
 # Global variables for database and Redis connections
@@ -83,9 +74,9 @@ async def lifespan(app: FastAPI):
         global redis_client
         if redis_client is None:
             # Fallback Redis initialization if not done earlier
-            redis_host = os.getenv("REDIS_HOST", "redis")
-            redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
-            redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+            redis_host = os.getenv("REDIS_HOST")
+            redis_port = int(os.getenv("REDIS_PORT"))
+            redis_password = os.getenv("REDIS_PASSWORD")
             
             redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
             redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
@@ -99,8 +90,7 @@ async def lifespan(app: FastAPI):
         # Initialize PostgreSQL async engine
         global db_engine, db_session_factory
         database_url = os.getenv(
-            "DATABASE_URL", 
-            "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db"
+            "DATABASE_URL"
         )
         
         db_pool_size = int(os.getenv("DB_POOL_SIZE", "20"))
@@ -135,15 +125,7 @@ async def lifespan(app: FastAPI):
         app.state.triton_timeout = TRITON_TIMEOUT
 
 
-        # Initialize tenant schema router for multi-tenant routing
-        multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL")
-        if not multi_tenant_db_url:
-            logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
-            multi_tenant_db_url = database_url
-        logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")
-        tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
-        app.state.tenant_schema_router = tenant_schema_router
-        logger.info("Tenant schema router initialized with multi-tenant database")
+        # Tenant schema router is created by MultiTenantPlugin at registration time
         
         # Initialize streaming service (optional - requires Model Management serviceId)
         global streaming_service
@@ -258,6 +240,12 @@ async def lifespan(app: FastAPI):
         if db_engine:
             await db_engine.dispose()
             logger.info("PostgreSQL connection closed")
+
+        # Close tenant schema router
+        tenant_router = getattr(app.state, "tenant_schema_router", None)
+        if tenant_router:
+            await tenant_router.close_all()
+            logger.info("Tenant schema router connections closed")
         
         logger.info("ASR Service shutdown complete")
         
@@ -287,20 +275,13 @@ app = FastAPI(
             "description": "ASR model management"
         }
     ],
-    contact={
-        "name": "Dhruva Platform Team",
-        "url": "https://github.com/AI4Bharat/Dhruva",
-        "email": "support@dhruva-platform.com"
-    },
-    license_info={
-        "name": "MIT",
-        "url": "https://opensource.org/licenses/MIT"
-    },
     lifespan=lifespan
 )
     
 # Initialize AI4ICore Observability Plugin
 # Plugin automatically extracts metrics from request bodies - no manual recording needed!
+# IMPORTANT: ObservabilityPlugin must be registered BEFORE LoggingPlugin
+# (FastAPI middleware runs in reverse order, so Observability runs first and sets tenant_id)
 config = PluginConfig.from_env()
 config.enabled = True  # Enable plugin
 if not config.customers:
@@ -308,15 +289,24 @@ if not config.customers:
 if not config.apps:
     config.apps = ["asr"]  # Service name
 
-plugin = ObservabilityPlugin(config)
-plugin.register_plugin(app)
+observability_plugin = ObservabilityPlugin(config)
+observability_plugin.register_plugin(app)
 logger.info("✅ AI4ICore Observability Plugin initialized for ASR service")
+
+# Initialize AI4ICore Logging Plugin
+# Registers CorrelationMiddleware and ServiceRequestLoggingMiddleware
+# IMPORTANT: Must be registered AFTER ObservabilityPlugin so tenant_id is available
+logging_config = LoggingConfig.from_env()
+logging_config.service_name = os.getenv("SERVICE_NAME")
+logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+register_logging_plugin(app, config=logging_config)
+logger.info("✅ AI4ICore Logging Plugin initialized for ASR service")
 
 # Model Management Plugin - registered AFTER Observability
 # so that Model Management runs first and Observability can use cached body
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
 model_mgmt_config = ModelManagementConfig(
-    model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
+    model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL"),
     model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
     cache_ttl_seconds=300,
     triton_endpoint_cache_ttl=300,
@@ -353,9 +343,9 @@ app.add_middleware(
 # Initialize Redis client early for middleware
 redis_client = None
 try:
-    redis_host = os.getenv("REDIS_HOST", "redis")
-    redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
-    redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+    redis_host = os.getenv("REDIS_HOST")
+    redis_port = int(os.getenv("REDIS_PORT"))
+    redis_password = os.getenv("REDIS_PASSWORD")
     
     redis_client = redis.Redis(
         host=redis_host,
@@ -377,13 +367,18 @@ except Exception as e:
 # NOTE: Model Management Plugin is now registered BEFORE Observability (above)
 # so that Observability runs first and caches the body, then Model Management can use cached body
 
-# Add middleware after FastAPI app creation
-# Tenant middleware (MUST be early to mark tenant-aware routes)
-app.add_middleware(TenantMiddleware)
-# Correlation middleware (MUST be before RequestLoggingMiddleware)
-app.add_middleware(CorrelationMiddleware)
-# Structured request logging middleware (logs to OpenSearch)
-app.add_middleware(RequestLoggingMiddleware)
+# Multi-tenant plugin (tenant context, schema routing)
+multi_tenant_config = MultiTenantConfig.from_env()
+multi_tenant_config.tenant_paths = ["/api/v1/asr"]
+multi_tenant_plugin = MultiTenantPlugin(multi_tenant_config)
+multi_tenant_plugin.register_plugin(
+    app,
+    multi_tenant_db_url=os.getenv("MULTI_TENANT_DB_URL") or os.getenv("DATABASE_URL"),
+)
+logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for ASR service")
+
+# Logging middleware is now registered via LoggingPlugin above
+# No need to manually add CorrelationMiddleware or RequestLoggingMiddleware
 
 # Add rate limiting middleware (if Redis is available)
 if redis_client:

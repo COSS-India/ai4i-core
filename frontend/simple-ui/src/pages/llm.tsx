@@ -2,6 +2,7 @@
 
 import {
   Box,
+  Button,
   FormControl,
   FormLabel,
   Grid,
@@ -14,6 +15,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
+import { FaLanguage } from "react-icons/fa";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
 import React, { useState, useEffect } from "react";
@@ -70,28 +72,18 @@ const LLMPage: React.FC = () => {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  // Auto-select first available LLM service when list loads
-  useEffect(() => {
-    if (!llmServices || llmServices.length === 0) return;
-    if (!serviceId) {
-      // If no service selected, select first available
-      setServiceId(llmServices[0].service_id);
-    }
-  }, [llmServices, serviceId]);
-
   const availableLanguages = LLM_SUPPORTED_LANGUAGES.map((lang) => lang.code);
 
-  const handleProcess = () => {
-    if (!inputText.trim()) {
-      toast({
-        title: "Input Required",
-        description: "Please enter text to process.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
+  const MAX_LLM_INPUT_LENGTH = 512;
+  const canTranslate =
+    !!serviceId?.trim() &&
+    !!inputLanguage?.trim() &&
+    !!outputLanguage?.trim() &&
+    !!inputText?.trim() &&
+    inputText.length <= MAX_LLM_INPUT_LENGTH;
+
+  const handleTranslate = () => {
+    if (!canTranslate) return;
     // Always use dual translation (LLM + NMT)
     performDualInference(inputText);
   };
@@ -130,12 +122,13 @@ const LLMPage: React.FC = () => {
             mx="auto"
           >
             {/* Configuration Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Service Selection */}
                 <FormControl>
                   <FormLabel fontSize="sm" fontWeight="semibold">
-                    LLM Service:
+                    LLM Service{" "}
+                    <Text as="span" color="red.500">*</Text>
                   </FormLabel>
                   {servicesLoading ? (
                     <HStack spacing={2} p={2}>
@@ -146,7 +139,7 @@ const LLMPage: React.FC = () => {
                     <Select
                       value={serviceId}
                       onChange={(e) => setServiceId(e.target.value)}
-                      placeholder="Select a LLM service"
+                      placeholder={servicesLoading ? "Loading..." : "Select"}
                       disabled={fetching}
                       size="md"
                       borderColor="gray.300"
@@ -184,8 +177,11 @@ const LLMPage: React.FC = () => {
                   )}
                 </FormControl>
 
-                {/* Language Selector */}
+                {/* Language Configuration */}
                 <Box>
+                  <Text className="dview-service-try-option-title" mb={4}>
+                    Language Configuration
+                  </Text>
                   <LanguageSelector
                     inputLanguage={inputLanguage}
                     outputLanguage={outputLanguage}
@@ -200,19 +196,35 @@ const LLMPage: React.FC = () => {
                   <TextInput
                     inputText={inputText}
                     onInputChange={setInputText}
-                    onProcess={handleProcess}
-                    isLoading={fetching}
-                    inputLanguage={inputLanguage}
-                    maxLength={50000}
+                    maxLength={MAX_LLM_INPUT_LENGTH}
                     disabled={fetching}
                   />
                 </Box>
+
+                {/* Instruction above Translate (aligned with NMT) */}
+                <Text fontSize="sm" color="gray.600">
+                  Enter text and click &quot;Translate&quot; to translate. You can change source and target languages in the configuration above.
+                </Text>
+
+                {/* Translate Button */}
+                <Button
+                  leftIcon={<FaLanguage />}
+                  colorScheme="orange"
+                  size="lg"
+                  onClick={handleTranslate}
+                  isLoading={fetching}
+                  loadingText="Translating..."
+                  isDisabled={!canTranslate || fetching}
+                  w="full"
+                >
+                  Translate
+                </Button>
               </VStack>
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Progress Indicator */}
                 {fetching && (
                   <Box>
@@ -238,7 +250,6 @@ const LLMPage: React.FC = () => {
                   </Box>
                 )}
 
-                {/* Dual Comparison Results - Always show dual mode */}
                 {fetched && nmtOutputText && (
                   <DualComparison
                     sourceText={inputText}
@@ -251,27 +262,9 @@ const LLMPage: React.FC = () => {
                     nmtResponseTime={Number(nmtRequestTime || 0)}
                   />
                 )}
-
-                {/* Instructions */}
-                {!fetched && !fetching && (
-                  <Box p={6} bg="gray.50" borderRadius="md" textAlign="center">
-                    <Text color="gray.600" fontSize="sm">
-                      Select input and output languages, then enter text to
-                      process. The LLM will translate or generate text based on
-                      your configuration.
-                    </Text>
-                  </Box>
-                )}
               </VStack>
             </GridItem>
           </Grid>
-
-          {/* Models Loading Indicator */}
-          {modelsLoading && (
-            <Box textAlign="center">
-              <LoadingSpinner label="Loading LLM models..." />
-            </Box>
-          )}
         </VStack>
       </ContentLayout>
     </>

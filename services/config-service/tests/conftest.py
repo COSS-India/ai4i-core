@@ -21,11 +21,8 @@ from openfeature.evaluation_context import EvaluationContext
 from openfeature import api as openfeature_api
 
 # Test database URL
-TEST_DATABASE_URL = os.getenv(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@localhost:5432/config_db_test"
-)
-TEST_REDIS_URL = os.getenv("TEST_REDIS_URL", "redis://localhost:6379/2")
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
+TEST_REDIS_URL = os.getenv("TEST_REDIS_URL")
 
 # Create async engine for testing
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
