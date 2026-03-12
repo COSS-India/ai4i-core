@@ -34,7 +34,7 @@ class NerInferenceConfig(BaseModel):
     """Configuration for NER inference."""
 
     serviceId: str = Field(
-        ..., description="Identifier for NER service/model (e.g., Dhruva NER)"
+        ..., description="Identifier for NER service/model"
     )
     language: LanguageConfig = Field(..., description="Language configuration")
 

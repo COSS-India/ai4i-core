@@ -2,7 +2,6 @@
 Alert Management API for Dynamic Alert Configuration
 Provides CRUD operations for customer-specific alert definitions, receivers, and routing rules
 """
-import os
 import hashlib
 import json
 import asyncpg
@@ -38,10 +37,12 @@ auth_db_pool: Optional[asyncpg.Pool] = None
 multi_tenant_db_pool: Optional[asyncpg.Pool] = None
 
 # Database configuration
-DB_HOST = os.getenv("POSTGRES_HOST")
-DB_PORT = int(os.getenv("POSTGRES_PORT"))
-DB_USER = os.getenv("POSTGRES_USER")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+from ai4icore_env import app_env
+
+DB_HOST = app_env.postgres_host
+DB_PORT = app_env.postgres_port
+DB_USER = app_env.postgres_user
+DB_PASSWORD = app_env.postgres_password
 DB_NAME = "alerting_db"
 
 # Auth database configuration (for querying users by role)
@@ -50,8 +51,8 @@ AUTH_DB_NAME = "auth_db"
 MULTI_TENANT_DB_NAME = os.getenv("MULTI_TENANT_DB_NAME", "multi_tenant_db")
 
 # Sync service configuration
-SYNC_SERVICE_URL = os.getenv("ALERT_CONFIG_SYNC_SERVICE_URL")
-SYNC_ENABLED = os.getenv("ALERT_SYNC_ENABLED", "true").lower() == "true"
+SYNC_SERVICE_URL = app_env.alert_config_sync_service_url
+SYNC_ENABLED = app_env.alert_sync_enabled
 
 async def init_db_pool():
     """Initialize database connection pools for alerting_db, auth_db, and multi_tenant_db"""

@@ -160,6 +160,9 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             ('llm.read', 'llm', 'read'),
             ('llm.inference', 'llm', 'inference'),
 
+            ('model-management.read', 'model-management', 'read'),
+            ('model-management.inference', 'model-management', 'inference'),
+
             # Observability
             ('logs.read', 'logs', 'read'),
             ('traces.read', 'traces', 'read'),

@@ -1,7 +1,7 @@
 """
-Dhruva Observability Plugin
+AI4ICore Observability Plugin
 
-This package provides enterprise-grade observability features for the Dhruva Platform,
+This package provides enterprise-grade observability features for the AI4ICore Platform,
 including comprehensive metrics, monitoring, and business analytics.
 
 Universal Framework Support:

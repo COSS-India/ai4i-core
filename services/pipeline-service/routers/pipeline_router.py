@@ -14,7 +14,7 @@ from models.pipeline_response import PipelineInferenceResponse
 from services.pipeline_service import PipelineService
 from utils.http_client import ServiceClient
 from middleware.auth_provider import AuthProvider
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     PipelineError,
     PipelineTaskError,
     ServiceUnavailableError,
@@ -22,15 +22,15 @@ from middleware.exceptions import (
     ErrorDetail,
     AuthenticationError
 )
-import os
 import httpx
+from ai4icore_env import app_env
 from ai4icore_multi_tenant import (
     try_get_tenant_context,
     enforce_tenant_and_service_checks,
 )
 
 #Tenant routing and service checks
-API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
+API_GATEWAY_URL = app_env.api_gateway_url
 
 # Import OpenTelemetry for tracing
 try:

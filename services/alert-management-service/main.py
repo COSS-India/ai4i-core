@@ -2,8 +2,7 @@
 Alert Management Service
 Provides CRUD operations for alert definitions, notification receivers, and routing rules.
 """
-import os
-
+from ai4icore_env import app_env
 from ai4icore_logging import get_logger, LoggingConfig, register_logging_plugin
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -76,8 +75,8 @@ app.add_middleware(
 
 # Initialize AI4ICore Logging Plugin
 logging_config = LoggingConfig.from_env()
-logging_config.service_name = os.getenv("SERVICE_NAME")
-logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+logging_config.service_name = app_env.service_name
+logging_config.use_kafka = app_env.use_kafka_logging
 register_logging_plugin(app, config=logging_config)
 logger.info("✅ AI4ICore Logging Plugin initialized for alert-management-service")
 
@@ -116,7 +115,7 @@ async def health_check():
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8098"))
+    port = app_env.port
     logger.info(
         f"Starting Alert Management Service on http://0.0.0.0:{port}...",
         extra={"context": {"port": port}}
