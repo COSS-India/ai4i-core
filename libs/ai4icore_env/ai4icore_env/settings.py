@@ -123,6 +123,19 @@ class AppEnv(BaseSettings):
     triton_timeout: float = 300.0
     triton_endpoint_cache_ttl: int = 300
 
+    # ── Per-service Triton endpoints (seeded into model_management_db) ──
+    triton_endpoint_asr: str = ""
+    triton_endpoint_tts: str = ""
+    triton_endpoint_nmt: str = ""
+    triton_endpoint_llm: str = ""
+    triton_endpoint_transliteration: str = ""
+    triton_endpoint_langdetect: str = ""
+    triton_endpoint_speaker_diarization: str = ""
+    triton_endpoint_audio_langdetect: str = ""
+    triton_endpoint_lang_diarization: str = ""
+    triton_endpoint_ocr: str = ""
+    triton_endpoint_ner: str = ""
+
     # ── Downstream service URLs (must be set via .env) ──
     api_gateway_url: str = ""
     auth_service_url: str = ""
