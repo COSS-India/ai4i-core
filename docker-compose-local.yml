@@ -513,42 +513,6 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  alert-management-service:
-    build:
-      context: .
-      dockerfile: ./services/alert-management-service/Dockerfile
-    container_name: ai4v-alert-management-service
-    ports:
-      - "8104:8098"
-    environment:
-      - SERVICE_NAME=alert-management-service
-      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - ALERT_CONFIG_SYNC_SERVICE_URL=http://alert-config-sync-service:8097
-      - ALERT_SYNC_ENABLED=true
-      - PORT=8098
-    env_file:
-      - ./.env
-    volumes:
-      - ./libs/ai4icore_env:/app/libs/ai4icore_env
-      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
-      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - microservices-network
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8098/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    restart: unless-stopped
-
   dashboard-service:
     build:
       context: .
@@ -1390,7 +1354,7 @@ services:
     ports:
       - "9095:9093"
     volumes:
-      - ./infrastructure/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - ./infrastructure/alertmanager:/etc/alertmanager
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
     networks:
