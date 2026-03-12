@@ -76,10 +76,7 @@ const ProfilePage: React.FC = () => {
   // Redirect if not authenticated
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
-      if (typeof window !== "undefined") {
-        sessionStorage.setItem("redirectAfterAuth", "/profile");
-      }
-      router.push("/auth");
+      router.push("/auth?redirect=" + encodeURIComponent("/profile"));
     }
   }, [isAuthenticated, authLoading, router]);
 

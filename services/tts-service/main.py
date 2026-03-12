@@ -20,8 +20,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
 from ai4icore_logging import (
     get_logger,
-    CorrelationMiddleware,
-    configure_logging,
+    LoggingConfig,
+    register_logging_plugin,
 )
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -49,7 +49,6 @@ except ImportError:
 # Import middleware components
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
@@ -58,13 +57,6 @@ from ai4icore_model_management import ModelManagementPlugin, ModelManagementConf
 # Import routers
 from routers import inference_router, health_router
 from routers.voice_router import router as voice_router
-
-# Configure structured logging
-# This also configures uvicorn loggers to use our formatter and disables access logs
-configure_logging(
-    service_name=os.getenv("SERVICE_NAME", "tts-service"),
-    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
-)
 
 # Aggressively disable uvicorn access logger BEFORE uvicorn starts
 # This must happen before uvicorn imports/creates its loggers
@@ -360,14 +352,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Correlation middleware (MUST be before RequestLoggingMiddleware)
-# This extracts X-Correlation-ID from headers and sets it in logging context
-app.add_middleware(CorrelationMiddleware)
-
-# Request logging (added BEFORE ObservabilityMiddleware)
-# FastAPI middleware runs in REVERSE order, so this will run AFTER ObservabilityMiddleware
-# This ensures organization is set in context before logging
-app.add_middleware(RequestLoggingMiddleware)
+# Initialize AI4ICore Logging Plugin
+# Register after observability to preserve existing middleware ordering behavior.
+logging_config = LoggingConfig.from_env()
+logging_config.service_name = os.getenv("SERVICE_NAME")
+logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+register_logging_plugin(app, config=logging_config)
+logger.info("✅ AI4ICore Logging Plugin initialized for TTS service")
 
 # Synchronous Redis client for Model Management middleware (A/B testing, service resolution)
 REDIS_HOST = os.getenv("REDIS_HOST")

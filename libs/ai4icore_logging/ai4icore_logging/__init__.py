@@ -26,6 +26,13 @@ from .middleware import (
     get_correlation_id,
     get_trace_id_from_request,
 )
+from .service_request_logging import ServiceRequestLoggingMiddleware
+from .config import LoggingConfig
+from .plugin import (
+    LoggingPlugin,
+    create_logging_plugin,
+    register_logging_plugin,
+)
 
 __all__ = [
     "get_logger",
@@ -42,7 +49,12 @@ __all__ = [
     "KafkaHandler",
     "CorrelationMiddleware",
     "RequestLoggingMiddleware",
+    "ServiceRequestLoggingMiddleware",
     "get_correlation_id",
     "get_trace_id_from_request",
+    "LoggingConfig",
+    "LoggingPlugin",
+    "create_logging_plugin",
+    "register_logging_plugin",
 ]
 
