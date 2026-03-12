@@ -90,9 +90,7 @@ async def startup_event():
         
         # Initialize Multi-tenant PostgreSQL connection
         multi_tenant_db_url = os.getenv(
-            'MULTI_TENANT_DATABASE_URL',
-            'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/multi_tenant_db'
-        )
+            'MULTI_TENANT_DB_URL')
         multi_tenant_db_engine = create_async_engine(
             multi_tenant_db_url,
             pool_size=10,

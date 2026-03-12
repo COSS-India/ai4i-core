@@ -93,6 +93,9 @@ const Header: React.FC = () => {
       case "/model-management":
         setTitle("Model Management");
         break;
+      case "/services-management":
+        setTitle("Services Management");
+        break;
       case "/auth":
         setTitle("Sign In");
         break;
@@ -109,11 +112,15 @@ const Header: React.FC = () => {
   const showBackButton = router.pathname !== "/";
 
   const handleBack = () => {
-    if (router.pathname === "/pipeline-builder") {
-      router.push("/");
-    } else {
-      router.back();
+    if (router.pathname === "/services-management" && router.query.tab === "2") {
+      router.push("/services-management");
+      return;
     }
+    if (router.pathname === "/model-management" && router.query.tab === "2") {
+      router.push("/model-management");
+      return;
+    }
+    router.push("/");
   };
 
   const handleAuthClick = () => {
