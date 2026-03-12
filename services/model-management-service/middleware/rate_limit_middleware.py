@@ -4,7 +4,7 @@ Rate limiting middleware using Redis for per-API-key throttling.
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request, Response
 from typing import Dict
-from middleware.exceptions import RateLimitExceededError
+from ai4icore_constants.exceptions import RateLimitExceededError
 from logger import logger
 
 

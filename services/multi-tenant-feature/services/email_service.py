@@ -12,9 +12,9 @@ from _email_service.sendgrid import email_service
 from _email_service.templates import WELCOME_EMAIL_SUBJECT, WELCOME_EMAIL_BODY ,USER_WELCOME_EMAIL_BODY
 
 from logger import logger
-import os
+from ai4icore_env import app_env
 
-LOGIN_URL = os.getenv("LOGIN_URL" ,"")
+LOGIN_URL = app_env.login_url
 
 
 async def send_welcome_email(

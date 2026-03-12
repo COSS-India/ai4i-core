@@ -2,13 +2,13 @@ from fastapi import BackgroundTasks, HTTPException
 from datetime import datetime, timezone , timedelta , date
 
 from typing import Optional, List
-from sqlalchemy import insert , select , update , text , MetaData
+from sqlalchemy import insert , select , update , delete , text , MetaData
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError , NoResultFound
 
-import os
 import httpx
 from pydantic import BaseModel, EmailStr
+from ai4icore_env import app_env
 
 from utils.utils import (
     generate_tenant_id,
@@ -20,6 +20,7 @@ from utils.utils import (
     generate_service_id,
     generate_random_password,
     hash_password,
+    hash_email,
     encrypt_sensitive_data,
     decrypt_sensitive_data,
     DecryptionError,
@@ -33,6 +34,7 @@ from models.db_models import (
     TenantUser,
     UserBillingRecord,
 )
+from models.auth_models import Role, UserRole
 
 from models.enum_tenant import  (
     SubscriptionType, 
@@ -77,10 +79,10 @@ DEFAULT_QUOTAS = {
 
 
 
-EMAIL_VERIFICATION_LINK = str(os.getenv("EMAIL_VERIFICATION_LINK",""))
-DB_NAME                 = str(os.getenv("APP_DB_NAME", "multi_tenant_db"))
-API_GATEWAY_URL        = str(os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080"))
-API_GATEWAY_TIMEOUT       = float(os.getenv("API_GATEWAY_TIMEOUT", "10"))
+EMAIL_VERIFICATION_LINK = app_env.email_verification_link
+DB_NAME                 = str(app_env.app_db_name)
+API_GATEWAY_URL        = app_env.api_gateway_url
+API_GATEWAY_TIMEOUT       = app_env.api_gateway_timeout
 
 # Status transition rules
 TENANT_STATUS_TRANSITIONS = {
@@ -702,34 +704,12 @@ async def create_new_tenant(
     """
 
     if payload.contact_email:
-        # Check for existing tenant by decrypting stored emails.
-        # Enforce uniqueness of contact_email across all domains.
-        # TODO: This is not efficient for very large datasets. Will add an email_hash column for indexed searches.
-        """
-        email_hash = Column(String, index=True, unique=True)
-        email_hash = hash_email(payload.contact_email)
+        # Use hashed email (normalized + SHA256) for fast, indexed duplicate detection.
+        email_hash_value = hash_email(payload.contact_email)
 
         existing = await db.scalar(
-            select(Tenant).where(Tenant.email_hash == email_hash)
+            select(Tenant).where(Tenant.email_hash == email_hash_value)
         )
-         
-        """
-        existing = None
-
-        tenants = await db.scalars(select(Tenant))
-        for tenant in tenants:
-            # skip tenants with no stored email
-            if not tenant.contact_email:
-                continue
-            try:
-                decrypted_email = decrypt_sensitive_data(tenant.contact_email)
-            except Exception:
-                # If decryption fails, fall back to raw comparison (backward compatibility)
-                decrypted_email = tenant.contact_email
-
-            if decrypted_email == payload.contact_email:
-                existing = tenant
-                break
 
         if existing:
             # Check status and raise appropriate errors
@@ -790,6 +770,8 @@ async def create_new_tenant(
         "tenant_id": tenant_id,
         "organization_name": payload.organization_name,
         "contact_email": encrypted_email,
+        # Store hash of normalized email for fast uniqueness checks
+        "email_hash": hash_email(payload.contact_email) if payload.contact_email else None,
         "phone_number": encrypted_phone,
         "domain": payload.domain,
         # "subdomain": subdomain,
@@ -1038,29 +1020,24 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     # Assign TENANT ADMIN role to the tenant admin user
     # The register endpoint assigns USER role by default, so we need to replace it with TENANT ADMIN
     try:
-        # Get TENANT ADMIN role ID from auth_db
+        # Get TENANT ADMIN role ID from auth_db using ORM
         role_result = await auth_db.execute(
-            text("SELECT id FROM roles WHERE name = 'TENANT ADMIN'")
+            select(Role.id).where(Role.name == "TENANT ADMIN")
         )
-        tenant_admin_role_row = role_result.first()
-        
-        if tenant_admin_role_row:
-            tenant_admin_role_id = tenant_admin_role_row[0]
-            
+        tenant_admin_role_id = role_result.scalar_one_or_none()
+
+        if tenant_admin_role_id is not None:
             # Delete any existing role assignments (auth-service only allows one role per user)
             await auth_db.execute(
-                text("DELETE FROM user_roles WHERE user_id = :user_id"),
-                {"user_id": admin_user_id}
+                delete(UserRole).where(UserRole.user_id == admin_user_id)
             )
-            
+
             # Insert TENANT ADMIN role assignment
-            await auth_db.execute(
-                text("""
-                    INSERT INTO user_roles (user_id, role_id, assigned_at)
-                    VALUES (:user_id, :role_id, CURRENT_TIMESTAMP)
-                    ON CONFLICT (user_id, role_id) DO NOTHING
-                """),
-                {"user_id": admin_user_id, "role_id": tenant_admin_role_id}
+            auth_db.add(
+                UserRole(
+                    user_id=admin_user_id,
+                    role_id=tenant_admin_role_id,
+                )
             )
             await auth_db.commit()
             logger.info(f"Assigned TENANT ADMIN role to tenant admin user_id={admin_user_id} for tenant {tenant.tenant_id}")
@@ -2401,6 +2378,8 @@ async def update_tenant(
         if old_value != new_value:
             changes["contact_email"] = FieldChange(old=old_value, new=new_value)
             tenant.contact_email = encrypt_sensitive_data(new_value) if new_value else None
+            # Keep email_hash in sync with the (decrypted) contact_email
+            tenant.email_hash = hash_email(new_value) if new_value else None
             updated_fields.append("contact_email")
 
     # Handle phone_number update (store encrypted)

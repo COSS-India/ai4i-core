@@ -22,7 +22,9 @@ class LanguagePair(BaseModel):
     
     @validator('sourceScriptCode', 'targetScriptCode')
     def validate_script_codes(cls, v):
-        if v is not None and (len(v) < 2 or len(v) > 10):
+        if not v:
+            return None
+        if len(v) < 2 or len(v) > 10:
             raise ValueError('Script codes must be 2-10 characters')
         return v
 

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from models import Role, Permission, RolePermission, UserRole
-from services.constants import get_resource_name
+from ai4icore_constants import get_resource_name
 
 logger = logging.getLogger(__name__)
 

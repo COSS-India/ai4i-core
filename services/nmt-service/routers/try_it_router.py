@@ -18,7 +18,7 @@ from utils.try_it_utils import (
     increment_try_it_count,
     is_try_it_rate_limit_exceeded
 )
-from services.constants.error_messages import (
+from ai4icore_constants.error_messages import (
     SERVICE_UNPUBLISHED,
     SERVICE_UNPUBLISHED_MESSAGE,
 )

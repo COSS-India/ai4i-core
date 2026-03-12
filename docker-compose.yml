@@ -16,7 +16,7 @@ services:
       - ./infrastructure/postgres:/docker-entrypoint-initdb.d
     command: >
       postgres
-      -c password_encryption=md5
+      -c password_encryption=scram-sha-256
       -c listen_addresses='*'
       -c max_connections=300
     networks:
@@ -510,10 +510,10 @@ services:
       - ./services/asr-service/.env
     environment:
       - ENV_FILE=.env
-      - AUTH_ENABLED=false
-      - REQUIRE_API_KEY=false
-      - ALLOW_ANONYMOUS_ACCESS=true
-      - TRITON_ENDPOINT=http://13.200.133.97:9000
+      - AUTH_ENABLED=true
+      - REQUIRE_API_KEY=true
+      - ALLOW_ANONYMOUS_ACCESS=false
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
       - TRITON_TIMEOUT=120
     depends_on:
       config-service:
@@ -543,7 +543,7 @@ services:
       - "8088:8088"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=http://13.200.133.97:9000
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
     env_file:
       - ./services/tts-service/.env
     depends_on:
@@ -669,7 +669,7 @@ services:
       - "8093:8090"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=http://3.235.56.233:8001
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
       - TRITON_TIMEOUT=300
     env_file:
       - ./services/llm-service/.env
@@ -859,7 +859,7 @@ services:
       - "8095:8095"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=http://65.1.35.3:8700
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
     depends_on:
       config-service:
         condition: service_healthy
@@ -886,7 +886,7 @@ services:
       - "9002:8090"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=65.1.35.3:8600
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
     env_file:
       - ./services/language-diarization-service/.env
     depends_on:
@@ -915,7 +915,7 @@ services:
       - "8096:8096"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=65.1.35.3:8100
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
     env_file:
       - ./services/audio-lang-detection-service/.env
     depends_on:

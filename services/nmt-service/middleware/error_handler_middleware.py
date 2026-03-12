@@ -3,20 +3,20 @@ Global error handler middleware for consistent error responses.
 
 
 """
-import os
 import time
 import logging
 import traceback
 import re
 
 from fastapi import FastAPI, Request, HTTPException
+from ai4icore_env import app_env
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from ai4icore_logging import get_correlation_id, get_logger
 
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     AuthenticationError,
     AuthorizationError,
     RateLimitExceededError,
@@ -27,7 +27,7 @@ from middleware.exceptions import (
     ServiceUnavailableError,
     TextProcessingError,
 )
-from services.constants.error_messages import (
+from ai4icore_constants.error_messages import (
     AUTH_FAILED,
     AUTH_FAILED_NMT_MESSAGE,
     RATE_LIMIT_EXCEEDED,
@@ -572,8 +572,8 @@ def add_error_handlers(app: FastAPI) -> None:
             return await http_exception_handler(request, actual_exc)
         
         # Check if health/metrics logs should be excluded
-        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
-        exclude_metrics_logs = os.getenv("EXCLUDE_METRICS_LOGS", "false").lower() == "true"
+        exclude_health_logs = app_env.exclude_health_logs
+        exclude_metrics_logs = app_env.exclude_metrics_logs
         
         path = request.url.path.lower().rstrip('/')
         should_skip = False

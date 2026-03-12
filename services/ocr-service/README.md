@@ -5,7 +5,7 @@ Microservice for extracting text from images using Surya OCR via Triton Inferenc
 ## Features
 
 - **Batch OCR inference** (multiple images per request)
-- **ULCA-style request/response schema** consistent with other Dhruva services
+- **ULCA-style request/response schema** consistent with other AI4ICore services
 - **Surya OCR model** served through Triton (`IMAGE_DATA` → `OUTPUT_TEXT`)
 - **Redis + PostgreSQL ready** (for auth, rate limiting, and logging, same pattern as NMT/TTS/ASR)
 - **AI4ICore Observability Plugin** integrated for metrics and tracing
@@ -44,7 +44,7 @@ Key variables (see `env.template` for full list):
 - `SERVICE_PORT` – default `8090`
 - `DATABASE_URL` – PostgreSQL connection string
 - `REDIS_HOST` / `REDIS_PORT` – Redis config
-- `TRITON_ENDPOINT` – Surya OCR Triton endpoint (e.g. `http://65.1.35.3:8400`)
+- `TRITON_ENDPOINT` – Surya OCR Triton endpoint (e.g. `http://<your-triton-host>:8400`)
 - `TRITON_API_KEY` – optional bearer token if your Triton is protected
 
 ## API

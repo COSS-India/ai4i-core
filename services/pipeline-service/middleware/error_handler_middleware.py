@@ -4,7 +4,7 @@ Global error handler middleware for consistent error responses.
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     AuthenticationError, 
     AuthorizationError, 
     RateLimitExceededError,
@@ -16,7 +16,7 @@ import time
 import traceback
 import re
 
-import os
+from ai4icore_env import app_env
 
 try:
     from ai4icore_logging import get_logger, get_correlation_id
@@ -40,8 +40,8 @@ except ImportError:
     TRACING_AVAILABLE = False
     tracer = None
 
-# Get Jaeger URL from environment or use default
-JAEGER_UI_URL = os.getenv("JAEGER_UI_URL", "http://localhost:16686")
+# Get Jaeger URL from settings
+JAEGER_UI_URL = app_env.jaeger_ui_url or "http://localhost:16686"
 
 # Authentication error message constant
 AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."

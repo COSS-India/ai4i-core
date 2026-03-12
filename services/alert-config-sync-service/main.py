@@ -32,8 +32,8 @@ yaml.add_representer(HTMLLiteral, html_literal_representer)
 try:
     from ai4icore_logging import get_logger, configure_logging
     configure_logging(
-        service_name=os.getenv("SERVICE_NAME", "alert-config-sync-service"),
-        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
+        service_name=app_env.service_name,
+        use_kafka=app_env.use_kafka_logging,
     )
     logger = get_logger(__name__)
 except ImportError:
@@ -42,33 +42,30 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 # Configuration
-DB_HOST = os.getenv("POSTGRES_HOST")
-DB_PORT = int(os.getenv("POSTGRES_PORT"))
-DB_USER = os.getenv("POSTGRES_USER")
-DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+from ai4icore_env import app_env
+
+DB_HOST = app_env.postgres_host
+DB_PORT = app_env.postgres_port
+DB_USER = app_env.postgres_user
+DB_PASSWORD = app_env.postgres_password
 DB_NAME = "alerting_db"
 
 # Auth DB (same host/user/password, different database) - for resolving ADMIN emails for default receiver
-AUTH_DB_NAME = os.getenv("AUTH_DB_NAME")
-# Multi-tenant DB - for resolving tenant name to tenant_id and tenant user (is_tenant=true)
-MULTI_TENANT_DB_NAME = os.getenv("MULTI_TENANT_DB_NAME", "multi_tenant_db")
+AUTH_DB_NAME = app_env.auth_db_name
 
-PROMETHEUS_URL = os.getenv("PROMETHEUS_URL")
-ALERTMANAGER_URL = os.getenv("ALERTMANAGER_URL")
+PROMETHEUS_URL = app_env.prometheus_url
+ALERTMANAGER_URL = app_env.alertmanager_url
 
 # Paths for YAML files (mounted volumes)
-PROMETHEUS_APPLICATION_ALERTS_PATH = os.getenv("PROMETHEUS_APPLICATION_ALERTS_PATH", "/etc/prometheus/rules/application-alerts.yml")
-PROMETHEUS_INFRASTRUCTURE_ALERTS_PATH = os.getenv("PROMETHEUS_INFRASTRUCTURE_ALERTS_PATH", "/etc/prometheus/rules/infrastructure-alerts.yml")
-ALERTMANAGER_CONFIG_PATH = os.getenv("ALERTMANAGER_CONFIG_PATH", "/etc/alertmanager/alertmanager.yml")
-
-# Alert history webhook: Alertmanager will POST here; alert-management-service records to DB
-ALERT_MANAGEMENT_SERVICE_URL = os.getenv("ALERT_MANAGEMENT_SERVICE_URL", "http://alert-management-service:8098").rstrip("/")
+PROMETHEUS_APPLICATION_ALERTS_PATH = app_env.prometheus_application_alerts_path
+PROMETHEUS_INFRASTRUCTURE_ALERTS_PATH = app_env.prometheus_infrastructure_alerts_path
+ALERTMANAGER_CONFIG_PATH = app_env.alertmanager_config_path
 
 # Sync interval (seconds)
-SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", "60"))
+SYNC_INTERVAL = app_env.sync_interval
 
 # Default receiver (ADMIN role) - fallback emails if auth DB unavailable (comma-separated)
-DEFAULT_RECEIVER_EMAILS = [e.strip() for e in (os.getenv("DEFAULT_RECEIVER_EMAILS") or "").split(",") if e and e.strip()]
+DEFAULT_RECEIVER_EMAILS = app_env.default_receiver_emails
 
 # Database connection pool
 db_pool: Optional[asyncpg.Pool] = None
@@ -456,8 +453,16 @@ def load_global_config_from_file() -> Dict[str, Any]:
                     logger.info("Loaded global SMTP config from existing alertmanager.yml")
                     return existing_config['global']
     except Exception as e:
-        logger.warning("Failed to load global config from file: %s, using env defaults", e)
-    return get_global_config_from_env()
+        logger.warning(f"Failed to load global config from file: {e}, using defaults")
+    
+    return {
+        'resolve_timeout': '5m',
+        'smtp_smarthost': app_env.smtp_smarthost,
+        'smtp_from': app_env.smtp_from,
+        'smtp_auth_username': app_env.smtp_auth_username,
+        'smtp_auth_password': app_env.smtp_auth_password,
+        'smtp_require_tls': True
+    }
 
 def generate_alertmanager_yaml(
     receivers: List[Dict[str, Any]],
@@ -1120,6 +1125,21 @@ if __name__ == "__main__":
     
     logger.info("Starting Alert Configuration Sync Service...")
     
-    port = int(os.getenv("PORT", "8097"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # Start periodic sync in background
+    import threading
+    sync_thread = threading.Thread(target=lambda: asyncio.run(start_background_sync()), daemon=True)
+    sync_thread.start()
+    
+    # Start HTTP server for manual triggers
+    try:
+        port = app_env.port
+        uvicorn.run(app, host="0.0.0.0", port=port)
+    except KeyboardInterrupt:
+        logger.info("Shutting down...")
+    finally:
+        # Close pools if still open
+        if db_pool:
+            asyncio.run(close_db_pool())
+        if auth_db_pool:
+            asyncio.run(close_auth_db_pool())
 
