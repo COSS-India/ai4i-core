@@ -29,10 +29,10 @@ const getServiceIdForLanguage = (language: string): string => {
 export const useTTS = (serviceId?: string): UseTTSReturn => {
   // State
   const [language, setLanguage] = useState<string>(DEFAULT_TTS_CONFIG.language);
-  const [gender, setGender] = useState<Gender>(DEFAULT_TTS_CONFIG.gender);
-  const [audioFormat, setAudioFormat] = useState<AudioFormat>(DEFAULT_TTS_CONFIG.audioFormat);
+  const [gender, setGender] = useState<string>(DEFAULT_TTS_CONFIG.gender);
+  const [audioFormat, setAudioFormat] = useState<string>(DEFAULT_TTS_CONFIG.audioFormat);
   const [samplingRate, setSamplingRate] = useState<SampleRate>(DEFAULT_TTS_CONFIG.sampleRate);
-  const [modelId, setModelId] = useState<string>(getServiceIdForLanguage(DEFAULT_TTS_CONFIG.language));
+  const [modelId, setModelId] = useState<string>("");
   const [inputText, setInputText] = useState<string>('');
   const [audio, setAudio] = useState<string>('');
   const [fetching, setFetching] = useState<boolean>(false);
@@ -60,9 +60,9 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
       const config: TTSInferenceRequest['config'] = {
         language: { sourceLanguage: language },
         serviceId: effectiveServiceId,
-        gender,
+        gender: gender as Gender,
         samplingRate,
-        audioFormat,
+        audioFormat: audioFormat as AudioFormat,
       };
 
       return performTTSInference(text, config);
@@ -124,7 +124,49 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
   // Perform inference
   const performInference = useCallback(async (text: string) => {
     const trimmed = text?.trim() ?? '';
-    
+
+    // Mandatory fields: service, language, voice (gender), audio format, text
+    if (!serviceId?.trim()) {
+      toast({
+        title: 'Selection required',
+        description: 'Please select a TTS service.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (!language?.trim()) {
+      toast({
+        title: 'Selection required',
+        description: 'Please select a language.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (!gender || (gender !== 'male' && gender !== 'female')) {
+      toast({
+        title: 'Selection required',
+        description: 'Please select a voice.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (!audioFormat?.trim()) {
+      toast({
+        title: 'Selection required',
+        description: 'Please select an audio format.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     if (!text) {
       const err = TTS_ERRORS.NO_TEXT_INPUT;
       toast({
@@ -136,7 +178,7 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
       });
       return;
     }
-    
+
     if (trimmed === '') {
       const err = TTS_ERRORS.EMPTY_INPUT;
       toast({
@@ -206,7 +248,7 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
     } catch (err) {
       console.error('Inference error:', err);
     }
-  }, [ttsMutation, toast, serviceId, language]);
+  }, [ttsMutation, toast, serviceId, language, gender, audioFormat]);
 
   // Set input text with validation — show toast only when first exceeding limit, not every keystroke
   const setInputTextWithValidation = useCallback((text: string) => {
@@ -233,7 +275,7 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
   // Set language with validation
   const setLanguageWithValidation = useCallback((newLanguage: string) => {
     setLanguage(newLanguage);
-    setModelId(getServiceIdForLanguage(newLanguage));
+    setModelId(newLanguage?.trim() ? getServiceIdForLanguage(newLanguage) : "");
     setInputText('');
     setAudio('');
     setFetched(false);

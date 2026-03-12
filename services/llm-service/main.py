@@ -19,8 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
 from ai4icore_logging import (
     get_logger,
-    CorrelationMiddleware,
-    configure_logging,
+    LoggingConfig,
+    register_logging_plugin,
 )
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -32,23 +32,12 @@ from utils.triton_client import TritonClient
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.request_logging import RequestLoggingMiddleware
-from middleware.tenant_schema_router import TenantSchemaRouter
-from middleware.tenant_middleware import TenantMiddleware
+from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 
 # Import models to ensure they are registered with SQLAlchemy
 from models import database_models, auth_models
-
-# Configure structured logging
-# This also configures uvicorn loggers to use our formatter and disables access logs
-# Set root_level=INFO to ensure successful 200 requests are logged to OpenSearch
-configure_logging(
-    service_name=os.getenv("SERVICE_NAME", "llm-service"),
-    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
-    root_level=logging.INFO,  # Allow INFO level logs (including 200 status requests)
-)
 
 # Aggressively disable uvicorn access logger BEFORE uvicorn starts
 # This must happen before uvicorn imports/creates its loggers
@@ -85,13 +74,13 @@ for handler in root_logger.handlers:
 logger = get_logger(__name__)
 
 # Environment variables
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db")
-TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "http://13.220.11.146:8000")
-TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
-TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT", "300.0"))
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = int(os.getenv("REDIS_PORT"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+DATABASE_URL = os.getenv("DATABASE_URL")
+TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT")
+TRITON_API_KEY = os.getenv("TRITON_API_KEY")
+TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT"))
 
 # Global variables
 redis_client: Optional[redis.Redis] = None
@@ -167,15 +156,7 @@ async def lifespan(app: FastAPI):
         app.state.db_engine = db_engine
         app.state.db_session_factory = db_session_factory
 
-         # Initialize tenant schema router for multi-tenant routing
-        multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL")
-        if not multi_tenant_db_url:
-            logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
-            multi_tenant_db_url = DATABASE_URL
-        logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")
-        tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
-        app.state.tenant_schema_router = tenant_schema_router
-        logger.info("Tenant schema router initialized with multi-tenant database")
+        # Tenant schema router is created by MultiTenantPlugin at registration time
 
         app.state.triton_endpoint = TRITON_ENDPOINT
         app.state.triton_api_key = TRITON_API_KEY
@@ -235,6 +216,11 @@ async def lifespan(app: FastAPI):
         if db_engine:
             await db_engine.dispose()
             logger.info("PostgreSQL connection closed")
+
+        tenant_router = getattr(app.state, "tenant_schema_router", None)
+        if tenant_router:
+            await tenant_router.close_all()
+            logger.info("Tenant schema router connections closed")
             
     except Exception as e:
         logger.error(f"Error during shutdown: {e}")
@@ -285,18 +271,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Correlation middleware (MUST be before RequestLoggingMiddleware)
-# This extracts X-Correlation-ID from headers and sets it in logging context
-app.add_middleware(CorrelationMiddleware)
-
-# Request logging (added BEFORE ObservabilityMiddleware)
-# FastAPI middleware runs in REVERSE order, so this will run AFTER ObservabilityMiddleware
-# This ensures organization is set in context before logging
-app.add_middleware(RequestLoggingMiddleware)
-
-# Add tenant middleware (after auth, before routes)
-# This extracts tenant context from JWT or user_id
-app.add_middleware(TenantMiddleware)
+# Initialize AI4ICore Logging Plugin
+# Register before observability to preserve existing middleware ordering behavior.
+logging_config = LoggingConfig.from_env()
+logging_config.service_name = os.getenv("SERVICE_NAME")
+logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+logging_config.root_level = logging.INFO  # Keep INFO requests visible in OpenSearch
+register_logging_plugin(app, config=logging_config)
+logger.info("✅ AI4ICore Logging Plugin initialized for LLM service")
 
 # Observability (MUST be added AFTER RequestLoggingMiddleware)
 # FastAPI middleware runs in REVERSE order, so this will run FIRST
@@ -312,6 +294,14 @@ if not obs_config.apps:
 observability_plugin = ObservabilityPlugin(obs_config)
 observability_plugin.register_plugin(app)
 logger.info("✅ AI4ICore Observability Plugin initialized for LLM service")
+
+# Multi-tenant plugin (tenant schema router + middleware)
+multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL") or DATABASE_URL
+multi_tenant_config = MultiTenantConfig.from_env()
+multi_tenant_config.tenant_paths = ["/api/v1/llm"]
+multi_tenant_plugin = MultiTenantPlugin(multi_tenant_config)
+multi_tenant_plugin.register_plugin(app, multi_tenant_db_url=multi_tenant_db_url)
+logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for LLM service")
 
 # Model Management Plugin - single source of truth for Triton endpoint/model (no env fallback)
 # MUST be registered BEFORE app starts (before other middleware) to avoid "Cannot add middleware after application has started" error

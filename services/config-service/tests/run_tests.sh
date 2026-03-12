@@ -6,8 +6,8 @@ set -e
 echo "Running feature flag tests..."
 
 # Set test environment variables
-export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@localhost:5432/config_db_test}"
-export TEST_REDIS_URL="${TEST_REDIS_URL:-redis://localhost:6379/2}"
+export TEST_DATABASE_URL="${TEST_DATABASE_URL}"
+export TEST_REDIS_URL="${TEST_REDIS_URL}"
 
 # Run tests
 pytest tests/test_feature_flags.py -v --tb=short

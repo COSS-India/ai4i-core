@@ -18,7 +18,6 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 # Import middleware components
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.error_handler_middleware import add_error_handlers
-from middleware.request_logging import RequestLoggingMiddleware
 
 # Import AI4ICore libraries for observability, logging, and tracing
 try:
@@ -31,8 +30,8 @@ except ImportError:
 try:
     from ai4icore_logging import (
         get_logger,
-        CorrelationMiddleware,
-        configure_logging,
+        LoggingConfig,
+        register_logging_plugin,
     )
     LOGGING_AVAILABLE = True
 except ImportError:
@@ -50,10 +49,6 @@ except ImportError:
 
 # Configure structured logging
 if LOGGING_AVAILABLE:
-    configure_logging(
-        service_name=os.getenv("SERVICE_NAME", "pipeline-service"),
-        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
-    )
     logger = get_logger(__name__)
     
     # Aggressively disable uvicorn access logger BEFORE uvicorn starts
@@ -109,9 +104,9 @@ async def lifespan(app: FastAPI):
         # Initialize Redis connection
         if redis_client is None:
             try:
-                redis_host = os.getenv("REDIS_HOST", "redis")
-                redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
-                redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+                redis_host = os.getenv("REDIS_HOST")
+                redis_port = int(os.getenv("REDIS_PORT"))
+                redis_password = os.getenv("REDIS_PASSWORD")
                 
                 redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
                 redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
@@ -198,15 +193,6 @@ app = FastAPI(
             "description": "Service health and readiness checks"
         }
     ],
-    contact={
-        "name": "AI4ICore Team",
-        "url": "https://github.com/AI4X",
-        "email": "support@ai4x.com",
-    },
-    license_info={
-        "name": "MIT",
-        "url": "https://opensource.org/licenses/MIT",
-    },
     lifespan=lifespan
 )
 
@@ -255,16 +241,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Correlation middleware (MUST be added if logging is available)
-# This extracts X-Correlation-ID from headers and sets it in logging context
+# Logging plugin
 if LOGGING_AVAILABLE:
-    app.add_middleware(CorrelationMiddleware)
-    logger.info("✅ Correlation middleware added for distributed tracing")
-    
-    # Request logging middleware (MUST be after CorrelationMiddleware)
-    # This logs API requests and errors to OpenSearch
-    app.add_middleware(RequestLoggingMiddleware)
-    logger.info("✅ Request logging middleware added for API request tracking")
+    logging_config = LoggingConfig.from_env()
+    logging_config.service_name = os.getenv("SERVICE_NAME")
+    logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+    register_logging_plugin(app, config=logging_config)
+    logger.info("✅ AI4ICore Logging Plugin initialized for Pipeline service")
 
 # Add rate limiting middleware
 # Redis client will be initialized in lifespan and stored in app.state

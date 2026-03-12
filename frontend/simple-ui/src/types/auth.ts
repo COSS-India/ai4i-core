@@ -108,6 +108,7 @@ export interface APIKeyResponse {
   key_value?: string; // Only returned on creation
   permissions: string[];
   is_active: boolean;
+  is_revoked: boolean;
   created_at: string;
   expires_at?: string;
   last_used?: string;

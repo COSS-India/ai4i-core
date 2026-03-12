@@ -4,21 +4,24 @@ FROM python:3.11-slim as builder
 # Set working directory
 WORKDIR /app
 
-# Install build dependencies
+# Install build dependencies and upgrade pip first (helps dependency resolution)
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     curl \
     libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Copy AI4ICore libraries from monorepo
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 
 # Copy requirements and install Python dependencies
 COPY services/telemetry-service/requirements.txt .
-RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Install grpcio first so ai4icore_telemetry's OTLP gRPC exporter resolves without conflicts
+RUN pip install --no-cache-dir --user 'grpcio>=1.63.2,<2.0.0'
 
 # Install AI4ICore telemetry library (editable)
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry

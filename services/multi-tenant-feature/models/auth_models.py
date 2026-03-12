@@ -29,13 +29,13 @@ class UserDB(AuthDBBase):
     # Compatibility property for code that uses 'password_hash'
     @property
     def password_hash(self):
-        """Get password_hash (alias for hashed_password)"""
-        return self.hashed_password
+        """Get password_hash (alias for password_hash)"""
+        return self.password_hash
     
     @password_hash.setter
     def password_hash(self, value):
-        """Set password_hash (alias for hashed_password)"""
-        self.hashed_password = value
+        """Set password_hash (alias for password_hash)"""
+        self.password_hash = value
 
 
 class ApiKeyDB(AuthDBBase):

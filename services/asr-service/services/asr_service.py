@@ -604,7 +604,7 @@ class ASRService:
     
     async def _get_audio_bytes(self, audio_input) -> bytes:
         """Extract audio bytes from AudioInput."""
-        from utils.validation_utils import UploadFailedError, UploadTimeoutError
+        from utils.validation_utils import UploadFailedError, UploadTimeoutError, NoFileSelectedError
         
         try:
             if audio_input.audioContent:
@@ -614,7 +614,6 @@ class ASRService:
                 # Download from URL
                 return await self.audio_service.download_audio(str(audio_input.audioUri))
             else:
-                from utils.validation_utils import NoFileSelectedError
                 raise NoFileSelectedError("No audio content or URI provided")
         except (UploadFailedError, UploadTimeoutError, NoFileSelectedError):
             # Re-raise specific upload errors

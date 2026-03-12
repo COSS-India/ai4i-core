@@ -4,8 +4,9 @@ from sqlalchemy.exc import IntegrityError
 
 from db_connection import get_tenant_db_session
 from models.service_create import ServiceCreateRequest , ListServicesResponse , ServiceResponse
-from models.services_update import ServiceUpdateRequest , ServiceUpdateResponse
-from services.tenant_service import create_service , update_service , list_service
+from models.service_update import ServiceUpdateRequest , ServiceUpdateResponse 
+from models.service_delete import ServiceDeleteRequest , ServiceDeleteResponse
+from services.tenant_service import create_service , update_service , list_service , delete_service
 
 from logger import logger
 from middleware.auth_provider import AuthProvider
@@ -68,4 +69,28 @@ async def list_services_request(db: AsyncSession = Depends(get_tenant_db_session
         raise
     except Exception as exc:
         logger.exception(f"Error listing services: {exc}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.delete("/delete/services", response_model=ServiceDeleteResponse, status_code=status.HTTP_200_OK)
+async def delete_service_request(
+    payload: ServiceDeleteRequest,
+    db: AsyncSession = Depends(get_tenant_db_session),
+):
+    """
+    Delete a service configuration by service_id.
+    """
+    try:
+        result = await delete_service(payload, db)
+        return result
+    except HTTPException:
+        raise
+    except IntegrityError as ie:
+        logger.error(f"Integrity error during service deletion: {ie}")
+        raise HTTPException(
+            status_code=409,
+            detail="Service deletion failed due to integrity constraint violation",
+        )
+    except Exception as exc:
+        logger.exception(f"Error deleting service: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")

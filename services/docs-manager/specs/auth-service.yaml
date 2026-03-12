@@ -191,6 +191,12 @@ paths:
       tags: [Authentication]
       summary: List all API keys with users (admin)
       security: [{ BearerAuth: [] }]
+      parameters:
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter API keys by tenant_id. If provided, only returns API keys for users belonging to that tenant.
       responses:
         "200": { description: List of all API keys with user info }
   /api/v1/auth/api-keys/select:
@@ -291,6 +297,11 @@ paths:
           in: path
           required: true
           schema: { type: integer }
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by tenant_id. If provided, user must belong to this tenant.
       responses:
         "200": { description: User roles }
   /api/v1/auth/roles/list:
@@ -317,6 +328,11 @@ paths:
           in: path
           required: true
           schema: { type: integer }
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by tenant_id. If provided, user must belong to this tenant.
       responses:
         "200":
           content:
@@ -334,6 +350,12 @@ paths:
       tags: [Role Management]
       summary: Get all users
       security: [{ BearerAuth: [] }]
+      parameters:
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter users by tenant_id. If provided, only returns users belonging to that tenant. If not provided, returns all users.
       responses:
         "200": { description: List of users }
 components:

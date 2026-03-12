@@ -6,8 +6,7 @@ from sqlalchemy import text
 
 # Default to the internal Docker DNS for Postgres
 DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    "postgresql+asyncpg://dhruva_user:dhruva_password@postgres:5432/dhruva_platform"
+    "DATABASE_URL"
 )
 
 logger = logging.getLogger("policy-engine-db")
