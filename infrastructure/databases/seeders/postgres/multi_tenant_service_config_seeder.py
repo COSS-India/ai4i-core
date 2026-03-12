@@ -17,7 +17,9 @@ class MultiTenantServiceConfigSeeder(BaseSeeder):
             (7, 'language_detection', 'request', 0.00005),
             (8, 'transliteration', 'character', 0.0001),
             (9, 'speaker_diarization', 'minute', 0.005),
-            (10, 'audio_lang_detection', 'minute', 0.001),
+            (10, 'audio_language_detection', 'minute', 0.001),
+            (11, 'pipeline', 'request', 0.01),
+            (12, 'language_diarization', 'minute', 0.005),
         ]
 
         for config_id, service_name, unit_type, price_per_unit in service_configs:

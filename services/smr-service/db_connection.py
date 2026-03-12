@@ -1,7 +1,6 @@
-import os
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.declarative import declarative_base
-from dotenv import load_dotenv
+from ai4icore_env import app_env
 
 try:
     from ai4icore_logging import get_logger
@@ -33,7 +32,7 @@ def init_postgresql_connections():
     
     try:
         # Model management database connection
-        app_db_connection_string = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+        app_db_connection_string = app_env.get_app_database_url()
 
         app_db_engine = create_async_engine(
             app_db_connection_string,
@@ -50,7 +49,7 @@ def init_postgresql_connections():
             expire_on_commit=False
         )
 
-        logger.info(f"Connected to PostgreSQL model_management_db: {DB_NAME}@{DB_HOST}:{DB_PORT}")
+        logger.info(f"Connected to PostgreSQL model_management_db: {app_env.app_db_name}@{app_env.app_db_host}:{app_env.app_db_port}")
     except Exception as e:
         logger.exception(f"Error connecting to PostgreSQL: {e}")
         raise

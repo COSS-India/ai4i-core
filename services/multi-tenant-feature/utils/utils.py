@@ -1,5 +1,4 @@
 import re
-import os
 import hashlib
 import base64
 import logging
@@ -11,6 +10,7 @@ from passlib.context import CryptContext
 from passlib.hash import argon2
 from cryptography.fernet import Fernet
 from typing import Optional
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +106,21 @@ def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
 
+def hash_email(email: str) -> str:
+    """
+    Generate a stable, case-insensitive hash for an email address.
+
+    The email is normalized by trimming whitespace and lowercasing before
+    hashing so that cosmetic differences do not affect uniqueness checks.
+    """
+    if not email:
+        return ""
+    normalized = email.strip().lower()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 # Encryption utilities for email and phone_number
-ENCRYPTION_KEY = os.getenv("API_KEY_ENCRYPTION_KEY", None)
+ENCRYPTION_KEY = app_env.api_key_encryption_key or None
 
 def _get_encryption_key() -> bytes:
     """Get or generate encryption key for email/phone encryption (Fernet key format)"""
@@ -119,8 +132,8 @@ def _get_encryption_key() -> bytes:
             logger.warning("Invalid API_KEY_ENCRYPTION_KEY format, generating new key")
     
     # Generate a key from JWT_SECRET_KEY if available
-    jwt_secret = os.getenv("JWT_SECRET_KEY", None)
-    if jwt_secret and jwt_secret != "dhruva-jwt-secret-key-2024-super-secure":
+    jwt_secret = app_env.jwt_secret_key or None
+    if jwt_secret:
         key_material = hashlib.sha256(jwt_secret.encode()).digest()[:32]
         fernet_key = base64.urlsafe_b64encode(key_material)
         return fernet_key

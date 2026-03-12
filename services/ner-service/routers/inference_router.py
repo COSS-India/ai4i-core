@@ -26,9 +26,9 @@ from ai4icore_multi_tenant import (
 
 get_tenant_db_session = get_tenant_db_session_factory()
 from sqlalchemy.ext.asyncio import AsyncSession
-import os
 import httpx
-from middleware.exceptions import ErrorDetail
+from ai4icore_env import app_env
+from ai4icore_constants.exceptions import ErrorDetail
 from fastapi import Depends
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ inference_router = APIRouter(
 )
 
 #Tenant routing and service checks
-API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
+API_GATEWAY_URL = app_env.api_gateway_url
 
 
 async def enforce_ner_checks(request: Request):
@@ -128,7 +128,7 @@ async def get_ner_service(
     "/inference",
     response_model=NerInferenceResponse,
     summary="Perform batch NER inference",
-    description="Run NER on one or more text inputs using Dhruva NER via Triton.",
+    description="Run NER on one or more text inputs via Triton.",
     dependencies=[Depends(AuthProvider)],  # Explicitly enforce auth at endpoint level (in addition to router-level)
 )
 async def run_inference(
@@ -259,7 +259,7 @@ async def run_inference(
             ) from exc
         except TritonInferenceError as exc:
             try:
-                from services.constants.static_fallback_responses import (
+                from ai4icore_constants.static_fallback_responses import (
                     is_static_fallback_enabled,
                     get_ner_static_response,
                 )
@@ -384,7 +384,7 @@ async def _run_ner_inference_impl(
     ner_service: NerService,
 ) -> NerInferenceResponse:
     """Fallback implementation when tracing is not available."""
-    from services.constants.static_fallback_responses import (
+    from ai4icore_constants.static_fallback_responses import (
         is_static_fallback_enabled,
         get_ner_static_response,
     )

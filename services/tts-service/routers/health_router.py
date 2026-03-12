@@ -5,13 +5,13 @@ Adapted from Ai4V-C health check patterns.
 """
 
 import logging
-import os
 import time
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, status, Request
 from sqlalchemy import text
-from middleware.exceptions import ErrorDetail
-from services.constants.error_messages import (
+from ai4icore_env import app_env
+from ai4icore_constants.exceptions import ErrorDetail
+from ai4icore_constants.error_messages import (
     SERVICE_UNAVAILABLE,
     SERVICE_UNAVAILABLE_TTS_MESSAGE
 )
@@ -20,7 +20,7 @@ from services.constants.error_messages import (
 logger = logging.getLogger(__name__)
 
 # Check if health logs should be excluded
-EXCLUDE_HEALTH_LOGS = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+EXCLUDE_HEALTH_LOGS = app_env.exclude_health_logs
 
 def _should_log_health() -> bool:
     """Check if health-related logs should be written."""
@@ -76,9 +76,8 @@ async def health_check(request: Request) -> Dict[str, Any]:
     # Check Triton server connectivity
     try:
         import tritonclient.http as http_client
-        import os
-        
-        triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
+
+        triton_url = app_env.triton_endpoint
         client = http_client.InferenceServerClient(url=triton_url)
         
         if client.is_server_ready():
@@ -164,9 +163,8 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
         # Check if Triton server has models loaded (optional)
         try:
             import tritonclient.http as http_client
-            import os
-            
-            triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
+
+            triton_url = app_env.triton_endpoint
             client = http_client.InferenceServerClient(url=triton_url)
             
             if not client.is_server_ready():

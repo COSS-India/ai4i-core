@@ -11,12 +11,12 @@ Initial version is intentionally small and focused so it can be called
 from any downstream service (e.g. nmt-service) via HTTP.
 """
 
-import os
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
+from ai4icore_env import app_env
 
 # Import DB operations for direct database access
 from db_operations import list_all_services, list_services_with_policies, get_model_details
@@ -42,13 +42,9 @@ except Exception:  # pragma: no cover - fallback logging
     logger = logging.getLogger(__name__)
 
 
-POLICY_ENGINE_URL = os.getenv("POLICY_ENGINE_URL", "http://policy-engine:8095")
-MODEL_MANAGEMENT_SERVICE_URL = os.getenv(
-    "MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"
-)
-REQUEST_PROFILER_SERVICE_URL = os.getenv(
-    "REQUEST_PROFILER_SERVICE_URL", "http://request-profiler-service:8000"
-)
+POLICY_ENGINE_URL = app_env.policy_engine_url
+MODEL_MANAGEMENT_SERVICE_URL = app_env.model_management_service_url
+REQUEST_PROFILER_SERVICE_URL = app_env.request_profiler_service_url
 
 
 class SMRSelectRequest(BaseModel):
@@ -1315,7 +1311,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "services.smr-service.main:get_app",  # type: ignore
         host="0.0.0.0",
-        port=int(os.getenv("PORT", "8097")),
-        reload=os.getenv("RELOAD", "false").lower() == "true",
+        port=app_env.port,
+        reload=app_env.reload,
     )
 

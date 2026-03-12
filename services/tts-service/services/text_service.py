@@ -1,7 +1,6 @@
 """
 Text processing service with utilities for text manipulation and SSML support.
 
-Adapted from Dhruva-Platform-2 inference_service.py text processing methods.
 """
 
 import re
@@ -33,7 +32,6 @@ class TextService:
         """
         Process TTS input text for normalization.
         
-        Adapted from Dhruva-Platform-2 __process_tts_input method (lines 934-936).
         """
         try:
             # Replace "।" (Devanagari danda) with "."
@@ -55,7 +53,6 @@ class TextService:
         """
         Split long text into smaller chunks for TTS processing.
         
-        Adapted from Dhruva-Platform-2 text chunking logic (lines 506-518).
         """
         try:
             if len(text) <= max_length:

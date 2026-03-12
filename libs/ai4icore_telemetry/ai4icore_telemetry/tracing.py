@@ -5,9 +5,10 @@ This module provides setup for distributed tracing using OpenTelemetry
 and exports traces to Jaeger.
 """
 
-import os
 import logging
 from typing import Optional
+
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +60,12 @@ def setup_tracing(service_name: str, jaeger_endpoint: Optional[str] = None) -> O
     try:
         # Get Jaeger endpoint from parameter or environment
         if not jaeger_endpoint:
-            jaeger_endpoint = os.getenv("JAEGER_ENDPOINT", "http://jaeger:4317")
+            jaeger_endpoint = app_env.jaeger_endpoint or "http://jaeger:4317"
         
         # Create resource with service name
         resource = Resource.create({
             "service.name": service_name,
-            "service.version": os.getenv("SERVICE_VERSION", "1.0.0"),
+            "service.version": app_env.service_version or "1.0.0",
         })
         
         # Setup tracer provider

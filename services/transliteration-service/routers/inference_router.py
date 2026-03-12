@@ -32,7 +32,7 @@ from ai4icore_multi_tenant import (
 )
 
 get_tenant_db_session = get_tenant_db_session_factory()
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     AuthenticationError, 
     AuthorizationError,
     TritonInferenceError,
@@ -41,10 +41,10 @@ from middleware.exceptions import (
     TextProcessingError,
     ErrorDetail
 )
-import os
 import httpx
+from ai4icore_env import app_env
 
-from services.constants.error_messages import (
+from ai4icore_constants.error_messages import (
     NO_TEXT_INPUT,
     NO_TEXT_INPUT_MESSAGE,
     TEXT_TOO_SHORT,
@@ -68,7 +68,7 @@ from services.constants.error_messages import (
 )
 
 
-API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
+API_GATEWAY_URL = app_env.api_gateway_url
 
 
 logger = logging.getLogger(__name__)
@@ -317,7 +317,7 @@ async def run_inference(
             ) from exc
 
         except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as exc:
-            from services.constants.static_fallback_responses import (
+            from ai4icore_constants.static_fallback_responses import (
                 is_static_fallback_enabled,
                 get_transliteration_static_response,
             )
@@ -415,7 +415,7 @@ async def _run_transliteration_inference_impl(
             auth_headers=extract_auth_headers(http_request)
         )
     except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as exc:
-        from services.constants.static_fallback_responses import (
+        from ai4icore_constants.static_fallback_responses import (
             is_static_fallback_enabled,
             get_transliteration_static_response,
         )
@@ -473,7 +473,7 @@ async def list_services() -> Dict[str, Any]:
             {
                 "service_id": "ai4bharat/indicxlit",
                 "model_id": "ai4bharat/indicxlit",
-                "triton_endpoint": "13.200.133.97:8000",
+                "triton_endpoint": "",
                 "triton_model": "transliteration",
                 "provider": "AI4Bharat",
                 "description": "IndicXlit model supporting transliteration for 20+ Indic languages",
@@ -486,7 +486,7 @@ async def list_services() -> Dict[str, Any]:
             {
                 "service_id": "indicxlit",
                 "model_id": "ai4bharat/indicxlit",
-                "triton_endpoint": "13.200.133.97:8000",
+                "triton_endpoint": "",
                 "triton_model": "transliteration",
                 "provider": "AI4Bharat",
                 "description": "IndicXlit model supporting transliteration for 20+ Indic languages (alias)",
