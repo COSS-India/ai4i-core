@@ -7,7 +7,6 @@ Provides batch NER inference using Triton Inference Server.
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -35,6 +34,7 @@ except ImportError:
 
 # Model Management imports (required)
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig, AuthContextMiddleware
+from ai4icore_env import app_env
 
 # Telemetry imports (optional)
 TELEMETRY_AVAILABLE = False
@@ -80,28 +80,24 @@ if LOGGING_AVAILABLE:
 else:
     # Fallback to standard logging if ai4icore_logging is not available
     logging.basicConfig(
-        level=os.getenv("LOG_LEVEL", "INFO"),
+        level=app_env.log_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     logger = logging.getLogger(__name__)
 
-REDIS_HOST = os.getenv("REDIS_HOST")
-REDIS_PORT = int(os.getenv("REDIS_PORT"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
-REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
+REDIS_HOST = app_env.redis_host
+REDIS_PORT = app_env.redis_port
+REDIS_PASSWORD = app_env.redis_password
+REDIS_TIMEOUT = app_env.redis_timeout
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL"
-)
+DATABASE_URL = app_env.get_database_url()
 
 # Multi-tenant database URL (for tenant schema routing)
-MULTI_TENANT_DB_URL = os.getenv(
-    "MULTI_TENANT_DB_URL"
-)
+MULTI_TENANT_DB_URL = app_env.get_multi_tenant_db_url()
 
 # NOTE: Triton endpoint/model MUST come from Model Management for inference.
 # No environment variable fallback - all resolution via Model Management database.
-TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
+TRITON_API_KEY = app_env.triton_api_key
 
 redis_client: Optional[redis.Redis] = None
 db_engine: Optional[AsyncEngine] = None
@@ -209,16 +205,16 @@ async def lifespan(app: FastAPI):
     # Service registry
     try:
         registry_client = ServiceRegistryHttpClient()
-        service_name = os.getenv("SERVICE_NAME", "ner-service")
-        service_port = int(os.getenv("SERVICE_PORT", "8091"))
-        public_base_url = os.getenv("SERVICE_PUBLIC_URL")
+        service_name = app_env.service_name
+        service_port = app_env.service_port
+        public_base_url = app_env.service_public_url
         if public_base_url:
             service_url = public_base_url.rstrip("/")
         else:
-            service_host = os.getenv("SERVICE_HOST", service_name)
+            service_host = app_env.service_host
             service_url = f"http://{service_host}:{service_port}"
         health_url = service_url + "/health"
-        instance_id = os.getenv("SERVICE_INSTANCE_ID", f"{service_name}-{os.getpid()}")
+        instance_id = app_env.service_instance_id
         registered_instance_id = await registry_client.register(
             service_name=service_name,
             service_url=service_url,
@@ -246,7 +242,7 @@ async def lifespan(app: FastAPI):
     try:
         try:
             if registry_client and registered_instance_id:
-                service_name = os.getenv("SERVICE_NAME", "ner-service")
+                service_name = app_env.service_name
                 await registry_client.deregister(service_name, registered_instance_id)
         except Exception as e:
             logger.warning("Service registry deregistration error: %s", e)
@@ -271,7 +267,7 @@ app = FastAPI(
     title="NER Service",
     version="1.0.0",
     description=(
-        "Named Entity Recognition microservice using Dhruva NER via "
+        "Named Entity Recognition microservice using NER via "
         "Triton Inference Server. Extracts entities from text in ULCA-style requests."
     ),
     docs_url="/docs",
@@ -335,14 +331,10 @@ else:
 # Initialize Redis client early for middleware (synchronous for Model Management Plugin)
 redis_client_sync = None
 try:
-    redis_host = os.getenv("REDIS_HOST")
-    redis_port = int(os.getenv("REDIS_PORT"))
-    redis_password = os.getenv("REDIS_PASSWORD")
-    
     redis_client_sync = redis_sync.Redis(
-        host=redis_host,
-        port=redis_port,
-        password=redis_password,
+        host=app_env.redis_host,
+        port=app_env.redis_port,
+        password=app_env.redis_password,
         decode_responses=True,
         socket_connect_timeout=5,
         socket_timeout=5,
@@ -360,8 +352,8 @@ except Exception as e:
 # MUST be registered BEFORE app starts (before other middleware) to avoid "Cannot add middleware after application has started" error
 try:
     mm_config = ModelManagementConfig(
-        model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
-        model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
+        model_management_service_url=app_env.model_management_service_url,
+        model_management_api_key=app_env.model_management_service_api_key,
         cache_ttl_seconds=300,
         triton_endpoint_cache_ttl=300,
         # Explicitly disable default Triton fallback – Model Management must resolve everything
@@ -390,14 +382,14 @@ app.add_middleware(
 # Initialize AI4ICore Logging Plugin
 if LOGGING_AVAILABLE and register_logging_plugin and LoggingConfig:
     logging_config = LoggingConfig.from_env()
-    logging_config.service_name = os.getenv("SERVICE_NAME")
-    logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+    logging_config.service_name = app_env.service_name
+    logging_config.use_kafka = app_env.use_kafka_logging
     register_logging_plugin(app, config=logging_config)
     logger.info("✅ AI4ICore Logging Plugin initialized for NER service")
 
 # Rate limiting (Redis client will be picked from app.state)
-rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+rate_limit_per_minute = app_env.rate_limit_per_minute
+rate_limit_per_hour = app_env.rate_limit_per_hour
 app.add_middleware(
     RateLimitMiddleware,
     redis_client=None,
@@ -409,7 +401,7 @@ app.add_middleware(
 add_error_handlers(app)
 
 # Multi-tenant plugin (tenant schema router + middleware)
-multi_tenant_db_url = MULTI_TENANT_DB_URL or DATABASE_URL
+multi_tenant_db_url = app_env.get_multi_tenant_db_url() or DATABASE_URL
 multi_tenant_config = MultiTenantConfig.from_env()
 multi_tenant_config.tenant_paths = ["/api/v1/ner"]
 multi_tenant_plugin = MultiTenantPlugin(multi_tenant_config)
@@ -436,7 +428,7 @@ async def health(request: Request):
     db_ok = False
 
     # Check if health logs should be excluded
-    exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+    exclude_health_logs = app_env.exclude_health_logs
 
     try:
         rc = getattr(request.app.state, "redis_client", None)
@@ -472,8 +464,8 @@ async def health(request: Request):
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("SERVICE_PORT", "9001"))
-    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    port = app_env.service_port
+    log_level = app_env.log_level
 
     uvicorn.run(
         "main:app",

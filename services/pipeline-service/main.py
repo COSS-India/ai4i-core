@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from typing import Dict, Any
 
 import redis.asyncio as redis
+from ai4icore_env import app_env
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from utils.service_registry_client import ServiceRegistryHttpClient
@@ -84,7 +85,7 @@ if LOGGING_AVAILABLE:
 else:
     # Configure standard logging
     logging.basicConfig(
-        level=os.getenv("LOG_LEVEL", "INFO"),
+        level=app_env.log_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     logger = logging.getLogger(__name__)
@@ -104,12 +105,7 @@ async def lifespan(app: FastAPI):
         # Initialize Redis connection
         if redis_client is None:
             try:
-                redis_host = os.getenv("REDIS_HOST")
-                redis_port = int(os.getenv("REDIS_PORT"))
-                redis_password = os.getenv("REDIS_PASSWORD")
-                
-                redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
-                redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
+                redis_client = redis.from_url(app_env.get_redis_url(), encoding="utf-8", decode_responses=True)
                 
                 # Test Redis connection
                 await redis_client.ping()
@@ -126,16 +122,16 @@ async def lifespan(app: FastAPI):
         
         # Register service into the central registry via config-service
         registry_client = ServiceRegistryHttpClient()
-        service_name = os.getenv("SERVICE_NAME", "pipeline-service")
-        service_port = int(os.getenv("SERVICE_PORT", "8090"))
-        public_base_url = os.getenv("SERVICE_PUBLIC_URL")
+        service_name = app_env.service_name or "pipeline-service"
+        service_port = app_env.service_port
+        public_base_url = app_env.service_public_url
         if public_base_url:
             service_url = public_base_url.rstrip("/")
         else:
-            service_host = os.getenv("SERVICE_HOST", service_name)
+            service_host = app_env.service_host or service_name
             service_url = f"http://{service_host}:{service_port}"
         health_url = service_url + "/health"
-        instance_id = os.getenv("SERVICE_INSTANCE_ID", f"{service_name}-{os.getpid()}")
+        instance_id = app_env.service_instance_id or f"{service_name}-{os.getpid()}"
         registered_instance_id = await registry_client.register(
             service_name=service_name,
             service_url=service_url,
@@ -160,8 +156,8 @@ async def lifespan(app: FastAPI):
         # Deregister service (best-effort)
         try:
             registry_client = ServiceRegistryHttpClient()
-            service_name = os.getenv("SERVICE_NAME", "pipeline-service")
-            instance_id = os.getenv("SERVICE_INSTANCE_ID", f"{service_name}-{os.getpid()}")
+            service_name = app_env.service_name or "pipeline-service"
+            instance_id = app_env.service_instance_id or f"{service_name}-{os.getpid()}"
             if instance_id:
                 await registry_client.deregister(service_name, instance_id)
         except Exception:
@@ -244,16 +240,16 @@ app.add_middleware(
 # Logging plugin
 if LOGGING_AVAILABLE:
     logging_config = LoggingConfig.from_env()
-    logging_config.service_name = os.getenv("SERVICE_NAME")
-    logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+    logging_config.service_name = app_env.service_name
+    logging_config.use_kafka = app_env.use_kafka_logging
     register_logging_plugin(app, config=logging_config)
     logger.info("✅ AI4ICore Logging Plugin initialized for Pipeline service")
 
 # Add rate limiting middleware
 # Redis client will be initialized in lifespan and stored in app.state
 # The middleware will access it from app.state
-rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+rate_limit_per_minute = app_env.rate_limit_per_minute
+rate_limit_per_hour = app_env.rate_limit_per_hour
 app.add_middleware(
     RateLimitMiddleware,
     redis_client=None,  # Will be accessed from app.state in middleware
@@ -291,8 +287,8 @@ async def health_check() -> Dict[str, Any]:
         health_status["timestamp"] = time.time()
         
         # Check if health logs should be excluded
-        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
-        
+        exclude_health_logs = app_env.exclude_health_logs
+
         # Check Redis connectivity
         global redis_client
         if redis_client:
@@ -310,9 +306,9 @@ async def health_check() -> Dict[str, Any]:
         registry = ServiceRegistryHttpClient()
         
         # Discover services via registry
-        asr_env = os.getenv('ASR_SERVICE_URL')
-        nmt_env = os.getenv('NMT_SERVICE_URL')
-        tts_env = os.getenv('TTS_SERVICE_URL')
+        asr_env = app_env.asr_service_url
+        nmt_env = app_env.nmt_service_url
+        tts_env = app_env.tts_service_url
         
         if asr_env:
             asr_url = asr_env.rstrip('/')
@@ -357,7 +353,7 @@ async def health_check() -> Dict[str, Any]:
                 health_status["status"] = "unhealthy"
         
     except Exception as e:
-        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+        exclude_health_logs = app_env.exclude_health_logs
         if not exclude_health_logs:
             logger.error(f"Health check failed: {e}")
         health_status["status"] = "unhealthy"
@@ -395,8 +391,8 @@ except ImportError as e:
 if __name__ == "__main__":
     import uvicorn
     
-    port = int(os.getenv("SERVICE_PORT", "8090"))
-    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    port = app_env.service_port
+    log_level = app_env.log_level.lower()
     
     uvicorn.run(
         "main:app",

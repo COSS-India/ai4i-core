@@ -1,4 +1,4 @@
-"""Configuration management using pydantic-settings."""
+"""Configuration management using pydantic-app_env."""
 import logging
 from pathlib import Path
 from typing import Optional

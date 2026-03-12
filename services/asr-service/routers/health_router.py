@@ -5,13 +5,13 @@ Adapted from Ai4V-C health check patterns.
 """
 
 import logging
-import os
 import time
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import text
-from middleware.exceptions import ErrorDetail
-from services.constants.error_messages import SERVICE_UNAVAILABLE, SERVICE_UNAVAILABLE_MESSAGE
+from ai4icore_env import app_env
+from ai4icore_constants.exceptions import ErrorDetail
+from ai4icore_constants.error_messages import SERVICE_UNAVAILABLE, SERVICE_UNAVAILABLE_MESSAGE
 from fastapi import Request
 
 # Don't import from main at module level to avoid circular imports
@@ -20,7 +20,7 @@ from fastapi import Request
 logger = logging.getLogger(__name__)
 
 # Check if health logs should be excluded
-EXCLUDE_HEALTH_LOGS = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+EXCLUDE_HEALTH_LOGS = app_env.exclude_health_logs
 
 def _should_log_health() -> bool:
     """Check if health-related logs should be written."""
@@ -80,13 +80,12 @@ async def health_check(request: Request) -> Dict[str, Any]:
     # Check Triton server connectivity
     try:
         import tritonclient.http as http_client
-        import os
-        
+
         # Triton endpoint must be resolved via Model Management - no hardcoded fallback
         # Skip Triton check in health endpoint (requires Model Management serviceId)
         if _should_log_health():
             logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
-        
+
         if client.is_server_ready():
             health_status["triton"] = "healthy"
         else:
@@ -181,8 +180,7 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
         # Check if Triton server has models loaded (optional)
         try:
             import tritonclient.http as http_client
-            import os
-            
+
             # Triton endpoint must be resolved via Model Management - no hardcoded fallback
             # Skip Triton check in readiness endpoint (requires Model Management serviceId)
             if _should_log_health():

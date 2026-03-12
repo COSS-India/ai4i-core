@@ -10,12 +10,13 @@ Goal:
 from __future__ import annotations
 
 import logging
-import os
 import time
 from typing import Any, Callable, Dict, Optional, Set
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from ai4icore_env import app_env
 
 from .logger import get_logger
 from .middleware import get_correlation_id
@@ -29,8 +30,8 @@ except Exception:
 
 
 def _parse_bool_env(name: str, default: str = "false") -> bool:
-    raw = os.getenv(name, default)
-    return str(raw).lower().strip() in ("true", "1", "yes", "on")
+    raw = getattr(app_env, name.lower(), default)
+    return bool(raw) if isinstance(raw, bool) else str(raw).lower().strip() in ("true", "1", "yes", "on")
 
 
 def _parse_allowed_levels_env(raw: str) -> Set[int]:
@@ -89,26 +90,26 @@ class ServiceRequestLoggingMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
         # Filtering configuration
-        self.exclude_health_logs = _parse_bool_env("EXCLUDE_HEALTH_LOGS")
-        self.exclude_metrics_logs = _parse_bool_env("EXCLUDE_METRICS_LOGS")
-        self.exclude_options_logs = _parse_bool_env("EXCLUDE_OPTIONS_LOGS")
+        self.exclude_health_logs = app_env.exclude_health_logs
+        self.exclude_metrics_logs = app_env.exclude_metrics_logs
+        self.exclude_options_logs = app_env.exclude_options_logs
         self.include_4xx = include_4xx
-        include_paths_raw = os.getenv("REQUEST_LOG_INCLUDE_PATHS", "")
+        include_paths_raw = app_env.request_log_include_paths
         self.include_paths = _parse_csv_paths_env(include_paths_raw)
 
         # Allowed levels configuration
-        allowed_raw = os.getenv("ALLOWED_LOG_LEVELS")
+        allowed_raw = app_env.allowed_log_levels
         self.allowed_log_levels = _parse_allowed_levels_env(allowed_raw)
 
         # Minimum log level fallback (only used when allowed_log_levels ends up empty)
-        min_log_level_str = os.getenv("MIN_LOG_LEVEL").upper()
+        min_log_level_str = app_env.min_log_level.upper()
         self.min_log_level = getattr(logging, min_log_level_str, logging.INFO)
 
         # Logger configuration
-        use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+        use_kafka = app_env.use_kafka_logging
         # If not provided, use a stable name per service for easier filtering
         if not logger_name:
-            svc = os.getenv("SERVICE_NAME")
+            svc = app_env.service_name
             logger_name = f"{svc}.request"
         self.logger = get_logger(logger_name, use_kafka=use_kafka)
 

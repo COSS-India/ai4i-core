@@ -6,10 +6,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc curl && rm 
 
 # Copy logging lib (required for JSON logs -> OpenSearch via Fluent Bit)
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY libs/ai4icore_env /app/libs/ai4icore_env
 COPY services/alert-config-sync-service/requirements.txt /app/requirements.txt
 
 RUN pip install --no-cache-dir -r /app/requirements.txt
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_logging
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_env
 
 # Runtime stage
 FROM python:3.11-slim
@@ -19,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl wget && rm
 
 COPY --from=builder /usr/local /usr/local
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
 
 COPY services/alert-config-sync-service/ /app/
 

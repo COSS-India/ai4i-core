@@ -11,11 +11,19 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy shared libs
+COPY libs/ai4icore_constants /app/libs/ai4icore_constants
+COPY libs/ai4icore_env /app/libs/ai4icore_env
+COPY libs/ai4icore_auth /app/libs/ai4icore_auth
+
 # ✅ FIX: copy requirements using full path from repo root
 COPY services/config-service/requirements.txt .
 
 # Install Python dependencies (NO --user)
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_constants
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_env
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_auth
 
 # ---------------- Final stage ----------------
 FROM python:3.11-slim
@@ -37,6 +45,11 @@ COPY --from=builder /usr/local /usr/local
 # COPY --from=builder /root/.local /home/app/.local
 
 # ENV PATH=/home/app/.local/bin:$PATH
+
+# Copy shared libs from builder
+COPY --from=builder /app/libs/ai4icore_constants /app/libs/ai4icore_constants
+COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
+COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
 
 # Copy application code
 COPY services/config-service/ .

@@ -1,7 +1,6 @@
 """
 OAuth 2.0 utilities for Google and other providers
 """
-import os
 import secrets
 import logging
 from typing import Optional, Dict, Any
@@ -9,6 +8,7 @@ from urllib.parse import urlencode
 import httpx
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 import redis.asyncio as redis
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class OAuthUtils:
     @staticmethod
     def get_google_authorization_url(state: str, redirect_uri: str) -> str:
         """Generate Google OAuth authorization URL"""
-        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        client_id = app_env.google_client_id
         if not client_id:
             raise ValueError("GOOGLE_CLIENT_ID environment variable not set")
         
@@ -67,19 +67,19 @@ class OAuthUtils:
     @staticmethod
     async def exchange_google_code_for_tokens(code: str, redirect_uri: str) -> Dict[str, Any]:
         """Exchange Google authorization code for access token"""
-        client_id = os.getenv("GOOGLE_CLIENT_ID")
-        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
-        
+        client_id = app_env.google_client_id
+        client_secret = app_env.google_client_secret
+
         if not client_id or not client_secret:
             raise ValueError("Google OAuth credentials not configured")
-        
+
         client = AsyncOAuth2Client(
             client_id=client_id,
             client_secret=client_secret
         )
-        
+
         token_url = "https://oauth2.googleapis.com/token"
-        
+
         try:
             token = await client.fetch_token(
                 token_url,
@@ -118,19 +118,19 @@ class OAuthUtils:
     @staticmethod
     async def refresh_google_token(refresh_token: str) -> Dict[str, Any]:
         """Refresh Google access token using refresh token"""
-        client_id = os.getenv("GOOGLE_CLIENT_ID")
-        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
-        
+        client_id = app_env.google_client_id
+        client_secret = app_env.google_client_secret
+
         if not client_id or not client_secret:
             raise ValueError("Google OAuth credentials not configured")
-        
+
         client = AsyncOAuth2Client(
             client_id=client_id,
             client_secret=client_secret
         )
-        
+
         token_url = "https://oauth2.googleapis.com/token"
-        
+
         try:
             token = await client.refresh_token(
                 token_url,
