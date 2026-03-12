@@ -6,9 +6,9 @@ from sqlalchemy import insert , select , update , text , MetaData
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError , NoResultFound
 
-import os
 import httpx
 from pydantic import BaseModel, EmailStr
+from ai4icore_env import app_env
 
 from utils.utils import (
     generate_tenant_id,
@@ -77,10 +77,10 @@ DEFAULT_QUOTAS = {
 
 
 
-EMAIL_VERIFICATION_LINK = str(os.getenv("EMAIL_VERIFICATION_LINK",""))
-DB_NAME                 = str(os.getenv("APP_DB_NAME", "multi_tenant_db"))
-API_GATEWAY_URL        = str(os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080"))
-API_GATEWAY_TIMEOUT       = float(os.getenv("API_GATEWAY_TIMEOUT", "10"))
+EMAIL_VERIFICATION_LINK = app_env.email_verification_link
+DB_NAME                 = str(app_env.app_db_name)
+API_GATEWAY_URL        = app_env.api_gateway_url
+API_GATEWAY_TIMEOUT       = app_env.api_gateway_timeout
 
 # Status transition rules
 TENANT_STATUS_TRANSITIONS = {

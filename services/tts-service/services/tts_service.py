@@ -1,7 +1,6 @@
 """
 Main TTS service class containing core inference logic.
 
-Adapted from Dhruva-Platform-2 run_tts_triton_inference method (lines 468-592).
 """
 
 import asyncio
@@ -22,7 +21,7 @@ from repositories.tts_repository import TTSRepository
 from services.audio_service import AudioService
 from services.text_service import TextService
 from utils.triton_client import TritonClient
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     TritonInferenceError,
     ModelNotFoundError,
     ServiceUnavailableError,
@@ -72,7 +71,6 @@ class TTSService:
         """
         Run TTS inference for the given request.
         
-        Adapted from Dhruva-Platform-2 run_tts_triton_inference method.
         """
         if not tracer:
             # Fallback if tracing not available

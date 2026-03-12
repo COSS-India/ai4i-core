@@ -48,7 +48,7 @@ scrape_configs:
           - "language-diarization-service:9002"
           - "audio-lang-detection-service:8096"
           # Note: transliteration-service and language-detection-service only expose /enterprise/metrics
-          # They are included in the dhruva-enterprise job below
+          # They are included in the ai4icore-enterprise job below
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
@@ -58,9 +58,9 @@ scrape_configs:
         replacement: '${1}'
 
   # --------------------------------------------
-  # 2. Dhruva Enterprise Metrics – /enterprise/metrics
+  # 2. AI4ICore Enterprise Metrics – /enterprise/metrics
   # --------------------------------------------
-  - job_name: "dhruva-enterprise"
+  - job_name: "ai4icore-enterprise"
     scrape_interval: 5s
     metrics_path: /enterprise/metrics
     static_configs:

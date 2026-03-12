@@ -19,7 +19,7 @@ from repositories.transliteration_repository import TransliterationRepository
 from services.text_service import TextService
 from utils.triton_client import TritonClient
 from utils.model_management_client import ModelManagementClient, ServiceInfo
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     TritonInferenceError,
     TextProcessingError,
     ModelNotFoundError,

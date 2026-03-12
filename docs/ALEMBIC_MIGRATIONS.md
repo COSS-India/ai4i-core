@@ -33,7 +33,7 @@ AI4I Core uses **Alembic** for managing PostgreSQL database schema changes. Alem
 - `telemetry_db` - Telemetry and observability
 - `metrics_db` - Metrics storage
 - `alerting_db` - Alerting system
-- `dhruva_platform` - Policy engine
+- `ai4i_platform` - Policy engine
 
 ## Installation
 

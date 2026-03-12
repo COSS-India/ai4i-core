@@ -5,8 +5,8 @@ info:
   description: Neural Machine Translation. Translate text between languages (e.g. Indic). Batch and streaming.
   version: 1.0.0
   contact:
-    name: Dhruva Platform Team
-    url: https://github.com/AI4Bharat/Dhruva
+    name: AI4ICore Team
+    url: https://github.com/COSS-India/ai4i-core
 
 servers:
   - url: "http://localhost:8080"

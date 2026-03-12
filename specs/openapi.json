@@ -6883,7 +6883,7 @@
             "serviceId": {
               "type": "string",
               "title": "Serviceid",
-              "description": "NER service/model ID (e.g., Dhruva NER)"
+              "description": "NER service/model ID (e.g., NER)"
             },
             "language": {
               "$ref": "#/components/schemas/NERLanguageConfig",

@@ -2,6 +2,7 @@
 Constants package for all services.
 """
 from .error_messages import *
+from .exceptions import *
 
 # Service name to resource name mapping
 # This mapping converts service names (with hyphens, as used in API endpoints and permissions)
@@ -72,4 +73,21 @@ __all__ = [
     # Service name mapping
     'SERVICE_TO_RESOURCE_MAP',
     'get_resource_name',
+    # Exception classes
+    'AuthenticationError',
+    'AuthorizationError',
+    'InvalidAPIKeyError',
+    'ExpiredAPIKeyError',
+    'InvalidTokenError',
+    'RateLimitExceededError',
+    'ErrorDetail',
+    'ErrorResponse',
+    'ServiceError',
+    'TritonInferenceError',
+    'ModelNotFoundError',
+    'ServiceUnavailableError',
+    'AudioProcessingError',
+    'TextProcessingError',
+    'PipelineError',
+    'PipelineTaskError',
 ]

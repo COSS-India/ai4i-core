@@ -1,7 +1,6 @@
 """
 Audio processing service with utilities for audio manipulation.
 
-Ported from Dhruva-Platform-2 audio_service.py for ASR processing.
 """
 
 import asyncio
