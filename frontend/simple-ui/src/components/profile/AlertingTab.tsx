@@ -81,7 +81,10 @@ import {
   RadioGroup,
   Stack,
 } from "@chakra-ui/react";
-import { AddIcon, DeleteIcon, ViewIcon, EditIcon, SearchIcon } from "@chakra-ui/icons";
+import { AddIcon, DeleteIcon, ViewIcon, EditIcon, SearchIcon, LockIcon } from "@chakra-ui/icons";
+import * as multiTenantService from "../../services/multiTenantService";
+import type { TenantView } from "../../types/multiTenant";
+import type { NotificationReceiver } from "../../types/alerting";
 import { useAlertDefinitions } from "./hooks/useAlertDefinitions";
 import { useNotificationReceivers } from "./hooks/useNotificationReceivers";
 import { useRoutingRules } from "./hooks/useRoutingRules";
@@ -136,32 +139,35 @@ function OptionSelector({
   onChange: (v: string) => void;
 }) {
   return (
-    <HStack spacing={0} borderWidth="1px" borderColor="gray.200" borderRadius="md" overflow="hidden">
-      {options.map((opt) => (
-        <Box
-          key={opt}
-          as="button"
-          type="button"
-          flex="1"
-          py={2}
-          px={3}
-          fontSize="sm"
-          fontWeight="semibold"
-          textAlign="center"
-          cursor="pointer"
-          bg={value === opt ? "black" : "white"}
-          color={value === opt ? "white" : "gray.600"}
-          borderRight="1px solid"
-          borderRightColor="gray.200"
-          _last={{ borderRight: "none" }}
-          _hover={{ bg: value === opt ? "gray.900" : "gray.50" }}
-          transition="all 0.15s"
-          onClick={() => onChange(opt)}
-          textTransform="capitalize"
-        >
-          {opt}
-        </Box>
-      ))}
+    <HStack spacing={2}>
+      {options.map((opt) => {
+        const isActive = value === opt;
+        return (
+          <Box
+            key={opt}
+            as="button"
+            type="button"
+            flex="1"
+            py={2}
+            px={3}
+            fontSize="sm"
+            fontWeight="semibold"
+            textAlign="center"
+            cursor="pointer"
+            borderRadius="lg"
+            borderWidth="2px"
+            borderColor={isActive ? "gray.900" : "gray.200"}
+            bg={isActive ? "gray.900" : "white"}
+            color={isActive ? "white" : "gray.500"}
+            _hover={{ bg: isActive ? "gray.800" : "gray.50", borderColor: isActive ? "gray.800" : "gray.300" }}
+            transition="all 0.15s"
+            onClick={() => onChange(opt)}
+            textTransform="capitalize"
+          >
+            {opt}
+          </Box>
+        );
+      })}
     </HStack>
   );
 }
@@ -174,11 +180,79 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
   const [subTabIndex, setSubTabIndex] = useState(0);
-  const [createRuleRole, setCreateRuleRole] = useState("");
-  const [updateRuleRole, setUpdateRuleRole] = useState("");
   const [createRuleDef, setCreateRuleDef] = useState("");
-  const [updateRuleDef, setUpdateRuleDef] = useState("");
-  const [viewRuleDef, setViewRuleDef] = useState("");
+
+  // Create Routing Rule — extended form state
+  const [createRuleScope, setCreateRuleScope] = useState<"global" | "specific_tenant">("global");
+  const [createRuleTenant, setCreateRuleTenant] = useState("");
+  const [createRuleErrors, setCreateRuleErrors] = useState<Record<string, string>>({});
+  const [tenants, setTenants] = useState<TenantView[]>([]);
+  const [isLoadingTenants, setIsLoadingTenants] = useState(false);
+
+  // Edit Routing Rule — extended form state (UI-only fields not in update API)
+  const [editRuleCategory, setEditRuleCategory] = useState("");
+  const [editRuleSeverity, setEditRuleSeverity] = useState("");
+  const [editRuleDef, setEditRuleDef] = useState("");
+  const [editRuleScope, setEditRuleScope] = useState<"global" | "specific_tenant">("global");
+  const [editRuleErrors, setEditRuleErrors] = useState<Record<string, string>>({});
+
+  const resetCreateRuleExtras = () => {
+    setCreateRuleScope("global");
+    setCreateRuleTenant("");
+    setCreateRuleErrors({});
+    setCreateRuleDef("");
+  };
+
+  const resetEditRuleExtras = () => {
+    setEditRuleCategory("");
+    setEditRuleSeverity("");
+    setEditRuleDef("");
+    setEditRuleScope("global");
+    setEditRuleErrors({});
+  };
+
+  const initEditRuleExtras = (item: NotificationReceiver) => {
+    setEditRuleScope(item.tenant ? "specific_tenant" : "global");
+
+    // Prefer direct category/severity from the receiver (backend may return them)
+    const cat = item.category ?? null;
+    const sev = item.severity ?? null;
+
+    // Also try to resolve from the linked alert definition (alert_names[0])
+    const firstName = item.alert_names?.[0];
+    const linkedDef = firstName ? defs.definitions.find((d) => d.name === firstName) : null;
+
+    setEditRuleCategory(cat ?? linkedDef?.category ?? "");
+    setEditRuleSeverity(sev ?? linkedDef?.severity ?? "");
+    setEditRuleDef(linkedDef ? String(linkedDef.id) : "");
+  };
+
+  const fetchTenants = async () => {
+    if (tenants.length > 0) return;
+    setIsLoadingTenants(true);
+    try {
+      const res = await multiTenantService.listTenants();
+      setTenants((res.tenants || []).filter((t) => t.status === "ACTIVE"));
+    } catch {
+      // ignore
+    } finally {
+      setIsLoadingTenants(false);
+    }
+  };
+
+  const validateAndCreate = async () => {
+    const errors: Record<string, string> = {};
+    if (!rules.createForm.rule_name.trim()) errors.ruleName = "Rule name is required.";
+    if (!rules.createForm.category) errors.category = "Please select a category.";
+    if (!rules.createForm.severity) errors.severity = "Please select a severity.";
+    if (createRuleScope === "specific_tenant" && !createRuleTenant) errors.tenant = "Please select a target tenant.";
+    setCreateRuleErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+    await rules.handleCreate({
+      tenant: createRuleScope === "specific_tenant" ? createRuleTenant || null : null,
+    });
+    resetCreateRuleExtras();
+  };
 
   const defs = useAlertDefinitions();
   const recvs = useNotificationReceivers();
@@ -188,6 +262,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const recvDeleteRef = useRef<HTMLButtonElement>(null);
   const ruleDeleteRef = useRef<HTMLButtonElement>(null);
 
+  // Track the item id we last initialized so we don't overwrite user changes during the same open session
+  const editRuleInitRef = useRef<number | null>(null);
+
   useEffect(() => {
     if (isActive) {
       defs.fetchDefinitions();
@@ -196,6 +273,42 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive]);
+
+  // Re-initialize edit-rule category / severity / linked-def once definitions are available
+  // (they may not be loaded yet when the drawer first opens — this effect fires again once they arrive)
+  useEffect(() => {
+    if (!rules.isUpdateOpen) {
+      editRuleInitRef.current = null;
+      return;
+    }
+    if (!rules.updateItem) return;
+    // Only initialize once per open session for this item to avoid overwriting user changes
+    if (editRuleInitRef.current === rules.updateItem.id) return;
+    // Wait until definitions are actually populated
+    if (defs.definitions.length === 0) return;
+
+    editRuleInitRef.current = rules.updateItem.id;
+    const item = rules.updateItem;
+    const cat = item.category ?? null;
+    const sev = item.severity ?? null;
+    const firstName = item.alert_names?.[0];
+    const linkedDef = firstName
+      ? (defs.definitions.find((d) => d.name === firstName) ?? null)
+      : null;
+    const resolvedCat = cat ?? linkedDef?.category ?? "";
+    const resolvedSev = sev ?? linkedDef?.severity ?? "";
+    setEditRuleCategory(resolvedCat);
+    setEditRuleSeverity(resolvedSev);
+    setEditRuleDef(linkedDef ? String(linkedDef.id) : "");
+    setEditRuleScope(item.tenant ? "specific_tenant" : "global");
+    // Keep updateForm in sync so the resolved values are included in the save payload
+    rules.setUpdateForm((prev) => ({
+      ...prev,
+      category: resolvedCat || null,
+      severity: resolvedSev || null,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rules.isUpdateOpen, rules.updateItem, defs.definitions]);
 
   const severityColor = (s: string) => {
     switch (s) {
@@ -1505,12 +1618,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 bg="white"
               />
             </InputGroup>
-            <Select size="sm" maxW="140px" value={rules.filterRole} onChange={(e) => rules.setFilterRole(e.target.value)} bg="white">
-              <option value="all">Role</option>
-              {RBAC_ROLES.map((role) => (
-                <option key={role} value={role}>{titleCase(role)}</option>
-              ))}
-            </Select>
             <Select size="sm" maxW="120px" value={rules.filterEnabled} onChange={(e) => rules.setFilterEnabled(e.target.value)} bg="white">
               <option value="all">Status</option>
               <option value="enabled">Active</option>
@@ -1523,8 +1630,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               variant="link"
               colorScheme="gray"
               textDecoration="underline"
-              onClick={() => { rules.setSearchQuery(""); rules.setFilterRole("all"); rules.setFilterEnabled("all"); }}
-              isDisabled={!rules.searchQuery && rules.filterRole === "all" && rules.filterEnabled === "all"}
+              onClick={() => { rules.setSearchQuery(""); rules.setFilterEnabled("all"); }}
+              isDisabled={!rules.searchQuery && rules.filterEnabled === "all"}
             >
               Reset Filters
             </Button>
@@ -1532,7 +1639,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               size="sm"
               colorScheme="orange"
               leftIcon={<AddIcon />}
-              onClick={() => { setCreateRuleRole(""); defs.fetchDefinitions(); rules.openCreate(); }}
+              onClick={() => { resetCreateRuleExtras(); defs.fetchDefinitions(); fetchTenants(); rules.openCreate(); }}
             >
               Create Routing Rule
             </Button>
@@ -1546,72 +1653,69 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Text color="gray.600">Loading alert routing...</Text>
             </VStack>
           </Center>
-        ) : rules.filteredReceivers.filter((rv) => rules.getRuleForReceiver(rv.id)).length > 0 ? (
+        ) : rules.filteredRules.length > 0 ? (
           <TableContainer>
             <Table variant="simple" size="sm" w="100%">
               <Thead>
                 <Tr>
                   <Th>Rule Name</Th>
-                  <Th>Category</Th>
-                  <Th>Severity</Th>
-                  <Th>Definitions</Th>
-                  <Th>Assigned Role</Th>
+                  <Th>Alert Definitions</Th>
+                  <Th>Tenant</Th>
                   <Th>Status</Th>
                   <Th>Actions</Th>
                 </Tr>
               </Thead>
               <Tbody>
-                {rules.filteredReceivers.filter((rv) => rules.getRuleForReceiver(rv.id)).map((rv) => {
-                  const linkedRule = rules.getRuleForReceiver(rv.id);
-                  const parts = rv.receiver_name.split("-");
-                  const rowSeverity = linkedRule?.match_severity || (parts.length >= 1 ? parts[0] : null);
-                  const rowCategory = linkedRule?.match_category || (parts.length >= 2 ? parts[1] : null);
-                  const matchingDefs = defs.definitions.filter(
-                    (d) =>
-                      (!rowCategory || d.category === rowCategory) &&
-                      (!rowSeverity || d.severity === rowSeverity)
-                  );
-                  return (
+                {rules.filteredRules.map((rule) => (
                     <Tr
-                      key={rv.id}
+                      key={rule.id}
                       _hover={{ bg: "gray.50", "& .row-actions": { opacity: 1 } }}
                       transition="background 0.15s"
                     >
-                      <Td fontWeight="semibold">{linkedRule?.rule_name ?? <Text as="span" color="gray.400" fontStyle="italic">—</Text>}</Td>
-                      <Td><Badge colorScheme={categoryColor(rowCategory)} textTransform="capitalize">{rowCategory ?? "All"}</Badge></Td>
-                      <Td>{rowSeverity ? <Badge colorScheme={severityColor(rowSeverity)} textTransform="capitalize">{rowSeverity}</Badge> : <Text fontSize="sm" color="gray.500">All</Text>}</Td>
+                      <Td fontWeight="semibold">{rule.rule_name ?? rule.receiver_name}</Td>
                       <Td>
-                        {matchingDefs.length > 0 ? (
+                        {rule.alert_names && rule.alert_names.length > 0 ? (
                           <Text fontSize="sm" color="gray.700">
-                            {matchingDefs.slice(0, 2).map((d) => d.name).join(", ")}
-                            {matchingDefs.length > 2 ? ` +${matchingDefs.length - 2}` : ""}
+                            {rule.alert_names.slice(0, 2).join(", ")}
+                            {rule.alert_names.length > 2 ? ` +${rule.alert_names.length - 2}` : ""}
                           </Text>
                         ) : (
-                          <Text fontSize="sm" color="gray.500">—</Text>
+                          <Text fontSize="sm" color="gray.500">All</Text>
                         )}
                       </Td>
-                      <Td>{rv.rbac_role ? <Badge colorScheme="purple">{titleCase(rv.rbac_role)}</Badge> : <Text fontSize="sm" color="gray.500">—</Text>}</Td>
                       <Td>
-                        <Badge colorScheme={rv.enabled ? "green" : "gray"} variant="subtle" fontSize="xs" px={2} py={0.5} borderRadius="full">
-                          {rv.enabled ? "Active" : "Inactive"}
+                        {rule.tenant ? (
+                          <Badge colorScheme="purple" variant="subtle" textTransform="none">{rule.tenant}</Badge>
+                        ) : (
+                          <Text fontSize="sm" color="gray.500">Global</Text>
+                        )}
+                      </Td>
+                      <Td>
+                        <Badge colorScheme={rule.enabled ? "green" : "gray"} variant="subtle" fontSize="xs" px={2} py={0.5} borderRadius="full">
+                          {rule.enabled ? "Active" : "Inactive"}
                         </Badge>
                       </Td>
                       <Td>
                         <HStack spacing={1} className="row-actions" opacity={0} transition="opacity 0.15s">
                           <Tooltip label="View" placement="top" hasArrow>
-                            <IconButton aria-label="View" icon={<ViewIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "blue.500", bg: "blue.50" }} onClick={() => { setViewRuleDef(""); defs.fetchDefinitions(); if (linkedRule) rules.openView(linkedRule); }} />
+                            <IconButton aria-label="View" icon={<ViewIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "blue.500", bg: "blue.50" }} onClick={() => { defs.fetchDefinitions(); rules.openView(rule); }} />
                           </Tooltip>
                           <Tooltip label="Edit" placement="top" hasArrow>
-                            <IconButton aria-label="Edit" icon={<EditIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "green.500", bg: "green.50" }} onClick={() => { setUpdateRuleRole(rv.rbac_role ?? ""); setUpdateRuleDef(""); defs.fetchDefinitions(); if (linkedRule) rules.openUpdate(linkedRule); }} />
+                            <IconButton aria-label="Edit" icon={<EditIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "green.500", bg: "green.50" }} onClick={() => {
+                              defs.fetchDefinitions();
+                              fetchTenants();
+                              resetEditRuleExtras();
+                              initEditRuleExtras(rule);
+                              rules.openUpdate(rule);
+                            }} />
                           </Tooltip>
                           <Tooltip label="Delete" placement="top" hasArrow>
-                            <IconButton aria-label="Delete" icon={<DeleteIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "red.500", bg: "red.50" }} onClick={() => { if (linkedRule) rules.openDelete(linkedRule); }} />
+                            <IconButton aria-label="Delete" icon={<DeleteIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "red.500", bg: "red.50" }} onClick={() => rules.openDelete(rule)} />
                           </Tooltip>
                         </HStack>
                       </Td>
                     </Tr>
-                  );
-                })}
+                  ))}
               </Tbody>
             </Table>
           </TableContainer>
@@ -1619,7 +1723,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
           <Alert status="info" borderRadius="md">
             <AlertIcon />
             <AlertDescription>
-              {rules.receivers.length === 0
+              {rules.rules.length === 0
                 ? "No alert routing configured. Click 'Create Routing Rule' to add one."
                 : "No entries match the current filters."}
             </AlertDescription>
@@ -1629,7 +1733,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       </Box>
 
       {/* ── Create Routing Rule Drawer ── */}
-      <Drawer isOpen={rules.isCreateOpen} onClose={rules.closeCreate} placement="right" size="md">
+      <Drawer isOpen={rules.isCreateOpen} onClose={() => { rules.closeCreate(); resetCreateRuleExtras(); }} placement="right" size="md">
         <DrawerOverlay />
         <DrawerContent>
           <DrawerCloseButton />
@@ -1637,106 +1741,163 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <Text fontSize="lg" fontWeight="bold">Create Routing Rule</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
-            <VStack spacing={6} align="stretch">
-              {/* ── Identity ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Identity</Text>
-                <VStack spacing={4} align="stretch">
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Rule Name</FormLabel>
-                    <Input placeholder="e.g. Critical-to-SRE" value={rules.createForm.rule_name} onChange={(e) => rules.setCreateForm({ ...rules.createForm, rule_name: e.target.value })} bg="white" />
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
-                    <OptionSelector
-                      options={CATEGORIES}
-                      value={rules.createForm.match_category ?? "application"}
-                      onChange={(v) => rules.setCreateForm({ ...rules.createForm, match_category: v })}
-                    />
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
-                    <OptionSelector
-                      options={SEVERITIES}
-                      value={rules.createForm.match_severity ?? "critical"}
-                      onChange={(v) => rules.setCreateForm({ ...rules.createForm, match_severity: v })}
-                    />
-                  </FormControl>
-                </VStack>
-              </Box>
+            <VStack spacing={0} align="stretch">
 
-              <Divider />
+              {/* ── Rule Name + Description ── */}
+              <VStack spacing={4} align="stretch" pb={6}>
+                <FormControl isRequired isInvalid={!!createRuleErrors.ruleName}>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Rule Name</FormLabel>
+                  <Input
+                    placeholder="e.g. Route Critical ASR Alerts"
+                    value={rules.createForm.rule_name}
+                    onChange={(e) => { rules.setCreateForm({ ...rules.createForm, rule_name: e.target.value }); if (e.target.value.trim()) setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.ruleName; return n; }); }}
+                    bg="white"
+                  />
+                  <FormErrorMessage>{createRuleErrors.ruleName}</FormErrorMessage>
+                </FormControl>
+              </VStack>
 
-              {/* ── Alert Definitions Preview ── */}
-              <Box>
-                <HStack justify="space-between" mb={3}>
-                  <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider">View Alert Definitions</Text>
-                  <Badge colorScheme="orange" fontSize="xs" borderRadius="full" px={2}>{defs.definitions.filter((d) => (!rules.createForm.match_category || d.category === rules.createForm.match_category) && (!rules.createForm.match_severity || d.severity === rules.createForm.match_severity)).length}</Badge>
-                </HStack>
-                {(() => {
-                  const matchingDefs = defs.definitions.filter((d) =>
-                    (!rules.createForm.match_category || d.category === rules.createForm.match_category) &&
-                    (!rules.createForm.match_severity || d.severity === rules.createForm.match_severity)
-                  );
-                  return (
+              <Divider mb={6} />
+
+              {/* ── Category + Severity + Alert Definition ── */}
+              <VStack spacing={4} align="stretch" pb={6}>
+                <FormControl isRequired isInvalid={!!createRuleErrors.category}>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+                  <OptionSelector
+                    options={CATEGORIES}
+                    value={rules.createForm.category ?? ""}
+                    onChange={(v) => { rules.setCreateForm({ ...rules.createForm, category: v }); setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.category; return n; }); }}
+                  />
+                  <FormErrorMessage>{createRuleErrors.category}</FormErrorMessage>
+                </FormControl>
+                <FormControl isRequired isInvalid={!!createRuleErrors.severity}>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+                  <HStack spacing={2}>
+                    {SEVERITIES.map((s) => {
+                      const isActive = rules.createForm.severity === s;
+                      const colors = s === "critical"
+                        ? { activeBg: "red.100", activeBorder: "red.600", activeText: "red.700", hoverBg: "red.50" }
+                        : s === "warning"
+                        ? { activeBg: "yellow.100", activeBorder: "yellow.600", activeText: "yellow.700", hoverBg: "yellow.50" }
+                        : { activeBg: "blue.100", activeBorder: "blue.600", activeText: "blue.700", hoverBg: "blue.50" };
+                      return (
+                        <Box
+                          key={s}
+                          as="button"
+                          type="button"
+                          flex="1"
+                          py={2}
+                          px={3}
+                          fontSize="sm"
+                          fontWeight="semibold"
+                          textAlign="center"
+                          cursor="pointer"
+                          borderRadius="full"
+                          borderWidth="2px"
+                          borderColor={isActive ? colors.activeBorder : "gray.200"}
+                          bg={isActive ? colors.activeBg : "white"}
+                          color={isActive ? colors.activeText : "gray.500"}
+                          _hover={{ bg: isActive ? colors.activeBg : colors.hoverBg, borderColor: colors.activeBorder }}
+                          transition="all 0.15s"
+                          onClick={() => { rules.setCreateForm({ ...rules.createForm, severity: s }); setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.severity; return n; }); }}
+                          textTransform="capitalize"
+                        >
+                          {s}
+                        </Box>
+                      );
+                    })}
+                  </HStack>
+                  <FormErrorMessage>{createRuleErrors.severity}</FormErrorMessage>
+                </FormControl>
+                <FormControl>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Alert Definitions</FormLabel>
+                  {(() => {
+                    const cat = rules.createForm.category;
+                    const sev = rules.createForm.severity;
+                    const hasFilter = !!cat && !!sev;
+                    const matchingDefs = defs.definitions.filter((d) =>
+                      (!cat || d.category === cat) && (!sev || d.severity === sev)
+                    );
+                    return (
+                      <Select
+                        bg="white"
+                        value={createRuleDef}
+                        isDisabled={!hasFilter}
+                        onChange={(e) => setCreateRuleDef(e.target.value)}
+                        placeholder={!hasFilter ? "Select Category and Severity first" : matchingDefs.length === 0 ? "No definitions match" : `${matchingDefs.length} alert definition${matchingDefs.length !== 1 ? "s" : ""} affected`}
+                      >
+                        {matchingDefs.map((d) => (
+                          <option key={d.id} value={String(d.id)}>{d.name}</option>
+                        ))}
+                      </Select>
+                    );
+                  })()}
+                </FormControl>
+              </VStack>
+
+              <Divider mb={6} />
+
+              {/* ── Scope ── */}
+              <VStack spacing={4} align="stretch" pb={6}>
+                <FormControl isRequired>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Scope</FormLabel>
+                  <Select
+                    value={createRuleScope}
+                    onChange={(e) => { setCreateRuleScope(e.target.value as "global" | "specific_tenant"); setCreateRuleTenant(""); setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; }); }}
+                    bg="white"
+                  >
+                    <option value="global">Global</option>
+                    <option value="specific_tenant">Specific Tenant</option>
+                  </Select>
+                </FormControl>
+                {createRuleScope === "specific_tenant" && (
+                  <FormControl isRequired isInvalid={!!createRuleErrors.tenant}>
+                    <FormLabel fontWeight="semibold" fontSize="sm">Target Tenant</FormLabel>
                     <Select
+                      value={createRuleTenant}
+                      onChange={(e) => { setCreateRuleTenant(e.target.value); if (e.target.value) setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; }); }}
                       bg="white"
-                      size="sm"
-                      value={createRuleDef}
-                      onChange={(e) => setCreateRuleDef(e.target.value)}
-                      placeholder={`${matchingDefs.length} alert definition${matchingDefs.length !== 1 ? "s" : ""}`}
+                      placeholder="Select tenant"
+                      isDisabled={isLoadingTenants}
                     >
-                      {matchingDefs.map((d) => (
-                        <option key={d.id} value={String(d.id)}>{d.name}</option>
+                      {tenants.map((t) => (
+                        <option key={t.tenant_id} value={t.tenant_id}>{t.organization_name || t.tenant_id}</option>
                       ))}
                     </Select>
-                  );
-                })()}
-              </Box>
+                    <FormErrorMessage>{createRuleErrors.tenant}</FormErrorMessage>
+                  </FormControl>
+                )}
+              </VStack>
 
-              <Divider />
+              <Divider mb={6} />
 
-              {/* ── Assign Role ── */}
-              <Box>
+              {/* ── Delivery Channel ── */}
+              <VStack spacing={2} align="stretch" pb={6}>
                 <FormControl isRequired>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Assign to Role</FormLabel>
-                  <Select
-                    value={createRuleRole}
-                    onChange={(e) => setCreateRuleRole(e.target.value)}
-                    bg="white"
-                    placeholder="Select a role..."
+                  <FormLabel fontWeight="semibold" fontSize="sm">Delivery Channel</FormLabel>
+                  <Box
+                    bg="gray.50"
+                    border="1px solid"
+                    borderColor="gray.200"
+                    borderRadius="md"
+                    px={4}
+                    py={3}
+                    cursor="not-allowed"
                   >
-                    {RBAC_ROLES.map((role) => (
-                      <option key={role} value={role}>{titleCase(role)}</option>
-                    ))}
-                  </Select>
-                  <Text fontSize="xs" color="gray.500" mt={1}>The user with selected role will receive matching alerts.</Text>
-                </FormControl>
-              </Box>
-
-              <Divider />
-
-              {/* ── Status ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Status</Text>
-                <FormControl isRequired>
-                  <RadioGroup defaultValue="active">
-                    <HStack spacing={4}>
-                      <Radio value="active" colorScheme="green">
-                        <Text fontSize="sm" fontWeight="medium">Active</Text>
-                      </Radio>
-                      <Radio value="inactive" colorScheme="gray">
-                        <Text fontSize="sm" fontWeight="medium">Inactive</Text>
-                      </Radio>
+                    <HStack spacing={2}>
+                      <LockIcon color="gray.400" boxSize={3} />
+                      <Text fontSize="sm" color="gray.400" fontWeight="medium">Email</Text>
                     </HStack>
-                  </RadioGroup>
+                  </Box>
+                  <Text fontSize="xs" color="gray.500" mt={1}>Email delivery is automatically configured. Additional channels coming soon.</Text>
                 </FormControl>
-              </Box>
+              </VStack>
+
             </VStack>
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
-            <Button variant="outline" mr={3} onClick={rules.closeCreate} isDisabled={rules.isCreating}>Cancel</Button>
-            <Button colorScheme="orange" onClick={() => rules.handleCreate(createRuleRole || undefined)} isLoading={rules.isCreating} loadingText="Saving...">Save Routing Rule</Button>
+            <Button variant="outline" mr={3} onClick={() => { rules.closeCreate(); resetCreateRuleExtras(); }} isDisabled={rules.isCreating}>Cancel</Button>
+            <Button colorScheme="orange" onClick={validateAndCreate} isLoading={rules.isCreating} loadingText="Saving...">Save Routing Rule</Button>
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
@@ -1747,52 +1908,180 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         <DrawerContent>
           <DrawerCloseButton />
           <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
-            <Text fontSize="lg" fontWeight="bold">Alert Routing Details</Text>
+            <Text fontSize="lg" fontWeight="bold">View Routing Rule</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
             {rules.viewItem && (() => {
-              const viewReceiver = rules.receivers.find((rv) => rv.id === rules.viewItem!.receiver_id);
-              const nameParts = (viewReceiver?.receiver_name ?? "").split("-");
-              const viewSeverity = rules.viewItem.match_severity || (nameParts.length >= 1 ? nameParts[0] : null);
-              const viewCategory = rules.viewItem.match_category || (nameParts.length >= 2 ? nameParts[1] : null);
-              const viewMatchDefs = defs.definitions.filter((d) => (!viewCategory || d.category === viewCategory) && (!viewSeverity || d.severity === viewSeverity));
+              const item = rules.viewItem;
+              const firstName = item.alert_names?.[0];
+              const linkedDef = firstName
+                ? (defs.definitions.find((d) => d.name === firstName) ?? null)
+                : null;
+              const category = item.category ?? linkedDef?.category ?? null;
+              const severity = item.severity ?? linkedDef?.severity ?? null;
+              const sevColors =
+                severity === "critical" ? { bg: "red.100", color: "red.700", border: "red.300" }
+                : severity === "warning" ? { bg: "yellow.100", color: "yellow.700", border: "yellow.300" }
+                : severity === "info" ? { bg: "blue.100", color: "blue.700", border: "blue.300" }
+                : { bg: "gray.100", color: "gray.600", border: "gray.300" };
+              const catColor = category === "application" ? "orange" : category === "infrastructure" ? "purple" : "gray";
               return (
-                <VStack spacing={5} align="stretch">
-                  <Box><Text fontWeight="semibold" color="gray.500" fontSize="xs" mb={1}>Rule Name</Text><Text fontWeight="medium">{rules.viewItem.rule_name}</Text></Box>
-                  <Box><Text fontWeight="semibold" color="gray.500" fontSize="xs" mb={1}>Category</Text><Badge colorScheme="purple" textTransform="capitalize">{viewCategory ?? "All"}</Badge></Box>
-                  <Box><Text fontWeight="semibold" color="gray.500" fontSize="xs" mb={1}>Severity</Text><Badge colorScheme={viewSeverity ? severityColor(viewSeverity) : "gray"} textTransform="capitalize">{viewSeverity ?? "All"}</Badge></Box>
-                  <Box>
-                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" mb={2}>Matching Alert Definitions</Text>
-                    {viewMatchDefs.length > 0 ? (
+                <VStack spacing={0} align="stretch">
+
+                  {/* Rule Name */}
+                  <Box pb={5}>
+                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={1}>Rule Name</Text>
+                    <Text fontWeight="semibold" fontSize="sm" color="gray.800">{item.rule_name ?? item.receiver_name}</Text>
+                  </Box>
+
+                  <Divider mb={5} />
+
+                  {/* Category + Severity */}
+                  <SimpleGrid columns={2} spacing={5} pb={5}>
+                    <Box>
+                      <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Category</Text>
+                      {category ? (
+                        <Badge colorScheme={catColor} variant="subtle" textTransform="capitalize" fontSize="xs" px={2} py={0.5} borderRadius="full">{category}</Badge>
+                      ) : (
+                        <Text fontSize="sm" color="gray.400">—</Text>
+                      )}
+                    </Box>
+                    <Box>
+                      <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Severity</Text>
+                      {severity ? (
+                        <Box
+                          display="inline-block"
+                          bg={sevColors.bg}
+                          color={sevColors.color}
+                          fontSize="xs"
+                          fontWeight="semibold"
+                          px={2}
+                          py={0.5}
+                          borderRadius="full"
+                          textTransform="capitalize"
+                          border="1px solid"
+                          borderColor={sevColors.border}
+                        >{severity}</Box>
+                      ) : (
+                        <Text fontSize="sm" color="gray.400">—</Text>
+                      )}
+                    </Box>
+                  </SimpleGrid>
+
+                  {/* Alert Definition */}
+                  <Box pb={5}>
+                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Alert Definition</Text>
+                    {item.alert_names && item.alert_names.length > 0 ? (
                       <VStack spacing={1} align="stretch">
-                        {viewMatchDefs.map((d) => (
-                          <HStack key={d.id} spacing={2}>
-                            <Text fontSize="sm" color="gray.700">• {d.name}</Text>
-                          </HStack>
+                        {item.alert_names.map((name) => (
+                          <Text key={name} fontSize="sm" color="gray.700">{name}</Text>
                         ))}
                       </VStack>
+                    ) : (() => {
+                      const matchCount = defs.definitions.filter(
+                        (d) => (!category || d.category === category) && (!severity || d.severity === severity)
+                      ).length;
+                      const hasFilter = category || severity;
+                      return (
+                        <HStack spacing={2}>
+                          <Text fontSize="sm" color="gray.500">
+                            {hasFilter
+                              ? `All matching definitions`
+                              : "All definitions"}
+                          </Text>
+                          {matchCount > 0 && (
+                            <Badge colorScheme="gray" variant="subtle" fontSize="xs">{matchCount}</Badge>
+                          )}
+                        </HStack>
+                      );
+                    })()}
+                  </Box>
+
+                  <Divider mb={5} />
+
+                  {/* Scope */}
+                  <Box pb={5}>
+                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Scope</Text>
+                    {item.tenant ? (
+                      <HStack spacing={1.5}>
+                        <Text fontSize="sm" color="gray.700" fontWeight="medium">Specific Tenant</Text>
+                        <Text fontSize="sm" color="gray.400">—</Text>
+                        <Badge colorScheme="purple" variant="subtle" textTransform="none" fontSize="xs">{item.tenant}</Badge>
+                      </HStack>
                     ) : (
-                      <Text fontSize="sm" color="gray.400">No matching definitions</Text>
+                      <HStack spacing={1.5}>
+                        <Badge colorScheme="gray" variant="subtle" fontSize="xs" textTransform="none">Global</Badge>
+                        <Text fontSize="xs" color="gray.400">All tenants</Text>
+                      </HStack>
                     )}
                   </Box>
-                  <Box><Text fontWeight="semibold" color="gray.500" fontSize="xs" mb={1}>Assigned Role</Text><Text fontSize="sm" fontWeight="medium">{viewReceiver?.rbac_role ? titleCase(viewReceiver.rbac_role) : "—"}</Text></Box>
-                  <Box>
-                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" mb={1}>Status</Text>
-                    <Badge colorScheme={viewReceiver?.enabled ? "green" : "gray"} variant="subtle" fontSize="xs" px={2} py={0.5} borderRadius="full">{viewReceiver?.enabled ? "Active" : "Inactive"}</Badge>
+
+                  {/* Notify — only show when there is meaningful recipient info */}
+                  {((item.rbac_role && item.tenant) || (item.email_to && item.email_to.length > 0)) && (
+                    <Box pb={5}>
+                      <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Notify</Text>
+                      {item.rbac_role && item.tenant ? (
+                        <HStack spacing={1.5}>
+                          <Badge colorScheme="blue" variant="subtle" fontSize="xs" textTransform="capitalize">{item.rbac_role}</Badge>
+                          <Text fontSize="sm" color="gray.400">—</Text>
+                          <Text fontSize="sm" color="gray.600" fontWeight="medium">{item.tenant}</Text>
+                        </HStack>
+                      ) : (
+                        <Wrap spacing={1}>
+                          {(item.email_to ?? []).map((e) => (
+                            <WrapItem key={e}><Badge colorScheme="blue" variant="subtle" fontSize="xs">{e}</Badge></WrapItem>
+                          ))}
+                        </Wrap>
+                      )}
+                    </Box>
+                  )}
+
+                  <Divider mb={5} />
+
+                  {/* Delivery Channel */}
+                  <Box pb={5}>
+                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Delivery Channel</Text>
+                    <HStack spacing={2}>
+                      <LockIcon color="gray.400" boxSize={3} />
+                      <Text fontSize="sm" color="gray.700" fontWeight="medium">Email</Text>
+                    </HStack>
                   </Box>
+
+                  {/* Status */}
+                  <Box>
+                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Status</Text>
+                    <Badge
+                      colorScheme={item.enabled ? "green" : "gray"}
+                      variant="subtle"
+                      fontSize="xs"
+                      px={2}
+                      py={0.5}
+                      borderRadius="full"
+                    >{item.enabled ? "Active" : "Inactive"}</Badge>
+                  </Box>
+
                 </VStack>
               );
             })()}
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
-            <Button variant="outline" mr={3} onClick={() => { rules.closeView(); if (rules.viewItem) { const recv = rules.receivers.find((r) => r.id === rules.viewItem!.receiver_id); setUpdateRuleRole(recv?.rbac_role ?? ""); setUpdateRuleDef(""); defs.fetchDefinitions(); rules.openUpdate(rules.viewItem); } }}>Edit</Button>
+            <Button variant="outline" mr={3} onClick={() => {
+                rules.closeView();
+                if (rules.viewItem) {
+                  defs.fetchDefinitions();
+                  fetchTenants();
+                  resetEditRuleExtras();
+                  initEditRuleExtras(rules.viewItem);
+                  rules.openUpdate(rules.viewItem);
+                }
+              }}>Edit</Button>
             <Button onClick={rules.closeView}>Close</Button>
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
 
       {/* ── Update Routing Rule Drawer ── */}
-      <Drawer isOpen={rules.isUpdateOpen} onClose={rules.closeUpdate} placement="right" size="md">
+      <Drawer isOpen={rules.isUpdateOpen} onClose={() => { rules.closeUpdate(); resetEditRuleExtras(); }} placement="right" size="md">
         <DrawerOverlay />
         <DrawerContent>
           <DrawerCloseButton />
@@ -1800,106 +2089,231 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <Text fontSize="lg" fontWeight="bold">Edit Routing Rule</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
-            <VStack spacing={6} align="stretch">
-              {/* ── Identity ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Identity</Text>
-                <VStack spacing={4} align="stretch">
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Rule Name</FormLabel>
-                    <Input value={rules.updateForm.rule_name ?? ""} onChange={(e) => rules.setUpdateForm({ ...rules.updateForm, rule_name: e.target.value })} bg="white" />
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
-                    <OptionSelector
-                      options={CATEGORIES}
-                      value={rules.updateForm.match_category ?? "application"}
-                      onChange={(v) => rules.setUpdateForm({ ...rules.updateForm, match_category: v })}
-                    />
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
-                    <OptionSelector
-                      options={SEVERITIES}
-                      value={rules.updateForm.match_severity ?? "critical"}
-                      onChange={(v) => rules.setUpdateForm({ ...rules.updateForm, match_severity: v })}
-                    />
-                  </FormControl>
-                </VStack>
-              </Box>
+            <VStack spacing={0} align="stretch">
 
-              <Divider />
+              {/* ── Rule Name ── */}
+              <VStack spacing={4} align="stretch" pb={6}>
+                <FormControl isRequired isInvalid={!!editRuleErrors.ruleName}>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Rule Name *</FormLabel>
+                  <Input
+                    value={rules.updateForm.rule_name ?? ""}
+                    onChange={(e) => {
+                      rules.setUpdateForm({ ...rules.updateForm, rule_name: e.target.value });
+                      if (e.target.value.trim()) setEditRuleErrors((prev) => { const n = { ...prev }; delete n.ruleName; return n; });
+                    }}
+                    bg="white"
+                    placeholder="e.g. Route Critical ASR Alerts"
+                  />
+                  <FormErrorMessage>{editRuleErrors.ruleName}</FormErrorMessage>
+                </FormControl>
+              </VStack>
 
-              {/* ── Alert Definitions Preview ── */}
-              <Box>
-                <HStack justify="space-between" mb={3}>
-                  <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider">View Alert Definitions</Text>
-                  <Badge colorScheme="orange" fontSize="xs" borderRadius="full" px={2}>{defs.definitions.filter((d) => (!rules.updateForm.match_category || d.category === rules.updateForm.match_category) && (!rules.updateForm.match_severity || d.severity === rules.updateForm.match_severity)).length}</Badge>
-                </HStack>
-                {(() => {
-                  const editMatchDefs = defs.definitions.filter((d) =>
-                    (!rules.updateForm.match_category || d.category === rules.updateForm.match_category) &&
-                    (!rules.updateForm.match_severity || d.severity === rules.updateForm.match_severity)
-                  );
-                  return (
+              <Divider mb={6} />
+
+              {/* ── Category + Severity + Alert Definition ── */}
+              <VStack spacing={4} align="stretch" pb={6}>
+                <FormControl>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+                  <OptionSelector
+                    options={CATEGORIES}
+                    value={editRuleCategory}
+                    onChange={(v) => {
+                      setEditRuleCategory(v);
+                      setEditRuleDef("");
+                      rules.setUpdateForm({ ...rules.updateForm, category: v || null, alert_names: null });
+                    }}
+                  />
+                </FormControl>
+                <FormControl>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+                  <HStack spacing={2}>
+                    {SEVERITIES.map((s) => {
+                      const isActive = editRuleSeverity === s;
+                      const colors = s === "critical"
+                        ? { activeBg: "red.100", activeBorder: "red.600", activeText: "red.700", hoverBg: "red.50" }
+                        : s === "warning"
+                        ? { activeBg: "yellow.100", activeBorder: "yellow.600", activeText: "yellow.700", hoverBg: "yellow.50" }
+                        : { activeBg: "blue.100", activeBorder: "blue.600", activeText: "blue.700", hoverBg: "blue.50" };
+                      return (
+                        <Box
+                          key={s}
+                          as="button"
+                          type="button"
+                          flex="1"
+                          py={2}
+                          px={3}
+                          fontSize="sm"
+                          fontWeight="semibold"
+                          textAlign="center"
+                          cursor="pointer"
+                          borderRadius="full"
+                          borderWidth="2px"
+                          borderColor={isActive ? colors.activeBorder : "gray.200"}
+                          bg={isActive ? colors.activeBg : "white"}
+                          color={isActive ? colors.activeText : "gray.500"}
+                          _hover={{ bg: isActive ? colors.activeBg : colors.hoverBg, borderColor: colors.activeBorder }}
+                          transition="all 0.15s"
+                          onClick={() => {
+                            setEditRuleSeverity(s);
+                            setEditRuleDef("");
+                            rules.setUpdateForm({ ...rules.updateForm, severity: s, alert_names: null });
+                          }}
+                          textTransform="capitalize"
+                        >
+                          {s}
+                        </Box>
+                      );
+                    })}
+                  </HStack>
+                </FormControl>
+                <FormControl>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Alert Definition</FormLabel>
+                  {(() => {
+                    const cat = editRuleCategory;
+                    const sev = editRuleSeverity;
+                    const filtered = defs.definitions.filter((d) =>
+                      (!cat || d.category === cat) && (!sev || d.severity === sev)
+                    );
+                    const displayDefs = cat || sev ? filtered : defs.definitions;
+                    return (
+                      <Select
+                        bg="white"
+                        value={editRuleDef}
+                        onChange={(e) => {
+                          setEditRuleDef(e.target.value);
+                          const chosen = defs.definitions.find((d) => String(d.id) === e.target.value);
+                          rules.setUpdateForm({
+                            ...rules.updateForm,
+                            alert_names: chosen ? [chosen.name] : null,
+                            category: chosen ? chosen.category : (rules.updateForm.category ?? null),
+                            severity: chosen ? chosen.severity : (rules.updateForm.severity ?? null),
+                          });
+                        }}
+                        placeholder={displayDefs.length === 0 ? "No definitions match" : `${displayDefs.length} alert definition${displayDefs.length !== 1 ? "s" : ""} affected`}
+                      >
+                        {displayDefs.map((d) => (
+                          <option key={d.id} value={String(d.id)}>{d.name}</option>
+                        ))}
+                      </Select>
+                    );
+                  })()}
+                  <Text fontSize="xs" color="gray.500" mt={1}>Filter by category/severity, then select a specific definition (optional).</Text>
+                </FormControl>
+              </VStack>
+
+              <Divider mb={6} />
+
+              {/* ── Scope ── */}
+              <VStack spacing={4} align="stretch" pb={6}>
+                <FormControl isRequired>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Scope *</FormLabel>
+                  <Select
+                    value={editRuleScope}
+                    onChange={(e) => {
+                      const v = e.target.value as "global" | "specific_tenant";
+                      setEditRuleScope(v);
+                      if (v === "global") {
+                        rules.setUpdateForm({ ...rules.updateForm, tenant: null });
+                        setEditRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; });
+                      } else {
+                        rules.setUpdateForm({ ...rules.updateForm, tenant: rules.updateItem?.tenant ?? "" });
+                      }
+                    }}
+                    bg="white"
+                  >
+                    <option value="global">Global</option>
+                    <option value="specific_tenant">Specific Tenant</option>
+                  </Select>
+                </FormControl>
+                {editRuleScope === "specific_tenant" && (
+                  <FormControl isRequired isInvalid={!!editRuleErrors.tenant}>
+                    <FormLabel fontWeight="semibold" fontSize="sm">Target Tenant *</FormLabel>
                     <Select
+                      value={rules.updateForm.tenant ?? ""}
+                      onChange={(e) => {
+                        rules.setUpdateForm({ ...rules.updateForm, tenant: e.target.value || null });
+                        if (e.target.value) setEditRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; });
+                      }}
                       bg="white"
-                      size="sm"
-                      value={updateRuleDef}
-                      onChange={(e) => setUpdateRuleDef(e.target.value)}
-                      placeholder={`${editMatchDefs.length} alert definition${editMatchDefs.length !== 1 ? "s" : ""}`}
+                      placeholder="Select tenant"
+                      isDisabled={isLoadingTenants}
                     >
-                      {editMatchDefs.map((d) => (
-                        <option key={d.id} value={String(d.id)}>{d.name}</option>
+                      {tenants.map((t) => (
+                        <option key={t.tenant_id} value={t.tenant_id}>{t.organization_name || t.tenant_id}</option>
                       ))}
                     </Select>
-                  );
-                })()}
-              </Box>
+                    <FormErrorMessage>{editRuleErrors.tenant}</FormErrorMessage>
+                  </FormControl>
+                )}
+              </VStack>
 
-              <Divider />
+              <Divider mb={6} />
 
-              {/* ── Assign Role ── */}
-              <Box>
-                <FormControl isRequired>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Assign to Role</FormLabel>
-                  <Select
-                    value={updateRuleRole}
-                    onChange={(e) => setUpdateRuleRole(e.target.value)}
-                    bg="white"
-                    placeholder="Select a role..."
+              {/* ── Delivery Channel ── */}
+              <VStack spacing={2} align="stretch" pb={6}>
+                <FormControl>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Delivery Channel</FormLabel>
+                  <Box
+                    bg="gray.50"
+                    border="1px solid"
+                    borderColor="gray.200"
+                    borderRadius="md"
+                    px={4}
+                    py={3}
+                    cursor="not-allowed"
                   >
-                    {RBAC_ROLES.map((role) => (
-                      <option key={role} value={role}>{titleCase(role)}</option>
-                    ))}
-                  </Select>
-                  <Text fontSize="xs" color="gray.500" mt={1}>The user with selected role will receive matching alerts.</Text>
+                    <HStack spacing={2}>
+                      <LockIcon color="gray.400" boxSize={3} />
+                      <Text fontSize="sm" color="gray.400" fontWeight="medium">Email</Text>
+                    </HStack>
+                  </Box>
+                  <Text fontSize="xs" color="gray.500" mt={1}>Email delivery is automatically configured. Additional channels coming soon.</Text>
                 </FormControl>
-              </Box>
+              </VStack>
 
-              <Divider />
+              <Divider mb={6} />
 
               {/* ── Status ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Status</Text>
+              <VStack spacing={2} align="stretch">
                 <FormControl isRequired>
-                  <RadioGroup value={rules.updateForm.enabled === false ? "inactive" : "active"} onChange={(v) => rules.setUpdateForm({ ...rules.updateForm, enabled: v === "active" })}>
-                    <HStack spacing={4}>
-                      <Radio value="active" colorScheme="green">
-                        <Text fontSize="sm" fontWeight="medium">Active</Text>
-                      </Radio>
-                      <Radio value="inactive" colorScheme="gray">
-                        <Text fontSize="sm" fontWeight="medium">Inactive</Text>
-                      </Radio>
-                    </HStack>
-                  </RadioGroup>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Status *</FormLabel>
+                  <HStack>
+                    <Switch
+                      isChecked={rules.updateForm.enabled ?? true}
+                      onChange={(e) => rules.setUpdateForm({ ...rules.updateForm, enabled: e.target.checked })}
+                      colorScheme="green"
+                    />
+                    <Text fontSize="sm">Enable this rule</Text>
+                  </HStack>
                 </FormControl>
-              </Box>
+              </VStack>
+
             </VStack>
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
-            <Button variant="outline" mr={3} onClick={rules.closeUpdate} isDisabled={rules.isUpdating}>Cancel</Button>
-            <Button colorScheme="orange" onClick={() => rules.handleUpdate({ rbac_role: updateRuleRole })} isLoading={rules.isUpdating} loadingText="Saving...">Save Changes</Button>
+            <Button
+              variant="outline"
+              mr={3}
+              onClick={() => { rules.closeUpdate(); resetEditRuleExtras(); }}
+              isDisabled={rules.isUpdating}
+            >
+              Cancel
+            </Button>
+            <Button
+              colorScheme="orange"
+              isLoading={rules.isUpdating}
+              loadingText="Saving..."
+              onClick={() => {
+                const errors: Record<string, string> = {};
+                if (!rules.updateForm.rule_name?.trim()) errors.ruleName = "Rule name is required.";
+                if (editRuleScope === "specific_tenant" && !rules.updateForm.tenant) errors.tenant = "Please select a target tenant.";
+                setEditRuleErrors(errors);
+                if (Object.keys(errors).length > 0) return;
+                rules.handleUpdate();
+              }}
+            >
+              Save Changes
+            </Button>
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
