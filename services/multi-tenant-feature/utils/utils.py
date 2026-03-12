@@ -106,6 +106,19 @@ def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
 
+def hash_email(email: str) -> str:
+    """
+    Generate a stable, case-insensitive hash for an email address.
+
+    The email is normalized by trimming whitespace and lowercasing before
+    hashing so that cosmetic differences do not affect uniqueness checks.
+    """
+    if not email:
+        return ""
+    normalized = email.strip().lower()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 # Encryption utilities for email and phone_number
 ENCRYPTION_KEY = app_env.api_key_encryption_key or None
 
