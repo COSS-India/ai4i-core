@@ -12,10 +12,7 @@ import sys
 from contextlib import asynccontextmanager
 from typing import Optional
 
-# CRITICAL: Prioritize mounted volume over installed package for development
-# This ensures code changes in libs/ai4icore_observability are picked up immediately
-if "/app/libs" not in sys.path:
-    sys.path.insert(0, "/app/libs")
+# Libs are pip-installed in editable mode; bind mounts update source in place.
 
 import redis.asyncio as redis
 from fastapi import FastAPI, Request
