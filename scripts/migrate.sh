@@ -9,6 +9,16 @@ ALEMBIC_INI="$PROJECT_ROOT/infrastructure/databases/migrations/postgres/alembic.
 ALEMBIC_DIR="$(cd "$(dirname "$ALEMBIC_INI")" && pwd)"
 REGISTRY_SCRIPT="$PROJECT_ROOT/infrastructure/databases/migrations/postgres/alembic/migration_registry.py"
 
+# Load environment variables from .env files if present (local dev).
+# In production, env vars are expected to be set by the environment already.
+ALEMBIC_ENV="$ALEMBIC_DIR/alembic/.env"
+ROOT_ENV="$PROJECT_ROOT/.env"
+if [[ -f "$ALEMBIC_ENV" ]]; then
+  set -a; source "$ALEMBIC_ENV"; set +a
+elif [[ -f "$ROOT_ENV" ]]; then
+  set -a; source "$ROOT_ENV"; set +a
+fi
+
 if [[ -n "${PYTHON_BIN:-}" ]]; then
   PYTHON_BIN="$PYTHON_BIN"
 elif command -v python3 >/dev/null 2>&1; then
