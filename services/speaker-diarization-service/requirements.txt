@@ -26,7 +26,7 @@ httpx==0.27.0
 requests>=2.31.0
 
 # Utilities
-python-multipart==0.0.9
+python-multipart==0.0.22
 packaging>=21.0
 python-dotenv>=1.0.0
 
