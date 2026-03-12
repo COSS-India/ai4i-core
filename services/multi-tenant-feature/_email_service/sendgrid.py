@@ -1,14 +1,12 @@
-import os
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 from .base import EmailService
 
 from logger import logger
-from dotenv import load_dotenv
-load_dotenv()
+from ai4icore_env import app_env
 
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
-FROM_EMAIL = os.getenv("FROM_EMAIL", "no-reply@ai4i.com")
+SENDGRID_API_KEY = app_env.sendgrid_api_key
+FROM_EMAIL = app_env.from_email or "no-reply@ai4i.com"
 
 class SendGridEmailService(EmailService):
 

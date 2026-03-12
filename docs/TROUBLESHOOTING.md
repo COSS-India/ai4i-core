@@ -19,7 +19,7 @@
 
 **Solutions**:
 1. Verify PostgreSQL is running: `docker-compose ps postgres`
-2. Check PostgreSQL health: `docker-compose exec postgres pg_isready -U dhruva_user`
+2. Check PostgreSQL health: `docker-compose exec postgres pg_isready -U $POSTGRES_USER`
 3. Verify credentials in .env match database configuration
 4. Check database logs: `docker-compose logs postgres`
 5. Restart PostgreSQL: `docker-compose restart postgres`
@@ -149,7 +149,7 @@
 **Symptoms**: All requests return 401 even with valid API key
 
 **Solutions**:
-1. Verify API key exists in database: `docker-compose exec postgres psql -U dhruva_user -d auth_db -c "SELECT * FROM api_keys;"`
+1. Verify API key exists in database: `docker-compose exec postgres psql -U $POSTGRES_USER -d auth_db -c "SELECT * FROM api_keys;"`
 2. Check API key is active: `is_active=true`
 3. Check API key is not expired: `expires_at IS NULL OR expires_at > NOW()`
 4. Verify API key hash matches (use same hashing algorithm)
@@ -196,8 +196,8 @@
 
 **Solutions**:
 1. Check disk usage: `df -h`
-2. Clean old request/result records: `docker-compose exec postgres psql -U dhruva_user -d auth_db -c "SELECT cleanup_old_ai_service_data(30);"`
-3. Vacuum database: `docker-compose exec postgres psql -U dhruva_user -d auth_db -c "VACUUM FULL;"`
+2. Clean old request/result records: `docker-compose exec postgres psql -U $POSTGRES_USER -d auth_db -c "SELECT cleanup_old_ai_service_data(30);"`
+3. Vacuum database: `docker-compose exec postgres psql -U $POSTGRES_USER -d auth_db -c "VACUUM FULL;"`
 4. Configure data retention policy
 5. Increase disk space or add volume
 

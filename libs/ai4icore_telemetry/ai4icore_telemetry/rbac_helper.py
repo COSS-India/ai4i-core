@@ -3,10 +3,11 @@ RBAC Helper for AI4ICore Telemetry Library
 
 Provides RBAC utilities for extracting organization filters from requests.
 """
-import os
 import logging
 from typing import Optional, Any
 from fastapi import Request, HTTPException, status
+
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ async def get_organization_filter(
         )
     
     # Get JWT secret key
-    secret_key = jwt_secret_key or os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
+    secret_key = jwt_secret_key or app_env.jwt_secret_key
     
     # Extract JWT token from Authorization header
     authorization = request.headers.get("Authorization")
@@ -210,7 +211,7 @@ def extract_user_info(request: Request, jwt_secret_key: Optional[str] = None) ->
     if not JWT_AVAILABLE:
         return {}
     
-    secret_key = jwt_secret_key or os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
+    secret_key = jwt_secret_key or app_env.jwt_secret_key
     
     authorization = request.headers.get("Authorization")
     if not authorization or not authorization.startswith("Bearer "):

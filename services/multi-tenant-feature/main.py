@@ -21,10 +21,10 @@ from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from cache.app_cache import get_async_cache_connection
 
-import os
+from ai4icore_env import app_env
 
-RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-RATE_LIMIT_PER_HOUR = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+RATE_LIMIT_PER_MINUTE = app_env.rate_limit_per_minute
+RATE_LIMIT_PER_HOUR = app_env.rate_limit_per_hour
 
 # Sync Redis client for redis_om (model/service caching)
 # redis_cache_client = get_cache_connection()

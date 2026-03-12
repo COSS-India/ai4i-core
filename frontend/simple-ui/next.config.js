@@ -53,7 +53,7 @@ function getSecurityHeaders() {
     // Restrict browser features (camera, mic, geolocation, etc.) to reduce attack surface
     {
       key: 'Permissions-Policy',
-      value: 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
+      value: 'camera=(), microphone=(self), geolocation=(), interest-cohort=()',
     },
     // Disable DNS prefetch by default to reduce information leakage (enable only for trusted origins if needed)
     { key: 'X-DNS-Prefetch-Control', value: 'off' },

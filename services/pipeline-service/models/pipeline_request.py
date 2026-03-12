@@ -2,7 +2,6 @@
 Pipeline Request Models
 
 Pydantic models for pipeline inference requests, supporting chaining of AI tasks.
-Adapted from Dhruva-Platform-2 ULCA schemas for pipeline service.
 """
 
 from enum import Enum
