@@ -27,3 +27,6 @@ pydantic-settings>=2.0.0
 
 # Alembic for database migrations
 alembic>=1.12.0
+
+# Password hashing (used in seeders like auth default admin)
+bcrypt>=4.0.0

@@ -5,6 +5,7 @@ env-local-setup/
 .env.development.local
 .env.test.local
 .env.production.local
+.venv
 
 # Python
 __pycache__/
