@@ -36,6 +36,11 @@ DATABASES=(
   "telemetry_db"
 )
 
+# External databases: services manage their own schemas, we just ensure DB exists
+EXTERNAL_DATABASES=(
+  "unleash"
+)
+
 print_db_header() {
   local db="$1"
   echo "🌿 =====> $db"
@@ -236,9 +241,46 @@ format_alembic_output() {
   done <<< "$output"
 }
 
+ensure_external_databases() {
+  # Create databases for external services that manage their own schemas
+  if [[ ${#EXTERNAL_DATABASES[@]} -eq 0 ]]; then
+    return
+  fi
+
+  echo "🔧 Ensuring external service databases exist..."
+
+  # Get connection info from the first registered DB's env vars
+  local pg_user pg_password pg_host pg_port
+  pg_user="${POSTGRES_USER:-ai4i_user}"
+  pg_password="${POSTGRES_PASSWORD:-}"
+  pg_host="${POSTGRES_HOST:-localhost}"
+  pg_port="${POSTGRES_PORT:-5432}"
+
+  for ext_db in "${EXTERNAL_DATABASES[@]}"; do
+    if PGPASSWORD="$pg_password" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" -d postgres \
+        -tAc "SELECT 1 FROM pg_database WHERE datname='$ext_db'" 2>/dev/null | grep -q 1; then
+      print_status "info" "$ext_db already exists"
+    else
+      if PGPASSWORD="$pg_password" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" -d postgres \
+          -c "CREATE DATABASE $ext_db;" 2>/dev/null; then
+        print_status "applied" "Created database: $ext_db"
+      else
+        print_status "info" "Failed to create $ext_db (may need manual creation)"
+      fi
+    fi
+  done
+  echo
+}
+
 run_for_all_databases() {
   local command="$1"
   shift
+
+  # Ensure external service databases exist before running migrations
+  if [[ "$command" == "upgrade" ]]; then
+    ensure_external_databases
+  fi
+
   local db
   for db in "${DATABASES[@]}"; do
     validate_database "$db"
