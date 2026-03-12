@@ -9,15 +9,6 @@ except Exception:
     import logging
     logger = logging.getLogger(__name__)
 
-load_dotenv()
-
-# Database connection settings
-DB_USER = str(os.getenv("APP_DB_USER"))
-DB_PASSWORD = str(os.getenv("APP_DB_PASSWORD"))
-DB_HOST = str(os.getenv("APP_DB_HOST"))
-DB_PORT = int(os.getenv("APP_DB_PORT", "5432"))
-DB_NAME = str(os.getenv("APP_DB_NAME"))
-
 # PostgreSQL connection engine
 app_db_engine: AsyncEngine = None
 AppDBSessionLocal: async_sessionmaker = None
