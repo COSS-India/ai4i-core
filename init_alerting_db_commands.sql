@@ -71,6 +71,9 @@ CREATE TABLE IF NOT EXISTS notification_receivers (
     organization VARCHAR(100) NOT NULL,
     receiver_name VARCHAR(255) NOT NULL,
     rule_name VARCHAR(255),
+    description TEXT,
+    category VARCHAR(50) NOT NULL DEFAULT 'application',
+    severity VARCHAR(20) NOT NULL DEFAULT 'warning',
     email_to TEXT[] NOT NULL DEFAULT '{}',
     rbac_role VARCHAR(50),
     alert_names TEXT[],
@@ -156,6 +159,8 @@ CREATE INDEX IF NOT EXISTS idx_alert_annotations_alert_def_id ON alert_annotatio
 
 CREATE INDEX IF NOT EXISTS idx_notification_receivers_organization ON notification_receivers(organization);
 CREATE INDEX IF NOT EXISTS idx_notification_receivers_enabled ON notification_receivers(enabled);
+CREATE INDEX IF NOT EXISTS idx_notification_receivers_category ON notification_receivers(category);
+CREATE INDEX IF NOT EXISTS idx_notification_receivers_severity ON notification_receivers(severity);
 
 CREATE INDEX IF NOT EXISTS idx_routing_rules_organization ON routing_rules(organization);
 CREATE INDEX IF NOT EXISTS idx_routing_rules_receiver_id ON routing_rules(receiver_id);

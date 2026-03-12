@@ -179,7 +179,7 @@ def _load_config_metadata():
 def _load_alerting_metadata():
     module = _load_module(
         "ai4i_alembic_dynamic.alerting_models",
-        PROJECT_ROOT / "services" / "alerting-service" / "models.py",
+        PROJECT_ROOT / "services" / "alert-management-service" / "models.py",
     )
     return module.Base.metadata
 

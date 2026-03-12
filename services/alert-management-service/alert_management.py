@@ -504,6 +504,7 @@ class NotificationReceiverCreate(BaseModel):
     alert_names: Optional[List[str]] = Field(None, description="Optional list of alert definition names to route only those alerts within the group")
     tenant: Optional[str] = Field(None, description="Optional tenant name; when set, route by tenant_id and use tenant user email (auth_db is_tenant=true)")
     rule_name: Optional[str] = Field(None, description="Optional rule name; when set, stored on the receiver and used for the auto-created routing rule")
+    description: Optional[str] = Field(None, description="Human-friendly description of what this receiver is for")
     email_to: Optional[List[str]] = Field(None, description="Email addresses (required if rbac_role not provided)", min_items=1)
     rbac_role: Optional[str] = Field(None, description="RBAC role name (ADMIN, MODERATOR, USER, GUEST) - if provided, emails will be resolved from users with this role")
     email_subject_template: Optional[str] = Field(None, description="Email subject template")
@@ -530,6 +531,9 @@ class NotificationReceiverUpdate(BaseModel):
     """Request model for updating a notification receiver"""
     receiver_name: Optional[str] = None
     rule_name: Optional[str] = None
+    description: Optional[str] = Field(None, description="Human-friendly description of what this receiver is for")
+    category: Optional[str] = Field(None, description="Category: 'application' or 'infrastructure'")
+    severity: Optional[str] = Field(None, description="Severity: 'critical', 'warning', or 'info'")
     alert_names: Optional[List[str]] = Field(None, description="Optional list of alert definition names")
     tenant: Optional[str] = Field(None, description="Optional tenant name")
     email_to: Optional[List[str]] = Field(None, description="Email addresses (required if rbac_role not provided)", min_items=1)
@@ -548,6 +552,20 @@ class NotificationReceiverUpdate(BaseModel):
                 raise ValueError(f"Invalid RBAC role '{v}'. Must be one of: {', '.join(valid_roles)}")
         return v
     
+    @field_validator('category')
+    @classmethod
+    def validate_category(cls, v):
+        if v is not None and v.lower() not in ("application", "infrastructure"):
+            raise ValueError("category must be 'application' or 'infrastructure'")
+        return v
+    
+    @field_validator('severity')
+    @classmethod
+    def validate_severity(cls, v):
+        if v is not None and v.lower() not in ("critical", "warning", "info"):
+            raise ValueError("severity must be 'critical', 'warning', or 'info'")
+        return v
+    
     def model_post_init(self, __context):
         """Validate that if updating email/rbac, either email_to or rbac_role is provided, but not both"""
         # Only validate if at least one is provided (both can be None for other updates)
@@ -561,6 +579,9 @@ class NotificationReceiverResponse(BaseModel):
     organization: str
     receiver_name: str
     rule_name: Optional[str] = None
+    description: Optional[str] = Field(None, description="Human-friendly description of what this receiver is for")
+    category: str = Field(default="application", description="Category: 'application' or 'infrastructure'")
+    severity: str = Field(default="warning", description="Severity: 'critical', 'warning', or 'info'")
     email_to: List[str]
     rbac_role: Optional[str] = None
     alert_names: Optional[List[str]] = None
@@ -1710,20 +1731,25 @@ async def create_notification_receiver(
                 detail=f"Receiver with name '{receiver_name}' already exists."
             )
         
-        # Create the receiver (store both email_to and rbac_role; optional alert_names, tenant, rule_name)
+        # Create the receiver (store both email_to and rbac_role; optional alert_names, tenant, rule_name; category and severity)
         alert_names_arr = [n for n in (data.alert_names or []) if n and str(n).strip()]
         tenant_val = str(data.tenant).strip() if data.tenant and str(data.tenant).strip() else None
         rule_name_val = str(data.rule_name).strip() if data.rule_name and str(data.rule_name).strip() else None
+        description_val = str(data.description).strip() if data.description and str(data.description).strip() else None
+        category_val = (data.category or "application").lower()
+        severity_val = (data.severity or "warning").lower()
         receiver_row = await conn.fetchrow(
             """
             INSERT INTO notification_receivers (
-                organization, receiver_name, rule_name, email_to, rbac_role,
+                organization, receiver_name, rule_name, description, category, severity,
+                email_to, rbac_role,
                 alert_names, tenant,
                 email_subject_template, email_body_template, created_by
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             RETURNING *
             """,
-            organization, receiver_name, rule_name_val, email_to, rbac_role,
+            organization, receiver_name, rule_name_val, description_val, category_val, severity_val,
+            email_to, rbac_role,
             alert_names_arr if alert_names_arr else None,
             tenant_val,
             email_subject_template, email_body_template, created_by
@@ -1981,6 +2007,18 @@ async def update_notification_receiver(receiver_id: int, organization: Optional[
         if data.rule_name is not None:
             updates.append(f"rule_name = ${param_idx}")
             params.append(str(data.rule_name).strip() if str(data.rule_name).strip() else None)
+            param_idx += 1
+        if data.description is not None:
+            updates.append(f"description = ${param_idx}")
+            params.append(str(data.description).strip() if str(data.description).strip() else None)
+            param_idx += 1
+        if data.category is not None:
+            updates.append(f"category = ${param_idx}")
+            params.append(data.category.lower())
+            param_idx += 1
+        if data.severity is not None:
+            updates.append(f"severity = ${param_idx}")
+            params.append(data.severity.lower())
             param_idx += 1
         if data.alert_names is not None:
             updates.append(f"alert_names = ${param_idx}")
