@@ -83,20 +83,28 @@ export interface NotificationReceiver {
   id: number;
   organization: string;
   receiver_name: string;
-  email_to: string[] | null;
+  rule_name: string | null;
+  category?: string | null;
+  severity?: string | null;
+  alert_names: string[] | null;
+  tenant: string | null;
+  email_to: string[];
   rbac_role: string | null;
   email_subject_template: string | null;
   email_body_template: string | null;
   enabled: boolean;
   created_at: string;
   updated_at: string;
-  created_by: string;
+  created_by: string | null;
 }
 
 export interface NotificationReceiverCreate {
+  rule_name?: string | null;
   category: string;
   severity: string;
   alert_type?: string | null;
+  alert_names?: string[] | null;
+  tenant?: string | null;
   email_to?: string[];
   rbac_role?: string | null;
   email_subject_template?: string | null;
@@ -105,6 +113,11 @@ export interface NotificationReceiverCreate {
 
 export interface NotificationReceiverUpdate {
   receiver_name?: string;
+  rule_name?: string;
+  category?: string | null;
+  severity?: string | null;
+  alert_names?: string[] | null;
+  tenant?: string | null;
   email_to?: string[];
   rbac_role?: string | null;
   email_subject_template?: string | null;
