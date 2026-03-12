@@ -29,8 +29,14 @@ class ConfigDefaultConfigsSeeder(BaseSeeder):
             adapter.execute(
                 """
                 INSERT INTO configurations (key, value, environment, service_name)
-                VALUES (:key, :value, :environment, :service_name)
-                ON CONFLICT (key, environment, service_name) DO NOTHING
+                SELECT :key, :value, :environment, :service_name
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM configurations
+                    WHERE key = :key
+                      AND environment = :environment
+                      AND service_name = :service_name
+                )
                 """,
                 {
                     'key': key,

@@ -1053,6 +1053,8 @@ services:
       - ALERT_CONFIG_SYNC_SERVICE_URL=http://alert-config-sync-service:8097
       - ALERT_SYNC_ENABLED=true
       - PORT=8098
+    env_file:
+      - ./.env
     depends_on:
       postgres:
         condition: service_healthy

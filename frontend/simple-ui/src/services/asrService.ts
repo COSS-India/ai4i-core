@@ -286,8 +286,8 @@ export class ASRStreamingService {
           serviceId: config.serviceId,
           language: config.language,
           samplingRate: config.samplingRate.toString(),
-          ...(config.apiKey && { apiKey: config.apiKey }),
         },
+        ...(config.apiKey && { auth: { token: config.apiKey } }),
       });
 
       this.socket.on('connect', () => {

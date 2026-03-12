@@ -396,6 +396,8 @@ services:
     environment:
       - SPECS_ROOT=/app/specs
       - SERVICE_DOCS_REGISTRY_PATH=/app/specs/service-docs-registry.yaml
+    env_file:
+      - ./.env
     volumes:
       - ./services/docs-manager:/app
     command: ["--reload"]
@@ -877,6 +879,8 @@ services:
       - ALLOW_ANONYMOUS_ACCESS=${MODEL_MANAGEMENT_ALLOW_ANONYMOUS_ACCESS:-false}
       - MAX_ACTIVE_VERSIONS_PER_MODEL=${MAX_ACTIVE_VERSIONS_PER_MODEL:-5}
       - ALLOW_DEPRECATED_MODEL_CHANGES=${ALLOW_DEPRECATED_MODEL_CHANGES:-true}
+    env_file:
+      - ./.env
     volumes:
       - ./services/model-management-service:/app
     command: ["--reload"]
@@ -901,6 +905,8 @@ services:
       - "8102:8095"
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    env_file:
+      - ./.env
     networks:
       - microservices-network
     restart: unless-stopped
@@ -959,6 +965,8 @@ services:
       - LOG_LEVEL=info
       - MODEL_DIR=/app/models
       - ENVIRONMENT=production
+    env_file:
+      - ./.env
     deploy:
       resources:
         limits:
@@ -1093,6 +1101,8 @@ services:
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=http://65.1.35.3:8700
+    env_file:
+      - ./.env
     volumes:
       - ./services/speaker-diarization-service:/app
       - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
@@ -1240,6 +1250,8 @@ services:
       # - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://core-v1.ai4inclusion.org
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
       - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
+    env_file:
+      - ./.env
     volumes:
       - ./frontend/simple-ui:/app
       - /app/node_modules
@@ -1325,6 +1337,8 @@ services:
       - ALERT_CONFIG_SYNC_SERVICE_URL=http://alert-config-sync-service:8097
       - ALERT_SYNC_ENABLED=true
       - PORT=8098
+    env_file:
+      - ./.env
     volumes:
       - ./services/alert-management-service:/app
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
@@ -1415,6 +1429,8 @@ services:
       - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
 
+    env_file:
+      - ./.env
     volumes:
       - grafana-data:/var/lib/grafana
       - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning

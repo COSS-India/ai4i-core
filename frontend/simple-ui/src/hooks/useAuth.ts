@@ -32,7 +32,6 @@ function runAuthInitOnce(): Promise<void> {
         }
       } catch (error: any) {
         const errorMessage = error?.message || 'Token validation failed';
-        console.log('Token validation failed during initialization:', errorMessage);
         if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
           console.warn('Auth service timeout during initialization - clearing auth state silently');
         }
@@ -129,21 +128,14 @@ export const useAuth = () => {
 
   const login = useCallback(async (credentials: LoginRequest) => {
     setAuthState(prev => ({ ...prev, isLoading: true, error: null }));
-    console.log('useAuth: Starting login...');
 
     try {
       const response = await authService.login(credentials);
-      console.log('useAuth: Login API successful, tokens received');
-      
+
       // Verify tokens are stored before proceeding
       const accessToken = authService.getAccessToken();
       const refreshToken = authService.getRefreshToken();
-      console.log('useAuth: Token verification:', {
-        hasAccessToken: !!accessToken,
-        hasRefreshToken: !!refreshToken,
-        accessTokenLength: accessToken?.length || 0,
-      });
-      
+
       if (!accessToken) {
         throw new Error('Access token was not stored after login. Please try again.');
       }
@@ -152,26 +144,19 @@ export const useAuth = () => {
       await new Promise(resolve => setTimeout(resolve, 100));
       
       // Use /me endpoint to validate token and get user data in one call
-      // This is more efficient than calling validate then me separately
-      console.log('useAuth: Fetching user data from /me endpoint (this also validates the token)...');
       try {
         const user = await authService.getCurrentUser();
-        console.log('useAuth: User data fetched successfully, token is valid:', user);
 
         // Store user data and tokens immediately before state update
         // This ensures all data is in localStorage before React re-renders
         authService.setStoredUser(user);
         // Tokens are already stored by authService.login(), but ensure they're there
         if (!authService.getAccessToken() || !authService.getRefreshToken()) {
-          // This shouldn't happen, but just in case
           console.warn('useAuth: Tokens not found in storage after login');
         }
 
-        // Token is valid and we have user data - authentication successful
-        // Use functional update to ensure we get the latest state
-        console.log('useAuth: Setting authentication state - isAuthenticated: true');
         setAuthState(prev => {
-          const newState = {
+          return {
             user: user,
             accessToken: response.access_token,
             refreshToken: response.refresh_token,
@@ -179,14 +164,7 @@ export const useAuth = () => {
             isLoading: false,
             error: null,
           };
-          console.log('useAuth: Auth state updated:', { 
-            isAuthenticated: newState.isAuthenticated, 
-            username: newState.user?.username 
-          });
-          return newState;
         });
-
-        console.log('useAuth: ✅ Authentication complete - user logged in successfully');
 
         // Fetch API keys and store selected key in localStorage for use in services
         try {

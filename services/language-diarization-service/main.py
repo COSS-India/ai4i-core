@@ -33,11 +33,11 @@ from ai4icore_model_management import ModelManagementPlugin, ModelManagementConf
 
 # Logging imports (structured JSON logging to OpenSearch via ai4icore_logging)
 LOGGING_AVAILABLE = False
-configure_logging = None
 get_logger = None
-CorrelationMiddleware = None
+LoggingConfig = None
+register_logging_plugin = None
 try:
-    from ai4icore_logging import configure_logging, get_logger, CorrelationMiddleware
+    from ai4icore_logging import get_logger, LoggingConfig, register_logging_plugin
     LOGGING_AVAILABLE = True
 except ImportError:
     pass
@@ -57,7 +57,6 @@ from routers import inference_router
 from models import database_models, auth_models
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from utils.triton_client import TritonClient
@@ -65,10 +64,6 @@ from utils.triton_client import TritonClient
 # Configure structured logging (JSON) so Fluent Bit can forward logs to OpenSearch.
 # Fallback to basic logging if ai4icore_logging is not available.
 if LOGGING_AVAILABLE:
-    configure_logging(
-        service_name=os.getenv("SERVICE_NAME", "language-diarization-service"),
-        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
-    )
     logger = get_logger(__name__)
 
     # Disable uvicorn access logger to avoid duplicate plain-text logs
@@ -336,8 +331,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Request logging
-app.add_middleware(RequestLoggingMiddleware)
+# Initialize AI4ICore Logging Plugin
+if LOGGING_AVAILABLE and register_logging_plugin and LoggingConfig:
+    logging_config = LoggingConfig.from_env()
+    logging_config.service_name = os.getenv("SERVICE_NAME")
+    logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING").lower() == "true"
+    register_logging_plugin(app, config=logging_config)
+    logger.info("✅ AI4ICore Logging Plugin initialized for Language Diarization service")
 
 # Rate limiting (Redis client will be picked from app.state)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
