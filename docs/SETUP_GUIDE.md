@@ -74,6 +74,11 @@ cp services/telemetry-service/env.template services/telemetry-service/.env
 cp frontend/simple-ui/env.template frontend/simple-ui/.env
 ```
 
+**Alembic**
+```bash
+cp infrastructure/databases/migrations/postgres/alembic/env.template  infrastructure/databases/migrations/postgres/alembic/.env
+```
+
 **Note:** You can edit these `.env` files if you need to customize settings, but the defaults should work for initial setup.
 
 ## Step 3: Build Docker Images
@@ -147,14 +152,8 @@ This creates the `unleash` database for the Unleash feature flag service.
 
 Run migrations for all databases at once.
 
-**Linux/macOS:**
 ```bash
-python3 infrastructure/databases/cli.py migrate:all
-```
-
-**Windows:**
-```bash
-python infrastructure/databases/cli.py migrate:all
+./scripts/migrate.sh all upgrade
 ```
 
 This command will:

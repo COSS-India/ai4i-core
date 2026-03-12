@@ -17,7 +17,7 @@ import {
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
@@ -43,15 +43,6 @@ const SpeakerDiarizationPage: React.FC = () => {
     queryFn: listSpeakerDiarizationServices,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
-
-  // Auto-select first available Speaker Diarization service when list loads
-  useEffect(() => {
-    if (!speakerDiarizationServices || speakerDiarizationServices.length === 0) return;
-    if (!serviceId) {
-      // If no service selected, select first available
-      setServiceId(speakerDiarizationServices[0].service_id);
-    }
-  }, [speakerDiarizationServices, serviceId]);
 
   const {
     isRecording,
@@ -191,7 +182,8 @@ const SpeakerDiarizationPage: React.FC = () => {
               {/* Service Selection */}
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  Speaker Diarization Service:
+                  Speaker Diarization Service{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 {servicesLoading ? (
                   <HStack spacing={2} p={2}>
@@ -242,7 +234,8 @@ const SpeakerDiarizationPage: React.FC = () => {
 
               <Box>
                 <Text mb={4} fontSize="sm" fontWeight="semibold">
-                  Audio Input:
+                  Audio Input{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </Text>
                 <AudioRecorder
                   onAudioReady={handleAudioReady}
@@ -269,6 +262,11 @@ const SpeakerDiarizationPage: React.FC = () => {
                 </Box>
               )}
 
+              {/* Instruction above Submit (consistent with other services) */}
+              <Text fontSize="sm" color="gray.600">
+                Record audio or upload a file above, then click &quot;Submit for Diarization&quot; to separate the conversation by speaker.
+              </Text>
+
               {/* Submit Button */}
               <Button
                 colorScheme="orange"
@@ -277,7 +275,7 @@ const SpeakerDiarizationPage: React.FC = () => {
                 loadingText="Processing..."
                 size="md"
                 w="full"
-                isDisabled={!audioData || fetching}
+                isDisabled={!audioData || !serviceId || fetching}
               >
                 Submit for Diarization
               </Button>

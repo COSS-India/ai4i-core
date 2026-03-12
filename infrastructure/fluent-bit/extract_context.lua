@@ -466,8 +466,13 @@ function filter_dashboard_logs(tag, timestamp, record)
     
     -- SAFETY: For RequestLoggingMiddleware logs, ensure path is extracted before dropping
     -- These are the actual API request logs we want to keep - check BEFORE dropping empty paths
+    -- Check for both old logger name pattern ("request_logging") and new pattern ("{service}.request")
     local logger = record["logger"] or ""
-    if (path == nil or path == "") and type(logger) == "string" and logger:find("request_logging") and allowed_endpoints ~= nil then
+    local is_request_logging = false
+    if type(logger) == "string" then
+        is_request_logging = logger:find("request_logging") or logger:find("%.request$")
+    end
+    if (path == nil or path == "") and is_request_logging and allowed_endpoints ~= nil then
         -- Extract path from message if not already found
         local message = record["message"] or ""
         if type(message) == "string" and message ~= "" then
@@ -563,11 +568,15 @@ function filter_dashboard_logs(tag, timestamp, record)
         end
         return 1, timestamp, record
     else
-        -- SAFETY: For RequestLoggingMiddleware logs (logger contains "request_logging")
+        -- SAFETY: For RequestLoggingMiddleware logs (logger contains "request_logging" or ends with ".request")
         -- These are the actual API request logs we want to keep - they have the path in context.path
         -- Allow them through if service is in whitelist, regardless of path matching
         local request_logger = record["logger"] or ""
-        if type(request_logger) == "string" and request_logger:find("request_logging") and allowed_endpoints ~= nil then
+        local is_request_logging = false
+        if type(request_logger) == "string" then
+            is_request_logging = request_logger:find("request_logging") or request_logger:find("%.request$")
+        end
+        if is_request_logging and allowed_endpoints ~= nil then
             -- Extract path from message if not already found
             if (path == nil or path == "") then
                 local message = record["message"] or ""
