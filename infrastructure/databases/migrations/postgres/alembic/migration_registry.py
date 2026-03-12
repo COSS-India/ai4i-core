@@ -11,10 +11,13 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import quote_plus
 
-from ai4icore_env import app_env
 from dotenv import load_dotenv
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.orm import declarative_base
+
+# NOTE: app_env must be imported AFTER load_dotenv() below so the singleton
+# picks up all environment variables.  The deferred import is done inside
+# ensure_database_exists().
 
 ALEMBIC_DIR = Path(__file__).resolve().parent
 # PROJECT_ROOT used to be the repository root when Alembic lived at the top level.
@@ -381,8 +384,9 @@ def supports_autogenerate(name: str) -> bool:
 def ensure_database_exists(name: str) -> None:
     parts = get_connection_parts(name)
     target_database = parts["database"]
+    from ai4icore_env import app_env
     ai4i_platform_db = app_env.ai4i_platform_db_name
-    maintenance_databases = ("postgres", ai4i_platform_db, target_database)
+    maintenance_databases = tuple(db for db in ("postgres", ai4i_platform_db, target_database) if db)
     last_error: Exception | None = None
 
     for maintenance_db in maintenance_databases:
