@@ -16,7 +16,7 @@ load_dotenv()
 DB_USER = str(os.getenv("APP_DB_USER"))
 DB_PASSWORD = str(os.getenv("APP_DB_PASSWORD"))
 DB_HOST = str(os.getenv("APP_DB_HOST"))
-DB_PORT = int(os.getenv("APP_DB_PORT"))
+DB_PORT = int(os.getenv("APP_DB_PORT", "5432"))
 DB_NAME = str(os.getenv("APP_DB_NAME"))
 
 # PostgreSQL connection engine
