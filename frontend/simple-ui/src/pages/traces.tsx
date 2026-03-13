@@ -54,6 +54,7 @@ interface ProcessedSpan {
   errorMessage?: string;
   relativeStart: number; // milliseconds from trace start
   relativeEnd: number;
+  effectiveDuration?: number; // exclusive duration: span.duration minus direct children (used for root/wrapper spans)
 }
 
 const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number): ProcessedSpan => {
@@ -657,6 +658,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     const categorized = categorizeSpan(span, serviceName, traceStartTime);
     return categorized;
   });
+
   // Detect VAD fallback pattern: VAD failed but ASR preprocessing succeeded with single chunk
   // This indicates graceful degradation - VAD failed but processing continued with fallback
   const detectVadFallback = () => {
@@ -838,6 +840,58 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
   // Sort by start time
   const sorted = filtered.sort((a, b) => a.relativeStart - b.relativeStart);
 
+  // ─── Displayed-tree exclusive duration ────────────────────────────────────
+  // Each displayed span should show ONLY the time it spends on its OWN work,
+  // not time covered by any displayed descendant. This ensures all step
+  // durations add up correctly to the total trace duration.
+  //
+  // Algorithm: build a "displayed tree" where the parent of each displayed
+  // span is its nearest displayed ancestor (walking up the Jaeger parent chain).
+  // Then: effectiveDuration = span.duration − Σ(displayed direct children durations)
+  const computeEffectiveDurations = (spanList: ProcessedSpan[]): void => {
+    const displayedIds = new Set(spanList.map(p => p.span.spanID));
+    const processedById = new Map<string, ProcessedSpan>(
+      spanList.map(p => [p.span.spanID, p])
+    );
+
+    // For each displayed span, walk up the Jaeger parent chain to find the
+    // nearest displayed ancestor (which may be a grandparent if the direct
+    // parent is not in the displayed list).
+    const displayedParentOf = new Map<string, string>(); // childId → parentId
+    spanList.forEach(p => {
+      let cur: string | undefined = spanToParent.get(p.span.spanID);
+      while (cur) {
+        if (displayedIds.has(cur)) {
+          displayedParentOf.set(p.span.spanID, cur);
+          break;
+        }
+        cur = spanToParent.get(cur);
+      }
+    });
+
+    // Invert: parentId → [childId, ...]
+    const displayedChildrenOf = new Map<string, string[]>();
+    displayedParentOf.forEach((parentId, childId) => {
+      if (!displayedChildrenOf.has(parentId)) displayedChildrenOf.set(parentId, []);
+      displayedChildrenOf.get(parentId)!.push(childId);
+    });
+
+    // Set effectiveDuration for each span that has displayed children
+    spanList.forEach(p => {
+      const children = displayedChildrenOf.get(p.span.spanID) || [];
+      if (children.length > 0) {
+        const childrenSum = children.reduce((sum, childId) => {
+          const child = processedById.get(childId);
+          return sum + (child ? child.span.duration : 0);
+        }, 0);
+        const exclusive = p.span.duration - childrenSum;
+        p.effectiveDuration = exclusive >= 0 ? exclusive : 0;
+      } else {
+        p.effectiveDuration = undefined; // no displayed children → show full span duration
+      }
+    });
+  };
+
   // If we have too few spans, include some important non-top-level ones
   if (sorted.length < 3) {
     const additional = processed
@@ -853,7 +907,9 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       .sort((a, b) => a.relativeStart - b.relativeStart)
       .slice(0, 5 - sorted.length);
     
-    return [...sorted, ...additional].sort((a, b) => a.relativeStart - b.relativeStart);
+    const combined = [...sorted, ...additional].sort((a, b) => a.relativeStart - b.relativeStart);
+    computeEffectiveDurations(combined);
+    return combined;
   }
 
   // If still no spans, include any spans that have significant duration (>10ms) or are root spans
@@ -939,9 +995,11 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     }).sort((a, b) => a.relativeStart - b.relativeStart);
     
     console.log("Final fallback spans:", finalSpans.length, finalSpans.map(s => s.displayName));
+    computeEffectiveDurations(finalSpans);
     return finalSpans;
   }
 
+  computeEffectiveDurations(sorted);
   return sorted;
 };
 
@@ -2035,7 +2093,7 @@ const TracesPage: React.FC = () => {
                             {processedSpans && processedSpans.length > 0 ? (
                               processedSpans.map((processed: ProcessedSpan, idx: number) => {
                                 const relativeTime = formatRelativeTime(processed.relativeStart);
-                                const duration = formatDuration(processed.span.duration);
+                                const duration = formatDuration(processed.effectiveDuration ?? processed.span.duration);
                                 return (
                                   <Box
                                     key={idx}
@@ -2154,7 +2212,7 @@ const TracesPage: React.FC = () => {
                         <VStack spacing={3} align="stretch">
                           {processedSpans && processedSpans.length > 0 ? (
                             processedSpans.map((processed: ProcessedSpan, idx: number) => {
-                            const duration = formatDuration(processed.span.duration);
+                            const duration = formatDuration(processed.effectiveDuration ?? processed.span.duration);
                             
                             // Merge tags from current span and all ancestor spans
                             // Parent tags are useful for input-related info (e.g., nmt.input.* on parent nmt.inference)
@@ -2502,7 +2560,7 @@ const TracesPage: React.FC = () => {
                                           borderRadius="full"
                                           textTransform="none"
                                         >
-                                          {formatDuration(processed.span.duration)}
+                                          {duration}
                                         </Badge>
                                       </VStack>
                                     </HStack>
