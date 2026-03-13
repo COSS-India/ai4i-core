@@ -1108,7 +1108,7 @@ async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
                             new_cache["apiKey"] = value
                         elif key == "modelId":
                             new_cache["modelId"] = value
-                        elif key in cache_fields:
+                        elif key in new_cache:
                             new_cache[key] = value
             except Exception as e:
                 logger.exception(f"Error fetching service from DB for cache: {e}")
