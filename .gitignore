@@ -66,6 +66,7 @@ auth_db_dump.sql
 
 # Docker
 .dockerignore
+docker-compose-local.yml
 
 # Node.js (for frontend)
 node_modules/
