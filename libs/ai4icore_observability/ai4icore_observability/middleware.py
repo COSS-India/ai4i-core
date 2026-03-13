@@ -1,5 +1,5 @@
 """
-Middleware for Dhruva Observability Plugin
+Middleware for AI4ICore Observability Plugin
 
 Handles request tracking, service detection, and metrics collection.
 """
@@ -15,6 +15,8 @@ import random
 from typing import Optional, Dict, Any
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from ai4icore_env import app_env
+
 from .config import PluginConfig
 from .metrics import MetricsCollector
 import httpx
@@ -361,20 +363,19 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             tenant_id if found, None otherwise
         """
         try:
-            # Get multi-tenant service URL from config or environment variable
+            # Get multi-tenant service URL from config or db_settings
             # Supports both environment variable and service discovery (Kubernetes/Docker service names)
-            import os
             multi_tenant_service_url = getattr(self.config, 'multi_tenant_service_url', None)
             if not multi_tenant_service_url:
-                multi_tenant_service_url = os.getenv("MULTI_TENANT_SERVICE_URL")
-            
+                multi_tenant_service_url = app_env.multi_tenant_service_url
+
             # If not set, try to construct from service name (for Kubernetes/Docker service discovery)
             if not multi_tenant_service_url:
                 # Try common service discovery patterns
-                service_name = os.getenv("MULTI_TENANT_SERVICE_NAME", "multi-tenant-service")
+                service_name = app_env.multi_tenant_service_name
                 # Default port is 8001 (internal Docker port), not 8100 (external mapped port)
-                service_port = os.getenv("MULTI_TENANT_SERVICE_PORT", "8001")
-                service_scheme = os.getenv("MULTI_TENANT_SERVICE_SCHEME", "http")
+                service_port = app_env.multi_tenant_service_port
+                service_scheme = app_env.multi_tenant_service_scheme
                 # Construct URL from service name (works with Docker service names and Kubernetes DNS)
                 multi_tenant_service_url = f"{service_scheme}://{service_name}:{service_port}"
                 if self.config.debug:

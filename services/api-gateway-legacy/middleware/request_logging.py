@@ -5,14 +5,14 @@ Uses structured JSON logging with trace correlation, compatible with OpenSearch 
 """
 
 import time
-import os
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from ai4icore_logging import get_logger, get_correlation_id, get_organization
+from ai4icore_env import app_env
 
-# Get Jaeger URL from environment or use default
-JAEGER_UI_URL = os.getenv("JAEGER_UI_URL", "http://localhost:16686")
+# Get Jaeger URL from settings or use default
+JAEGER_UI_URL = app_env.jaeger_ui_url or "http://localhost:16686"
 
 logger = get_logger(__name__)
 
@@ -23,18 +23,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
         
-        # Read filtering configuration from environment variables
-        # Parse boolean values - handle "true", "True", "TRUE", "1", etc.
-        exclude_health_env = os.getenv("EXCLUDE_HEALTH_LOGS", "false")
-        exclude_metrics_env = os.getenv("EXCLUDE_METRICS_LOGS", "false")
-        self.exclude_health_logs = exclude_health_env.lower().strip() in ("true", "1", "yes", "on")
-        self.exclude_metrics_logs = exclude_metrics_env.lower().strip() in ("true", "1", "yes", "on")
-        
+        # Read filtering configuration from db_settings
+        self.exclude_health_logs = app_env.exclude_health_logs
+        self.exclude_metrics_logs = app_env.exclude_metrics_logs
+
         # Log configuration at startup for debugging
         logger.info(
             f"API Gateway RequestLoggingMiddleware initialized: "
-            f"EXCLUDE_HEALTH_LOGS={self.exclude_health_logs} (env='{exclude_health_env}'), "
-            f"EXCLUDE_METRICS_LOGS={self.exclude_metrics_logs} (env='{exclude_metrics_env}')"
+            f"EXCLUDE_HEALTH_LOGS={self.exclude_health_logs}, "
+            f"EXCLUDE_METRICS_LOGS={self.exclude_metrics_logs}"
         )
     
     def _should_skip_logging(self, path: str) -> bool:

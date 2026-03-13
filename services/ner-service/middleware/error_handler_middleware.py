@@ -6,7 +6,6 @@ return the same `error` and `message` shapes at service level.
 """
 
 import logging
-import os
 import re
 import time
 import traceback
@@ -14,7 +13,8 @@ import traceback
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from middleware.exceptions import (
+from ai4icore_env import app_env
+from ai4icore_constants.exceptions import (
     AuthenticationError,
     AuthorizationError,
     ErrorDetail,
@@ -262,8 +262,8 @@ def add_error_handlers(app: FastAPI) -> None:
                 pass  # Don't fail if tracing fails
         
         # Check if health/metrics logs should be excluded
-        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
-        exclude_metrics_logs = os.getenv("EXCLUDE_METRICS_LOGS", "false").lower() == "true"
+        exclude_health_logs = app_env.exclude_health_logs
+        exclude_metrics_logs = app_env.exclude_metrics_logs
         
         path = request.url.path.lower().rstrip('/')
         should_skip = False

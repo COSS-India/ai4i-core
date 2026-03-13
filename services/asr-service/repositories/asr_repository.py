@@ -1,7 +1,6 @@
 """
 Async repository for ASR database operations.
 
-Adapted from Dhruva-Platform-2 PostgreSQLBaseRepository for async SQLAlchemy.
 """
 
 import logging
@@ -33,13 +32,13 @@ try:
     docker_path = '/app/services/multi-tenant-feature'
     if os.path.exists(docker_path):
         if docker_path not in sys.path:
-            sys.path.insert(0, docker_path)
+            sys.path.append(docker_path)
     else:
         # Try local dev path
         workspace_root = os.path.abspath(os.path.join(current_dir, '..', '..', '..'))
         multi_tenant_path = os.path.join(workspace_root, 'services', 'multi-tenant-feature')
         if os.path.exists(multi_tenant_path) and multi_tenant_path not in sys.path:
-            sys.path.insert(0, multi_tenant_path)
+            sys.path.append(multi_tenant_path)
     from models.service_schema_models import ASRRequestDB as TenantASRRequestDB, ASRResultDB as TenantASRResultDB
     logger.info(f"Successfully imported tenant schema models from {docker_path if os.path.exists(docker_path) else multi_tenant_path}")
 except (ImportError, ValueError) as e:
@@ -113,7 +112,7 @@ class ASRRepository:
             if os.path.exists(docker_path):
                 # Ensure the path is in sys.path for imports to work
                 if docker_path not in sys.path:
-                    sys.path.insert(0, docker_path)
+                    sys.path.append(docker_path)
                 logger.info(f"Attempting to import tenant models from {docker_path}, sys.path includes: {docker_path in sys.path}")
                 
                 # Try regular import first (should work now that path is set)

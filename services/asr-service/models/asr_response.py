@@ -1,7 +1,6 @@
 """
 Pydantic models for ASR inference responses.
 
-Adapted from Dhruva-Platform-2 ULCA schemas for ASR service.
 """
 
 from typing import List, Optional, Dict, Any

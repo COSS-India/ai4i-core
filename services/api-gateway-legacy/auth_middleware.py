@@ -2,13 +2,12 @@
 Authentication middleware for API Gateway
 Authentication is delegated to auth-service for centralized validation
 """
-import os
-import sys
 import logging
 from typing import Optional, Dict, Any
 from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import httpx
+from ai4icore_env import app_env
 
 # OpenTelemetry instrumentation for httpx
 try:
@@ -24,47 +23,12 @@ except ImportError:
     # Fallback will be defined below
     pass
 
-# Import error messages - use importlib for reliable file-based import
-import importlib.util
-import os
-
-# Try regular import first
-try:
-    from services.constants.error_messages import (
-        AUTH_FAILED,
-        AUTH_FAILED_MESSAGE
-    )
-except ImportError:
-    # Fallback: direct file import using importlib (more reliable)
-    error_messages_path = "/app/services/constants/error_messages.py"
-    # Try multiple possible paths
-    possible_paths = [
-        error_messages_path,
-        os.path.join(os.path.dirname(__file__), "..", "services", "constants", "error_messages.py"),
-        os.path.join("/app", "services", "constants", "error_messages.py")
-    ]
-    
-    error_messages = None
-    for path in possible_paths:
-        abs_path = os.path.abspath(path)
-        if os.path.exists(abs_path):
-            spec = importlib.util.spec_from_file_location("error_messages", abs_path)
-            if spec and spec.loader:
-                error_messages = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(error_messages)
-                break
-    
-    if error_messages:
-        AUTH_FAILED = error_messages.AUTH_FAILED
-        AUTH_FAILED_MESSAGE = error_messages.AUTH_FAILED_MESSAGE
-    else:
-        # Last resort: define constants directly
-        AUTH_FAILED = "AUTH_FAILED"
-        AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."
+# Import error messages
+from ai4icore_constants.error_messages import AUTH_FAILED, AUTH_FAILED_MESSAGE
 
 # Configure logger with JSON formatting
 try:
-    logger = get_logger(__name__, use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true")
+    logger = get_logger(__name__, use_kafka=app_env.use_kafka_logging)
     # Remove the logger's own handlers and let it propagate to root logger
     # This ensures all logs use the same handler configuration
     logger.handlers.clear()
@@ -74,9 +38,9 @@ except (NameError, Exception):
     logger = logging.getLogger(__name__)
 
 # JWT Configuration
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
+JWT_SECRET_KEY = app_env.jwt_secret_key
+JWT_ALGORITHM = app_env.jwt_algorithm
+AUTH_SERVICE_URL = app_env.auth_service_url
 
 security = HTTPBearer(auto_error=False)
 

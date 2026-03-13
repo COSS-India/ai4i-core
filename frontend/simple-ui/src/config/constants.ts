@@ -519,7 +519,7 @@ export const TRANSLITERATION_ERRORS = {
   },
   SERVICE_UNAVAILABLE: {
     title: 'Service unavailable',
-    description: 'Transliteration service is temporarily unavailable. Please try again in a few minutes.',
+    description: 'Transliteration is temporarily unavailable. Please try again in a few minutes.',
     action: 'Retry after some time',
   },
   PROCESSING_FAILED: {
@@ -529,7 +529,7 @@ export const TRANSLITERATION_ERRORS = {
   },
   QUOTA_EXCEEDED: {
     title: 'Quota exceeded',
-    description: 'You have exceeded your usage quota for transliteration service. Please contact your administrator.',
+    description: 'You have exceeded your usage quota for transliteration. Please contact your administrator.',
     action: 'Contact admin or wait',
   },
   RATE_LIMIT_EXCEEDED: {
@@ -539,13 +539,16 @@ export const TRANSLITERATION_ERRORS = {
   },
   MODEL_UNAVAILABLE: {
     title: 'Model unavailable',
-    description: 'The selected transliteration model is currently unavailable. Please try a different model.',
+    description: 'The selected transliteration model is currently unavailable. Please try another model.',
     action: 'Select different model',
   },
 } as const;
 
 /** Minimum Language Detection text length (characters) to be considered valid */
 export const MIN_LANGUAGE_DETECTION_TEXT_LENGTH = 2;
+
+/** Maximum total input length for Text Language Detection textarea */
+export const MAX_LANGUAGE_DETECTION_INPUT_LENGTH = 512;
 
 /** Language Detection error codes and user-facing messages */
 export const LANGUAGE_DETECTION_ERRORS = {

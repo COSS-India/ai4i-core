@@ -9,7 +9,7 @@ from io import BytesIO
 from models.asr_request import AudioInput
 from .audio_utils import validate_audio_format, get_audio_duration, AudioProcessingError, InvalidAudioFormatError
 import soundfile as sf
-from services.constants.error_messages import (
+from ai4icore_constants.error_messages import (
     NO_FILE_SELECTED,
     NO_FILE_SELECTED_MESSAGE,
     UNSUPPORTED_FORMAT,

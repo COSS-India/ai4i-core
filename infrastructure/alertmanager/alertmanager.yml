@@ -1,9 +1,9 @@
 global:
   resolve_timeout: 5m
   smtp_smarthost: smtp.gmail.com:587
-  smtp_from: bharathia0704@gmail.com
-  smtp_auth_username: bharathia0704@gmail.com
-  smtp_auth_password: thxqhvvkyxgxenlo
+  smtp_from: ${SMTP_FROM_EMAIL}
+  smtp_auth_username: ${SMTP_USERNAME}
+  smtp_auth_password: ${SMTP_PASSWORD}
   smtp_require_tls: true
 route:
   group_by:

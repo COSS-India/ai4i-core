@@ -6,8 +6,8 @@ info:
   description: Automatic Speech Recognition. Convert speech to text. 22+ Indic languages.
   version: 1.0.0
   contact:
-    name: Dhruva Platform Team
-    url: https://github.com/AI4Bharat/Dhruva
+    name: AI4ICore Team
+    url: https://github.com/COSS-India/ai4i-core
 
 servers:
   - url: "http://localhost:8080"

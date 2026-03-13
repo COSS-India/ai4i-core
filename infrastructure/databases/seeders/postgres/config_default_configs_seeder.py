@@ -29,8 +29,14 @@ class ConfigDefaultConfigsSeeder(BaseSeeder):
             adapter.execute(
                 """
                 INSERT INTO configurations (key, value, environment, service_name)
-                VALUES (:key, :value, :environment, :service_name)
-                ON CONFLICT (key, environment, service_name) DO NOTHING
+                SELECT :key, :value, :environment, :service_name
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM configurations
+                    WHERE key = :key
+                      AND environment = :environment
+                      AND service_name = :service_name
+                )
                 """,
                 {
                     'key': key,
@@ -78,8 +84,8 @@ class ConfigDefaultConfigsSeeder(BaseSeeder):
             ('telemetry-service', 'http://telemetry-service:8084', 'http://telemetry-service:8084/health', 'healthy'),
             ('alerting-service', 'http://alerting-service:8085', 'http://alerting-service:8085/health', 'healthy'),
             ('dashboard-service', 'http://dashboard-service:8086', 'http://dashboard-service:8086/health', 'healthy'),
-            ('asr-service', 'http://asr-service:8001', 'http://asr-service:8001/health', 'healthy'),
-            ('tts-service', 'http://tts-service:8002', 'http://tts-service:8002/health', 'healthy'),
+            ('asr-service', '', '', 'healthy'),
+            ('tts-service', '', '', 'healthy'),
             ('nmt-service', 'http://nmt-service:8003', 'http://nmt-service:8003/health', 'healthy'),
             ('llm-service', 'http://llm-service:8004', 'http://llm-service:8004/health', 'healthy'),
             ('ocr-service', 'http://ocr-service:8005', 'http://ocr-service:8005/health', 'healthy'),

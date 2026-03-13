@@ -1,7 +1,6 @@
 """
 Authentication utilities and JWT handling
 """
-import os
 import secrets
 import hashlib
 import logging
@@ -17,6 +16,7 @@ from sqlalchemy import select
 from cryptography.fernet import Fernet
 from models import User, UserSession, APIKey, Role, Permission, UserRole, RolePermission, OAuthProvider
 from casbin_enforcer import check_apikey_permission
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 
@@ -28,14 +28,14 @@ logger = logging.getLogger(__name__)
 pwd_context = CryptContext(schemes=["bcrypt", "argon2"], default="bcrypt")
 
 # JWT Configuration
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
-JWT_REFRESH_SECRET_KEY = os.getenv("JWT_REFRESH_SECRET_KEY", "dhruva-refresh-secret-key-2024-super-secure")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
-REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+JWT_SECRET_KEY = app_env.jwt_secret_key
+JWT_REFRESH_SECRET_KEY = app_env.jwt_refresh_secret_key
+JWT_ALGORITHM = app_env.jwt_algorithm
+ACCESS_TOKEN_EXPIRE_MINUTES = app_env.access_token_expire_minutes
+REFRESH_TOKEN_EXPIRE_DAYS = app_env.refresh_token_expire_days
 
 # API Key Encryption Configuration
-API_KEY_ENCRYPTION_KEY = os.getenv("API_KEY_ENCRYPTION_KEY", None)
+API_KEY_ENCRYPTION_KEY = app_env.api_key_encryption_key
 
 def _get_encryption_key() -> bytes:
     """Get or generate encryption key for API key encryption (Fernet key format)"""
@@ -50,7 +50,7 @@ def _get_encryption_key() -> bytes:
     
     # Generate a key from JWT_SECRET_KEY if available (for consistency)
     # This ensures the same key is used across restarts if JWT_SECRET_KEY is set
-    if JWT_SECRET_KEY and JWT_SECRET_KEY != "dhruva-jwt-secret-key-2024-super-secure":
+    if JWT_SECRET_KEY:
         # Derive a Fernet-compatible key from JWT_SECRET_KEY
         # Fernet needs exactly 32 bytes of key material
         key_material = hashlib.sha256(JWT_SECRET_KEY.encode()).digest()[:32]
