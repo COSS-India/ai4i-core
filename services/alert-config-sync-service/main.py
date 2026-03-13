@@ -61,6 +61,11 @@ PROMETHEUS_APPLICATION_ALERTS_PATH = app_env.prometheus_application_alerts_path
 PROMETHEUS_INFRASTRUCTURE_ALERTS_PATH = app_env.prometheus_infrastructure_alerts_path
 ALERTMANAGER_CONFIG_PATH = app_env.alertmanager_config_path
 
+# Alert Management Service URL (for webhook receivers)
+ALERT_MANAGEMENT_SERVICE_URL = app_env.alert_management_service_url or os.getenv(
+    "ALERT_MANAGEMENT_SERVICE_URL", "http://alert-management-service:8098"
+)
+
 # Sync interval (seconds)
 SYNC_INTERVAL = app_env.sync_interval
 

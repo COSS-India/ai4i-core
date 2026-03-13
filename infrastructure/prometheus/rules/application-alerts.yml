@@ -3,7 +3,7 @@ groups:
   interval: 30s
   rules:
   - alert: FullSignalPathAlert2
-    expr: histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", service="nmt-service"}[5m]))) >= 0.04
+    expr: histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", service="nmt-service"}[5m]))) >= 0.01
     for: 1m
     labels:
       severity: warning
