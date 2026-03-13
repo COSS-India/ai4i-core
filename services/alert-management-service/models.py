@@ -200,13 +200,6 @@ class RoutingRule(Base):
 
 class AlertHistory(Base):
     __tablename__ = "alert_history"
-    __table_args__ = (
-        Index("idx_alert_history_triggered_at", "triggered_at.desc()"),
-        Index("idx_alert_history_category", "category"),
-        Index("idx_alert_history_severity", "severity"),
-        Index("idx_alert_history_alert_name", "alert_name"),
-        Index("idx_alert_history_tenant", "tenant"),
-    )
 
     id = Column(BigInteger, primary_key=True)
     alert_name = Column(String(255), nullable=False)
@@ -226,6 +219,14 @@ class AlertHistory(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+    )
+
+    __table_args__ = (
+        Index("idx_alert_history_triggered_at", triggered_at.desc()),
+        Index("idx_alert_history_category", "category"),
+        Index("idx_alert_history_severity", "severity"),
+        Index("idx_alert_history_alert_name", "alert_name"),
+        Index("idx_alert_history_tenant", "tenant"),
     )
 
 

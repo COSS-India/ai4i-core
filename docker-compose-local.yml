@@ -28,6 +28,33 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  # Run database CLI (migrations, init:external, seed, etc.) inside Docker network
+  # so that POSTGRES_HOST=postgres resolves. Uses project root .env so credentials
+  # match the postgres container (compose substitutes ${POSTGRES_*} from root .env).
+  # Usage:
+  #   docker compose -f docker-compose-local.yml run --rm migration-runner python infrastructure/databases/cli.py init:external
+  #   ./scripts/run-migration-cli.sh init:external
+  migration-runner:
+    image: python:3.11-slim
+    container_name: ai4v-migration-runner
+    working_dir: /app
+    volumes:
+      - .:/app
+    env_file:
+      - ./.env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      AUTH_DB_HOST: postgres
+      APP_DB_HOST: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    entrypoint: ["sh", "-c", "cd /app/infrastructure/databases && pip install -q -r requirements.txt && cd /app && exec \"$@\"", "sh"]
+    command: ["python", "infrastructure/databases/cli.py"]
+
   redis:
     image: redis:7-alpine
     container_name: ai4v-redis
@@ -255,7 +282,8 @@ services:
       - ./.env
     volumes:
       - ./services/api-gateway-service/gateways/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
-      - ./services/api-gateway-service/gateways/apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml.template:ro
+      # Mount routes template (must be a file; if apisix.yaml is a dir, use apisix.yaml/apisix-routes.yaml)
+      - ./services/api-gateway-service/gateways/apisix/apisix-routes.yaml:/usr/local/apisix/conf/apisix.yaml.template:ro
       - ./services/api-gateway-service/gateways/apisix/substitute-env.sh:/usr/local/apisix/substitute-env.sh:ro
     command: >
       sh -c "
@@ -668,8 +696,8 @@ services:
       - ./shared:/app/shared
     command: ["--reload"]
     depends_on:
-      api-gateway-service:
-        condition: service_healthy
+      apisix:
+        condition: service_started
       config-service:
         condition: service_healthy
       model-management-service:
@@ -1354,7 +1382,8 @@ services:
     ports:
       - "9095:9093"
     volumes:
-      - ./infrastructure/alertmanager:/etc/alertmanager
+      # Mount host's alertmanager.yml file only (host path must be a file, not a directory)
+      - ./infrastructure/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
     networks:
@@ -1391,6 +1420,7 @@ services:
       - ./services/alert-management-service:/app
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./infrastructure:/app/infrastructure
@@ -1418,6 +1448,7 @@ services:
     ports:
       - "8101:8097"
     environment:
+      - PYTHONPATH=/app:/app/libs
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER}
@@ -1443,8 +1474,7 @@ services:
       - ./infrastructure:/app/infrastructure
       # Mount Prometheus rules directory (writable so sync service can write YAML files)
       - ./infrastructure/prometheus/rules:/etc/prometheus/rules
-      # Mount Alertmanager config file (writable so sync service can write YAML file)
-      # Note: alertmanager mounts this as read-only, but sync service writes to host file
+      # Mount host's alertmanager.yml file (writable so sync service can update it); same file alertmanager reads
       - ./infrastructure/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
     depends_on:
       postgres:

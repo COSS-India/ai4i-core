@@ -1,3 +1,4 @@
+import asyncio
 from sqlalchemy import create_engine, inspect , text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -50,7 +51,7 @@ async def init_postgresql_connections():
         app_db_connection_string = app_env.get_app_database_url()
 
         app_db_engine = create_async_engine(
-            app_conn_str,
+            app_db_connection_string,
             pool_size=20,
             max_overflow=10,
             echo=False,
@@ -67,7 +68,7 @@ async def init_postgresql_connections():
         auth_db_connection_string = app_env.get_auth_database_url()
     
         auth_db_engine = create_async_engine(
-            auth_conn_str,
+            auth_db_connection_string,
             pool_size=20,
             max_overflow=10,
             echo=False,

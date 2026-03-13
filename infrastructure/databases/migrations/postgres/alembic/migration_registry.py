@@ -415,7 +415,15 @@ def ensure_database_exists(name: str) -> None:
             except Exception:
                 pass
 
-    raise RuntimeError(f"Unable to ensure database '{target_database}' exists: {last_error}")
+    hint = ""
+    if last_error and "Connection refused" in str(last_error):
+        hint = (
+            "\n\nPostgres is not reachable. Ensure it is running (e.g. from repo root:\n"
+            "  docker compose -f docker-compose-local.yml up -d postgres\n"
+            "Then ensure infrastructure/databases/migrations/postgres/alembic/.env has\n"
+            "POSTGRES_HOST and POSTGRES_PORT for your setup (e.g. localhost and 5434 for host access)."
+        )
+    raise RuntimeError(f"Unable to ensure database '{target_database}' exists: {last_error}{hint}")
 
 if __name__ == "__main__":
     import argparse
