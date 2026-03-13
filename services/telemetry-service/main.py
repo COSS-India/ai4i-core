@@ -194,6 +194,10 @@ async def startup_event():
             rbac_enforcer.add_policy("role:ADMIN", tenant, "logs", "read")
             rbac_enforcer.add_policy("role:ADMIN", tenant, "traces", "read")
             
+            # TENANT ADMIN role permissions (scoped to their own tenant by router logic)
+            rbac_enforcer.add_policy("role:TENANT ADMIN", tenant, "logs", "read")
+            rbac_enforcer.add_policy("role:TENANT ADMIN", tenant, "traces", "read")
+            
             # MODERATOR role permissions
             rbac_enforcer.add_policy("role:MODERATOR", tenant, "logs", "read")
             rbac_enforcer.add_policy("role:MODERATOR", tenant, "traces", "read")
