@@ -181,11 +181,15 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
         errorMessage += ` (${errorReasonTag.value})`;
       }
     }
-    // Priority 3: Check for error tags (but skip boolean true values)
+    // Priority 3: Check for error tags (but skip boolean false/true values)
     else if (errorTag) {
       const errorValue = errorTag.value;
-      // Skip if it's just a boolean true - not helpful
-      if (errorValue !== true && errorValue !== "true" && String(errorValue).toLowerCase() !== "true") {
+      // Skip if value is explicitly false - this means NO error (e.g., has_errors: false)
+      if (errorValue === false || errorValue === "false" || String(errorValue).toLowerCase() === "false") {
+        // Value is false - not an error, do nothing
+      }
+      // Skip if it's just a boolean true - not helpful as message
+      else if (errorValue !== true && errorValue !== "true" && String(errorValue).toLowerCase() !== "true") {
         hasError = true;
         errorMessage = String(errorValue);
       } else {
@@ -353,11 +357,25 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     if (downloadStatus) descParts.push(`- ${downloadStatus}`);
     description = descParts.join(" ");
   }
-  // Skip nested process_batch, resolve_images (plural), build_response - they're redundant
-  else if (opName.includes("process_batch") || opName.includes("resolve_images") || 
-           opName.includes("build_response")) {
+  // process_batch is an important AI processing step; resolve_images (plural) and build_response are redundant
+  else if (opName.includes("process_batch")) {
     category = "processing";
-    isImportant = false; // Don't show nested processing steps
+    isImportant = true; // Show batch processing step - it's a key AI inference step
+    icon = FiCpu;
+    // Build a friendly display name from the operation name (e.g. "audio-lang-detection.process_batch" → "Batch Processing")
+    const servicePart = span.operationName.split(".")[0];
+    displayName = "Batch Processing";
+    const outputCount = getTag("audio-lang-detection.output_count") || getTag("output_count");
+    const processingTime = getTag("audio-lang-detection.processing_time_seconds") || getTag("processing_time_seconds");
+    let descParts = [`Processes ${servicePart} batch`];
+    if (outputCount) descParts.push(`(${outputCount} output${parseInt(outputCount) !== 1 ? "s" : ""})`);
+    if (processingTime) descParts.push(`in ${parseFloat(processingTime).toFixed(2)}s`);
+    description = descParts.join(" ");
+  }
+  // Skip resolve_images (plural) and build_response - they're redundant
+  else if (opName.includes("resolve_images") || opName.includes("build_response")) {
+    category = "processing";
+    isImportant = false; // Don't show these nested processing steps
     icon = FiCpu;
     displayName = span.operationName;
     description = "Internal processing step";
