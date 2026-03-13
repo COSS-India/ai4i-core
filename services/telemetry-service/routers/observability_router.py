@@ -236,6 +236,46 @@ async def is_user_admin(request: Request) -> bool:
         return False
 
 
+async def is_user_tenant_admin(request: Request) -> bool:
+    """
+    Check if the authenticated user has the 'TENANT ADMIN' role.
+
+    TENANT ADMIN users are scoped to a single tenant (tenant_id is embedded in
+    their JWT) and may only view logs for that tenant.
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        True if the user holds the 'TENANT ADMIN' role, False otherwise.
+    """
+    if not JWT_AVAILABLE:
+        return False
+
+    try:
+        secret_key = app_env.jwt_secret_key
+
+        authorization = request.headers.get("Authorization") or request.headers.get("authorization")
+        if not authorization or not authorization.startswith("Bearer "):
+            return False
+
+        token = authorization.split(" ", 1)[1]
+
+        payload = jwt.decode(
+            token,
+            secret_key,
+            algorithms=["HS256"],
+            options={"verify_signature": True, "verify_exp": True}
+        )
+
+        roles = payload.get("roles", [])
+        return "TENANT ADMIN" in roles or any(r.upper() == "TENANT ADMIN" for r in roles)
+
+    except (JWTError, Exception) as e:
+        logger.warning(f"Error checking tenant-admin status: {e}")
+        return False
+
+
 async def get_tenant_subscriptions(tenant_id: str) -> Optional[List[str]]:
     """
     Query tenant subscriptions (registered services) from multi_tenant_db.
@@ -303,69 +343,63 @@ async def search_logs(
     Search logs with filters and pagination.
     
     Requires 'logs.read' permission.
-    - Super admin users (admin with no tenant_id) see all logs and can filter by any tenant_id parameter.
-    - Tenant admin users (admin with tenant_id in JWT) see only their tenant's logs and cannot filter by other tenants.
-    - Normal users see only their tenant's logs.
+    - ADMIN users (regardless of tenant_id in JWT) see all logs and can filter by
+      any tenant_id parameter.
+    - TENANT ADMIN users see only logs for the tenant embedded in their JWT.
+      The tenant_id filter parameter is not available to them.
+    - Normal users (USER, MODERATOR, etc.) see only their tenant's logs.
     Non-tenant users are denied access.
     Tenant users can only see logs from services registered to their tenant.
-    
-    The tenant_id parameter can only be used by super admin users (admin without tenant_id) to filter logs for a specific tenant.
-    Tenant admins are restricted to their own tenant and cannot use the tenant_id parameter.
     """
     try:
-        # Check if user is admin
+        # Check role types
         is_admin = await is_user_admin(request)
-        
+        is_tenant_admin = await is_user_tenant_admin(request)
+
         # Extract tenant_id from JWT token
         jwt_tenant_id = await extract_tenant_id_from_jwt(request)
-        
+
         # Get tenant_id filter (handles RBAC)
         # Returns None for admin (sees all), tenant_id for users, or raises 403 for non-tenant users
         org_filter = await get_organization_filter(
             request, enforcer, "logs.read",
             tenant_id_fallback=query_tenant_id_from_db
         )
-        
-        # If admin has tenant_id in JWT, treat them as tenant admin and filter by their tenant
-        # Super admins (no tenant_id) can see all logs
-        if is_admin and jwt_tenant_id:
-            # Tenant admin - only see logs from their tenant
+
+        if is_admin:
+            # ADMIN role: override to None — sees all logs across every tenant
+            org_filter = None
+            logger.info(f"ADMIN user (jwt_tenant_id: {jwt_tenant_id}) - can see all logs")
+        elif is_tenant_admin:
+            # TENANT ADMIN role: always scoped to their own tenant
+            if not jwt_tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT ADMIN account has no tenant_id in token. Please contact your system administrator."
+                )
             org_filter = jwt_tenant_id
-            logger.info(f"Tenant admin (tenant_id: {jwt_tenant_id}) - filtering logs by their tenant")
-        elif is_admin and not jwt_tenant_id:
-            # Super admin (no tenant_id) - can see all logs (org_filter is None)
-            logger.info("Super admin (no tenant_id) - can see all logs")
-        
+            logger.info(f"TENANT ADMIN user (tenant_id: {jwt_tenant_id}) - filtering logs to their tenant")
+
         # If tenant_id parameter is provided, validate and use it
         admin_filtering_by_tenant = False
         if tenant_id:
-            if not is_admin:
-                # Non-admin users cannot filter by arbitrary tenant_id
+            if is_tenant_admin:
+                # TENANT ADMIN cannot change the tenant scope — silently ignore the param
+                logger.warning(
+                    f"TENANT ADMIN (tenant_id: {jwt_tenant_id}) sent tenant_id param ({tenant_id}), ignoring"
+                )
+            elif not is_admin:
+                # Regular users cannot filter by arbitrary tenant_id
                 logger.warning(f"Non-admin user attempted to filter by tenant_id {tenant_id}, ignoring parameter")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Only admin users can filter logs by tenant_id parameter"
                 )
-            # Admin user provided tenant_id
-            if jwt_tenant_id:
-                # Tenant admin: allow using tenant_id only if it matches their own tenant_id
-                if tenant_id != jwt_tenant_id:
-                    logger.warning(
-                        f"Tenant admin (tenant_id: {jwt_tenant_id}) attempted to filter by different tenant_id {tenant_id}"
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Tenant admins can only view logs from their own tenant"
-                    )
-                # If tenant_id matches jwt_tenant_id, just continue; org_filter is already set
-                logger.info(
-                    f"Tenant admin (tenant_id: {jwt_tenant_id}) filtering logs for their own tenant via tenant_id param"
-                )
             else:
-                # Super admin user provided tenant_id - use it for filtering
+                # Any ADMIN user can filter by any tenant_id
                 org_filter = tenant_id
                 admin_filtering_by_tenant = True
-                logger.info(f"Super admin user filtering logs by tenant_id: {tenant_id}")
+                logger.info(f"ADMIN user filtering logs by tenant_id: {tenant_id}")
         
         # If user is not admin, filter by tenant subscriptions
         # Admin users filtering by tenant_id should see ALL logs for that tenant, not just subscribed services
@@ -440,36 +474,41 @@ async def get_log_aggregations(
     Get log aggregations and statistics.
     
     Requires 'logs.read' permission.
-    Super admin users (no tenant_id) see all logs.
-    Tenant admin users (admin with tenant_id) see only their tenant's logs.
-    Normal users see only their tenant's logs.
+    - ADMIN users (regardless of tenant_id in JWT) see aggregations across all tenants.
+    - TENANT ADMIN users see aggregations only for the tenant in their JWT.
+    - Normal users see only their tenant's aggregations.
     Non-tenant users are denied access.
     Tenant users can only see aggregations from services registered to their tenant.
     Returns total logs, error count, warning count, breakdown by level and service.
     """
     try:
-        # Check if user is admin
+        # Check role types
         is_admin = await is_user_admin(request)
-        
+        is_tenant_admin = await is_user_tenant_admin(request)
+
         # Extract tenant_id from JWT token
         jwt_tenant_id = await extract_tenant_id_from_jwt(request)
-        
+
         # Get tenant_id filter (handles RBAC)
         # Returns None for admin (sees all), tenant_id for users, or raises 403 for non-tenant users
         org_filter = await get_organization_filter(
             request, enforcer, "logs.read",
             tenant_id_fallback=query_tenant_id_from_db
         )
-        
-        # If admin has tenant_id in JWT, treat them as tenant admin and filter by their tenant
-        # Super admins (no tenant_id) can see all logs
-        if is_admin and jwt_tenant_id:
-            # Tenant admin - only see logs from their tenant
+
+        if is_admin:
+            # ADMIN role: override to None — sees aggregations across all tenants
+            org_filter = None
+            logger.info(f"ADMIN user (jwt_tenant_id: {jwt_tenant_id}) - can see all log aggregations")
+        elif is_tenant_admin:
+            # TENANT ADMIN role: always scoped to their own tenant
+            if not jwt_tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT ADMIN account has no tenant_id in token. Please contact your system administrator."
+                )
             org_filter = jwt_tenant_id
-            logger.info(f"Tenant admin (tenant_id: {jwt_tenant_id}) - filtering aggregations by their tenant")
-        elif is_admin and not jwt_tenant_id:
-            # Super admin (no tenant_id) - can see all logs (org_filter is None)
-            logger.info("Super admin (no tenant_id) - can see all log aggregations")
+            logger.info(f"TENANT ADMIN user (tenant_id: {jwt_tenant_id}) - filtering aggregations to their tenant")
         
         # If user is not admin, filter by tenant subscriptions
         tenant_subscriptions = None
