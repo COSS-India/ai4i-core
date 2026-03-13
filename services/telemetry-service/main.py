@@ -69,7 +69,7 @@ async def startup_event():
         logger.info("Connected to Redis")
         
         # Initialize PostgreSQL connection
-        database_url = app_env.get_database_url("telemetry_db")
+        database_url = app_env.get_database_url()  # Uses DATABASE_URL directly from .env
         db_engine = create_async_engine(
             database_url,
             pool_size=10,
