@@ -1037,8 +1037,8 @@ services:
 
   tenant-audit-service:
     build:
-      context: ./services/tenant-audit-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/tenant-audit-service/Dockerfile
     container_name: ai4v-tenant-audit-service
     ports:
       - "9010:9003"
@@ -1048,6 +1048,9 @@ services:
       - ./services/tenant-audit-service/.env
     volumes:
       - ./services/tenant-audit-service:/app
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
     command: ["--reload"]
     depends_on:
       postgres:
@@ -1313,7 +1316,9 @@ services:
       - /app/node_modules
       - /app/.next
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - simple-ui
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 10s

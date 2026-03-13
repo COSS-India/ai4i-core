@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 import dotenv
 
 from dotenv import load_dotenv
+from auth_provider import AuthProvider
 
 load_dotenv()
 
@@ -180,7 +181,8 @@ async def fetch_latest_table_rows(
     return [dict(row._mapping) for row in result]
 
 
-@app.get("/api/v1/tenant-audit/health")
+@app.get("/api/v1/tenant-audit/health",
+         dependencies=[Depends(AuthProvider)],)
 async def health() -> Dict[str, str]:
     return {"status": "healthy", "service": "tenant-audit-service"}
 
@@ -189,6 +191,7 @@ async def health() -> Dict[str, str]:
     "/api/v1/tenant-audit/tenant/service/data/latest",
     response_model=ServiceTableData,
     summary="Get latest tenant service table entry",
+    dependencies=[Depends(AuthProvider)],
 )
 async def get_tenant_service_data(
     tenant_id: str = Query(..., description="Tenant identifier"),
@@ -253,6 +256,7 @@ async def get_tenant_service_data(
     "/api/v1/tenant-audit/tenant/service/data/all",
     response_model=ServiceTableData,
     summary="Get all tenant service table data",
+    dependencies=[Depends(AuthProvider)],
 )
 async def list_tenant_service_data(
     tenant_id: str = Query(..., description="Tenant identifier"),

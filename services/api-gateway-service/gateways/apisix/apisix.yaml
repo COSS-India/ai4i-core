@@ -510,6 +510,7 @@ routes:
     proxy-rewrite:
       headers:
         X-Gateway: apisix
+        X-Auth-Source: AUTH_TOKEN
       use_real_request_uri_unsafe: false
     response-rewrite:
       headers:

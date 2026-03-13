@@ -11,11 +11,19 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy service files
-COPY . .
+# Copy shared libraries and service requirements
+COPY libs/ai4icore_constants /app/libs/ai4icore_constants
+COPY libs/ai4icore_env /app/libs/ai4icore_env
+COPY libs/ai4icore_auth /app/libs/ai4icore_auth
+COPY services/tenant-audit-service/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install shared libraries in editable mode
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_constants
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_env
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_auth
 
 # ---------------- Stage 2: Runtime ----------------
 FROM python:3.11-slim
@@ -37,11 +45,14 @@ RUN apt-get update && apt-get install -y \
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash app
 
-# Copy installed Python packages from builder
+# Copy installed Python packages and shared libraries from builder
 COPY --from=builder /usr/local /usr/local
+COPY --from=builder /app/libs/ai4icore_constants /app/libs/ai4icore_constants
+COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
+COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
 
 # Copy application code
-COPY . .
+COPY services/tenant-audit-service .
 
 # Permissions
 RUN chown -R app:app /app
