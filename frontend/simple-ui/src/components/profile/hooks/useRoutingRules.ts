@@ -9,19 +9,32 @@ import type {
 
 const EMPTY_CREATE_FORM = {
   rule_name: "",
+  description: null as string | null,
   severity: null as string | null,
   category: null as string | null,
+  alert_type: null as string | null,
+  alert_names: null as string[] | null,
   tenant: null as string | null,
+  email_to: [] as string[],
+  rbac_role: null as string | null,
+  email_subject_template: null as string | null,
+  email_body_template: null as string | null,
 };
 
 type CreateForm = typeof EMPTY_CREATE_FORM;
 
 type UpdateForm = {
-  rule_name?: string;
+  rule_name?: string | null;
+  description?: string | null;
   category?: string | null;
   severity?: string | null;
+  alert_type?: string | null;
   alert_names?: string[] | null;
   tenant?: string | null;
+  email_to?: string[];
+  rbac_role?: string | null;
+  email_subject_template?: string | null;
+  email_body_template?: string | null;
   enabled?: boolean;
 };
 
@@ -83,20 +96,36 @@ export function useRoutingRules() {
   };
   const handleCreate = async (overrides?: Partial<CreateForm>) => {
     const form = overrides ? { ...createForm, ...overrides } : createForm;
-    const ruleName = form.rule_name.trim();
-    if (!ruleName) {
-      toast({ title: "Validation Error", description: "Rule name is required", status: "warning", duration: 3000, isClosable: true });
+    const hasEmail = form.email_to && form.email_to.length > 0;
+    const hasRole = !!form.rbac_role;
+    if (!hasEmail && !hasRole) {
+      toast({ title: "Validation Error", description: "At least one email address or an RBAC role is required", status: "warning", duration: 3000, isClosable: true });
       return;
     }
     setIsCreating(true);
     try {
       const payload: NotificationReceiverCreate = {
-        rule_name: ruleName,
         category: form.category || "application",
         severity: form.severity || "critical",
-        rbac_role: "ADMIN",
+        ...(form.rule_name?.trim() ? { rule_name: form.rule_name.trim() } : {}),
+        ...(form.description ? { description: form.description } : {}),
+        ...(form.alert_type ? { alert_type: form.alert_type } : {}),
+        ...(form.alert_names && form.alert_names.length > 0
+          ? { alert_names: form.alert_names }
+          : {}),
         ...(form.tenant ? { tenant: form.tenant } : {}),
+        ...(form.email_subject_template
+          ? { email_subject_template: form.email_subject_template }
+          : {}),
+        ...(form.email_body_template
+          ? { email_body_template: form.email_body_template }
+          : {}),
       };
+      if (hasEmail) {
+        payload.email_to = form.email_to;
+      } else {
+        payload.rbac_role = form.rbac_role;
+      }
       await alertingService.createReceiver(payload);
       toast({ title: "Routing Rule Created", status: "success", duration: 3000, isClosable: true });
       closeCreate();
@@ -128,11 +157,17 @@ export function useRoutingRules() {
   const openUpdate = (item: NotificationReceiver) => {
     setUpdateItem(item);
     setUpdateForm({
-      rule_name: item.rule_name ?? "",
+      rule_name: item.rule_name ?? null,
+      description: item.description ?? null,
       category: item.category ?? null,
       severity: item.severity ?? null,
+      alert_type: item.alert_type ?? null,
       alert_names: item.alert_names ?? null,
       tenant: item.tenant ?? null,
+      email_to: item.email_to ?? [],
+      rbac_role: item.rbac_role ?? null,
+      email_subject_template: item.email_subject_template ?? null,
+      email_body_template: item.email_body_template ?? null,
       enabled: item.enabled,
     });
     setIsUpdateOpen(true);
@@ -144,15 +179,32 @@ export function useRoutingRules() {
   };
   const handleUpdate = async () => {
     if (!updateItem) return;
+    const hasEmail = updateForm.email_to && updateForm.email_to.length > 0;
+    const hasRole = !!updateForm.rbac_role;
+    if (hasEmail && hasRole) {
+      toast({ title: "Validation Error", description: "Provide either email_to or rbac_role, not both", status: "warning", duration: 3000, isClosable: true });
+      return;
+    }
     setIsUpdating(true);
     try {
       const payload: NotificationReceiverUpdate = {};
-      if (updateForm.rule_name !== undefined) payload.rule_name = updateForm.rule_name;
+      if (updateForm.rule_name !== undefined) payload.rule_name = updateForm.rule_name ?? null;
+      if (updateForm.description !== undefined) payload.description = updateForm.description ?? null;
       if (updateForm.category !== undefined) payload.category = updateForm.category ?? null;
       if (updateForm.severity !== undefined) payload.severity = updateForm.severity ?? null;
+      if (updateForm.alert_type !== undefined) payload.alert_type = updateForm.alert_type ?? null;
       if (updateForm.alert_names !== undefined) payload.alert_names = updateForm.alert_names ?? null;
       if (updateForm.tenant !== undefined) payload.tenant = updateForm.tenant ?? null;
+      if (updateForm.email_subject_template !== undefined) payload.email_subject_template = updateForm.email_subject_template ?? null;
+      if (updateForm.email_body_template !== undefined) payload.email_body_template = updateForm.email_body_template ?? null;
       if (updateForm.enabled !== undefined) payload.enabled = updateForm.enabled;
+      if (hasEmail) {
+        payload.email_to = updateForm.email_to;
+        payload.rbac_role = null;
+      } else if (hasRole) {
+        payload.rbac_role = updateForm.rbac_role;
+        payload.email_to = undefined;
+      }
       await alertingService.updateReceiver(updateItem.id, payload);
       toast({ title: "Routing Rule Updated", status: "success", duration: 3000, isClosable: true });
       closeUpdate();
