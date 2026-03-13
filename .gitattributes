@@ -1,2 +1,4 @@
 # Shell scripts must use LF so shebang works in WSL/Linux
 *.sh text eol=lf
+# .env files sourced by bash must use LF
+*.env text eol=lf

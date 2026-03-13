@@ -1448,7 +1448,7 @@ services:
     ports:
       - "8101:8097"
     environment:
-      - PYTHONPATH=/app:/app/libs
+      - PYTHONPATH=/app:/app/libs/ai4icore_env:/app/libs/ai4icore_logging
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER}
@@ -1459,6 +1459,7 @@ services:
       - PROMETHEUS_APPLICATION_ALERTS_PATH=/etc/prometheus/rules/application-alerts.yml
       - PROMETHEUS_INFRASTRUCTURE_ALERTS_PATH=/etc/prometheus/rules/infrastructure-alerts.yml
       - ALERTMANAGER_CONFIG_PATH=/etc/alertmanager/alertmanager.yml
+      - ALERT_MANAGEMENT_SERVICE_URL=http://alert-management-service:8098
       - SYNC_INTERVAL=60
       - PORT=8097
       - SMTP_SMARTHOST=${SMTP_SMARTHOST:-}
@@ -1468,7 +1469,7 @@ services:
     env_file:
       - ./.env
     volumes:
-      - ./services/alert-config-sync-service:/app/services/alert-config-sync-service
+      - ./services/alert-config-sync-service:/app
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./infrastructure:/app/infrastructure
