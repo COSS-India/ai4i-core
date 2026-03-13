@@ -18,7 +18,7 @@ import {
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performLanguageDetectionInference, listLanguageDetectionServices } from "../services/languageDetectionService";
@@ -42,6 +42,15 @@ const LanguageDetectionPage: React.FC = () => {
     queryFn: listLanguageDetectionServices,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
+
+  // Auto-select first available Language Detection service when list loads
+  useEffect(() => {
+    if (!languageDetectionServices || languageDetectionServices.length === 0) return;
+    if (!serviceId) {
+      // If no service selected, select first available
+      setServiceId(languageDetectionServices[0].service_id);
+    }
+  }, [languageDetectionServices, serviceId]);
 
   const handleProcess = async () => {
     const trimmedText = inputTexts.trim();
@@ -192,7 +201,7 @@ const LanguageDetectionPage: React.FC = () => {
           <GridItem>
             <VStack spacing={6} align="stretch">
               {/* Service Selection */}
-              <FormControl isRequired>
+              <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
                   Language Detection Service:
                 </FormLabel>
@@ -243,7 +252,7 @@ const LanguageDetectionPage: React.FC = () => {
                 )}
               </FormControl>
 
-              <FormControl isRequired>
+              <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
                   Enter text to detect language:
                 </FormLabel>
@@ -290,10 +299,6 @@ const LanguageDetectionPage: React.FC = () => {
                 </Box>
               )}
 
-                <Text fontSize="sm" color="gray.600">
-                  Select a service and enter your text above, then click Detect Language to identify the language.
-                </Text>
-
                 <Button
                   colorScheme="orange"
                   onClick={handleProcess}
@@ -301,7 +306,6 @@ const LanguageDetectionPage: React.FC = () => {
                   loadingText="Processing..."
                   size="md"
                   w="full"
-                  isDisabled={!serviceId || !inputTexts.trim() || fetching}
                 >
                   Detect Language
                 </Button>

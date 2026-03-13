@@ -18,7 +18,7 @@ import {
   Badge,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
@@ -30,7 +30,7 @@ import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 const NERPage: React.FC = () => {
   const toast = useToastWithDeduplication();
   const [inputText, setInputText] = useState("");
-  const [sourceLanguage, setSourceLanguage] = useState("");
+  const [sourceLanguage, setSourceLanguage] = useState("en");
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -49,6 +49,12 @@ const NERPage: React.FC = () => {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
+  // Auto-select first service when services are loaded
+  useEffect(() => {
+    if (services.length > 0 && !selectedServiceId) {
+      setSelectedServiceId(services[0].service_id);
+    }
+  }, [services, selectedServiceId]);
 
   const handleProcess = async () => {
     const trimmedText = inputText.trim();
@@ -254,7 +260,6 @@ const NERPage: React.FC = () => {
                 <Select
                   value={sourceLanguage}
                   onChange={(e) => setSourceLanguage(e.target.value)}
-                  placeholder="Select a language"
                   isDisabled={fetching}
                   size="md"
                 >
@@ -287,10 +292,6 @@ const NERPage: React.FC = () => {
                   borderColor="gray.300"
                 />
               </FormControl>
-
-                <Text fontSize="sm" color="gray.600">
-                  Select a service and language, enter your text above, then click Detect Entities to identify named entities.
-                </Text>
 
                 <Button
                   colorScheme="orange"
