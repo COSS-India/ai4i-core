@@ -18,7 +18,7 @@ import {
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performTransliterationInference, listTransliterationServices } from "../services/transliterationService";
@@ -30,8 +30,8 @@ const TransliterationPage: React.FC = () => {
   const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const [inputText, setInputText] = useState("");
-  const [sourceLanguage, setSourceLanguage] = useState("en");
-  const [targetLanguage, setTargetLanguage] = useState("hi");
+  const [sourceLanguage, setSourceLanguage] = useState("");
+  const [targetLanguage, setTargetLanguage] = useState("");
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -44,15 +44,6 @@ const TransliterationPage: React.FC = () => {
     queryFn: listTransliterationServices,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
-
-  // Auto-select first available Transliteration service when list loads
-  useEffect(() => {
-    if (!transliterationServices || transliterationServices.length === 0) return;
-    if (!serviceId) {
-      // If no service selected, select first available
-      setServiceId(transliterationServices[0].service_id);
-    }
-  }, [transliterationServices, serviceId]);
 
   const handleProcess = async () => {
     const trimmedText = inputText.trim();
@@ -183,7 +174,7 @@ const TransliterationPage: React.FC = () => {
             <GridItem>
               <VStack spacing={6} align="stretch">
                 {/* Service Selection */}
-                <FormControl>
+                <FormControl isRequired>
                   <FormLabel fontSize="sm" fontWeight="semibold">
                     Transliteration Service:
                   </FormLabel>
@@ -235,13 +226,14 @@ const TransliterationPage: React.FC = () => {
                 </FormControl>
 
               <HStack spacing={4}>
-                <FormControl>
+                <FormControl isRequired>
                   <FormLabel fontSize="sm" fontWeight="semibold">
                     Source Language:
                   </FormLabel>
                   <Select
                     value={sourceLanguage}
                     onChange={(e) => setSourceLanguage(e.target.value)}
+                    placeholder="Select source language"
                     isDisabled={fetching}
                     size="md"
                   >
@@ -260,13 +252,14 @@ const TransliterationPage: React.FC = () => {
                   </Select>
                 </FormControl>
 
-                <FormControl>
+                <FormControl isRequired>
                   <FormLabel fontSize="sm" fontWeight="semibold">
                     Target Language:
                   </FormLabel>
                   <Select
                     value={targetLanguage}
                     onChange={(e) => setTargetLanguage(e.target.value)}
+                    placeholder="Select target language"
                     isDisabled={fetching}
                     size="md"
                   >
@@ -286,7 +279,7 @@ const TransliterationPage: React.FC = () => {
                 </FormControl>
               </HStack>
 
-                <FormControl>
+                <FormControl isRequired>
                   <FormLabel fontSize="sm" fontWeight="semibold">
                     Enter text to transliterate:
                   </FormLabel>
@@ -301,6 +294,10 @@ const TransliterationPage: React.FC = () => {
                   />
                 </FormControl>
 
+                <Text fontSize="sm" color="gray.600">
+                  Select a service, source and target languages, enter your text above, then click Transliterate.
+                </Text>
+
                 <Button
                   colorScheme="orange"
                   onClick={handleProcess}
@@ -308,6 +305,7 @@ const TransliterationPage: React.FC = () => {
                   loadingText="Processing..."
                   size="md"
                   w="full"
+                  isDisabled={!serviceId || !sourceLanguage || !targetLanguage || !inputText.trim() || fetching}
                 >
                   Transliterate
                 </Button>
