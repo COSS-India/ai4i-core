@@ -93,6 +93,7 @@ MULTI_TENANT_DB_URL = app_env.get_multi_tenant_db_url()
 MODEL_MANAGEMENT_SERVICE_URL = app_env.model_management_service_url
 MODEL_MANAGEMENT_SERVICE_API_KEY = app_env.model_management_service_api_key or app_env.model_management_api_key
 MODEL_MANAGEMENT_CACHE_TTL = app_env.model_management_cache_ttl
+MODEL_MANAGEMENT_TIMEOUT = int(os.getenv("MODEL_MANAGEMENT_TIMEOUT", "20"))
 TRITON_ENDPOINT_CACHE_TTL = app_env.triton_endpoint_cache_ttl
 SMR_SERVICE_URL = app_env.smr_service_url
 

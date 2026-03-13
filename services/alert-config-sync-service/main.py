@@ -28,6 +28,9 @@ def html_literal_representer(dumper, data):
 # Register the custom representer at module level
 yaml.add_representer(HTMLLiteral, html_literal_representer)
 
+# Configuration (import first so logging config can use it)
+from ai4icore_env import app_env
+
 # Configure structured logging (JSON) so Fluent Bit forwards logs to OpenSearch
 try:
     from ai4icore_logging import get_logger, configure_logging
@@ -40,9 +43,6 @@ except ImportError:
     import logging
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     logger = logging.getLogger(__name__)
-
-# Configuration
-from ai4icore_env import app_env
 
 DB_HOST = app_env.postgres_host
 DB_PORT = app_env.postgres_port
