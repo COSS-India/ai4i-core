@@ -382,7 +382,7 @@ This project is licensed under the MIT License. See the LICENSE file for details
 ## Credits
 
 - **AI4Bharat** - For providing the ASR, TTS, and NMT services
-- **Dhruva Platform** - For reference implementation patterns
+- **AI4ICore** - For reference implementation patterns
 - **Chakra UI** - For the component library
 - **Next.js** - For the React framework
 - **React Query** - For data fetching and caching

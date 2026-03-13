@@ -1,7 +1,6 @@
 """
 Authentication & Authorization Service - Identity management and access control
 """
-import os
 import asyncio
 import logging
 from datetime import datetime, timedelta
@@ -16,6 +15,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError, OperationalError, DBAPIError
+from ai4icore_env import app_env
 
 from models import (
     User, UserSession, APIKey, UserCreate, UserResponse, UserUpdate,
@@ -34,12 +34,12 @@ from oauth_utils import OAuthUtils
 from casbin_enforcer import load_policies_from_db, check_roles_permission
 
 # Refresh token lifetimes
-REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
-REFRESH_TOKEN_EXPIRE_HOURS = int(os.getenv("REFRESH_TOKEN_EXPIRE_HOURS", "24"))
+REFRESH_TOKEN_EXPIRE_DAYS = app_env.refresh_token_expire_days
+REFRESH_TOKEN_EXPIRE_HOURS = app_env.refresh_token_expire_hours
 
 # Import error constants
 try:
-    from services.constants.error_messages import (
+    from ai4icore_constants.error_messages import (
         AUTHENTICATION_REQUIRED,
         AUTHENTICATION_REQUIRED_MESSAGE,
         INVALID_CREDENTIALS,
@@ -61,16 +61,16 @@ except ImportError:
     UNAUTHORIZED_MESSAGE = "You don't have permission to access this service. Please contact your administrator."
 
 # Configure logging with ai4icore_logging
+LOGGING_AVAILABLE = False
 try:
-    from ai4icore_logging import get_logger, CorrelationMiddleware, RequestLoggingMiddleware
+    from ai4icore_logging import get_logger, LoggingConfig, register_logging_plugin
+    LOGGING_AVAILABLE = True
     logger = get_logger(__name__)
     logger.info("✅ Using ai4icore_logging for structured logging")
 except ImportError:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     logger.warning("⚠️ ai4icore_logging not available, using standard logging")
-    CorrelationMiddleware = None
-    RequestLoggingMiddleware = None
 
 # Import telemetry and tracing
 try:
@@ -93,7 +93,7 @@ app = FastAPI(
 )
 
 # Override OpenAPI server URL for Swagger UI (e.g., localhost)
-swagger_server_url = os.getenv("SWAGGER_SERVER_URL")
+swagger_server_url = app_env.swagger_server_url
 if swagger_server_url:
     def custom_openapi():
         if app.openapi_schema:
@@ -118,26 +118,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Correlation middleware (MUST be before RequestLoggingMiddleware)
-# This extracts X-Correlation-ID from headers and sets it in logging context
-if CorrelationMiddleware:
-    app.add_middleware(CorrelationMiddleware)
-    logger.info("✅ CorrelationMiddleware added to auth-service")
-
-# Request logging middleware (logs all requests to OpenSearch)
-# This ensures login/logout endpoints are logged even though API Gateway skips successful requests
-if RequestLoggingMiddleware:
-    app.add_middleware(RequestLoggingMiddleware)
+# Initialize AI4ICore Logging Plugin
+if LOGGING_AVAILABLE:
+    logging_config = LoggingConfig.from_env()
+    logging_config.service_name = app_env.service_name
+    logging_config.use_kafka = app_env.use_kafka_logging
+    register_logging_plugin(app, config=logging_config)
     logger.info(
-        "✅ RequestLoggingMiddleware added to auth-service",
-        extra={"context": {
-            "service": "auth-service",
-            "middleware": "RequestLoggingMiddleware",
-            "endpoints": ["/api/v1/auth/login", "/api/v1/auth/logout"]
-        }}
+        "✅ AI4ICore Logging Plugin initialized for auth-service",
+        extra={"context": {"service": "auth-service", "endpoints": ["/api/v1/auth/login", "/api/v1/auth/logout"]}},
     )
 else:
-    logger.warning("⚠️ RequestLoggingMiddleware not available - login/logout requests will not be logged to OpenSearch")
+    logger.warning("⚠️ Logging plugin not available - login/logout requests will not be logged to OpenSearch")
 
 # Setup Distributed Tracing (Jaeger)
 # IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
@@ -382,9 +374,9 @@ async def startup_event():
     
     try:
         # Initialize Redis connection
-        redis_host = os.getenv('REDIS_HOST')
-        redis_port = os.getenv('REDIS_PORT')
-        redis_password = os.getenv('REDIS_PASSWORD')
+        redis_host = app_env.redis_host
+        redis_port = app_env.redis_port
+        redis_password = app_env.redis_password
         
         # Build Redis URL - only include password if it's set
         if redis_password:
@@ -418,13 +410,11 @@ async def startup_event():
                     break
         
         # Initialize PostgreSQL connection
-        database_url = os.getenv(
-            'DATABASE_URL'
-        )
+        database_url = app_env.get_database_url()
         db_engine = create_async_engine(
             database_url,
-            pool_size=int(os.getenv('DB_POOL_SIZE', '20')),
-            max_overflow=int(os.getenv('DB_MAX_OVERFLOW', '10')),
+            pool_size=app_env.db_pool_size,
+            max_overflow=app_env.db_max_overflow,
             echo=False
         )
         db_session = sessionmaker(
@@ -454,15 +444,12 @@ async def startup_event():
                 logger.warning(f"⚠️ Failed to instrument Redis: {e}")
         
         # Initialize multi-tenant database connection
-        multi_tenant_db_url = os.getenv(
-            'MULTI_TENANT_DB_URL',
-            'postgresql+asyncpg://dhruva_user:dhruva_password@postgres:5434/multi_tenant_db'
-        )
+        multi_tenant_db_url = app_env.get_multi_tenant_db_url()
         try:
             multi_tenant_db_engine = create_async_engine(
                 multi_tenant_db_url,
-                pool_size=int(os.getenv('MULTI_TENANT_DB_POOL_SIZE', '20')),
-                max_overflow=int(os.getenv('MULTI_TENANT_DB_MAX_OVERFLOW', '10')),
+                pool_size=app_env.multi_tenant_db_pool_size,
+                max_overflow=app_env.multi_tenant_db_max_overflow,
                 echo=False
             )
             multi_tenant_db_session = sessionmaker(
@@ -1154,7 +1141,7 @@ async def validate_api_key(
     # Map service names to permission resource names (for compatibility)
     # Permissions use resource names with underscores (e.g., "audio_lang_detection") 
     # but services may send names with hyphens (e.g., "audio-lang-detection")
-    from services.constants import get_resource_name
+    from ai4icore_constants import get_resource_name
     resource_name = get_resource_name(service)
     
     # Validate API key (existence, active/expired, permissions)
@@ -1739,7 +1726,7 @@ async def get_oauth2_providers():
     """Get available OAuth2 providers"""
     providers = []
     
-    google_client_id = os.getenv("GOOGLE_CLIENT_ID")
+    google_client_id = app_env.google_client_id
     if google_client_id:
         providers.append(
             OAuth2Provider(
@@ -1750,7 +1737,7 @@ async def get_oauth2_providers():
             )
         )
     
-    github_client_id = os.getenv("GITHUB_CLIENT_ID")
+    github_client_id = app_env.github_client_id
     if github_client_id:
         providers.append(
             OAuth2Provider(
@@ -1777,7 +1764,7 @@ async def google_authorize(request: Request):
         state = await OAuthUtils.generate_state_token(redis_client)
         
         # Get redirect URI
-        redirect_uri = os.getenv("GOOGLE_REDIRECT_URI")
+        redirect_uri = app_env.google_redirect_uri
         if not redirect_uri:
             # Construct from request if not set
             base_url = str(request.base_url).rstrip('/')
@@ -1827,7 +1814,7 @@ async def google_callback(
             )
         
         # 2. Get redirect URI
-        redirect_uri = os.getenv("GOOGLE_REDIRECT_URI")
+        redirect_uri = app_env.google_redirect_uri
         if not redirect_uri:
             base_url = str(request.base_url).rstrip('/')
             redirect_uri = f"{base_url}/api/v1/auth/oauth2/google/callback"
@@ -1932,7 +1919,7 @@ async def google_callback(
         logger.info(f"OAuth login successful for user: {email} via Google")
         
         # 9. Redirect to frontend with tokens (or return JSON)
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        frontend_url = app_env.frontend_url
         redirect_url = (
             f"{frontend_url}/auth/callback?"
             f"access_token={jwt_access_token}&"

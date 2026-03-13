@@ -4,7 +4,6 @@ Triton Inference Server client wrapper for NMT
 """
 
 import logging
-import os
 import numpy as np
 from typing import List, Tuple, Optional, Dict
 
@@ -13,7 +12,8 @@ from tritonclient.utils import np_to_triton_dtype
 from tritonclient.http import InferInput, InferRequestedOutput
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
-from middleware.exceptions import (
+from ai4icore_env import app_env
+from ai4icore_constants.exceptions import (
     TritonInferenceError,
     ModelNotFoundError,
     ServiceUnavailableError
@@ -167,7 +167,7 @@ class TritonClient:
                 )
                 
                 # Get result with timeout
-                timeout = int(os.getenv("TRITON_TIMEOUT", "20"))
+                timeout = int(app_env.triton_timeout)
                 span.set_attribute("triton.timeout_seconds", timeout)
                 result = response.get_result(block=True, timeout=timeout)
                 

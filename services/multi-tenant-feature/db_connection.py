@@ -1,28 +1,10 @@
-import os
 from sqlalchemy import create_engine, inspect , text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
-from dotenv import load_dotenv
+from ai4icore_env import app_env
 from logger import logger
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
-
-load_dotenv()
-
-
-
-DB_USER     = str(os.getenv("APP_DB_USER"))
-DB_PASSWORD = str(os.getenv("APP_DB_PASSWORD"))
-DB_HOST     = str(os.getenv("APP_DB_HOST"))
-DB_PORT     = int(os.getenv("APP_DB_PORT"))
-DB_NAME     = str(os.getenv("APP_DB_NAME"))
-
-
-AUTH_DB_USER     = os.getenv("AUTH_DB_USER")
-AUTH_DB_PASSWORD = os.getenv("AUTH_DB_PASSWORD")
-AUTH_DB_HOST     = os.getenv("AUTH_DB_HOST")
-AUTH_DB_PORT     = os.getenv("AUTH_DB_PORT")
-AUTH_DB_NAME     = os.getenv("AUTH_DB_NAME")
 
 
 # PostgreSQL connection engines
@@ -45,7 +27,7 @@ def init_postgresql_connections():
     
     try:
         # Model management database connection
-        tenant_db_connection_string = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+        tenant_db_connection_string = app_env.get_app_database_url()
 
         tenant_db_engine = create_async_engine(
             tenant_db_connection_string,
@@ -60,7 +42,7 @@ def init_postgresql_connections():
             expire_on_commit=False
         )
 
-        auth_db_connection_string = f"postgresql+asyncpg://{AUTH_DB_USER}:{AUTH_DB_PASSWORD}@{AUTH_DB_HOST}:{AUTH_DB_PORT}/{AUTH_DB_NAME}"
+        auth_db_connection_string = app_env.get_auth_database_url()
     
         auth_db_engine = create_async_engine(
             auth_db_connection_string,
@@ -75,8 +57,8 @@ def init_postgresql_connections():
             expire_on_commit=False
         )
 
-        logger.info(f"Connected to PostgreSQL multi_tenant_db: {DB_NAME}@{DB_HOST}:{DB_PORT}")
-        logger.info(f"Connected to PostgreSQL auth_db: {AUTH_DB_NAME}@{AUTH_DB_HOST}:{AUTH_DB_PORT}")
+        logger.info(f"Connected to PostgreSQL multi_tenant_db: {app_env.app_db_name}@{app_env.app_db_host}:{app_env.app_db_port}")
+        logger.info(f"Connected to PostgreSQL auth_db: {app_env.auth_db_name}@{app_env.auth_db_host}:{app_env.auth_db_port}")
     except Exception as e:
         logger.exception(f"Error connecting to PostgreSQL: {e}")
         raise

@@ -52,7 +52,7 @@ import {
   LogAggregationResponse,
 } from "../services/observabilityService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
-import { listTenants } from "../services/multiTenantService";
+import { listTenants, getViewTenant } from "../services/multiTenantService";
 
 /**
  * Convert datetime-local format (YYYY-MM-DDTHH:mm) to ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
@@ -94,6 +94,24 @@ const convertToISOFormat = (datetimeLocal: string): string => {
   }
 };
 
+// Mapping from DB subscription short names (underscore) to frontend service names (hyphen + "-service").
+// Tenant subscriptions are stored as e.g. "language_detection", "audio_language_detection",
+// while the ALL_SERVICES list uses "language-detection-service", "audio-lang-detection-service".
+const SUBSCRIPTION_TO_SERVICE_MAP: Record<string, string> = {
+  'asr': 'asr-service',
+  'tts': 'tts-service',
+  'nmt': 'nmt-service',
+  'llm': 'llm-service',
+  'ocr': 'ocr-service',
+  'ner': 'ner-service',
+  'language_detection': 'language-detection-service',
+  'transliteration': 'transliteration-service',
+  'speaker_diarization': 'speaker-diarization-service',
+  'audio_language_detection': 'audio-lang-detection-service',
+  'pipeline': 'pipeline-service',
+  'language_diarization': 'language-diarization-service',
+};
+
 const LogsPage: React.FC = () => {
   const toast = useToastWithDeduplication();
   const router = useRouter();
@@ -118,14 +136,14 @@ const LogsPage: React.FC = () => {
   const [appliedEndTime, setAppliedEndTime] = useState<string>("");
   const [appliedTenantId, setAppliedTenantId] = useState<string>("");
   
-  // Check if user is admin
+  // Check if user is admin (full ADMIN role — sees all tenants)
   const isAdmin = user?.roles?.includes('ADMIN') || false;
   // Check if user has USER role - hide logs UI for them
   const isUser = user?.roles?.includes('USER') || false;
-  // Check if admin is super admin (no tenant_id) or tenant admin (has tenant_id)
+  // Check if user is a TENANT ADMIN — scoped to their own tenant only
+  const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
+  // Kept for reference (e.g. display purposes); no longer drives access logic
   const tenantIdFromToken = getTenantIdFromToken();
-  const isSuperAdmin = isAdmin && !tenantIdFromToken; // Super admin: admin without tenant_id
-  const isTenantAdmin = isAdmin && !!tenantIdFromToken; // Tenant admin: admin with tenant_id
   
   const cardBg = useColorModeValue("white", "gray.800");
   const borderColor = useColorModeValue("gray.200", "gray.700");
@@ -194,12 +212,13 @@ const LogsPage: React.FC = () => {
     'auth-service',
   ];
 
+
   // No longer fetching services from OpenSearch - using static list
   const services = ALL_SERVICES;
   const servicesLoading = false;
   const servicesError = null;
 
-  // Fetch tenants list (only for super admins - admins without tenant_id)
+  // Fetch tenants list (for all admins - ADMIN or SUPER_ADMIN role)
   const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } = useQuery({
     queryKey: ["tenants-list"],
     queryFn: async () => {
@@ -224,9 +243,28 @@ const LogsPage: React.FC = () => {
         throw error; // Re-throw to let React Query handle it
       }
     },
-    enabled: isAuthenticated && isSuperAdmin, // Only fetch for super admins
+    enabled: isAuthenticated && isAdmin && !isTenantAdmin, // Fetch only for full ADMIN role (not TENANT ADMIN)
     staleTime: 5 * 60 * 1000, // 5 minutes
     retry: 1, // Retry once on failure
+  });
+
+  // Fetch the current tenant's detail (subscriptions) for TENANT ADMIN role
+  const { data: tenantAdminDetail } = useQuery({
+    queryKey: ["tenant-admin-detail", tenantIdFromToken],
+    queryFn: async () => {
+      if (!tenantIdFromToken) return null;
+      try {
+        const detail = await getViewTenant(tenantIdFromToken);
+        console.log('Tenant admin subscriptions loaded:', detail?.subscriptions);
+        return detail;
+      } catch (error) {
+        console.error('Failed to fetch tenant detail for TENANT ADMIN:', error);
+        return null;
+      }
+    },
+    enabled: isAuthenticated && isTenantAdmin && !!tenantIdFromToken,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    retry: 1,
   });
 
   // Filter tenants to only show ACTIVE tenants
@@ -276,17 +314,40 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, isAdmin, user, tenantsData, activeTenants, tenantsError]);
 
-  // Use static list of all services (already filtered to only application services)
+  // Use static list of all services, filtered to tenant subscriptions for TENANT ADMIN
   const filteredServices = useMemo(() => {
-    // Return all services from the static list, sorted alphabetically
-    const sorted = [...services].sort();
+    let serviceList = [...services];
+
+    // For TENANT ADMIN: restrict to services that the tenant has subscribed to.
+    // Tenant subscriptions are stored as short underscore names (e.g. "language_detection")
+    // while frontend service names use full hyphenated names (e.g. "language-detection-service").
+    // Use SUBSCRIPTION_TO_SERVICE_MAP to bridge the two formats.
+    if (isTenantAdmin && tenantAdminDetail?.subscriptions?.length) {
+      // Build the set of allowed frontend service names from the tenant's subscriptions
+      const allowedServices = new Set<string>(
+        tenantAdminDetail.subscriptions
+          .map((sub: string) => SUBSCRIPTION_TO_SERVICE_MAP[sub.toLowerCase().trim()] ?? null)
+          .filter(Boolean)
+      );
+
+      serviceList = serviceList.filter((svc) => allowedServices.has(svc));
+
+      console.log('Tenant admin service filter applied:', {
+        rawSubscriptions: tenantAdminDetail.subscriptions,
+        mappedAllowed: Array.from(allowedServices),
+        filteredCount: serviceList.length,
+        filteredServices: serviceList,
+      });
+    }
+
+    const sorted = serviceList.sort();
     console.log('Filtered services for dropdown:', {
       total: sorted.length,
       services: sorted,
-      includesLanguageDiarization: sorted.includes('language-diarization-service'),
+      isTenantAdmin,
     });
     return sorted;
-  }, [services]);
+  }, [services, isTenantAdmin, tenantAdminDetail]);
 
   // No longer needed - services are static, no error handling required
 
@@ -365,8 +426,8 @@ const LogsPage: React.FC = () => {
       });
       
       // First, fetch page 1 to get total count
-      // Only super admins (admin without tenant_id) can filter by tenant_id parameter
-      // Tenant admins are automatically filtered by their tenant_id from JWT
+      // Only ADMIN role (not TENANT ADMIN) can send the tenant_id filter param;
+      // TENANT ADMIN is automatically scoped by the backend via their JWT.
       const firstPage = await searchLogs({
         page: 1,
         size: fetchSize,
@@ -375,7 +436,7 @@ const LogsPage: React.FC = () => {
         search_text: appliedSearchText && appliedSearchText.trim() !== "" ? appliedSearchText : undefined,
         start_time: apiStartTime,
         end_time: apiEndTime,
-        tenant_id: isSuperAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
+        tenant_id: isAdmin && !isTenantAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
       });
       
       // Ensure logs is always an array
@@ -413,7 +474,7 @@ const LogsPage: React.FC = () => {
                   search_text: appliedSearchText && appliedSearchText.trim() !== "" ? appliedSearchText : undefined,
                   start_time: apiStartTime,
                   end_time: apiEndTime,
-                  tenant_id: isSuperAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
+                  tenant_id: isAdmin && !isTenantAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
                 }).catch((error) => {
                 console.error(`Error fetching page ${page}:`, error);
                 return { logs: [] }; // Return empty logs on error
@@ -1045,8 +1106,8 @@ const LogsPage: React.FC = () => {
             <CardBody>
               <Heading size="sm" mb={4} color="gray.700">Filters</Heading>
               <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} w="full">
-                {/* Tenant Filter - Super Admin Only (admin without tenant_id) */}
-                {isSuperAdmin && (
+                {/* Tenant Filter - only for ADMIN role (not TENANT ADMIN who is scoped to their own tenant) */}
+                {isAdmin && !isTenantAdmin && (
                   <FormControl>
                     <FormLabel fontWeight="medium">Tenant</FormLabel>
                     <Select

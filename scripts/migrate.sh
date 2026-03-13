@@ -9,6 +9,16 @@ ALEMBIC_INI="$PROJECT_ROOT/infrastructure/databases/migrations/postgres/alembic.
 ALEMBIC_DIR="$(cd "$(dirname "$ALEMBIC_INI")" && pwd)"
 REGISTRY_SCRIPT="$PROJECT_ROOT/infrastructure/databases/migrations/postgres/alembic/migration_registry.py"
 
+# Load environment variables from .env files if present (local dev).
+# In production, env vars are expected to be set by the environment already.
+ALEMBIC_ENV="$ALEMBIC_DIR/alembic/.env"
+ROOT_ENV="$PROJECT_ROOT/.env"
+if [[ -f "$ALEMBIC_ENV" ]]; then
+  set -a; source "$ALEMBIC_ENV"; set +a
+elif [[ -f "$ROOT_ENV" ]]; then
+  set -a; source "$ROOT_ENV"; set +a
+fi
+
 if [[ -n "${PYTHON_BIN:-}" ]]; then
   PYTHON_BIN="$PYTHON_BIN"
 elif command -v python3 >/dev/null 2>&1; then
@@ -29,11 +39,16 @@ DATABASES=(
   "auth_db"
   "config_db"
   "dashboard_db"
-  "dhruva_platform_db"
+  "ai4i_platform_db"
   "metrics_db"
   "model_management_db"
   "multi_tenant_db"
   "telemetry_db"
+)
+
+# External databases: services manage their own schemas, we just ensure DB exists
+EXTERNAL_DATABASES=(
+  "unleash"
 )
 
 print_db_header() {
@@ -236,9 +251,46 @@ format_alembic_output() {
   done <<< "$output"
 }
 
+ensure_external_databases() {
+  # Create databases for external services that manage their own schemas
+  if [[ ${#EXTERNAL_DATABASES[@]} -eq 0 ]]; then
+    return
+  fi
+
+  echo "🔧 Ensuring external service databases exist..."
+
+  # Get connection info from the first registered DB's env vars
+  local pg_user pg_password pg_host pg_port
+  pg_user="${POSTGRES_USER:-ai4i_user}"
+  pg_password="${POSTGRES_PASSWORD:-}"
+  pg_host="${POSTGRES_HOST:-localhost}"
+  pg_port="${POSTGRES_PORT:-5432}"
+
+  for ext_db in "${EXTERNAL_DATABASES[@]}"; do
+    if PGPASSWORD="$pg_password" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" -d postgres \
+        -tAc "SELECT 1 FROM pg_database WHERE datname='$ext_db'" 2>/dev/null | grep -q 1; then
+      print_status "info" "$ext_db already exists"
+    else
+      if PGPASSWORD="$pg_password" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" -d postgres \
+          -c "CREATE DATABASE $ext_db;" 2>/dev/null; then
+        print_status "applied" "Created database: $ext_db"
+      else
+        print_status "info" "Failed to create $ext_db (may need manual creation)"
+      fi
+    fi
+  done
+  echo
+}
+
 run_for_all_databases() {
   local command="$1"
   shift
+
+  # Ensure external service databases exist before running migrations
+  if [[ "$command" == "upgrade" ]]; then
+    ensure_external_databases
+  fi
+
   local db
   for db in "${DATABASES[@]}"; do
     validate_database "$db"

@@ -5,7 +5,6 @@ This middleware handles authentication and authorization at the gateway level,
 logging 401 and 403 errors with proper trace context.
 """
 
-import os
 import logging
 from contextlib import nullcontext
 from typing import Optional, Dict, Any, List
@@ -15,6 +14,7 @@ from starlette.responses import Response
 
 from auth_middleware import auth_middleware
 from ai4icore_logging import get_logger, get_correlation_id
+from ai4icore_env import app_env
 
 # OpenTelemetry for tracing
 try:
@@ -121,7 +121,8 @@ class AuthGatewayMiddleware(BaseHTTPMiddleware):
     
     def __init__(self, app):
         super().__init__(app)
-        self.auth_enabled = os.getenv("AUTH_ENABLED", "true").lower() == "true"
+        _auth_enabled_raw = app_env.auth_enabled
+        self.auth_enabled = (_auth_enabled_raw or "true").lower() == "true"
     
     async def dispatch(self, request: Request, call_next):
         """Process request with authentication and authorization checks."""

@@ -4,12 +4,13 @@ OpenSearch Query Client for AI4ICore Telemetry Library
 Provides query capabilities for logs stored in OpenSearch with RBAC support.
 Uses httpx directly to avoid monkey-patching and product check issues.
 """
-import os
 import logging
 import json
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 import httpx
+
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +40,9 @@ class OpenSearchQueryClient:
             verify_certs: Whether to verify SSL certificates
             index_pattern: Index pattern to search (default: "logs-*")
         """
-        self.url = url or os.getenv("OPENSEARCH_URL", "http://opensearch:9200")
-        self.username = username or os.getenv("OPENSEARCH_USERNAME", "admin")
-        self.password = password or os.getenv("OPENSEARCH_PASSWORD", "admin")
+        self.url = url or app_env.opensearch_url
+        self.username = username or app_env.opensearch_username
+        self.password = password or app_env.opensearch_password
         self.index_pattern = index_pattern
         self.verify_certs = verify_certs
         

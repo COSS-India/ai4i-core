@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
+from ai4icore_env import app_env
 from infrastructure.databases.core.base_adapter import BaseAdapter
 
 
@@ -71,55 +72,36 @@ class PostgresAdapter(BaseAdapter):
     def _ensure_database_exists(self) -> None:
         """Create database if it doesn't exist"""
         target_db = self.config['database']
-        
-        # Connect to default 'postgres' database to check/create target database
-        default_url = (
-            f"postgresql://{self.config['user']}:{self.config['password']}"
-            f"@{self.config['host']}:{self.config['port']}/postgres"
-        )
-        
-        try:
-            temp_engine = create_engine(default_url, echo=False, isolation_level="AUTOCOMMIT")
-            with temp_engine.connect() as temp_conn:
-                # Check if database exists
-                result = temp_conn.execute(text(
-                    "SELECT 1 FROM pg_database WHERE datname = :dbname"
-                ), {"dbname": target_db})
-                
-                if not result.fetchone():
-                    # Database doesn't exist, create it
-                    print(f"    🔨 Creating database: {target_db}")
-                    temp_conn.execute(text(f'CREATE DATABASE "{target_db}"'))
-                    print(f"    ✅ Database created: {target_db}")
-            
-            temp_engine.dispose()
-        except Exception as e:
-            # If we can't connect to 'postgres', try 'dhruva_platform' (our default DB)
+        platform_db = app_env.ai4i_platform_db_name
+        maintenance_dbs = [db for db in ("postgres", platform_db, target_db) if db]
+        last_error = None
+
+        for maint_db in maintenance_dbs:
+            url = (
+                f"postgresql://{self.config['user']}:{self.config['password']}"
+                f"@{self.config['host']}:{self.config['port']}/{maint_db}"
+            )
             try:
-                default_url = (
-                    f"postgresql://{self.config['user']}:{self.config['password']}"
-                    f"@{self.config['host']}:{self.config['port']}/dhruva_platform"
-                )
-                temp_engine = create_engine(default_url, echo=False, isolation_level="AUTOCOMMIT")
+                temp_engine = create_engine(url, echo=False, isolation_level="AUTOCOMMIT")
                 with temp_engine.connect() as temp_conn:
-                    # Check if database exists
                     result = temp_conn.execute(text(
                         "SELECT 1 FROM pg_database WHERE datname = :dbname"
                     ), {"dbname": target_db})
-                    
-                    if not result.fetchone():
-                        # Database doesn't exist, create it
-                        print(f"    🔨 Creating database: {target_db}")
-                        temp_conn.execute(text(f'CREATE DATABASE "{target_db}"'))
-                        print(f"    ✅ Database created: {target_db}")
-                
-                temp_engine.dispose()
-            except Exception as e2:
-                # If database already exists or we're trying to connect to it, ignore
-                if target_db in ['postgres', 'dhruva_platform']:
-                    pass  # These databases should already exist
-                else:
-                    # Log but don't fail - the database might exist
+
+                    if result.fetchone():
+                        return
+                    if maint_db == target_db:
+                        return
+                    print(f"    🔨 Creating database: {target_db}")
+                    temp_conn.execute(text(f'CREATE DATABASE "{target_db}"'))
+                    print(f"    ✅ Database created: {target_db}")
+                    return
+            except Exception as exc:
+                last_error = exc
+            finally:
+                try:
+                    temp_engine.dispose()
+                except Exception:
                     pass
     
     def execute(self, query: str, params: Optional[Dict] = None) -> Any:

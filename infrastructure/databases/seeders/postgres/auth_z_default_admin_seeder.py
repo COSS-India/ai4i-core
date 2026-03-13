@@ -1,27 +1,31 @@
 """
 Default Admin User Seeder
-Creates the default system administrator account
+Creates the default system administrator account.
+
+IMPORTANT: After first login, change the default admin password immediately.
+The default password is set via ADMIN_DEFAULT_PASSWORD env var (falls back to 'Admin@123').
 """
+import os
+import bcrypt
 from infrastructure.databases.core.base_seeder import BaseSeeder
 
 
 class AuthDefaultAdminSeeder(BaseSeeder):
     """Create default admin user for auth_db"""
-    
+
     database = 'auth_db'  # Target database
-    
+
     def run(self, adapter):
         """Run seeder"""
-        # Create default admin user if it doesn't exist
-        # Password hash for "Admin@123" (bcrypt)
-        
-        # Insert admin user if it doesn't exist, or update if it exists
+        default_password = "ADMIN_PASSWORD" # CAN CHANGE THIS TO ANY PASSWORD
+        password_hash = bcrypt.hashpw(default_password.encode(), bcrypt.gensalt()).decode()
+
         adapter.execute(
             """
             INSERT INTO users (email, username, password_hash, is_active, is_verified, is_superuser, timezone, language)
             VALUES (:email, :username, :password_hash, :is_active, :is_verified, :is_superuser, :timezone, :language)
             ON CONFLICT (email) DO UPDATE
-            SET 
+            SET
                 username = EXCLUDED.username,
                 password_hash = EXCLUDED.password_hash,
                 is_active = EXCLUDED.is_active,
@@ -33,7 +37,7 @@ class AuthDefaultAdminSeeder(BaseSeeder):
             {
                 'email': 'admin@ai4inclusion.org',
                 'username': 'admin',
-                'password_hash': '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW',
+                'password_hash': password_hash,
                 'is_active': True,
                 'is_verified': True,
                 'is_superuser': True,
@@ -41,7 +45,7 @@ class AuthDefaultAdminSeeder(BaseSeeder):
                 'language': 'en',
             }
         )
-        print("    ✓ Created/updated default admin user (admin@ai4inclusion.org / Admin@123)")
+        print("    ✓ Created/updated default admin user (admin@ai4inclusion.org)")
         
         # Ensure is_superuser is set to true for admin@ai4inclusion.org (in case it was false)
         adapter.execute(

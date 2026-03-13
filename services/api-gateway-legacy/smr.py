@@ -14,10 +14,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-import os
-
 import httpx
 from fastapi import HTTPException
+from ai4icore_env import app_env
 
 try:
     from ai4icore_logging import get_logger
@@ -29,10 +28,8 @@ except Exception:  # pragma: no cover - fallback logging
     logger = logging.getLogger(__name__)
 
 
-POLICY_ENGINE_URL = os.getenv("POLICY_ENGINE_URL", "http://policy-engine:8095")
-MODEL_MANAGEMENT_SERVICE_URL = os.getenv(
-    "MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"
-)
+POLICY_ENGINE_URL = app_env.policy_engine_url
+MODEL_MANAGEMENT_SERVICE_URL = app_env.model_management_service_url
 
 
 async def call_policy_engine_for_smr(
