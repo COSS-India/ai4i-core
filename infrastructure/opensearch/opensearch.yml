@@ -2,8 +2,6 @@ cluster.name: docker-cluster
 network.host: 0.0.0.0
 discovery.type: single-node
 
-# Security plugin enabled — credentials required for all API access
-# Configure via OPENSEARCH_USERNAME / OPENSEARCH_PASSWORD env vars
-plugins.security.disabled: false
-plugins.security.ssl.http.enabled: false
-plugins.security.allow_default_init_securityindex: true
+# Security plugin disabled for local development
+# For production, enable security and configure SSL certificates
+plugins.security.disabled: true
