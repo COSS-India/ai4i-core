@@ -1,7 +1,7 @@
 /**
- * Hook for checking and handling session expiry
- * - 7 days if remember_me is true
- * - 24 hours if remember_me is false
+ * Hook for checking and handling session expiry.
+ * Session expiry is enforced via JWT exp + refresh tokens (server-side);
+ * no client-stored timestamp is used.
  */
 import { useCallback } from 'react';
 import { useRouter } from 'next/router';
@@ -13,57 +13,38 @@ export const useSessionExpiry = () => {
   const toast = useToastWithDeduplication();
 
   /**
-   * Check if session has expired and handle accordingly
+   * Check if session has expired and handle accordingly.
+   * Uses JWT exp and refresh token presence; server enforces refresh token expiry.
    * @returns true if session is valid, false if expired or not authenticated
    */
   const checkSessionExpiry = useCallback((): boolean => {
-    // Check if user is authenticated first
     if (!authService.isAuthenticated()) {
-      // No token found - user is not authenticated
       authService.clearAuthTokens();
       authService.clearStoredUser();
-
-      // Show toast notification
       toast({
-        title: 'Session  Expired',
+        title: 'Session expired',
         description: 'Please log in to continue.',
         status: 'warning',
         duration: 5000,
         isClosable: true,
         position: 'top',
       });
-
-      // Redirect to login page
       router.push('/auth');
-      
       return false;
     }
 
-    // Check if session has expired (24 hours or 7 days depending on remember_me)
     if (authService.isSessionExpired()) {
-      // Clear tokens and user data
       authService.clearAuthTokens();
       authService.clearStoredUser();
-
-      // Get remember_me setting for appropriate message
-      const rememberMe = typeof window !== 'undefined' 
-        ? localStorage.getItem('remember_me') === 'true' 
-        : false;
-      const sessionDuration = rememberMe ? '7 days' : '24 hours';
-
-      // Show toast notification
       toast({
-        title: 'Session Expired',
-        description: `Your session has expired after ${sessionDuration}. Please log in again.`,
+        title: 'Session expired',
+        description: 'Your session has expired. Please sign in again.',
         status: 'warning',
         duration: 5000,
         isClosable: true,
         position: 'top',
       });
-
-      // Redirect to login page
       router.push('/auth');
-      
       return false;
     }
 

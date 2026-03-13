@@ -86,8 +86,10 @@ class RedisAdapter(BaseAdapter):
     
     def create_migrations_table(self) -> None:
         """Create migrations tracking structure (Redis sorted set)"""
-        # Redis sorted sets are created implicitly on first ZADD,
-        # so we just verify connection works. No need to pre-create.
+        # Ensure the sorted set exists (will be created on first insert)
+        if not self.client.exists(self.MIGRATIONS_KEY):
+            # Initialize with empty sorted set
+            self.client.zadd(self.MIGRATIONS_KEY, {}, nx=True)
     
     def get_executed_migrations(self) -> List[str]:
         """Get list of executed migrations"""

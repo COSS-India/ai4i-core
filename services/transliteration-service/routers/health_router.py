@@ -4,16 +4,16 @@ Health check and monitoring endpoints
 """
 
 import logging
-import os
 from typing import Dict, Any
 
 from fastapi import APIRouter, Request
 from sqlalchemy import text
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 
 # Check if health logs should be excluded
-EXCLUDE_HEALTH_LOGS = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+EXCLUDE_HEALTH_LOGS = app_env.exclude_health_logs
 
 def _should_log_health() -> bool:
     """Check if health-related logs should be written."""

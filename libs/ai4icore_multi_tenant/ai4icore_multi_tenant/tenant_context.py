@@ -1,16 +1,17 @@
 """
 Tenant Context - Extracts tenant information from request and provides to endpoints
 """
-import os
 from fastapi import Request, HTTPException
 from typing import Optional, Dict, Any
 import logging
 
 import httpx
 
+from ai4icore_env import app_env
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
+DEFAULT_API_GATEWAY_URL = app_env.api_gateway_url
 
 
 async def resolve_tenant_from_jwt(jwt_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:

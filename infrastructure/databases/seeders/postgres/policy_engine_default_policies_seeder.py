@@ -4,7 +4,7 @@ from infrastructure.databases.core.base_seeder import BaseSeeder
 class PolicyEngineDefaultPoliciesSeeder(BaseSeeder):
     """Seed default tenant policies for policy engine."""
     
-    database = 'dhruva_platform'  # Target database
+    database = 'ai4i_platform_db'  # Logical target; config maps this to the ai4i_platform database
     
     def run(self, adapter):
         """Seed the database."""

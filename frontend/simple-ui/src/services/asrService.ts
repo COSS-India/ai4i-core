@@ -65,12 +65,12 @@ export const transcribeAudio = async (
   config: ASRInferenceRequest['config']
 ): Promise<{ data: ASRInferenceResponse; responseTime: number }> => {
   try {
-    // Dhruva Platform ASR request schema
+    // AI4ICore ASR request schema
     const payload: ASRInferenceRequest = {
       audio: [{ audioContent }],
       config: {
         ...config,
-        encoding: 'base64', // Required for Dhruva Platform
+        encoding: 'base64', // Required for AI4ICore
         preProcessors: ['vad', 'denoise'], // Voice Activity Detection and denoising
         postProcessors: ['lm', 'punctuation'], // Language model and punctuation
       },
@@ -286,8 +286,8 @@ export class ASRStreamingService {
           serviceId: config.serviceId,
           language: config.language,
           samplingRate: config.samplingRate.toString(),
-          ...(config.apiKey && { apiKey: config.apiKey }),
         },
+        ...(config.apiKey && { auth: { token: config.apiKey } }),
       });
 
       this.socket.on('connect', () => {

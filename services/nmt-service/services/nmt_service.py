@@ -26,7 +26,7 @@ try:
 except ImportError:
     Request = None  # type: ignore
 
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     TritonInferenceError,
     TextProcessingError,
     ModelNotFoundError,

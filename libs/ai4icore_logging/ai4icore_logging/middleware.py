@@ -5,12 +5,13 @@ Extracts correlation/trace ID from HTTP headers and sets it in logging context
 for automatic inclusion in all log entries.
 """
 
-import os
 import time
 import logging
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request, Response
 from typing import Optional
+
+from ai4icore_env import app_env
 
 from .context import set_trace_id, get_trace_id, generate_trace_id
 from .logger import get_logger
@@ -147,12 +148,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
         
-        # Read filtering configuration from environment variables
-        self.exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
-        self.exclude_metrics_logs = os.getenv("EXCLUDE_METRICS_LOGS", "false").lower() == "true"
-        
+        # Read filtering configuration from db_settings
+        self.exclude_health_logs = app_env.exclude_health_logs
+        self.exclude_metrics_logs = app_env.exclude_metrics_logs
+
         # Parse minimum log level
-        min_log_level_str = os.getenv("MIN_LOG_LEVEL", "INFO").upper()
+        min_log_level_str = app_env.min_log_level.upper()
         self.min_log_level = getattr(logging, min_log_level_str, logging.INFO)
         
         # Get logger

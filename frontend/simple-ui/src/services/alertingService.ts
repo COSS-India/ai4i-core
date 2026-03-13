@@ -3,6 +3,7 @@
  * Follows the same request pattern as authService (fetch + Bearer token).
  */
 import { API_BASE_URL } from './api';
+import authService from './authService';
 import type {
   AlertDefinition,
   AlertDefinitionCreate,
@@ -24,13 +25,7 @@ class AlertingService {
   }
 
   private getAccessToken(): string | null {
-    if (typeof window !== 'undefined') {
-      return (
-        localStorage.getItem('access_token') ||
-        sessionStorage.getItem('access_token')
-      );
-    }
-    return null;
+    return authService.getAccessToken();
   }
 
   private async request<T>(

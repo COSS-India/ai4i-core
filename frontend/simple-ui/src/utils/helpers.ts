@@ -1,4 +1,5 @@
 // Utility helper functions for Simple UI
+import { getStoredAccessToken } from './tokenStorage';
 
 /**
  * Masks phone for view mode: only last 4 digits visible, e.g. "+91 xxxxxx1234"
@@ -20,8 +21,7 @@ export const getTenantIdFromToken = (): string | null => {
   if (typeof window === 'undefined') return null;
   
   try {
-    // Get token from localStorage or sessionStorage
-    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    const token = getStoredAccessToken();
     if (!token || token.trim() === '') {
       return null;
     }

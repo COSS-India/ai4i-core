@@ -1,8 +1,5 @@
 """
 Core business logic for NER inference.
-
-This mirrors the behavior of Dhruva's /inference/ner while fitting
-into the microservice structure used by ASR/TTS/NMT/OCR in this repo.
 """
 
 import json

@@ -2,13 +2,13 @@
 Pytest configuration and shared fixtures for feature flag tests
 """
 import asyncio
-import os
 from typing import AsyncGenerator, Generator
 from unittest.mock import Mock, AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
 import redis.asyncio as redis
+from ai4icore_env import app_env
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -21,8 +21,8 @@ from openfeature.evaluation_context import EvaluationContext
 from openfeature import api as openfeature_api
 
 # Test database URL
-TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
-TEST_REDIS_URL = os.getenv("TEST_REDIS_URL")
+TEST_DATABASE_URL = app_env.test_database_url
+TEST_REDIS_URL = app_env.test_redis_url
 
 # Create async engine for testing
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)

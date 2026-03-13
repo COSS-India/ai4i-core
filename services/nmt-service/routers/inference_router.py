@@ -4,7 +4,6 @@ FastAPI router for NMT inference endpoints
 """
 
 import logging
-import os
 import time
 from typing import Dict, Any, Optional
 
@@ -14,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from ai4icore_logging import get_correlation_id, get_logger
+from ai4icore_env import app_env
 
 from models.nmt_request import NMTInferenceRequest
 from models.nmt_response import NMTInferenceResponse, TranslationOutput
@@ -28,7 +28,7 @@ from utils.validation_utils import (
     InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError
 )
 from middleware.auth_provider import AuthProvider
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     AuthenticationError,
     AuthorizationError,
     TritonInferenceError,
@@ -44,10 +44,8 @@ from ai4icore_multi_tenant import (
 )
 
 get_tenant_db_session = get_tenant_db_session_factory()
-import os
-import httpx
 
-from services.constants.error_messages import (
+from ai4icore_constants.error_messages import (
     NO_TEXT_INPUT,
     NO_TEXT_INPUT_NMT_MESSAGE,
     TEXT_TOO_SHORT,
@@ -82,10 +80,10 @@ logger = get_logger(__name__)
 tracer = trace.get_tracer("nmt-service")
 
 #Tenant routing and service checks
-API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
+API_GATEWAY_URL = app_env.api_gateway_url
 
 # SMR Service Configuration
-SMR_SERVICE_URL = os.getenv("SMR_SERVICE_URL", "http://smr-service:8097")
+SMR_SERVICE_URL = app_env.smr_service_url
 
 # Create router
 inference_router = APIRouter(
@@ -1373,7 +1371,7 @@ async def run_inference(
             ) from exc
 
         except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as exc:
-            from services.constants.static_fallback_responses import (
+            from ai4icore_constants.static_fallback_responses import (
                 is_static_fallback_enabled,
                 get_nmt_static_response,
             )
@@ -1506,7 +1504,7 @@ async def _run_nmt_inference_impl(
             http_request=http_request,
         )
     except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as exc:
-        from services.constants.static_fallback_responses import (
+        from ai4icore_constants.static_fallback_responses import (
             is_static_fallback_enabled,
             get_nmt_static_response,
         )

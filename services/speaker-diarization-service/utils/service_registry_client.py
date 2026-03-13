@@ -1,9 +1,9 @@
-import os
 import logging
 from typing import Optional, Dict, Any
 
 import httpx
 
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class ServiceRegistryHttpClient:
     """
 
     def __init__(self) -> None:
-        base_url = os.getenv("CONFIG_SERVICE_URL", "http://config-service:8082")
+        base_url = app_env.config_service_url
         # Ensure we point at the registry API root
         self._registry_base = base_url.rstrip("/") + "/api/v1/registry"
 

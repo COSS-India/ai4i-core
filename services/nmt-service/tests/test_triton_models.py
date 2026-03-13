@@ -5,8 +5,9 @@ Fetches NMT services from model management service and tests their Triton endpoi
 """
 
 import sys
-import os
 import asyncio
+
+from ai4icore_env import app_env
 
 # Check if tritonclient is available
 try:
@@ -73,8 +74,8 @@ async def test_all_nmt_services():
     print()
     
     # Initialize model management client
-    model_mgmt_url = os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091")
-    model_mgmt_api_key = os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY")
+    model_mgmt_url = app_env.model_management_service_url
+    model_mgmt_api_key = app_env.model_management_service_api_key
     
     print(f"Connecting to Model Management Service: {model_mgmt_url}")
     print()
@@ -167,8 +168,8 @@ def main():
     if len(sys.argv) > 1:
         endpoint = sys.argv[1]
         test_single_endpoint(endpoint)
-    elif os.getenv("TRITON_ENDPOINT"):
-        endpoint = os.getenv("TRITON_ENDPOINT")
+    elif app_env.triton_endpoint:
+        endpoint = app_env.triton_endpoint
         test_single_endpoint(endpoint)
     else:
         # Fetch from model management service
