@@ -4,7 +4,6 @@ Observability Router for Telemetry Service
 Provides RBAC-enabled endpoints for querying logs and traces.
 """
 import logging
-import os
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, Query, HTTPException, status, Depends
@@ -16,6 +15,7 @@ from ai4icore_telemetry import (
     get_organization_filter
 )
 from sqlalchemy import text
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ async def extract_tenant_id_from_jwt(request: Request) -> Optional[str]:
     
     try:
         # Get JWT secret key
-        secret_key = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
+        secret_key = app_env.jwt_secret_key
         
         # Extract JWT token from Authorization header
         authorization = request.headers.get("Authorization") or request.headers.get("authorization")
@@ -207,7 +207,7 @@ async def is_user_admin(request: Request) -> bool:
     
     try:
         # Get JWT secret key
-        secret_key = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
+        secret_key = app_env.jwt_secret_key
         
         # Extract JWT token from Authorization header
         authorization = request.headers.get("Authorization") or request.headers.get("authorization")

@@ -1,7 +1,7 @@
 """
 TTS Request Models
 
-Pydantic models for TTS inference requests, adapted from Dhruva-Platform-2 ULCA schemas.
+Pydantic models for TTS inference requests.
 """
 
 from enum import Enum

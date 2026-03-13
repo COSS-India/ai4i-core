@@ -11,7 +11,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from middleware.exceptions import RateLimitExceededError
+from ai4icore_constants.exceptions import RateLimitExceededError
 import logging
 
 logger = logging.getLogger(__name__)

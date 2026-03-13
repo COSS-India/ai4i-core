@@ -1,0 +1,28 @@
+[project]
+name = "ai4icore-env"
+version = "1.0.0"
+description = "AI4ICore Environment Configuration - centralized Pydantic-based settings for all AI4ICore services"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "AI4X Team"},
+    {email = "team@ai4x.com"}
+]
+keywords = ["config", "pydantic", "settings", "environment", "ai4icore"]
+dependencies = [
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["ai4icore_env"]

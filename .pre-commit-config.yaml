@@ -1,0 +1,5 @@
+# Minimal pre-commit configuration
+# This file allows pre-commit to run without errors
+# You can add hooks later if needed
+
+repos: []

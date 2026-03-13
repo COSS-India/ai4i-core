@@ -53,7 +53,7 @@ Large Language Model microservice for text processing, translation, and generati
 
 ## Configuration
 
-The service connects to a Triton inference server endpoint at `http://13.220.11.146:8000/services/inference/llm`.
+The service connects to a Triton inference server endpoint at `the URL configured via the `TRITON_ENDPOINT` environment variable`.
 
 Set `TRITON_ENDPOINT` in the `.env` file to configure the endpoint URL.
 

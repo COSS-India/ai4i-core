@@ -2,11 +2,12 @@
 Auth client for alert-management-service (standalone auth when not behind API gateway).
 Validates JWT via auth-service and returns user payload for permission checks.
 """
-import os
 from typing import Optional, Dict, Any
 import httpx
 
-AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
+from ai4icore_env import app_env
+
+AUTH_SERVICE_URL = app_env.auth_service_url
 _http_client: Optional[httpx.AsyncClient] = None
 
 

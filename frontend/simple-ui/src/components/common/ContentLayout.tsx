@@ -17,10 +17,10 @@ const ContentLayout: React.FC<ContentLayoutProps> = ({ children }) => {
       pl={isMobile ? 4 : "calc(4.5rem + 1rem)"}
       pr={4}
       pb={4}
-      minH="calc(100vh - 3.5rem)"
+      flex="1"
+      minH={0}
       display="flex"
-      alignItems="center"
-      justifyContent="center"
+      flexDirection="column"
       w="100%"
     >
       <Box
@@ -28,7 +28,9 @@ const ContentLayout: React.FC<ContentLayoutProps> = ({ children }) => {
         px={4}
         bg={bgColor}
         borderRadius="md"
-        minH="calc(100vh - 3.5rem - 1rem)"
+        flex="1"
+        minH={0}
+        overflow="auto"
         w="100%"
         maxW="1400px"
         mx="auto"

@@ -47,16 +47,19 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </Box>
       </GridItem>
 
-      {/* Main Content */}
-      <GridItem area="main" overflow="auto">
+      {/* Main Content - no outer scroll; only inner content scrolls */}
+      <GridItem area="main" overflow="hidden" display="flex" flexDirection="column" minH={0}>
         <Box
           opacity={isSidebarBlurred ? 0.3 : 1}
           transition="opacity 0.2s"
-          minH="100vh"
+          flex="1"
+          minH={0}
+          display="flex"
+          flexDirection="column"
           bg="gray.50"
         >
           <Header />
-          <Box as="main" p={4}>
+          <Box as="main" p={4} flex="1" minH={0} overflow="hidden" display="flex" flexDirection="column">
             {children}
           </Box>
         </Box>

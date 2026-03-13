@@ -5,12 +5,12 @@ Provides an async HTTP client for making requests to ASR, NMT, and TTS services.
 Includes distributed tracing context propagation for end-to-end observability.
 """
 
-import os
 import logging
 import time
 import json
 from typing import Dict, Any, Optional, Tuple
 import httpx
+from ai4icore_env import app_env
 from .service_registry_client import ServiceRegistryHttpClient
 
 # Import OpenTelemetry for trace context propagation
@@ -97,7 +97,7 @@ class ServiceClient:
         # Create HTTP client with configurable timeout
         # Use environment variable or default to 120 seconds (2 minutes) for inference
         # This is more reasonable than 5 minutes and helps identify slow services faster
-        timeout_seconds = float(os.getenv('PIPELINE_HTTP_TIMEOUT', '120.0'))
+        timeout_seconds = app_env.pipeline_http_timeout
         # Use httpx.Timeout for more granular control: connect, read, write, pool
         timeout = httpx.Timeout(
             timeout=timeout_seconds,  # Total timeout
@@ -115,9 +115,9 @@ class ServiceClient:
         try:
             # Discover all services via registry
             # Environment variables can override discovery if explicitly set
-            asr_env = os.getenv('ASR_SERVICE_URL')
-            nmt_env = os.getenv('NMT_SERVICE_URL')
-            tts_env = os.getenv('TTS_SERVICE_URL')
+            asr_env = app_env.asr_service_url
+            nmt_env = app_env.nmt_service_url
+            tts_env = app_env.tts_service_url
             
             if asr_env:
                 self.asr_service_url = asr_env.rstrip('/')
@@ -322,7 +322,7 @@ class ServiceClient:
                 error_lower = error_message.lower()
                 # If the error message suggests JWT failure, raise AuthenticationError
                 if any(indicator.lower() in error_lower for indicator in jwt_failure_indicators):
-                    from middleware.exceptions import AuthenticationError
+                    from ai4icore_constants.exceptions import AuthenticationError
                     raise AuthenticationError("Authentication failed. Please log in again.")
             
             error_detail = f"ASR service returned status {e.response.status_code}: {error_message}"

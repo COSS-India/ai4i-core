@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     AuthenticationError, 
     AuthorizationError, 
     RateLimitExceededError,
@@ -18,7 +18,7 @@ import re
 
 # NOTE:
 # Unlike ASR/API Gateway containers, audio-lang-detection's Docker image only copies this
-# service directory into /app, so the shared `services.constants` package
+# service directory into /app, so the shared `ai4icore_constants` package
 # is not available at runtime. To keep the same user-facing message for
 # expired/invalid tokens, we duplicate the constant value here.
 AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."
