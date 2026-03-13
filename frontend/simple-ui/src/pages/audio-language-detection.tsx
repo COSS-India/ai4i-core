@@ -16,7 +16,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
@@ -47,13 +47,6 @@ const AudioLanguageDetectionPage: React.FC = () => {
     queryFn: listAudioLanguageDetectionServices,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
-
-  // Auto-select first service when services are loaded
-  useEffect(() => {
-    if (services.length > 0 && !selectedServiceId) {
-      setSelectedServiceId(services[0].service_id);
-    }
-  }, [services, selectedServiceId]);
 
   const {
     isRecording,
@@ -192,7 +185,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
             <VStack spacing={6} align="stretch">
 
               {/* Service Selection */}
-              <FormControl>
+              <FormControl isRequired>
                 <FormLabel fontSize="sm" fontWeight="semibold">
                   Audio Language Detection Service:
                 </FormLabel>
@@ -251,10 +244,10 @@ const AudioLanguageDetectionPage: React.FC = () => {
                 )}
               </FormControl>
 
-              <Box>
-                <Text mb={4} fontSize="sm" fontWeight="semibold">
+              <FormControl isRequired>
+                <FormLabel fontSize="sm" fontWeight="semibold">
                   Audio Input:
-                </Text>
+                </FormLabel>
                 <AudioRecorder
                   onAudioReady={handleAudioReady}
                   isRecording={isRecording}
@@ -263,7 +256,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
                   disabled={fetching}
                   timer={timer}
                 />
-              </Box>
+              </FormControl>
 
               {/* Audio Status */}
               {audioData && (
@@ -281,6 +274,10 @@ const AudioLanguageDetectionPage: React.FC = () => {
               )}
 
               {/* Submit Button */}
+              <Text fontSize="sm" color="gray.600">
+                Select a service and provide audio above, then click Submit to detect the spoken language.
+              </Text>
+
               <Button
                 colorScheme="orange"
                 onClick={handleSubmit}
@@ -288,7 +285,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
                 loadingText="Processing..."
                 size="md"
                 w="full"
-                isDisabled={!audioData || fetching}
+                isDisabled={!selectedServiceId || !audioData || fetching}
               >
                 Submit for Detection
               </Button>
