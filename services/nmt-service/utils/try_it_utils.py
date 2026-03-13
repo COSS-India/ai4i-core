@@ -2,17 +2,18 @@
 Try-It rate limiting utilities
 Supports Redis-based and in-memory rate limiting for anonymous try-it access
 """
-import os
 import time
 import logging
 from typing import Dict, Any, Optional
 from fastapi import Request
 
+from ai4icore_env import app_env
+
 logger = logging.getLogger(__name__)
 
 # Try-It rate limiting configuration
-TRY_IT_LIMIT = int(os.getenv("TRY_IT_LIMIT", "5"))
-TRY_IT_TTL_SECONDS = int(os.getenv("TRY_IT_TTL_SECONDS", "3600"))
+TRY_IT_LIMIT = app_env.try_it_limit
+TRY_IT_TTL_SECONDS = app_env.try_it_ttl_seconds
 
 # In-memory fallback counter (used when Redis is unavailable)
 try_it_counters: Dict[str, Dict[str, Any]] = {}

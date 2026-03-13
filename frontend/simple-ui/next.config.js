@@ -53,7 +53,7 @@ function getSecurityHeaders() {
     // Restrict browser features (camera, mic, geolocation, etc.) to reduce attack surface
     {
       key: 'Permissions-Policy',
-      value: 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
+      value: 'camera=(), microphone=(self), geolocation=(), interest-cohort=()',
     },
     // Disable DNS prefetch by default to reduce information leakage (enable only for trusted origins if needed)
     { key: 'X-DNS-Prefetch-Control', value: 'off' },
@@ -65,6 +65,7 @@ function getSecurityHeaders() {
         "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "img-src 'self' data: blob: https: http:",
+        "media-src 'self' blob:",
         "font-src 'self' data: https://fonts.gstatic.com",
         `connect-src ${connectSrc}`,
         "frame-ancestors 'none'",

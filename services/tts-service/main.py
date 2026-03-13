@@ -20,11 +20,12 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
 from ai4icore_logging import (
     get_logger,
-    CorrelationMiddleware,
-    configure_logging,
+    LoggingConfig,
+    register_logging_plugin,
 )
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from ai4icore_env import app_env
 
 # Load environment variables from .env file if it exists
 load_dotenv()
@@ -49,22 +50,14 @@ except ImportError:
 # Import middleware components
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
-from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
+from ai4icore_constants.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig, AuthContextMiddleware
 
 # Import routers
 from routers import inference_router, health_router
 from routers.voice_router import router as voice_router
-
-# Configure structured logging
-# This also configures uvicorn loggers to use our formatter and disables access logs
-configure_logging(
-    service_name=os.getenv("SERVICE_NAME", "tts-service"),
-    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
-)
 
 # Aggressively disable uvicorn access logger BEFORE uvicorn starts
 # This must happen before uvicorn imports/creates its loggers
@@ -128,12 +121,7 @@ async def lifespan(app: FastAPI):
     try:
         # Initialize Redis connection
         global redis_client
-        redis_host = os.getenv("REDIS_HOST")
-        redis_port = int(os.getenv("REDIS_PORT"))
-        redis_password = os.getenv("REDIS_PASSWORD")
-        
-        redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
-        redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
+        redis_client = redis.from_url(app_env.get_redis_url(), encoding="utf-8", decode_responses=True)
         
         # Test Redis connection
         await redis_client.ping()
@@ -141,12 +129,10 @@ async def lifespan(app: FastAPI):
         
         # Initialize PostgreSQL async engine
         global db_engine, db_session_factory
-        database_url = os.getenv(
-            "DATABASE_URL"
-        )
+        database_url = app_env.get_database_url()
         
-        db_pool_size = int(os.getenv("DB_POOL_SIZE", "20"))
-        db_max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+        db_pool_size = app_env.db_pool_size
+        db_max_overflow = app_env.db_max_overflow
         
         db_engine = create_async_engine(
             database_url,
@@ -192,11 +178,11 @@ async def lifespan(app: FastAPI):
             audio_service = AudioService()
             text_service = TextService()
             voice_service = VoiceService()
-            triton_url = os.getenv("TRITON_ENDPOINT")
+            triton_url = app_env.triton_endpoint
             # Strip http:// or https:// scheme from URL (like ASR service)
             if triton_url.startswith(('http://', 'https://')):
                 triton_url = triton_url.split('://', 1)[1]
-            triton_api_key = os.getenv("TRITON_API_KEY")
+            triton_api_key = app_env.triton_api_key
             triton_client = TritonClient(triton_url, triton_api_key)
             
             # Create async session for repository
@@ -205,7 +191,7 @@ async def lifespan(app: FastAPI):
                 
                 # Create streaming service (if available)
                 if STREAMING_AVAILABLE:
-                    response_frequency_ms = int(os.getenv("STREAMING_RESPONSE_FREQUENCY_MS", "2000"))
+                    response_frequency_ms = app_env.streaming_response_frequency_ms
                     streaming_service = StreamingTTSService(
                         audio_service=audio_service,
                         text_service=text_service,
@@ -231,16 +217,16 @@ async def lifespan(app: FastAPI):
         try:
             global registry_client, registered_instance_id
             registry_client = ServiceRegistryHttpClient()
-            service_name = os.getenv("SERVICE_NAME", "tts-service")
-            service_port = int(os.getenv("SERVICE_PORT", "8088"))
-            public_base_url = os.getenv("SERVICE_PUBLIC_URL")
+            service_name = app_env.service_name
+            service_port = app_env.service_port
+            public_base_url = app_env.service_public_url
             if public_base_url:
                 service_url = public_base_url.rstrip("/")
             else:
-                service_host = os.getenv("SERVICE_HOST", service_name)
+                service_host = app_env.service_host
                 service_url = f"http://{service_host}:{service_port}"
             health_url = service_url + "/health"
-            instance_id = os.getenv("SERVICE_INSTANCE_ID", f"{service_name}-{os.getpid()}")
+            instance_id = app_env.service_instance_id or f"{service_name}-{os.getpid()}"
             registered_instance_id = await registry_client.register(
                 service_name=service_name,
                 service_url=service_url,
@@ -269,7 +255,7 @@ async def lifespan(app: FastAPI):
         # Deregister from registry if previously registered
         try:
             if registry_client and registered_instance_id:
-                service_name = os.getenv("SERVICE_NAME", "tts-service")
+                service_name = app_env.service_name
                 await registry_client.deregister(service_name, registered_instance_id)
         except Exception as e:
             logger.warning("Service registry deregistration error: %s", e)
@@ -360,19 +346,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Correlation middleware (MUST be before RequestLoggingMiddleware)
-# This extracts X-Correlation-ID from headers and sets it in logging context
-app.add_middleware(CorrelationMiddleware)
-
-# Request logging (added BEFORE ObservabilityMiddleware)
-# FastAPI middleware runs in REVERSE order, so this will run AFTER ObservabilityMiddleware
-# This ensures organization is set in context before logging
-app.add_middleware(RequestLoggingMiddleware)
+# Initialize AI4ICore Logging Plugin
+# Register after observability to preserve existing middleware ordering behavior.
+logging_config = LoggingConfig.from_env()
+logging_config.service_name = app_env.service_name
+logging_config.use_kafka = app_env.use_kafka_logging
+register_logging_plugin(app, config=logging_config)
+logger.info("✅ AI4ICore Logging Plugin initialized for TTS service")
 
 # Synchronous Redis client for Model Management middleware (A/B testing, service resolution)
-REDIS_HOST = os.getenv("REDIS_HOST")
-REDIS_PORT = int(os.getenv("REDIS_PORT"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+REDIS_HOST = app_env.redis_host
+REDIS_PORT = app_env.redis_port
+REDIS_PASSWORD = app_env.redis_password
 redis_client_sync = None
 try:
     import redis as redis_sync
@@ -392,15 +377,12 @@ except Exception as e:
     redis_client_sync = None
 
 # Model Management Plugin – service resolution and A/B experiment variant selection + metrics
-MODEL_MANAGEMENT_SERVICE_URL = os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091")
-MODEL_MANAGEMENT_SERVICE_API_KEY = os.getenv(
-    "MODEL_MANAGEMENT_SERVICE_API_KEY",
-    os.getenv("MODEL_MANAGEMENT_API_KEY"),
-)
-MODEL_MANAGEMENT_CACHE_TTL = int(os.getenv("MODEL_MANAGEMENT_CACHE_TTL", "300"))
-TRITON_ENDPOINT_CACHE_TTL = int(os.getenv("TRITON_ENDPOINT_CACHE_TTL", "300"))
-_default_triton = (os.getenv("TRITON_ENDPOINT") or "").strip().replace("http://", "").replace("https://", "") or ""
-_default_triton_key = os.getenv("TRITON_API_KEY") or ""
+MODEL_MANAGEMENT_SERVICE_URL = app_env.model_management_service_url
+MODEL_MANAGEMENT_SERVICE_API_KEY = app_env.model_management_service_api_key or app_env.model_management_api_key
+MODEL_MANAGEMENT_CACHE_TTL = app_env.model_management_cache_ttl
+TRITON_ENDPOINT_CACHE_TTL = app_env.triton_endpoint_cache_ttl
+_default_triton = (app_env.triton_endpoint or "").strip().replace("http://", "").replace("https://", "") or ""
+_default_triton_key = app_env.triton_api_key or ""
 
 model_mgmt_config = ModelManagementConfig(
     model_management_service_url=MODEL_MANAGEMENT_SERVICE_URL,
@@ -419,7 +401,7 @@ logger.info("Model Management Plugin initialized for TTS service (A/B experiment
 
 # Multi-tenant plugin (tenant schema router + middleware)
 # db_session_factory is set in app.state during lifespan
-multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL")
+multi_tenant_db_url = app_env.get_multi_tenant_db_url()
 multi_tenant_config = MultiTenantConfig.from_env()
 multi_tenant_config.tenant_paths = ["/api/v1/tts"]
 multi_tenant_plugin = MultiTenantPlugin(multi_tenant_config)
@@ -428,8 +410,8 @@ logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for TTS service")
 
 
 # Add rate limiting middleware (will be configured with Redis in lifespan)
-rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+rate_limit_per_minute = app_env.rate_limit_per_minute
+rate_limit_per_hour = app_env.rate_limit_per_hour
 app.add_middleware(
     RateLimitMiddleware,
     requests_per_minute=rate_limit_per_minute,
@@ -497,7 +479,7 @@ async def health_check() -> Dict[str, Any]:
     }
     
     # Check if health logs should be excluded
-    exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+    exclude_health_logs = app_env.exclude_health_logs
     
     try:
         import time
@@ -533,11 +515,11 @@ async def health_check() -> Dict[str, Any]:
         # Check Triton server connectivity
         try:
             from utils.triton_client import TritonClient
-            triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
+            triton_url = app_env.triton_endpoint
             # Strip http:// or https:// scheme from URL (like ASR service)
             if triton_url.startswith(('http://', 'https://')):
                 triton_url = triton_url.split('://', 1)[1]
-            triton_api_key = os.getenv("TRITON_API_KEY")
+            triton_api_key = app_env.triton_api_key
             triton_client = TritonClient(triton_url, triton_api_key)
             
             # Check if server is ready
@@ -570,8 +552,8 @@ app.include_router(voice_router)
 if __name__ == "__main__":
     import uvicorn
     
-    port = int(os.getenv("SERVICE_PORT", "8088"))
-    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    port = app_env.service_port
+    log_level = app_env.log_level
     
     uvicorn.run(
         "main:app",

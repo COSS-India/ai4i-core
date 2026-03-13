@@ -2,5 +2,6 @@ cluster.name: docker-cluster
 network.host: 0.0.0.0
 discovery.type: single-node
 
-# Disable security plugin
+# Security plugin disabled for local development
+# For production, enable security and configure SSL certificates
 plugins.security.disabled: true

@@ -5,13 +5,13 @@ with caching support for efficient and scalable operations
 """
 
 import logging
-import os
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 import json
 
 import httpx
 from pydantic import BaseModel
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +54,7 @@ class ModelManagementClient:
             cache_ttl_seconds: Cache TTL in seconds
             timeout: Request timeout in seconds
         """
-        self.base_url = base_url or os.getenv(
-            "MODEL_MANAGEMENT_SERVICE_URL",
-            "http://model-management-service:8091"
-        )
+        self.base_url = base_url or app_env.model_management_service_url
         # Ensure base_url doesn't end with /
         self.base_url = self.base_url.rstrip("/")
         self.api_key = api_key

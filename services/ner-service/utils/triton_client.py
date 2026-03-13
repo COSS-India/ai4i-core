@@ -12,6 +12,7 @@ from tritonclient.utils import np_to_triton_dtype
 from tritonclient.http import InferInput, InferRequestedOutput
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 # Use service name to get the same tracer instance as main.py
@@ -160,8 +161,7 @@ class TritonClient:
                 )
 
                 # Use async_infer with timeout (like NMT service) to avoid hanging
-                import os
-                timeout = int(os.getenv("TRITON_TIMEOUT", "30"))
+                timeout = app_env.triton_timeout
                 span.set_attribute("triton.timeout_seconds", timeout)
                 
                 # Send async inference request
@@ -239,8 +239,7 @@ class TritonClient:
             )
 
             # Use async_infer with timeout to avoid hanging
-            import os
-            timeout = int(os.getenv("TRITON_TIMEOUT", "30"))
+            timeout = app_env.triton_timeout
             
             # Send async inference request
             async_response = self.client.async_infer(

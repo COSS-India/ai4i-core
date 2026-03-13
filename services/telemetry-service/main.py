@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from elasticsearch import AsyncElasticsearch
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from ai4icore_env import app_env
 
 # Import observability clients and router
 from ai4icore_telemetry import OpenSearchQueryClient, JaegerQueryClient
@@ -63,18 +64,12 @@ async def startup_event():
     
     try:
         # Initialize Redis connection
-        redis_client = redis.from_url(
-            f"redis://:{os.getenv('REDIS_PASSWORD', 'redis_secure_password_2024')}@"
-            f"{os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', '6379')}"
-        )
+        redis_client = redis.from_url(app_env.get_redis_url())
         await redis_client.ping()
         logger.info("Connected to Redis")
         
         # Initialize PostgreSQL connection
-        database_url = os.getenv(
-            'DATABASE_URL', 
-            'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/telemetry_db'
-        )
+        database_url = app_env.get_database_url()  # Uses DATABASE_URL directly from .env
         db_engine = create_async_engine(
             database_url,
             pool_size=10,
@@ -89,10 +84,7 @@ async def startup_event():
         logger.info("Connected to PostgreSQL")
         
         # Initialize Multi-tenant PostgreSQL connection
-        multi_tenant_db_url = os.getenv(
-            'MULTI_TENANT_DATABASE_URL',
-            'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/multi_tenant_db'
-        )
+        multi_tenant_db_url = app_env.get_multi_tenant_db_url()
         multi_tenant_db_engine = create_async_engine(
             multi_tenant_db_url,
             pool_size=10,
@@ -107,9 +99,9 @@ async def startup_event():
         logger.info("Connected to Multi-tenant PostgreSQL")
         
         # Initialize Elasticsearch client
-        es_url = os.getenv('ELASTICSEARCH_URL', 'http://elasticsearch:9200')
-        es_username = os.getenv('ELASTICSEARCH_USERNAME', 'elastic')
-        es_password = os.getenv('ELASTICSEARCH_PASSWORD', 'elastic_secure_password_2024')
+        es_url = app_env.elasticsearch_url
+        es_username = app_env.elasticsearch_username
+        es_password = app_env.elasticsearch_password
         
         es_client = AsyncElasticsearch(
             [es_url],
@@ -121,9 +113,9 @@ async def startup_event():
         
         # Initialize OpenSearch query client (for observability endpoints)
         opensearch_query_client = OpenSearchQueryClient(
-            url=os.getenv("OPENSEARCH_URL", "http://opensearch:9200"),
-            username=os.getenv("OPENSEARCH_USERNAME", "admin"),
-            password=os.getenv("OPENSEARCH_PASSWORD", "admin"),
+            url=app_env.opensearch_url,
+            username=app_env.opensearch_username,
+            password=app_env.opensearch_password,
             verify_certs=False
         )
         # Set global in router module
@@ -133,7 +125,7 @@ async def startup_event():
         
         # Initialize Jaeger query client (for observability endpoints)
         jaeger_query_client = JaegerQueryClient(
-            url=os.getenv("JAEGER_QUERY_URL", "http://jaeger:16686")
+            url=app_env.jaeger_query_url
         )
         observability_router.jaeger_client = jaeger_query_client
         logger.info("Jaeger query client initialized")
@@ -154,10 +146,7 @@ async def startup_event():
             from sqlalchemy import text
             
             # Try auth database first (where roles/permissions are stored)
-            auth_db_url = os.getenv(
-                'AUTH_DATABASE_URL',
-                'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/dhruva_db'
-            )
+            auth_db_url = app_env.get_auth_database_url()
             auth_db_engine = create_async_engine(auth_db_url, echo=False)
             auth_db_session = sessionmaker(auth_db_engine, class_=AsyncSession, expire_on_commit=False)
             
@@ -204,6 +193,10 @@ async def startup_event():
             # ADMIN role permissions
             rbac_enforcer.add_policy("role:ADMIN", tenant, "logs", "read")
             rbac_enforcer.add_policy("role:ADMIN", tenant, "traces", "read")
+            
+            # TENANT ADMIN role permissions (scoped to their own tenant by router logic)
+            rbac_enforcer.add_policy("role:TENANT ADMIN", tenant, "logs", "read")
+            rbac_enforcer.add_policy("role:TENANT ADMIN", tenant, "traces", "read")
             
             # MODERATOR role permissions
             rbac_enforcer.add_policy("role:MODERATOR", tenant, "logs", "read")

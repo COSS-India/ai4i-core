@@ -1,8 +1,5 @@
 """
 Core business logic for OCR inference.
-
-This mirrors the behavior of Dhruva's /services/inference/ocr while fitting
-into the microservice structure used by ASR/TTS/NMT in this repository.
 """
 
 import base64

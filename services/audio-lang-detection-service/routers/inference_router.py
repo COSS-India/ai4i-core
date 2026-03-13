@@ -27,9 +27,9 @@ from ai4icore_multi_tenant import (
 )
 
 get_tenant_db_session = get_tenant_db_session_factory()
-import os
 import httpx
-from middleware.exceptions import ErrorDetail
+from ai4icore_env import app_env
+from ai4icore_constants.exceptions import ErrorDetail
 
 logger = logging.getLogger(__name__)
 # Use service name to get the same tracer instance as main.py
@@ -43,7 +43,7 @@ inference_router = APIRouter(
 
 
 #Tenant routing and service checks
-API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
+API_GATEWAY_URL = app_env.api_gateway_url
 
 
 async def get_audio_lang_detection_service(
@@ -247,7 +247,7 @@ async def run_inference(
                 detail=str(exc),
             ) from exc
         except TritonInferenceError as exc:
-            from services.constants.static_fallback_responses import (
+            from ai4icore_constants.static_fallback_responses import (
                 is_static_fallback_enabled,
                 get_audio_lang_detection_static_response,
             )
@@ -367,7 +367,7 @@ async def _run_inference_impl(
             session_id=session_id
         )
     except TritonInferenceError as exc:
-        from services.constants.static_fallback_responses import (
+        from ai4icore_constants.static_fallback_responses import (
             is_static_fallback_enabled,
             get_audio_lang_detection_static_response,
         )

@@ -1,17 +1,18 @@
 """
 Tenant-aware database session dependency
 """
-import os
 from fastapi import Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 import logging
 
+from ai4icore_env import app_env
+
 from .tenant_context import try_get_tenant_context
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
+DEFAULT_API_GATEWAY_URL = app_env.api_gateway_url
 
 
 async def _get_shared_db_session(request: Request) -> AsyncSession:
