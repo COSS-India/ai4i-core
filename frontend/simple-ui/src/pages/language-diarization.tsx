@@ -17,7 +17,7 @@ import {
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
@@ -41,6 +41,15 @@ const LanguageDiarizationPage: React.FC = () => {
     queryFn: listLanguageDiarizationServices,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
+
+  // Auto-select first available Language Diarization service when list loads
+  useEffect(() => {
+    if (!languageDiarizationServices || languageDiarizationServices.length === 0) return;
+    if (!serviceId) {
+      // If no service selected, select first available
+      setServiceId(languageDiarizationServices[0].service_id);
+    }
+  }, [languageDiarizationServices, serviceId]);
 
   const {
     isRecording,
@@ -189,7 +198,7 @@ const LanguageDiarizationPage: React.FC = () => {
           <GridItem>
             <VStack spacing={6} align="stretch">
               {/* Service Selection */}
-              <FormControl isRequired>
+              <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
                   Language Diarization Service:
                 </FormLabel>
@@ -240,10 +249,10 @@ const LanguageDiarizationPage: React.FC = () => {
                 )}
               </FormControl>
 
-              <FormControl isRequired>
-                <FormLabel fontSize="sm" fontWeight="semibold">
+              <Box>
+                <Text mb={4} fontSize="sm" fontWeight="semibold">
                   Audio Input:
-                </FormLabel>
+                </Text>
                 <AudioRecorder
                   onAudioReady={handleAudioReady}
                   isRecording={isRecording}
@@ -252,7 +261,7 @@ const LanguageDiarizationPage: React.FC = () => {
                   disabled={fetching}
                   timer={timer}
                 />
-              </FormControl>
+              </Box>
 
               {/* Audio Status */}
               {audioData && (
@@ -270,10 +279,6 @@ const LanguageDiarizationPage: React.FC = () => {
               )}
 
               {/* Submit Button */}
-              <Text fontSize="sm" color="gray.600">
-                Select a service and provide audio above, then click Submit to identify language changes in the audio.
-              </Text>
-
               <Button
                 colorScheme="orange"
                 onClick={handleSubmit}
@@ -281,7 +286,7 @@ const LanguageDiarizationPage: React.FC = () => {
                 loadingText="Processing..."
                 size="md"
                 w="full"
-                isDisabled={!serviceId || !audioData || fetching}
+                isDisabled={!audioData || fetching}
               >
                 Submit for Diarization
               </Button>
