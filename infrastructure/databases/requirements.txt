@@ -21,6 +21,9 @@ kafka-python>=2.0.2
 # Core dependencies
 python-dotenv>=1.0.0
 
+# Local shared libs (used by migration framework config)
+-e ../../libs/ai4icore_env
+
 # Pydantic (needed for loading service models during migrations)
 pydantic[email]>=2.4.0
 pydantic-settings>=2.0.0
