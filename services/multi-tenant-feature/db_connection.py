@@ -6,6 +6,7 @@ from ai4icore_env import app_env
 from logger import logger
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 
 # PostgreSQL connection engines (set by init_postgresql_connections in lifespan)

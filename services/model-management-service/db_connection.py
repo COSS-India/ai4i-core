@@ -10,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 # Engines
 app_db_engine: AsyncEngine | None = None
 auth_db_engine: AsyncEngine | None = None
+# Engines
+app_db_engine: AsyncEngine | None = None
+auth_db_engine: AsyncEngine | None = None
 
 # Session makers
 AppDBSessionLocal = None
