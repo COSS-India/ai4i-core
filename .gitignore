@@ -127,3 +127,7 @@ services/api-gateway-service/
 infrastructure/alertmanager/alertmanager.yml
 infrastructure/prometheus/rules/infrastructure-alerts.yml
 infrastructure/prometheus/rules/application-alerts.yml
+
+# Local / generated
+init_alerting_db_commands.sql
+docs/alerts-api-reference.md
