@@ -949,7 +949,6 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     # Decrypt the password that was stored during tenant registration
     admin_username = f"admin@{tenant.tenant_id}"
     plain_password = generate_random_password(length = 8)
-    logger.info(f"Tenant created - plain_password for admin: {plain_password}")
 
     hashed_password = hash_password(plain_password)
 
@@ -1665,7 +1664,6 @@ async def register_user(
     
     # No password collected in create-user flow; generate one so user can set password later (e.g. via reset)
     user_password = generate_random_password(length=12)
-    logger.info(f"Tenant user created - plain_password: {user_password}")
 
     # Create user in AUTH-SERVICE via /api/v1/auth/register
     try:
