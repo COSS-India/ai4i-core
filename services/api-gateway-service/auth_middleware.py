@@ -73,8 +73,14 @@ except (NameError, Exception):
     # Fallback to standard logging if ai4icore_logging is not available
     logger = logging.getLogger(__name__)
 
-# JWT Configuration
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
+# JWT Configuration — no fallback: unset secret would allow token forgery
+_JWT_SECRET = os.getenv("JWT_SECRET_KEY", "").strip()
+if not _JWT_SECRET:
+    raise RuntimeError(
+        "JWT_SECRET_KEY must be set in the environment. "
+        "Do not use a default; set a strong secret in .env or deployment config."
+    )
+JWT_SECRET_KEY = _JWT_SECRET
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
 
