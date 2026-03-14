@@ -1,6 +1,7 @@
 # Environment variables
 .env
 .env.local
+*.env.bak
 env-local-setup/
 .env.development.local
 .env.test.local
@@ -66,7 +67,6 @@ auth_db_dump.sql
 
 # Docker
 .dockerignore
-docker-compose-local.yml
 
 # Node.js (for frontend)
 node_modules/
@@ -120,8 +120,6 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# Service directories (local / generated)
-services/api-gateway-service/
 
 # Auto-generated / sensitive alert configuration (sync service writes from env; may contain SMTP secrets)
 infrastructure/alertmanager/alertmanager.yml

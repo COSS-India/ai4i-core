@@ -249,7 +249,7 @@ class MetricsCollector:
         self.enterprise_sla_compliance = Gauge(
             "telemetry_obsv_sla_compliance_percent",
             "SLA compliance percentage",
-            ["organization", "app", "sla_type"],
+            ["organization", "app", "sla_type", "tenant"],
             registry=self.registry,
         )
 
