@@ -949,7 +949,6 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     # Decrypt the password that was stored during tenant registration
     admin_username = f"admin@{tenant.tenant_id}"
     plain_password = generate_random_password(length = 8)
-    
 
     hashed_password = hash_password(plain_password)
 
