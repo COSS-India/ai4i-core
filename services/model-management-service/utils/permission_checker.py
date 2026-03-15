@@ -110,6 +110,11 @@ async def require_permission(
     Raises:
         HTTPException: 403 if permission is missing, 401 if not authenticated
     """
+    # Skip permission checks when auth is globally disabled
+    from ai4icore_env import app_env
+    if app_env.auth_enabled is not None and str(app_env.auth_enabled).lower() in ("false", "0", "no"):
+        return
+
     # Allow anonymous access for try-it requests (X-Try-It header)
     # This enables read-only model/service usage for anonymous "try-it" flows
     try_it_header = request.headers.get("X-Try-It") or request.headers.get("x-try-it")

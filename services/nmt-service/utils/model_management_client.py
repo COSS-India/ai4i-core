@@ -7,6 +7,7 @@ with caching support for efficient and scalable operations
 import logging
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
+from urllib.parse import quote
 import json
 
 import httpx
@@ -334,7 +335,9 @@ class ModelManagementClient:
         # Fetch from API
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/api/v1/model-management/services/{service_id}"
+            # Encode service_id so IDs containing '/' (e.g. "ai4bharat/indictrans-v2-all-gpu") are one path segment
+            encoded_service_id = quote(service_id, safe="")
+            url = f"{self.base_url}/api/v1/model-management/services/{encoded_service_id}"
             headers = self._get_headers(auth_headers)
             payload = {"serviceId": service_id}
             

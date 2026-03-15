@@ -1,9 +1,10 @@
+
 """
 API Gateway Service - Central entry point for all microservice requests
 """
+import os
 import sys
 from dotenv import load_dotenv
-from ai4icore_env import app_env
 
 # Add /app to Python path to ensure services module can be imported
 if '/app' not in sys.path:
@@ -113,15 +114,15 @@ tracer = None  # Will be set after setup_tracing, but use get_tracer() for relia
 
 # Configure AI4ICore logging
 configure_logging(
-    service_name=app_env.service_name or "api-gateway-service",
-    use_kafka=app_env.use_kafka_logging,
+    service_name=os.getenv("SERVICE_NAME", "api-gateway-service"),
+    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
 )
 
 logger = get_logger(__name__)
 
-# Define auth error constants (fallback if not available from ai4icore_constants)
+# Define auth error constants (fallback if not available from services.constants)
 try:
-    from ai4icore_constants.error_messages import AUTH_FAILED, AUTH_FAILED_MESSAGE
+    from services.constants.error_messages import AUTH_FAILED, AUTH_FAILED_MESSAGE
 except ImportError:
     AUTH_FAILED = "AUTH_FAILED"
     AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."
@@ -132,8 +133,8 @@ try:
     
     # Configure logging with JSON formatter
     configure_logging(
-        service_name=app_env.service_name or "api-gateway",
-        use_kafka=app_env.use_kafka_logging,
+        service_name=os.getenv("SERVICE_NAME", "api-gateway"),
+        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
     )
     
     logger = get_logger(__name__)
@@ -143,7 +144,7 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 # Auth service base URL (also used by SMR for auth metadata if needed)
-AUTH_SERVICE_URL = app_env.auth_service_url
+AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
 
 # Pydantic models for ASR endpoints
 class AudioInput(BaseModel):
@@ -1776,23 +1777,11 @@ class ServiceUpdateResponse(BaseModel):
     changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
 
 
-class ServiceDeleteRequest(BaseModel):
-    """Request model for deleting a service."""
-    service_id: int = Field(..., description="Service ID")
-
-
-class ServiceDeleteResponse(BaseModel):
-    """Response model for service deletion."""
-    service_id: int = Field(..., description="Deleted service ID")
-    message: str = Field(..., description="Deletion message")
-
-
 class TenantUpdateRequest(BaseModel):
     """Request model for updating tenant information"""
     tenant_id: str = Field(..., description="Tenant identifier")
     organization_name: Optional[str] = Field(None, min_length=2, max_length=255, description="Organization name")
     contact_email: Optional[str] = Field(None, description="Contact email address")
-    phone_number: Optional[str] = Field(None, max_length=20, description="User phone number")
     domain: Optional[str] = Field(None, min_length=3, max_length=255, description="Domain name")
     requested_quotas: Optional[QuotaStructure] = Field(None, description="Requested quota limits (characters_length, audio_length_in_min)")
     usage_quota: Optional[QuotaStructure] = Field(None, description="Usage quota values (characters_length, audio_length_in_min)")
@@ -1862,7 +1851,7 @@ class TenantUserUpdateRequest(BaseModel):
     user_id: int = Field(..., description="Auth user id for tenant user")
     username: Optional[str] = Field(None,min_length=3,max_length=100,description="Username for the tenant user")
     email: Optional[EmailStr] = Field(None,description="Email address for the tenant user")
-    phone_number: Optional[str] = Field(None, max_length=20, description="User phone number")
+    is_approved: Optional[bool] = Field(None,description="Whether the tenant user is approved by the tenant admin")
     role: Optional[str] = Field(
         None,
         description="Role for the user (key-value: {'role': 'USER'}). Allowed: ADMIN, USER, GUEST, MODERATOR.",
@@ -1893,22 +1882,12 @@ class TenantUserDeleteResponse(BaseModel):
 
 
 
-def _parse_redis_dict(raw: str) -> dict:
-    """Safely parse a dict stored in Redis.
-    Tries JSON first; falls back to ast.literal_eval for legacy Python-repr data."""
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        import ast
-        return ast.literal_eval(raw)
-
-
 class ServiceRegistry:
     """Redis-based service instance management"""
-
+    
     def __init__(self, redis_client: redis.Redis):
         self.redis = redis_client
-        self.service_ttl = app_env.service_registry_ttl
+        self.service_ttl = int(os.getenv('SERVICE_REGISTRY_TTL', '300'))
     
     async def register_service(self, service_name: str, instance_id: str, url: str) -> None:
         """Register a service instance"""
@@ -1922,7 +1901,7 @@ class ServiceRegistry:
         }
         
         # Store instance data
-        await self.redis.hset(f"service:{service_name}:instances", instance_id, json.dumps(instance_data))
+        await self.redis.hset(f"service:{service_name}:instances", instance_id, str(instance_data))
         
         # Add to active instances sorted set (scored by response time)
         await self.redis.zadd(f"service:{service_name}:active", {instance_id: 0.0})
@@ -1943,7 +1922,7 @@ class ServiceRegistry:
             return
         
         # Parse and update instance data
-        instance_data = _parse_redis_dict(instance_data_raw.decode() if isinstance(instance_data_raw, bytes) else instance_data_raw)
+        instance_data = eval(instance_data_raw.decode()) if isinstance(instance_data_raw, bytes) else instance_data_raw
         instance_data['health_status'] = 'healthy' if is_healthy else 'unhealthy'
         instance_data['last_check_timestamp'] = str(int(time.time()))
         
@@ -1962,13 +1941,13 @@ class ServiceRegistry:
             instance_data['consecutive_failures'] = str(failures)
             
             # Remove from active instances if too many failures
-            max_failures = app_env.max_consecutive_failures
+            max_failures = int(os.getenv('MAX_CONSECUTIVE_FAILURES', '3'))
             if failures >= max_failures:
                 await self.redis.zrem(f"service:{service_name}:active", instance_id)
                 logger.warning(f"Instance {instance_id} removed from active pool due to {failures} consecutive failures")
         
         # Update instance data
-        await self.redis.hset(instance_key, instance_id, json.dumps(instance_data))
+        await self.redis.hset(instance_key, instance_id, str(instance_data))
     
     async def get_healthy_instances(self, service_name: str) -> List[Tuple[str, str]]:
         """Get healthy instances sorted by response time (best first)"""
@@ -1978,7 +1957,7 @@ class ServiceRegistry:
         for instance_id, score in active_instances:
             instance_data_raw = await self.redis.hget(f"service:{service_name}:instances", instance_id)
             if instance_data_raw:
-                instance_data = _parse_redis_dict(instance_data_raw.decode() if isinstance(instance_data_raw, bytes) else instance_data_raw)
+                instance_data = eval(instance_data_raw.decode()) if isinstance(instance_data_raw, bytes) else instance_data_raw
                 if instance_data.get('health_status') == 'healthy':
                     instances.append((instance_id, instance_data['url']))
         
@@ -1995,7 +1974,7 @@ class LoadBalancer:
     
     def __init__(self, service_registry: ServiceRegistry):
         self.registry = service_registry
-        self.algorithm = app_env.load_balancer_algorithm
+        self.algorithm = os.getenv('LOAD_BALANCER_ALGORITHM', 'weighted_round_robin')
     
     async def select_instance(self, service_name: str) -> Optional[Tuple[str, str]]:
         """Select the best available instance for a service"""
@@ -2155,7 +2134,7 @@ app = FastAPI(
 )
 
 # Frontend deep-link support: redirect SPA routes to Simple UI so refreshes on these paths work
-FRONTEND_BASE = app_env.simple_ui_url or "http://simple-ui-frontend:3000"
+FRONTEND_BASE = os.getenv("SIMPLE_UI_URL", "http://simple-ui-frontend:3000")
 
 # Specific SPA redirects (avoid generic catch-all to not shadow /health and API routes)
 @app.get("/asr")
@@ -2209,7 +2188,7 @@ async def spa_pipeline_builder_trailing():
 # OpenAPI/Swagger security scheme (Bearer auth)
 bearer_scheme = HTTPBearer(auto_error=False)
 api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
-AUTH_SERVICE_URL = app_env.auth_service_url
+AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
 
 def determine_service_and_action(request: Request) -> Tuple[str, str]:
     """Infer service and action from path and method."""
@@ -3207,7 +3186,7 @@ def custom_openapi():
     )
 
     # Point Swagger to API Gateway (port 8080) - same permission logic as Kong
-    server_url = app_env.swagger_server_url or "http://localhost:8080"
+    server_url = os.getenv("SWAGGER_SERVER_URL", "http://localhost:8080")
     openapi_schema["servers"] = [
         {
             "url": server_url,
@@ -3261,7 +3240,7 @@ def custom_openapi():
         "/api/v1/multi-tenant/register/services",
         "/api/v1/multi-tenant/update/services",
         "/api/v1/multi-tenant/list/services",
-        "/api/v1/multi-tenant/resolve/tenant/from/user/{user_id}",
+        "/api/v1/multi-tenant/resolve-tenant-from-user/{user_id}",
     ])
 
     # Auto-tag operations by path prefix for better grouping in Swagger and inject header where applicable
@@ -3400,8 +3379,8 @@ async def health_monitor():
         logger.error("Health monitor: service registry or HTTP client not initialized")
         return
     
-    health_check_interval = app_env.service_health_check_interval
-    health_check_timeout = app_env.health_check_timeout
+    health_check_interval = int(os.getenv('HEALTH_CHECK_INTERVAL', '30'))
+    health_check_timeout = int(os.getenv('HEALTH_CHECK_TIMEOUT', '5'))
     
     logger.info(f"Starting health monitor (interval: {health_check_interval}s)")
     
@@ -3422,7 +3401,7 @@ async def health_monitor():
                     
                     try:
                         # Parse instance data
-                        instance_data = _parse_redis_dict(instance_data_raw) if isinstance(instance_data_raw, str) else instance_data_raw
+                        instance_data = eval(instance_data_raw) if isinstance(instance_data_raw, str) else instance_data_raw
                         instance_url = instance_data.get('url')
                         
                         if not instance_url:
@@ -3564,7 +3543,7 @@ app.add_middleware(ErrorMarkingMiddleware)
 
 # Add CORS middleware. Explicit origins allow credentials (e.g. Swagger UI on docs-manager port).
 # Set CORS_ORIGINS env to comma-separated list (e.g. "https://app.example.com") or "*" for allow-all (no credentials).
-_cors_origins_env = (app_env.cors_origins or "").strip()
+_cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
 if _cors_origins_env == "*":
     _cors_origins = ["*"]
     _cors_credentials = False
@@ -3719,25 +3698,25 @@ async def api_status():
         "api_version": "v1",
         "status": "operational",
         "services": {
-            "auth": app_env.auth_service_url,
-            "config": app_env.config_service_url,
-            "metrics": app_env.metrics_service_url,
-            "telemetry": app_env.telemetry_service_url,
-            "alerting": app_env.alerting_service_url,
-            "dashboard": app_env.dashboard_service_url,
-            "asr": app_env.asr_service_url,
-            "tts": app_env.tts_service_url,
-            "nmt": app_env.nmt_service_url,
-            "ocr": app_env.ocr_service_url,
-            "transliteration": app_env.transliteration_service_url,
-            "language-detection": app_env.language_detection_service_url,
-            "speaker-diarization": app_env.speaker_diarization_service_url,
-            "language-diarization": app_env.language_diarization_service_url,
-            "audio-lang-detection": app_env.audio_lang_detection_service_url,
-            "model-management": app_env.model_management_service_url,
-            "llm": app_env.llm_service_url,
-            "pipeline": app_env.pipeline_service_url,
-            "multi-tenant": app_env.multi_tenant_service_url
+            "auth": os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081"),
+            "config": os.getenv("CONFIG_SERVICE_URL", "http://config-service:8082"),
+            "metrics": os.getenv("METRICS_SERVICE_URL", "http://metrics-service:8083"),
+            "telemetry": os.getenv("TELEMETRY_SERVICE_URL", "http://telemetry-service:8084"),
+            "alerting": os.getenv("ALERTING_SERVICE_URL", "http://alerting-service:8085"),
+            "dashboard": os.getenv("DASHBOARD_SERVICE_URL", "http://dashboard-service:8086"),
+            "asr": os.getenv("ASR_SERVICE_URL", "http://asr-service:8087"),
+            "tts": os.getenv("TTS_SERVICE_URL", "http://tts-service:8088"),
+            "nmt": os.getenv("NMT_SERVICE_URL", "http://nmt-service:8089"),
+            "ocr": os.getenv("OCR_SERVICE_URL", "http://ocr-service:8099"),
+            "transliteration": os.getenv("TRANSLITERATION_SERVICE_URL", "http://transliteration-service:8090"),
+            "language-detection": os.getenv("LANGUAGE_DETECTION_SERVICE_URL", "http://language-detection-service:8090"),
+            "speaker-diarization": os.getenv("SPEAKER_DIARIZATION_SERVICE_URL", "http://speaker-diarization-service:8095"),
+            "language-diarization": os.getenv("LANGUAGE_DIARIZATION_SERVICE_URL", "http://language-diarization-service:8090"),
+            "audio-lang-detection": os.getenv("AUDIO_LANG_DETECTION_SERVICE_URL", "http://audio-lang-detection-service:8096"),
+            "model-management": os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
+            "llm": os.getenv("LLM_SERVICE_URL", "http://llm-service:8090"),
+            "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8090"),
+            "multi-tenant": os.getenv("MULTI_TENANT_SERVICE_URL", "http://multi-tenant-service:8001")
         }
     }
 
@@ -4710,29 +4689,6 @@ async def delete_notification_receiver_endpoint(
         headers=headers
     )
 
-@app.get("/api/v1/alerts/history", tags=["Alerts", "Alert History"])
-async def list_alert_history_endpoint(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme),
-    category: Optional[str] = Query(None, description="Filter by category: application, infrastructure"),
-    severity: Optional[str] = Query(None, description="Filter by severity: critical, warning, info"),
-    date_from: Optional[str] = Query(None, description="Filter triggered_at >= (ISO 8601 or YYYY-MM-DD)"),
-    date_to: Optional[str] = Query(None, description="Filter triggered_at <= (ISO 8601 or YYYY-MM-DD)"),
-    search: Optional[str] = Query(None, description="Search in alert name and notified audience"),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-):
-    """List alert history (audit log of triggered alerts) - proxied to alert-management-service"""
-    await check_permission("alerts.read", request, credentials)
-    headers = await build_alert_headers(request, credentials, api_key)
-    return await proxy_to_service(
-        request,
-        "/alerts/history",
-        "alert-management-service",
-        headers=headers
-    )
-
 @app.post("/api/v1/alerts/routing-rules", tags=["Alerts"])
 async def create_routing_rule_endpoint(
     payload: RoutingRuleCreate,
@@ -5418,7 +5374,7 @@ async def nmt_inference(
                 extra={
                     "context": {
                         "translate_payload": translate_payload,
-                        "endpoint": app_env.llm_translate_api_url
+                        "endpoint": "http://13.201.75.118:8000/api/translate"
                     }
                 },
             )
@@ -5427,7 +5383,7 @@ async def nmt_inference(
             # Use a local client for this request
             async with httpx.AsyncClient(timeout=30.0) as client:
                 translate_response = await client.post(
-                    app_env.llm_translate_api_url,
+                    "http://13.201.75.118:8000/api/translate",
                     json=translate_payload,
                     headers={"Content-Type": "application/json"}
                 )
@@ -6943,7 +6899,7 @@ async def get_feature_flag(
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     # Use default environment if not provided (config service will also default, but we pass it for consistency)
-    env = environment or app_env.unleash_environment
+    env = environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
     # Build query string with required parameters
     from urllib.parse import urlencode
     query_params = {"environment": env}
@@ -6966,7 +6922,7 @@ async def list_feature_flags(
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     # Use default environment if not provided (config service will also default, but we pass it for consistency)
-    env = environment or app_env.unleash_environment
+    env = environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
     # Build query string with required parameters
     from urllib.parse import urlencode
     query_params = {"environment": env, "limit": str(limit), "offset": str(offset)}
@@ -6998,7 +6954,7 @@ async def sync_feature_flags(
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     # Use default environment if not provided (config service will also default, but we pass it for consistency)
-    env = environment or app_env.unleash_environment
+    env = environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
     # Build query string with required parameters
     from urllib.parse import urlencode
     query_params = {"environment": env}
@@ -7508,28 +7464,6 @@ async def list_services(
         headers=headers
     )
 
-
-@app.delete("/api/v1/multi-tenant/delete/services", response_model=ServiceDeleteResponse, tags=["Multi-Tenant"])
-async def delete_service(
-    payload: ServiceDeleteRequest,
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme),
-):
-    """Delete a service configuration by service_id."""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    headers["Content-Type"] = "application/json"
-    body = json.dumps(payload.model_dump(mode="json", exclude_unset=False)).encode("utf-8")
-    return await proxy_to_service(
-        None,
-        "/delete/services",
-        "multi-tenant-service",
-        method="DELETE",
-        body=body,
-        headers=headers,
-    )
-
 @app.get("/api/v1/multi-tenant/resolve/tenant/from/user/{user_id}", tags=["Multi-Tenant"])
 async def resolve_tenant_from_user(
     user_id: int,
@@ -7686,8 +7620,8 @@ async def get_trace_operations(
 # Helper function to proxy requests to auth service
 async def proxy_to_auth_service(request: Request, path: str):
     """Proxy request to auth service"""
-    auth_service_url = app_env.auth_service_url
-
+    auth_service_url = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
+    
     try:
         # Prepare request body
         body = None
@@ -7727,27 +7661,27 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
     
     # Direct service URL mapping (bypassing service registry)
     service_urls = {
-        'auth-service': app_env.auth_service_url,
-        'config-service': app_env.config_service_url,
-        'metrics-service': app_env.metrics_service_url,
-        'telemetry-service': app_env.telemetry_service_url,
-        'alerting-service': app_env.alerting_service_url,
-        'dashboard-service': app_env.dashboard_service_url,
-        'asr-service': app_env.asr_service_url,
-        'tts-service': app_env.tts_service_url,
-        'nmt-service': app_env.nmt_service_url,
-        'ocr-service': app_env.ocr_service_url,
-        'ner-service': app_env.ner_service_url,
-        'transliteration-service': app_env.transliteration_service_url,
-        'language-detection-service': app_env.language_detection_service_url,
-        'speaker-diarization-service': app_env.speaker_diarization_service_url,
-        'language-diarization-service': app_env.language_diarization_service_url,
-        'audio-lang-detection-service': app_env.audio_lang_detection_service_url,
-        'model-management-service': app_env.model_management_service_url,
-        'llm-service': app_env.llm_service_url,
-        'pipeline-service': app_env.pipeline_service_url,
-        'multi-tenant-service': app_env.multi_tenant_service_url,
-        'alert-management-service': app_env.alert_management_service_url
+        'auth-service': os.getenv('AUTH_SERVICE_URL', 'http://auth-service:8081'),
+        'config-service': os.getenv('CONFIG_SERVICE_URL', 'http://config-service:8082'),
+        'metrics-service': os.getenv('METRICS_SERVICE_URL', 'http://metrics-service:8083'),
+        'telemetry-service': os.getenv('TELEMETRY_SERVICE_URL', 'http://telemetry-service:8084'),
+        'alerting-service': os.getenv('ALERTING_SERVICE_URL', 'http://alerting-service:8085'),
+        'dashboard-service': os.getenv('DASHBOARD_SERVICE_URL', 'http://dashboard-service:8086'),
+        'asr-service': os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087'),
+        'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
+        'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
+        'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
+        'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),
+        'transliteration-service': os.getenv('TRANSLITERATION_SERVICE_URL', 'http://transliteration-service:8090'),
+        'language-detection-service': os.getenv('LANGUAGE_DETECTION_SERVICE_URL', 'http://language-detection-service:8090'),
+        'speaker-diarization-service': os.getenv('SPEAKER_DIARIZATION_SERVICE_URL', 'http://speaker-diarization-service:8095'),
+        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:8090'),
+        'audio-lang-detection-service': os.getenv('AUDIO_LANG_DETECTION_SERVICE_URL', 'http://audio-lang-detection-service:8096'),
+        'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
+        'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
+        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090'),
+        'multi-tenant-service': os.getenv('MULTI_TENANT_SERVICE_URL', 'http://multi-tenant-service:8001'),
+        'alert-management-service': os.getenv('ALERT_MANAGEMENT_SERVICE_URL', 'http://alert-management-service:8098')
     }
     
     try:
@@ -7794,9 +7728,9 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         elif service_name == 'ner-service':
             # NER needs time for Triton inference (default 30s) + processing overhead
             # Set to 60s to allow for Triton timeout + NER processing time
-            timeout_value = app_env.ner_service_timeout_seconds
+            timeout_value = float(os.getenv("NER_SERVICE_TIMEOUT_SECONDS", "60.0"))
         else:
-            timeout_value = app_env.default_service_timeout_seconds
+            timeout_value = float(os.getenv("DEFAULT_SERVICE_TIMEOUT_SECONDS", "60.0"))
         final_url = f"{service_url}{path}"
         
         # Don't log proxy request details for successful requests - service-level logging handles this
@@ -7998,24 +7932,26 @@ async def proxy_to_service_with_params(
     
     # Direct service URL mapping
     service_urls = {
-        'auth-service': app_env.auth_service_url,
-        'config-service': app_env.config_service_url,
-        'metrics-service': app_env.metrics_service_url,
-        'telemetry-service': app_env.telemetry_service_url,
-        'alerting-service': app_env.alerting_service_url,
-        'dashboard-service': app_env.dashboard_service_url,
-        'asr-service': app_env.asr_service_url,
-        'tts-service': app_env.tts_service_url,
-        'nmt-service': app_env.nmt_service_url,
-        'ocr-service': app_env.ocr_service_url,
-        'ner-service': app_env.ner_service_url,
-        'speaker-diarization-service': app_env.speaker_diarization_service_url,
-        'language-diarization-service': app_env.language_diarization_service_url,
-        'audio-lang-detection-service': app_env.audio_lang_detection_service_url,
-        'model-management-service': app_env.model_management_service_url,
-        'llm-service': app_env.llm_service_url,
-        'pipeline-service': app_env.pipeline_service_url,
-        'multi-tenant-service': app_env.multi_tenant_service_url
+        'auth-service': os.getenv('AUTH_SERVICE_URL', 'http://auth-service:8081'),
+        'config-service': os.getenv('CONFIG_SERVICE_URL', 'http://config-service:8082'),
+        'metrics-service': os.getenv('METRICS_SERVICE_URL', 'http://metrics-service:8083'),
+        'telemetry-service': os.getenv('TELEMETRY_SERVICE_URL', 'http://telemetry-service:8084'),
+        'alerting-service': os.getenv('ALERTING_SERVICE_URL', 'http://alerting-service:8085'),
+        'dashboard-service': os.getenv('DASHBOARD_SERVICE_URL', 'http://dashboard-service:8086'),
+        'asr-service': os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087'),
+        'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
+        'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
+        'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
+        'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),
+        'speaker-diarization-service': os.getenv('SPEAKER_DIARIZATION_SERVICE_URL', 'http://speaker-diarization-service:8095'),
+        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:8090'),
+        'audio-lang-detection-service': os.getenv('AUDIO_LANG_DETECTION_SERVICE_URL', 'http://audio-lang-detection-service:8096'),
+        'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
+        'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),
+        'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
+        'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
+        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090'),
+        'multi-tenant-service': os.getenv('MULTI_TENANT_SERVICE_URL', 'http://multi-tenant-service:8001')
     }
     
     try:
@@ -8487,5 +8423,5 @@ async def proxy_request(request: Request, path: str):
 
 if __name__ == "__main__":
     import uvicorn
-    port = app_env.port or app_env.service_port
+    port = int(os.getenv("PORT", os.getenv("SERVICE_PORT", "8080")))
     uvicorn.run(app, host="0.0.0.0", port=port)
