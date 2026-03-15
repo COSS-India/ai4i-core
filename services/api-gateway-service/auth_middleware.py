@@ -2,6 +2,7 @@
 Authentication middleware for API Gateway
 Authentication is delegated to auth-service for centralized validation
 """
+import atexit
 import os
 import sys
 import logging
@@ -26,7 +27,6 @@ except ImportError:
 
 # Import error messages - use importlib for reliable file-based import
 import importlib.util
-import os
 
 # Try regular import first
 try:
@@ -216,3 +216,22 @@ class AuthMiddleware:
 
 # Global auth middleware instance
 auth_middleware = AuthMiddleware()
+
+
+def _close_http_client():
+    """Close the HTTP client on process exit to avoid connection pool leak."""
+    try:
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.call_soon_threadsafe(lambda: asyncio.create_task(auth_middleware.close()))
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(auth_middleware.close())
+            loop.close()
+    except Exception:
+        pass
+
+
+atexit.register(_close_http_client)

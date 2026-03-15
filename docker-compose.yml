@@ -1018,16 +1018,21 @@ services:
       retries: 3
 
   # Observability: Alertmanager (POC)
+  # Mount directory; bootstrap ensures alertmanager.yml exists (copy from .default.yml if missing)
   alertmanager:
     image: prom/alertmanager:v0.27.0
     container_name: ai4v-alertmanager
     ports:
       - "9095:9093"
     volumes:
-      - ./infrastructure/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - ./infrastructure/alertmanager:/etc/alertmanager
+    entrypoint: ["sh", "-c"]
     command:
-      - "--config.file=/etc/alertmanager/alertmanager.yml"
-      - "--web.enable-lifecycle"
+      - |
+        if [ ! -f /etc/alertmanager/alertmanager.yml ]; then
+          cp /etc/alertmanager/alertmanager.default.yml /etc/alertmanager/alertmanager.yml;
+        fi;
+        exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml
     networks:
       - microservices-network
     restart: unless-stopped
@@ -1097,8 +1102,8 @@ services:
       # Mount Prometheus rules directory (writable so sync service can write YAML files)
       - ./infrastructure/prometheus/rules:/etc/prometheus/rules
       # Mount Alertmanager config file (writable so sync service can write YAML file)
-      # Note: alertmanager mounts this as read-only, but sync service writes to host file
-      - ./infrastructure/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      # Mount alertmanager dir so sync service can write alertmanager.yml (bootstrap creates it from .default if missing)
+      - ./infrastructure/alertmanager:/etc/alertmanager
     depends_on:
       postgres:
         condition: service_healthy
