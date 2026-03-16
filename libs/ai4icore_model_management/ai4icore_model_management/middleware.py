@@ -5,6 +5,7 @@ FastAPI middleware for automatic serviceId → endpoint + model_name resolution
 
 import json
 import logging
+import re
 import time
 import uuid
 from typing import Optional, Dict, Tuple, Any
@@ -17,6 +18,9 @@ from .client import ModelManagementClient, ServiceInfo
 from .triton_client import TritonClient
 
 logger = logging.getLogger(__name__)
+
+# Allowlist pattern for service_id coming from client requests
+_SERVICE_ID_PATTERN = re.compile(r"^[a-zA-Z0-9/_\\-]{1,255}$")
 
 # Error raised when a service is unpublished (inference not allowed)
 SERVICE_UNPUBLISHED_CODE = "SERVICE_UNPUBLISHED"
@@ -364,8 +368,22 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                     body = await request.body()
                 
                 service_id = extract_service_id_from_body(body)
-                
                 if service_id:
+                    # Validate serviceId format and length using allowlist pattern
+                    if not _SERVICE_ID_PATTERN.match(str(service_id)):
+                        logger.warning(
+                            "Invalid serviceId format received from request body: %r for path %s",
+                            service_id,
+                            request.url.path,
+                        )
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "code": "INVALID_SERVICE_ID",
+                                "message": "Invalid serviceId format.",
+                                "serviceId": service_id,
+                            },
+                        )
                     # Log removed - middleware handles request/response logging
                     logger.debug(f"Extracted serviceId from request: {service_id}")
                 else:
