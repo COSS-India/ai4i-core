@@ -209,7 +209,7 @@ const ASRPage: React.FC = () => {
                   />
                 </Box>
 
-                {/* Instruction above Transcribe (same order as TTS: instruction then button) */}
+                {/* Helper text above action button only (record/upload are separate blocks in AudioRecorder above) */}
                 <Text fontSize="sm" color="gray.600">
                   Record or upload audio above, then click Transcribe to generate the transcript.
                 </Text>
