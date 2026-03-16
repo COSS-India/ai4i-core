@@ -86,6 +86,26 @@ export function useApiKeyManagementTab({
 
   const handleUpdateApiKey = async () => {
     if (!selectedKeyForUpdate) return;
+    if (!updateFormData.key_name?.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a key name",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (!updateFormData.permissions?.length) {
+      toast({
+        title: "Validation Error",
+        description: "Please select at least one permission",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     setIsUpdating(true);
     try {
       await authService.updateApiKey(selectedKeyForUpdate.id, updateFormData);

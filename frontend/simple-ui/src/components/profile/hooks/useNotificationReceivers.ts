@@ -16,7 +16,7 @@ const EMPTY_CREATE_FORM: NotificationReceiverCreate = {
   rule_name: null,
   description: null,
   email_to: [],
-  rbac_role: null,
+  rbac_role: "ADMIN",
   email_subject_template: null,
   email_body_template: null,
 };

@@ -115,9 +115,7 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
                   </option>
                 ))}
               </Select>
-              <Text fontSize="xs" color="gray.500" mt={1}>
-                Using placeholder users - API integration pending
-              </Text>
+            
             </FormControl>
           </Box>
 
