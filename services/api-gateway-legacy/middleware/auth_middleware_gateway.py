@@ -40,9 +40,9 @@ def get_tracer():
     except Exception:
         return None
 
-# Public routes that don't require authentication
+# Public routes that don't require authentication.
+# Do NOT add "/" as a prefix — use exact match for root only (see is_public_route).
 PUBLIC_ROUTES = [
-    "/",
     "/health",
     "/api/v1/status",
     "/docs",
@@ -81,15 +81,17 @@ AUTH_REQUIRED_ROUTES = [
 
 def is_public_route(path: str) -> bool:
     """Check if a route is public (no authentication required)."""
-    # Exact match
+    # Exact match for root only (every path would startswith "/" so never use prefix for root)
+    if path in ("/", ""):
+        return True
     if path in PUBLIC_ROUTES:
         return True
-    
-    # Prefix match for public routes
+
+    # Prefix match for public routes (e.g. /docs, /api/v1/auth/login)
     for public_route in PUBLIC_ROUTES:
         if path.startswith(public_route):
             return True
-    
+
     return False
 
 

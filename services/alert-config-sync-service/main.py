@@ -8,8 +8,9 @@ import asyncpg
 import yaml
 from yaml.representer import SafeRepresenter
 import httpx
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
+from contextlib import asynccontextmanager
 import logging
 
 # Custom YAML representer for HTML literal blocks
@@ -27,6 +28,9 @@ def html_literal_representer(dumper, data):
 # Register the custom representer at module level
 yaml.add_representer(HTMLLiteral, html_literal_representer)
 
+# Configuration (import first so logging config can use it)
+from ai4icore_env import app_env
+
 # Configure structured logging (JSON) so Fluent Bit forwards logs to OpenSearch
 try:
     from ai4icore_logging import get_logger, configure_logging
@@ -39,9 +43,6 @@ except ImportError:
     import logging
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
     logger = logging.getLogger(__name__)
-
-# Configuration
-from ai4icore_env import app_env
 
 DB_HOST = app_env.postgres_host
 DB_PORT = app_env.postgres_port
@@ -60,6 +61,11 @@ PROMETHEUS_APPLICATION_ALERTS_PATH = app_env.prometheus_application_alerts_path
 PROMETHEUS_INFRASTRUCTURE_ALERTS_PATH = app_env.prometheus_infrastructure_alerts_path
 ALERTMANAGER_CONFIG_PATH = app_env.alertmanager_config_path
 
+# Alert Management Service URL (for webhook receivers)
+ALERT_MANAGEMENT_SERVICE_URL = app_env.alert_management_service_url or os.getenv(
+    "ALERT_MANAGEMENT_SERVICE_URL", "http://alert-management-service:8098"
+)
+
 # Sync interval (seconds)
 SYNC_INTERVAL = app_env.sync_interval
 
@@ -71,6 +77,8 @@ db_pool: Optional[asyncpg.Pool] = None
 db_pool_lock = asyncio.Lock()
 auth_db_pool: Optional[asyncpg.Pool] = None
 auth_db_pool_lock = asyncio.Lock()
+multi_tenant_db_pool: Optional[asyncpg.Pool] = None
+multi_tenant_db_pool_lock = asyncio.Lock()
 
 # Lock to prevent concurrent sync operations
 sync_lock = asyncio.Lock()
@@ -130,6 +138,92 @@ async def close_auth_db_pool():
         await auth_db_pool.close()
         auth_db_pool = None
         logger.info("Auth database connection pool closed")
+
+async def init_multi_tenant_db_pool():
+    """Initialize multi-tenant database connection pool for resolving tenant name to tenant_id and tenant user email."""
+    global multi_tenant_db_pool
+    async with multi_tenant_db_pool_lock:
+        if multi_tenant_db_pool is None:
+            try:
+                multi_tenant_db_pool = await asyncpg.create_pool(
+                    host=DB_HOST,
+                    port=DB_PORT,
+                    user=DB_USER,
+                    password=DB_PASSWORD,
+                    database=MULTI_TENANT_DB_NAME,
+                    min_size=1,
+                    max_size=3
+                )
+                logger.info("Multi-tenant database connection pool initialized")
+            except Exception as e:
+                logger.warning(f"Could not initialize multi_tenant_db pool (tenant resolution will be skipped): {e}")
+                multi_tenant_db_pool = None
+
+async def close_multi_tenant_db_pool():
+    """Close multi-tenant database connection pool"""
+    global multi_tenant_db_pool
+    if multi_tenant_db_pool:
+        await multi_tenant_db_pool.close()
+        multi_tenant_db_pool = None
+        logger.info("Multi-tenant database connection pool closed")
+
+async def resolve_tenant_name_to_tenant_id_and_emails(tenant_name: str) -> Optional[Tuple[str, List[str]]]:
+    """
+    Resolve tenant name to (tenant_id, list of emails) using multi_tenant_db and auth_db.
+    Matches tenant by organization_name only (case-insensitive, trimmed); then auth_db users where is_tenant=true.
+    Returns (tenant_id, [emails]) or None if not found or no tenant user.
+    """
+    if not tenant_name or not str(tenant_name).strip():
+        return None
+    tenant_name = str(tenant_name).strip()
+    try:
+        if multi_tenant_db_pool is None:
+            await init_multi_tenant_db_pool()
+        if multi_tenant_db_pool is None:
+            logger.warning("multi_tenant_db pool not available; cannot resolve tenant to tenant_id/emails")
+            return None
+        async with multi_tenant_db_pool.acquire() as conn:
+            # Match by organization_name only (case-insensitive, trimmed)
+            row = await conn.fetchrow(
+                """
+                SELECT tenant_id, user_id
+                FROM tenants
+                WHERE LOWER(TRIM(organization_name)) = LOWER(TRIM($1))
+                LIMIT 1
+                """,
+                tenant_name
+            )
+            if not row:
+                logger.info(f"Tenant not found in multi_tenant_db for organization_name '{tenant_name}'")
+                return None
+            tenant_id = str(row['tenant_id'])
+            user_id = row.get('user_id')
+            if user_id is None:
+                logger.info(f"Tenant '{tenant_name}' (tenant_id={tenant_id}) has no user_id in multi_tenant_db; no tenant user email available")
+                return (tenant_id, [])
+        # Resolve tenant user email from auth_db (user where is_tenant = true)
+        if auth_db_pool is None:
+            await init_auth_db_pool()
+        if auth_db_pool is None:
+            logger.warning("auth_db pool not available; cannot resolve tenant user email")
+            return (tenant_id, [])
+        async with auth_db_pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT email FROM users
+                WHERE id = $1 AND is_tenant = true AND is_active = true AND email IS NOT NULL AND email != ''
+                """,
+                user_id
+            )
+            emails = [r['email'] for r in rows if r.get('email')]
+        if not emails:
+            logger.info(f"Tenant '{tenant_name}' (tenant_id={tenant_id}, user_id={user_id}): no auth_db user with is_tenant=true and valid email")
+        else:
+            logger.info(f"Resolved tenant '{tenant_name}' -> tenant_id={tenant_id}, {len(emails)} tenant user email(s)")
+        return (tenant_id, emails)
+    except Exception as e:
+        logger.warning(f"Failed to resolve tenant '{tenant_name}' to tenant_id/emails: {e}")
+        return None
 
 async def fetch_admin_emails() -> List[str]:
     """Fetch email addresses of active users with ADMIN role from auth DB for default receiver."""
@@ -203,6 +297,32 @@ async def fetch_routing_rules() -> List[Dict[str, Any]]:
         )
         return [dict(row) for row in rows]
 
+def inject_tenant_into_promql(expr: str) -> str:
+    """
+    Ensure application alert PromQL preserves the metric's tenant label so firing alerts
+    can be routed by tenant in Alertmanager. Idempotent: does not double-inject.
+    """
+    if not expr:
+        return expr
+    import re
+    # If already has tenant in group-by, leave as-is
+    if ", tenant)" in expr:
+        return expr
+    # Latency-style: sum by (le, endpoint) -> sum by (le, endpoint, tenant)
+    expr = re.sub(
+        r'sum by\s*\(\s*le\s*,\s*endpoint\s*\)',
+        'sum by (le, endpoint, tenant)',
+        expr,
+    )
+    # Error-rate-style: sum by (endpoint) -> sum by (endpoint, tenant)
+    expr = re.sub(
+        r'sum by\s*\(\s*endpoint\s*\)',
+        'sum by (endpoint, tenant)',
+        expr,
+    )
+    return expr
+
+
 def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], category: str = None) -> Dict[str, Any]:
     """
     Generate Prometheus alerts.yml structure from alert definitions.
@@ -227,9 +347,11 @@ def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], cat
         unique_alert_name = alert_name
         
         # Build alert rule (no organization in labels; alerts are global)
+        # Preserve metric tenant label in expr so Alertmanager can route by tenant
+        promql_expr = inject_tenant_into_promql(alert['promql_expr'])
         alert_rule = {
             'alert': unique_alert_name,
-            'expr': alert['promql_expr'],
+            'expr': promql_expr,
             'for': alert['for_duration'],
             'labels': {
                 'severity': alert['severity'],
@@ -285,10 +407,48 @@ DEFAULT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{ if eq .GroupLabels.severit
 <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
 """
 
+def get_global_config_from_env() -> Dict[str, Any]:
+    """
+    Build global SMTP config from environment variables.
+    In Docker, env comes from docker-compose env_file: ./.env and environment: SMTP_*=${SMTP_*} (same pattern as alert-management-service).
+    Keys with no value are omitted so the YAML does not contain 'key: null'.
+    """
+    out: Dict[str, Any] = {
+        'resolve_timeout': '5m',
+    }
+    smtp_smarthost = (os.getenv('SMTP_SMARTHOST') or '').strip()
+    smtp_from = (os.getenv('SMTP_FROM') or '').strip()
+    smtp_auth_username = (os.getenv('SMTP_AUTH_USERNAME') or '').strip()
+    smtp_auth_password = (os.getenv('SMTP_AUTH_PASSWORD') or '').strip()
+
+    if smtp_smarthost:
+        out['smtp_smarthost'] = smtp_smarthost
+    if smtp_from:
+        out['smtp_from'] = smtp_from
+    if smtp_auth_username:
+        out['smtp_auth_username'] = smtp_auth_username
+    if smtp_auth_password:
+        out['smtp_auth_password'] = smtp_auth_password
+    if 'smtp_smarthost' in out:
+        out['smtp_require_tls'] = True
+
+    if out.get('smtp_smarthost'):
+        logger.info(
+            "SMTP global config from env: smtp_smarthost=%s smtp_from=%s smtp_auth_username=%s auth_password_set=%s",
+            out.get('smtp_smarthost'), out.get('smtp_from'), out.get('smtp_auth_username'), bool(out.get('smtp_auth_password')),
+        )
+    else:
+        logger.warning(
+            "SMTP env vars not set (SMTP_SMARTHOST empty). Set SMTP_* in .env next to docker-compose and use env_file: ./.env (same as alert-management-service)."
+        )
+
+    return out
+
+
 def load_global_config_from_file() -> Dict[str, Any]:
     """
     Load global SMTP configuration from existing alertmanager.yml file.
-    Preserves only the global section (lines 1-7).
+    Preserves only the global section. Falls back to env if file missing/fails.
     """
     try:
         if os.path.exists(ALERTMANAGER_CONFIG_PATH):
@@ -313,21 +473,33 @@ def generate_alertmanager_yaml(
     receivers: List[Dict[str, Any]],
     routing_rules: List[Dict[str, Any]],
     default_admin_emails: Optional[List[str]] = None,
+    tenant_resolution_map: Optional[Dict[str, Tuple[str, List[str]]]] = None,
 ) -> Dict[str, Any]:
     """
     Generate Alertmanager configuration from receivers and routing rules.
-    Preserves global SMTP config from existing file, everything else comes from database.
+    Global SMTP config is always taken from environment variables (SMTP_*) when writing.
     Always includes a default receiver 'default-admin' (ADMIN role, not tied to any organization).
     Only routes whose receiver still exists in the config are included (stale routes removed).
+    When receiver has optional alert_names or tenant, uses unique receiver_name; otherwise merges by severity-category.
+    tenant_resolution_map: optional map tenant_name -> (tenant_id, [emails]) for receivers with tenant set.
     """
-    # Load global config from existing file (preserves SMTP settings)
-    global_config = load_global_config_from_file()
+    tenant_resolution_map = tenant_resolution_map or {}
+    # Always use env for global config when generating (so SMTP is never hardcoded)
+    global_config = get_global_config_from_env()
     
     default_admin_emails = default_admin_emails or []
     default_receiver_name = "default-admin"
 
-    # Build receivers: first add the default receiver (not tied to any organization, ADMIN role)
-    receivers_config = []
+    # Alert history webhook receiver: include so all alerts are also sent here for audit log
+    alert_history_webhook_url = f"{ALERT_MANAGEMENT_SERVICE_URL}/alerts/history/webhook"
+    receivers_config = [
+        {
+            "name": "alert-history-webhook",
+            "webhook_configs": [{"url": alert_history_webhook_url}],
+        }
+    ]
+
+    # Build receivers: add the default receiver (not tied to any organization, ADMIN role)
     default_email_configs = []
     for email in default_admin_emails:
         if email and str(email).strip():
@@ -344,128 +516,189 @@ def generate_alertmanager_yaml(
     if not default_email_configs:
         logger.warning("Default receiver 'default-admin' has no email addresses; set DEFAULT_RECEIVER_EMAILS or ensure auth DB has ADMIN users")
 
-    # Build receivers from database: one receiver per (severity, category), merge emails from all orgs
-    # Receiver name = severity-category (e.g. warning-application), no organization
+    # Build receivers from database: merge by (severity, category) when receiver_name is "severity-category"; else one per receiver_name (alert_names/tenant)
     receivers_by_severity_category = {}  # (severity, category) -> list of email_configs to merge
+    receivers_by_unique_name = {}  # receiver_name -> list of email_configs (for names containing "--")
     
     for receiver in receivers:
         receiver_name = receiver['receiver_name']
-        # Parse receiver name: format severity-category (e.g. "warning-application")
+        # When tenant is set, use tenant user emails from resolution map; fallback to email_to if none
+        tenant_name = (receiver.get('tenant') or '').strip() or None
+        if tenant_name and tenant_name in tenant_resolution_map:
+            _tid, tenant_emails = tenant_resolution_map[tenant_name]
+            email_list = [e for e in tenant_emails if e and str(e).strip()]
+            if not email_list:
+                # Fallback to email_to when tenant user has no email
+                logger.info(f"Receiver '{receiver_name}' (tenant={tenant_name}): no tenant user emails, using email_to fallback")
+                email_to = receiver.get('email_to')
+                if isinstance(email_to, str):
+                    email_list = [email_to]
+                elif isinstance(email_to, list):
+                    email_list = list(email_to) if email_to else []
+                else:
+                    email_list = list(email_to) if email_to else []
+            else:
+                logger.debug(f"Receiver '{receiver_name}': using {len(email_list)} tenant user email(s) for tenant '{tenant_name}'")
+        else:
+            if tenant_name:
+                logger.warning(f"Tenant '{tenant_name}' could not be resolved for receiver '{receiver_name}'; using email_to")
+            email_to = receiver.get('email_to')
+            if isinstance(email_to, str):
+                email_list = [email_to]
+            elif isinstance(email_to, list):
+                email_list = list(email_to) if email_to else []
+            else:
+                email_list = list(email_to) if email_to else []
+        
+        email_configs = []
+        email_subject_template = receiver.get('email_subject_template') or DEFAULT_EMAIL_SUBJECT_TEMPLATE
+        email_body_template = receiver.get('email_body_template') or DEFAULT_EMAIL_BODY_TEMPLATE
+        for email in email_list:
+            if email and str(email).strip():
+                email_configs.append({
+                    'to': str(email).strip(),
+                    'send_resolved': True,
+                    'headers': {'Subject': email_subject_template},
+                    'html': email_body_template
+                })
+        
+        if not email_configs:
+            logger.warning(f"No valid email addresses for receiver '{receiver_name}' (org: {receiver.get('organization')})")
+            continue
+        
+        # Unique receiver name (contains "--") -> one Alertmanager receiver per name
+        if '--' in receiver_name:
+            if receiver_name not in receivers_by_unique_name:
+                receivers_by_unique_name[receiver_name] = []
+            receivers_by_unique_name[receiver_name].extend(email_configs)
+            continue
+        
+        # Legacy: severity-category (no --) -> merge by (severity, category)
         parts = receiver_name.split('-', 1)
         if len(parts) != 2:
             logger.warning(f"Receiver name '{receiver_name}' doesn't follow pattern 'severity-category', skipping")
             continue
         severity, category = parts
         key = (severity, category)
-        
-        # Build email configs for this DB receiver
-        email_configs = []
-        if receiver.get('email_to'):
-            email_to = receiver['email_to']
-            if isinstance(email_to, str):
-                email_list = [email_to]
-            elif isinstance(email_to, list):
-                email_list = email_to
-            else:
-                email_list = list(email_to) if email_to else []
-            
-            email_subject_template = receiver.get('email_subject_template') or DEFAULT_EMAIL_SUBJECT_TEMPLATE
-            email_body_template = receiver.get('email_body_template') or DEFAULT_EMAIL_BODY_TEMPLATE
-            
-            for email in email_list:
-                if email and str(email).strip():
-                    email_config = {
-                        'to': str(email).strip(),
-                        'send_resolved': True,
-                        'headers': {'Subject': email_subject_template},
-                        'html': email_body_template
-                    }
-                    email_configs.append(email_config)
-        
-        if not email_configs:
-            logger.warning(f"No valid email addresses for receiver '{receiver_name}' (org: {receiver.get('organization')})")
-            continue
-        
         if key not in receivers_by_severity_category:
             receivers_by_severity_category[key] = []
         receivers_by_severity_category[key].extend(email_configs)
     
-    # One Alertmanager receiver per (severity, category) with merged email_configs
+    # One Alertmanager receiver per (severity, category) with merged email_configs (legacy)
     for (severity, category), email_configs in receivers_by_severity_category.items():
-        receiver_name_alertmanager = f"{severity}-{category}"
+        receiver_name_am = f"{severity}-{category}"
         receivers_config.append({
-            'name': receiver_name_alertmanager,
+            'name': receiver_name_am,
+            'email_configs': email_configs,
+        })
+    # One Alertmanager receiver per unique name (alert_names/tenant)
+    for name, email_configs in receivers_by_unique_name.items():
+        receivers_config.append({
+            'name': name,
             'email_configs': email_configs,
         })
     
-    # Build routing tree: one route per (severity, category), receiver = severity-category (no organization)
-    # Use explicit routing rules when available (custom group_wait, match_alert_type, etc.); else defaults
+    # Build routing tree: one route per routing rule; match severity, category, optional alert_type, optional alertname, optional tenant
     root_routes = []
     valid_receiver_names = {r['name'] for r in receivers_config}
+    receivers_by_id = {r['id']: r for r in receivers}
     
-    # Build map (severity, category) -> best explicit rule (lowest priority wins; any org)
-    explicit_rule_by_key = {}
-    if routing_rules:
-        # Sort by priority ascending (lower = higher priority)
-        for rule in sorted(routing_rules, key=lambda r: r.get('priority', 100)):
-            sev = rule.get('match_severity')
-            cat = rule.get('match_category')
-            if sev and cat:
-                key = (sev, cat)
-                if key not in explicit_rule_by_key:
-                    explicit_rule_by_key[key] = rule
+    # Sort rules by priority (lower first); then put rules with more matchers (tenant, alert_names) first for same priority
+    def route_sort_key(rule):
+        r = receivers_by_id.get(rule.get('receiver_id'), {})
+        has_tenant = bool((r.get('tenant') or '').strip())
+        has_alert_names = bool(rule.get('match_alert_names'))
+        return (rule.get('priority', 100), 0 if (has_tenant or has_alert_names) else 1)
     
-    for (severity, category) in receivers_by_severity_category.keys():
-        receiver_name_alertmanager = f"{severity}-{category}"
-        if receiver_name_alertmanager not in valid_receiver_names:
+    for rule in sorted(routing_rules, key=route_sort_key):
+        receiver = receivers_by_id.get(rule.get('receiver_id'))
+        if not receiver:
             continue
-        explicit_rule = explicit_rule_by_key.get((severity, category))
-        match_conditions = {'severity': severity, 'category': category}
-        if explicit_rule and explicit_rule.get('match_alert_type'):
-            match_conditions['alert_type'] = explicit_rule['match_alert_type']
+        receiver_name_db = receiver['receiver_name']
+        # Alertmanager receiver name: unique name if contains "--", else severity-category
+        if '--' in receiver_name_db:
+            receiver_name_am = receiver_name_db
+        else:
+            sev, cat = rule.get('match_severity'), rule.get('match_category')
+            if not sev or not cat:
+                continue
+            receiver_name_am = f"{sev}-{cat}"
+        
+        if receiver_name_am not in valid_receiver_names:
+            continue
+        
+        match_conditions = {
+            'severity': rule.get('match_severity'),
+            'category': rule.get('match_category'),
+        }
+        if rule.get('match_alert_type'):
+            match_conditions['alert_type'] = rule['match_alert_type']
+        
+        # Optional: match specific alert names (alertname label in Prometheus)
+        match_alert_names = rule.get('match_alert_names')
+        match_re_alertname = None
+        if match_alert_names and isinstance(match_alert_names, (list, tuple)):
+            names = [n for n in match_alert_names if n and str(n).strip()]
+            if len(names) == 1:
+                match_conditions['alertname'] = names[0]
+            elif len(names) > 1:
+                import re
+                match_re_alertname = '|'.join(re.escape(n) for n in names)
+        
+        # Optional: match tenant (tenant label in metrics)
+        tenant_name = (receiver.get('tenant') or '').strip() or None
+        if tenant_name and tenant_name in tenant_resolution_map:
+            tenant_id, _ = tenant_resolution_map[tenant_name]
+            match_conditions['tenant'] = tenant_id
+        
         route = {
             'match': match_conditions,
-            'receiver': receiver_name_alertmanager,
-            'group_wait': (explicit_rule or {}).get('group_wait') or '10s',
-            'group_interval': (explicit_rule or {}).get('group_interval') or '10s',
-            'repeat_interval': (explicit_rule or {}).get('repeat_interval') or '12h',
+            'receiver': receiver_name_am,
+            'group_wait': rule.get('group_wait') or '10s',
+            'group_interval': rule.get('group_interval') or '10s',
+            'repeat_interval': rule.get('repeat_interval') or '12h',
             'continue': True
         }
-        if explicit_rule and explicit_rule.get('group_by'):
-            route['group_by'] = explicit_rule['group_by']
+        if match_re_alertname:
+            route['match_re'] = {'alertname': match_re_alertname}
+        if rule.get('group_by'):
+            route['group_by'] = rule['group_by']
         root_routes.append(route)
-        logger.debug(f"Route for severity={severity} category={category} -> receiver {receiver_name_alertmanager}" + (" (explicit rule)" if explicit_rule else " (defaults)"))
     
-    # Only include routes whose receiver exists in our config (remove stale routes for deleted receivers)
-    before_count = len(root_routes)
+    # Prepend catch-all route so every alert is also sent to alert-history-webhook (continue so other routes still run)
+    root_routes.insert(0, {
+        "receiver": "alert-history-webhook",
+        "continue": True,
+    })
+    
+    # Deduplicate and ensure we don't have duplicate match sets (Alertmanager uses first match)
+    # Only include routes whose receiver exists
     root_routes = [r for r in root_routes if r.get('receiver') in valid_receiver_names]
-    if len(root_routes) < before_count:
-        logger.warning(f"Removed {before_count - len(root_routes)} route(s) that referenced non-existent receivers")
 
     # Build complete Alertmanager configuration
-    # Only global config is preserved from file, everything else from database
     route_config = {
-        'group_by': ['alertname', 'category', 'severity'],
+        'group_by': ['alertname', 'category', 'severity', 'tenant'],
         'group_wait': '10s',
         'group_interval': '10s',
         'repeat_interval': '12h'
     }
-    
-    # Root default receiver is always default-admin (not tied to any organization, ADMIN role)
     route_config['receiver'] = default_receiver_name
-    
-    # Routes: only include routes for receivers that exist in config
-    if not root_routes:
-        logger.info("No severity/category routes; all alerts will go to default-admin receiver.")
     route_config['routes'] = root_routes
     
+    if not root_routes:
+        logger.info("No severity/category routes; all alerts will go to default-admin receiver.")
+
+    # Sanitize global: drop any key that is None or empty string so YAML never gets "key: null"
+    global_sanitized = {
+        k: v for k, v in global_config.items()
+        if v is not None and (v != '' if isinstance(v, str) else True)
+    }
+
     config = {
-        'global': global_config,
+        'global': global_sanitized,
         'route': route_config,
         'receivers': receivers_config
     }
-    
-    # Add inhibition rules (optional, can be configured via API later)
     config['inhibit_rules'] = [
         {
             'source_match': {'severity': 'critical'},
@@ -473,7 +706,6 @@ def generate_alertmanager_yaml(
             'equal': ['alertname', 'category']
         }
     ]
-    
     return config
 
 async def validate_prometheus_config(config: Dict[str, Any]) -> bool:
@@ -635,10 +867,8 @@ async def trigger_prometheus_reload() -> bool:
         return False
 
 async def trigger_alertmanager_reload() -> bool:
-    """Trigger Alertmanager configuration reload"""
+    """Trigger Alertmanager configuration reload via POST /-/reload (enabled by default in Alertmanager)."""
     try:
-        # Alertmanager can reload via HTTP API or SIGHUP
-        # Try HTTP API first (Alertmanager 0.16+)
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(f"{ALERTMANAGER_URL}/-/reload")
@@ -646,16 +876,24 @@ async def trigger_alertmanager_reload() -> bool:
                     logger.info("Alertmanager configuration reloaded successfully via HTTP API")
                     return True
                 else:
-                    logger.warning(f"Alertmanager reload returned status {response.status_code}: {response.text}")
+                    logger.warning(
+                        "Alertmanager reload returned status %s: %s. "
+                        "Config was written but not loaded; restart the alertmanager container to apply.",
+                        response.status_code,
+                        response.text,
+                    )
+                    return False
         except Exception as e:
-            logger.debug(f"Alertmanager HTTP reload not available: {e}")
-        
-        # Fallback: Alertmanager watches config file for changes
-        # File modification will trigger automatic reload
-        logger.info("Alertmanager will reload automatically when config file changes")
-        return True
+            logger.debug("Alertmanager HTTP reload not available: %s", e)
+
+        # Reload API unreachable - config will not reload until container restart
+        logger.warning(
+            "Alertmanager config was written but reload request failed. "
+            "Restart the alertmanager container to apply the new config."
+        )
+        return False
     except Exception as e:
-        logger.error(f"Failed to trigger Alertmanager reload: {e}")
+        logger.error("Failed to trigger Alertmanager reload: %s", e)
         return False
 
 async def sync_configuration(blocking: bool = True) -> None:
@@ -725,10 +963,33 @@ async def sync_configuration(blocking: bool = True) -> None:
             # Resolve ADMIN emails for default receiver (not tied to any organization)
             default_admin_emails = await fetch_admin_emails()
 
+            # Resolve tenant names to (tenant_id, emails) for receivers that have tenant set
+            tenant_resolution_map = {}
+            unique_tenant_names = set()
+            for r in receivers:
+                t = (r.get('tenant') or '').strip() or None
+                if t:
+                    unique_tenant_names.add(t)
+            for tname in unique_tenant_names:
+                resolved = await resolve_tenant_name_to_tenant_id_and_emails(tname)
+                if resolved:
+                    tenant_id, emails = resolved
+                    tenant_resolution_map[tname] = resolved
+                    if emails:
+                        logger.info(f"Tenant '{tname}' resolved to tenant_id={tenant_id}, {len(emails)} email(s) for receiver routing")
+                    else:
+                        logger.warning(f"Tenant '{tname}' resolved to tenant_id={tenant_id} but no tenant user email; receivers will use email_to fallback")
+                else:
+                    logger.warning(f"Could not resolve tenant '{tname}' to tenant_id/emails; routes for this tenant will use email_to fallback")
+
             # Generate YAML configurations - separate files for application and infrastructure
             application_alerts = generate_prometheus_alerts_yaml(alert_definitions, category='application')
             infrastructure_alerts = generate_prometheus_alerts_yaml(alert_definitions, category='infrastructure')
-            alertmanager_config = generate_alertmanager_yaml(receivers, routing_rules, default_admin_emails=default_admin_emails)
+            alertmanager_config = generate_alertmanager_yaml(
+                receivers, routing_rules,
+                default_admin_emails=default_admin_emails,
+                tenant_resolution_map=tenant_resolution_map,
+            )
             
             # Write YAML files - separate files for application and infrastructure alerts
             await write_yaml_file(PROMETHEUS_APPLICATION_ALERTS_PATH, application_alerts)
@@ -803,13 +1064,39 @@ async def run_periodic_sync():
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
-app = FastAPI(title="Alert Config Sync Service")
+# Background sync task (set by lifespan, cancelled on shutdown)
+_sync_task: Optional[asyncio.Task] = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start periodic sync in the same event loop as the app; close pools on shutdown."""
+    global _sync_task
+    _sync_task = asyncio.create_task(run_periodic_sync())
+    logger.info("Background configuration sync task started")
+    try:
+        yield
+    finally:
+        if _sync_task and not _sync_task.done():
+            _sync_task.cancel()
+            try:
+                await _sync_task
+            except asyncio.CancelledError:
+                pass
+            logger.info("Background sync task stopped")
+        await close_db_pool()
+        await close_auth_db_pool()
+        await close_multi_tenant_db_pool()
+        logger.info("Database connection pools closed")
+
+
+app = FastAPI(title="Alert Config Sync Service", lifespan=lifespan)
 
 @app.post("/sync")
 async def trigger_sync_endpoint():
     """Manually trigger configuration sync (called by API Gateway after create/update/delete)"""
     try:
-        # Ensure DB pool is initialized (should already be from startup)
+        # Ensure DB pool is initialized (lifespan starts sync task which calls init_db_pool)
         if db_pool is None:
             await init_db_pool()
         
@@ -831,17 +1118,12 @@ async def trigger_sync_endpoint():
             content={"status": "error", "message": error_msg}
         )
 
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "service": "alert-config-sync-service"}
 
-async def start_background_sync():
-    """Start periodic sync in background task"""
-    try:
-        await run_periodic_sync()
-    except Exception as e:
-        logger.error(f"Background sync task failed: {e}")
 
 if __name__ == "__main__":
     import uvicorn
