@@ -16,7 +16,7 @@ const EMPTY_CREATE_FORM = {
   alert_names: null as string[] | null,
   tenant: null as string | null,
   email_to: [] as string[],
-  rbac_role: null as string | null,
+  rbac_role: "ADMIN" as string | null,
   email_subject_template: null as string | null,
   email_body_template: null as string | null,
 };

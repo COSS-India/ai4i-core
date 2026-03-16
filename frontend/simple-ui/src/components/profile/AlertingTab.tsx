@@ -658,9 +658,17 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     >
                       {(() => {
                         const sel = defs.createForm.service ?? [];
-                        if (sel.length === 0) return <Text color="gray.400">Select targets...</Text>;
-                        if (sel.length === TARGET_SERVICES.length) return "All services selected";
-                        return sel.map((v) => TARGET_SERVICES.find((t) => t.value === v)?.label ?? v).join(", ");
+                        if (sel.length === 0) {
+                          return <Text color="gray.400">Select targets</Text>;
+                        }
+                        if (sel.length === TARGET_SERVICES.length) {
+                          return <Text color="gray.400">All services selected</Text>;
+                        }
+                        if (sel.length === 1) {
+                          const v = sel[0];
+                          return <Text color="gray.400">{TARGET_SERVICES.find((t) => t.value === v)?.label ?? v}</Text>;
+                        }
+                        return <Text color="gray.400">{`${sel.length} services selected`}</Text>;
                       })()}
                     </MenuButton>
                     <MenuList w="100%" maxH="300px" overflowY="auto">
@@ -1078,9 +1086,17 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     >
                       {(() => {
                         const sel = defs.updateForm.service ?? [];
-                        if (sel.length === 0) return <Text color="gray.400">Select targets...</Text>;
-                        if (sel.length === TARGET_SERVICES.length) return "All services selected";
-                        return sel.map((v) => TARGET_SERVICES.find((t) => t.value === v)?.label ?? v).join(", ");
+                        if (sel.length === 0) {
+                          return <Text color="gray.400">Select targets...</Text>;
+                        }
+                        if (sel.length === TARGET_SERVICES.length) {
+                          return "All services selected";
+                        }
+                        if (sel.length === 1) {
+                          const v = sel[0];
+                          return TARGET_SERVICES.find((t) => t.value === v)?.label ?? v;
+                        }
+                        return `${sel.length} services selected`;
                       })()}
                     </MenuButton>
                     <MenuList w="100%" maxH="300px" overflowY="auto">
@@ -1525,7 +1541,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <VStack spacing={4} align="stretch">
               <FormControl>
                 <FormLabel fontWeight="semibold">Receiver Name</FormLabel>
-                <Input value={recvs.updateForm.receiver_name ?? ""} onChange={(e) => recvs.setUpdateForm({ ...recvs.updateForm, receiver_name: e.target.value })} bg="white" />
+                <Input value={recvs.updateForm.rule_name ?? ""} onChange={(e) => recvs.setUpdateForm({ ...recvs.updateForm, rule_name: e.target.value })} bg="white" />
               </FormControl>
               <FormControl>
                 <FormLabel fontWeight="semibold">Recipient Type</FormLabel>
