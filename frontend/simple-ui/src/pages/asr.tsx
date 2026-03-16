@@ -1,6 +1,9 @@
 // ASR service testing page with recording, file upload, and results display
 
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
   Box,
   Button,
   FormControl,
@@ -214,6 +217,15 @@ const ASRPage: React.FC = () => {
                     disabled={fetching || !serviceId || !language}
                     timer={timer}
                   />
+                  {/* Upload / recording confirmation - show when audio is ready */}
+                  {!recording && pendingAudio && (
+                    <Alert status="success" borderRadius="md" mt={4}>
+                      <AlertIcon />
+                      <AlertDescription>
+                        Audio ready (recording or upload). Click Transcribe to generate the transcript.
+                      </AlertDescription>
+                    </Alert>
+                  )}
                 </Box>
 
                 {/* Helper text above action button only (record/upload are separate blocks in AudioRecorder above) */}

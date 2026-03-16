@@ -728,8 +728,9 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     placeholder="contact@organization.com"
                     value={tm.tenantForm.contact_email}
                     onChange={(e) => {
-                      tm.setTenantForm((f) => ({ ...f, contact_email: e.target.value }));
-                      if (tm.tenantFormErrors.contact_email) tm.setTenantFormErrors((prev) => ({ ...prev, contact_email: "" }));
+                      const value = e.target.value;
+                      tm.setTenantForm((f) => ({ ...f, contact_email: value }));
+                      tm.checkTenantContactEmailUnique(value);
                     }}
                     bg="white"
                   />
@@ -752,16 +753,51 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     </Box>
                   ) : tm.availableServicesForCreate && tm.availableServicesForCreate.length > 0 ? (
                     <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="200px" overflowY="auto">
-                      <Text fontSize="xs" color="gray.500" mb={2}>Select from loaded services:</Text>
-                      <CheckboxGroup value={tm.tenantForm.requested_subscriptions || []} onChange={(values) => tm.setTenantForm((f) => ({ ...f, requested_subscriptions: values as string[] }))}>
-                        <VStack align="stretch" spacing={2}>
-                          {tm.availableServicesForCreate.map((svc) => (
-                            <Checkbox key={svc.id} value={svc.service_name} colorScheme="blue" size="sm">
-                              <Text fontSize="sm">{(svc.service_name ?? "").toUpperCase()}</Text>
-                            </Checkbox>
-                          ))}
-                        </VStack>
-                      </CheckboxGroup>
+                      {(() => {
+                        const allServiceNames = tm.availableServicesForCreate.map((svc) => svc.service_name);
+                        const allSelected =
+                          allServiceNames.length > 0 &&
+                          allServiceNames.every((name) => tm.tenantForm.requested_subscriptions?.includes(name));
+                        return (
+                          <>
+                            <HStack justify="space-between" mb={2}>
+                              <Checkbox
+                                isChecked={allSelected}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    tm.setTenantForm((f) => ({
+                                      ...f,
+                                      requested_subscriptions: allServiceNames.filter(Boolean) as string[],
+                                    }));
+                                  } else {
+                                    tm.setTenantForm((f) => ({ ...f, requested_subscriptions: [] }));
+                                  }
+                                }}
+                                colorScheme="blue"
+                                size="sm"
+                              >
+                                <Text fontSize="sm" fontWeight="semibold">
+                                  Select All
+                                </Text>
+                              </Checkbox>
+                            </HStack>
+                            <CheckboxGroup
+                              value={tm.tenantForm.requested_subscriptions || []}
+                              onChange={(values) =>
+                                tm.setTenantForm((f) => ({ ...f, requested_subscriptions: values as string[] }))
+                              }
+                            >
+                              <VStack align="stretch" spacing={2}>
+                                {tm.availableServicesForCreate.map((svc) => (
+                                  <Checkbox key={svc.id} value={svc.service_name} colorScheme="blue" size="sm">
+                                    <Text fontSize="sm">{(svc.service_name ?? "").toUpperCase()}</Text>
+                                  </Checkbox>
+                                ))}
+                              </VStack>
+                            </CheckboxGroup>
+                          </>
+                        );
+                      })()}
                     </Box>
                   ) : (
                     <Box borderWidth="1px" borderRadius="md" p={3} bg="white">
@@ -870,7 +906,37 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   </Box>
                 ) : (
                   <VStack spacing={3} align="stretch">
-                    <Text fontSize="sm" color="gray.600">Check to add or uncheck to remove a service for this tenant. Changes are applied immediately.</Text>
+                    <Text fontSize="sm" color="gray.600">
+                      Check to add or uncheck to remove a service for this tenant. Changes are applied immediately.
+                    </Text>
+                    <HStack justify="space-between">
+                      <Checkbox
+                        isChecked={
+                          tm.availableServices.length > 0 &&
+                          tm.availableServices.every((svc) =>
+                            tm.manageServicesSelected.includes(svc.service_name)
+                          )
+                        }
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          tm.availableServices.forEach((svc) => {
+                            const isCurrentlySelected = tm.manageServicesSelected.includes(svc.service_name);
+                            if (checked && !isCurrentlySelected) {
+                              tm.handleTenantServiceCheckChange(svc.service_name, true);
+                            } else if (!checked && isCurrentlySelected) {
+                              tm.handleTenantServiceCheckChange(svc.service_name, false);
+                            }
+                          });
+                        }}
+                        isDisabled={tm.isSavingManageServices}
+                        colorScheme="blue"
+                        size="sm"
+                      >
+                        <Text fontSize="sm" fontWeight="semibold">
+                          Select All
+                        </Text>
+                      </Checkbox>
+                    </HStack>
                     <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="280px" overflowY="auto">
                       <VStack align="stretch" spacing={2}>
                         {tm.availableServices.map((svc) => (
@@ -887,7 +953,9 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                         ))}
                       </VStack>
                     </Box>
-                    <Text fontSize="sm" color="gray.500">{tm.manageServicesSelected.length} service(s) selected</Text>
+                    <Text fontSize="sm" color="gray.500">
+                      {tm.manageServicesSelected.length} service(s) selected
+                    </Text>
                   </VStack>
                 )}
               </>
@@ -950,7 +1018,37 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   </Box>
                 ) : (
                   <VStack spacing={3} align="stretch">
-                    <Text fontSize="sm" color="gray.600">Check to add or uncheck to remove a service for this user. Changes are applied immediately.</Text>
+                    <Text fontSize="sm" color="gray.600">
+                      Check to add or uncheck to remove a service for this user. Changes are applied immediately.
+                    </Text>
+                    <HStack justify="space-between">
+                      <Checkbox
+                        isChecked={
+                          tm.availableServicesForUser.length > 0 &&
+                          tm.availableServicesForUser.every((svc) =>
+                            tm.manageUserServicesSelected.includes(svc.service_name)
+                          )
+                        }
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          tm.availableServicesForUser.forEach((svc) => {
+                            const isCurrentlySelected = tm.manageUserServicesSelected.includes(svc.service_name);
+                            if (checked && !isCurrentlySelected) {
+                              tm.handleUserServiceCheckChange(svc.service_name, true);
+                            } else if (!checked && isCurrentlySelected) {
+                              tm.handleUserServiceCheckChange(svc.service_name, false);
+                            }
+                          });
+                        }}
+                        isDisabled={tm.isSavingManageUserServices}
+                        colorScheme="blue"
+                        size="sm"
+                      >
+                        <Text fontSize="sm" fontWeight="semibold">
+                          Select All
+                        </Text>
+                      </Checkbox>
+                    </HStack>
                     <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="280px" overflowY="auto">
                       <SimpleGrid columns={{ base: 2, sm: 3, md: 4 }} spacing={2}>
                         {tm.availableServicesForUser.map((svc) => (
@@ -967,7 +1065,9 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                         ))}
                       </SimpleGrid>
                     </Box>
-                    <Text fontSize="sm" color="gray.500">{tm.manageUserServicesSelected.length} service(s) selected</Text>
+                    <Text fontSize="sm" color="gray.500">
+                      {tm.manageUserServicesSelected.length} service(s) selected
+                    </Text>
                   </VStack>
                 )}
               </>
@@ -1012,9 +1112,20 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <FormLabel>Full Name</FormLabel>
                 <Input placeholder="Enter user's full name" value={tm.userForm.full_name} onChange={(e) => tm.setUserForm((f) => ({ ...f, full_name: e.target.value }))} bg="white" />
               </FormControl>
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={!!tm.userFormErrors?.email}>
                 <FormLabel>Email Address</FormLabel>
-                <Input type="email" placeholder="user@organization.com" value={tm.userForm.email} onChange={(e) => tm.setUserForm((f) => ({ ...f, email: e.target.value }))} bg="white" />
+                <Input
+                  type="email"
+                  placeholder="user@organization.com"
+                  value={tm.userForm.email}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    tm.setUserForm((f) => ({ ...f, email: value }));
+                    tm.checkUserEmailUnique(value);
+                  }}
+                  bg="white"
+                />
+                {tm.userFormErrors?.email && <FormErrorMessage>{tm.userFormErrors.email}</FormErrorMessage>}
               </FormControl>
               <FormControl isRequired>
                 <FormLabel>Username</FormLabel>
@@ -1043,26 +1154,46 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                       </Text>
                     );
                   }
+                  const allSelected =
+                    tenantServices.length > 0 &&
+                    tenantServices.every((svc) => tm.userForm.services.includes(svc));
                   return (
-                    <CheckboxGroup
-                      value={tm.userForm.services}
-                      onChange={(values) => tm.setUserForm((f) => ({ ...f, services: values as string[] }))}
-                    >
-                      <SimpleGrid columns={2} spacing={3} minChildWidth="140px">
-                        {tenantServices.map((svc) => (
-                          <Checkbox key={svc} value={svc} colorScheme="blue" size="sm" whiteSpace="normal">
-                            <Text fontSize="sm" fontWeight="medium" whiteSpace="normal" wordBreak="break-word">{String(svc).toUpperCase()}</Text>
-                          </Checkbox>
-                        ))}
-                      </SimpleGrid>
-                    </CheckboxGroup>
+                    <>
+                      <HStack justify="space-between" mb={2}>
+                        <Checkbox
+                          isChecked={allSelected}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              tm.setUserForm((f) => ({ ...f, services: [...tenantServices] }));
+                            } else {
+                              tm.setUserForm((f) => ({ ...f, services: [] }));
+                            }
+                          }}
+                          colorScheme="blue"
+                          size="sm"
+                        >
+                          <Text fontSize="sm" fontWeight="semibold">
+                            Select All
+                          </Text>
+                        </Checkbox>
+                      </HStack>
+                      <CheckboxGroup
+                        value={tm.userForm.services}
+                        onChange={(values) => tm.setUserForm((f) => ({ ...f, services: values as string[] }))}
+                      >
+                        <SimpleGrid columns={2} spacing={3} minChildWidth="140px">
+                          {tenantServices.map((svc) => (
+                            <Checkbox key={svc} value={svc} colorScheme="blue" size="sm" whiteSpace="normal">
+                              <Text fontSize="sm" fontWeight="medium" whiteSpace="normal" wordBreak="break-word">
+                                {String(svc).toUpperCase()}
+                              </Text>
+                            </Checkbox>
+                          ))}
+                        </SimpleGrid>
+                      </CheckboxGroup>
+                    </>
                   );
                 })()}
-              </FormControl>
-              <FormControl>
-                <Checkbox isChecked={tm.userForm.is_approved} onChange={(e) => tm.setUserForm((f) => ({ ...f, is_approved: e.target.checked }))}>
-                  Approved (user can access immediately)
-                </Checkbox>
               </FormControl>
             </VStack>
           </ModalBody>
@@ -1153,9 +1284,14 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   <FormLabel>Organization Name</FormLabel>
                   <Input value={tm.editTenantForm.organization_name ?? ""} onChange={(e) => tm.setEditTenantForm((f) => ({ ...f, organization_name: e.target.value }))} placeholder="Organization name" />
                 </FormControl>
-                <FormControl isRequired>
+                <FormControl isRequired isDisabled={tm.editTenantRow.status === "PENDING"}>
                   <FormLabel>Contact Email</FormLabel>
-                  <Input type="email" value={tm.editTenantForm.contact_email ?? ""} onChange={(e) => tm.setEditTenantForm((f) => ({ ...f, contact_email: e.target.value }))} placeholder="contact@example.com" />
+                  <Input
+                    type="email"
+                    value={tm.editTenantForm.contact_email ?? ""}
+                    onChange={(e) => tm.setEditTenantForm((f) => ({ ...f, contact_email: e.target.value }))}
+                    placeholder="contact@example.com"
+                  />
                 </FormControl>
                 <FormControl isRequired>
                   <FormLabel>Domain</FormLabel>
@@ -1229,12 +1365,6 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
                   </Select>
-                </FormControl>
-                <FormControl>
-                  <FormLabel>Approved (optional)</FormLabel>
-                  <Checkbox isChecked={tm.editUserForm.is_approved ?? false} onChange={(e) => tm.setEditUserForm((f) => ({ ...f, is_approved: e.target.checked }))}>
-                    User can access immediately
-                  </Checkbox>
                 </FormControl>
               </VStack>
             )}
