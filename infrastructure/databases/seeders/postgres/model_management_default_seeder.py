@@ -32,6 +32,7 @@ MODELS = [
     {
         "name": "indiclid",
         "version": "1.0.0",
+        "triton_model_name": "indiclid",
         "description": "Indic Language Identification for text. Supports 47 language classes (24 native-script, 21 roman-script, plus English and Others). Uses IndicLID-FTN, IndicLID-FTR, and IndicLID-BERT based on ai4bharat/IndicBERTv2-MLM-only. Input: INPUT_TEXT (STRING). Output: OUTPUT_TEXT (STRING). Python backend, max batch 64, 1 GPU, dynamic batching.",
         "task_type": "language-detection",
         "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "or"}]',
@@ -49,6 +50,7 @@ MODELS = [
     {
         "name": "ald",
         "version": "1.0.0",
+        "triton_model_name": "ald",
         "description": "Audio Language Detection from speech audio. Uses SpeechBrain EncoderClassifier. Input: AUDIO_DATA (STRING). Output: LANGUAGE_CODE (STRING), CONFIDENCE (FP32), ALL_SCORES (STRING). Python backend, max batch 64, 1 GPU, dynamic batching.",
         "task_type": "audio-lang-detection",
         "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}]',
@@ -66,6 +68,7 @@ MODELS = [
     {
         "name": "surya-ocr",
         "version": "1.0.0",
+        "triton_model_name": "surya_ocr",
         "description": "Surya OCR for document images. OCR in 90+ languages using Surya OCR models (Foundation, Detection, Recognition). Input: IMAGE_DATA (STRING). Output: OUTPUT_TEXT (STRING). Python backend, max batch 8, 1 GPU, dynamic batching.",
         "task_type": "ocr",
         "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}]',
@@ -83,6 +86,7 @@ MODELS = [
     {
         "name": "ner",
         "version": "1.0.0",
+        "triton_model_name": "ner",
         "description": "Named Entity Recognition for Indian languages. Model: ai4bharat/IndicNER. Supports 11 Indian languages. Input: INPUT_TEXT (STRING), LANG_ID (STRING). Output: OUTPUT_TEXT (STRING). Python backend, max batch 64, 1 GPU, dynamic batching.",
         "task_type": "ner",
         "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}]',
@@ -100,6 +104,7 @@ MODELS = [
     {
         "name": "speaker-diarization",
         "version": "1.0.0",
+        "triton_model_name": "speaker_diarization",
         "description": "Speaker diarization from audio. Input: AUDIO_DATA (STRING), NUM_SPEAKERS (STRING, optional). Output: DIARIZATION_RESULT (STRING). Python backend, max batch 16, 1 GPU, dynamic batching.",
         "task_type": "speaker-diarization",
         "languages": '[{"sourceLanguage": "*"}]',
@@ -117,6 +122,7 @@ MODELS = [
     {
         "name": "lang-diarization",
         "version": "1.0.0",
+        "triton_model_name": "lang_diarization",
         "description": "Language diarization from audio. Uses SpeechBrain EncoderClassifier for language identification. Input: AUDIO_DATA (STRING), LANGUAGE (STRING). Output: DIARIZATION_RESULT (STRING). Python backend, max batch 32, 1 GPU, dynamic batching.",
         "task_type": "language-diarization",
         "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}]',
@@ -134,6 +140,7 @@ MODELS = [
     {
         "name": "transliteration",
         "version": "1.0.0",
+        "triton_model_name": "transliteration",
         "description": "Indic Transliteration (Indic-Xlit). English-to-Indic and Indic-to-English using ai4bharat.transliteration.XlitEngine. Input: INPUT_TEXT (STRING), INPUT_LANGUAGE_ID (STRING), OUTPUT_LANGUAGE_ID (STRING), IS_WORD_LEVEL (BOOL), TOP_K (UINT8). Output: OUTPUT_TEXT (STRING). Python backend, 1 CPU instance (only CPU model in inventory).",
         "task_type": "transliteration",
         "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "or"}]',
@@ -151,57 +158,43 @@ MODELS = [
     {
         "name": "asr-am-ensemble",
         "version": "1.0.0",
-        "description": "Automatic Speech Recognition model for Indic languages.",
+        "triton_model_name": "asr_am_ensemble",
+        "description": "Multilingual ASR ensemble for end-to-end speech-to-text over multiple Indic languages. Primary Triton model: asr_am_ensemble (ensemble backend). Pipeline: asr_preprocessor → asr_am → asr_greedy_decoder. Uses CTC decoding via pyctcdecode and exposes top-k decoding via asr_am_topk_ensemble. Input: AUDIO_SIGNAL (FP32, [-1, -1]), NUM_SAMPLES (INT32, [-1, 1]), LANG_ID (STRING/BYTES, [-1, 1]). Output: TRANSCRIPTS (STRING/BYTES, [-1, -1]).",
         "task_type": "asr",
-        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}]',
+        "languages": '[{"sourceLanguage": "as"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "brx"}, {"sourceLanguage": "doi"}, {"sourceLanguage": "kok"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "hi"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ks"}, {"sourceLanguage": "mai"}, {"sourceLanguage": "ml"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "mni"}, {"sourceLanguage": "ne"}, {"sourceLanguage": "or"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "sa"}, {"sourceLanguage": "sat"}, {"sourceLanguage": "sd"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "ur"}]',
         "domain": '["general", "conversational"]',
         "license": "Apache-2.0",
         "endpoint_attr": "triton_endpoint_asr",
         "services": [
             {
-                "name": "asr-hindi-prod",
-                "description": "Production ASR service for Hindi.",
-                "hardware": "GPU: NVIDIA T4, RAM: 16GB",
+                "name": "asr-gpu",
+                "description": "Multilingual ASR Triton service (ai4bharat/triton-multilingual-asr:latest). HTTP: 5000, gRPC: 5001, Metrics: 5002. Runs asr_preprocessor (PyTorch, GPU), asr_am (ONNXRuntime, GPU), and asr_greedy_decoder (Python, CPU) as an ensemble.",
+                "hardware": "GPU: 1 instance (encoder + preprocessing), CPU: 1 instance (decoder), dynamic batching (up to batch 32 for encoder, 512 for preprocessor).",
             }
         ],
     },
     {
         "name": "tts",
         "version": "1.0.0",
-        "description": "Text-to-Speech model for Indic languages.",
+        "triton_model_name": "tts",
+        "description": "Indo-Aryan TTS model to generate speech waveforms from text using FastPitch + HiFiGAN per language. Checkpoints loaded from /models/checkpoints/<lang_code>/. Supported speaker IDs: male, female. Supported languages (minimum): as, bn, gu, hi, mr, or, pa, raj. Input: INPUT_TEXT, INPUT_SPEAKER_ID, INPUT_LANGUAGE_ID (STRING/BYTES, [1]). Output: OUTPUT_GENERATED_AUDIO (FP32, [-1]).",
         "task_type": "tts",
-        "languages": '[{"sourceLanguage": "hi"}]',
+        "languages": '[{"sourceLanguage": "as"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "hi"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "or"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "raj"}]',
         "domain": '["general"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_tts",
         "services": [
             {
-                "name": "tts-hindi-prod",
-                "description": "Production TTS service for Hindi.",
-                "hardware": "GPU: NVIDIA T4, RAM: 16GB",
+                "name": "indo-aryan-tts-gpu",
+                "description": "Indo-Aryan TTS Triton service (ai4bharat/triton-indo-aryan-tts:latest). HTTP: 9000, gRPC: 9001, Metrics: 9002. Uses FastPitch and HiFiGAN per language to synthesize speech from text.",
+                "hardware": "GPU: 1 instance, max batch size 0.",
             }
         ],
     },
     {
-        "name": "nmt",
+        "name": "indictrans",
         "version": "1.0.0",
-        "description": "Neural Machine Translation model for English-Hindi.",
-        "task_type": "nmt",
-        "languages": '[{"sourceLanguage": "en", "targetLanguage": "hi"}]',
-        "domain": '["general", "news", "conversational"]',
-        "license": "MIT",
-        "endpoint_attr": "triton_endpoint_nmt",
-        "services": [
-            {
-                "name": "nmt-en-hi-prod",
-                "description": "Production NMT service for English-Hindi.",
-                "hardware": "GPU: NVIDIA A10, RAM: 32GB",
-            }
-        ],
-    },
-    {
-        "name": "ai4bharat/indictrans",
-        "version": "1.0.0",
+        "triton_model_name": "nmt",
         "description": "IndicTrans NMT model supporting multiple Indic languages.",
         "task_type": "nmt",
         "languages": '[{"sourceLanguage": "en", "targetLanguage": "hi"}, {"sourceLanguage": "hi", "targetLanguage": "en"}]',
@@ -219,6 +212,7 @@ MODELS = [
     {
         "name": "llm",
         "version": "1.0.0",
+        "triton_model_name": "llm",
         "description": "Large Language Model for Indic languages chat/completion.",
         "task_type": "llm",
         "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "or"}]',
@@ -251,6 +245,7 @@ class ModelManagementDefaultSeeder(BaseSeeder):
             name = m["name"]
             version = m["version"]
             task_type = m["task_type"]
+            triton_model_name = m.get("triton_model_name", name)
             endpoint_url = getattr(app_env, m["endpoint_attr"], "") or ""
             model_id = generate_model_id(name, version)
 
@@ -266,7 +261,7 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                     '{m["languages"]}'::jsonb,
                     '{m["domain"]}'::jsonb,
                     '{m["license"]}',
-                    '{{"schema": {{"modelProcessingType": {{"type": "{task_type}"}}, "model_name": "{name}", "request": {{}}, "response": {{}}}}, "callbackUrl": "{endpoint_url}"}}'::jsonb,
+                    '{{"schema": {{"modelProcessingType": {{"type": "{task_type}"}}, "model_name": "{triton_model_name}", "request": {{}}, "response": {{}}}}, "callbackUrl": "{endpoint_url}"}}'::jsonb,
                     '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                     {timestamp_ms},
                     'ACTIVE'
@@ -274,7 +269,7 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                     inference_endpoint = jsonb_set(
                         COALESCE(models.inference_endpoint, '{{}}'::jsonb),
                         '{{schema,model_name}}',
-                        '"{name}"'::jsonb,
+                        '"{triton_model_name}"'::jsonb,
                         true
                     ),
                     updated_at = CURRENT_TIMESTAMP;
