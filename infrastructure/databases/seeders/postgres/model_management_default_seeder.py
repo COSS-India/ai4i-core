@@ -27,9 +27,7 @@ def generate_uuid(*parts: str) -> str:
     raw = ":".join(part.strip().lower() for part in parts)
     return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
 
-
-# Model/service definitions. Hosted Triton models use Model Inventory data; others are placeholders.
-# Model and service names: alphabets, numbers, /, - only (no spaces). Endpoint URLs from app_env.
+#Endpoint URLs from app_env.
 MODELS = [
     {
         "name": "indiclid",
