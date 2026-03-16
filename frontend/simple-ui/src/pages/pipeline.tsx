@@ -260,8 +260,8 @@ const PipelinePage: React.FC = () => {
             mx="auto"
           >
             {/* Configuration Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Source Language */}
                 <FormControl>
                   <FormLabel className="dview-service-try-option-title">
@@ -541,8 +541,8 @@ const PipelinePage: React.FC = () => {
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Progress Indicator */}
                 {isLoading && (
                   <Box>
