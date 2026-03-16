@@ -471,6 +471,19 @@ const PipelinePage: React.FC = () => {
                     </Alert>
                   )}
 
+                  {/* Upload / recording confirmation - show when audio is ready */}
+                  {!isRecording && pendingAudio && (
+                    <Alert status="success" borderRadius="md" mt={4}>
+                      <AlertIcon />
+                      <AlertDescription>
+                        {uploadedFileName
+                          ? `File "${uploadedFileName}" is ready.`
+                          : "Recording complete. Audio is ready."}{" "}
+                        Click Run Pipeline to generate results.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
                   <VStack spacing={4} mt={4} align="stretch">
                     {/* Record Instruction + Button (boxed, like ASR AudioRecorder) */}
                     <Box
