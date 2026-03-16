@@ -187,8 +187,6 @@ services:
     ports:
       - "8080:8080"
       - "8443:8443"
-      - "8001:8001"
-      - "8444:8444"
     environment:
       KONG_DATABASE: "off"
       KONG_PROXY_LISTEN: 0.0.0.0:8080
@@ -197,7 +195,7 @@ services:
       KONG_ADMIN_ACCESS_LOG: /dev/stdout
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_ERROR_LOG: /dev/stderr
-      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_ADMIN_LISTEN: "off"
       KONG_ADMIN_GUI_URL: http://localhost:8002
       # Load only our custom plugin to avoid missing bundled plugins issues
       KONG_PLUGINS: token-validator
@@ -943,18 +941,6 @@ services:
     build:
       context: ./frontend/simple-ui
       dockerfile: Dockerfile
-      args:
-        # Browser talks directly to the API Gateway on host port 8080
-        NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
-        # Service-specific API keys from .env file (no hardcoding)
-        NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
-        NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
-        NEXT_PUBLIC_TTS_API_KEY: ${TTS_API_KEY}
-        NEXT_PUBLIC_NMT_API_KEY: ${NMT_API_KEY}
-        NEXT_PUBLIC_PIPELINE_API_KEY: ${PIPELINE_API_KEY}
-        NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
-        # Telemetry/Observability service URL (logs and traces) - same as API Gateway
-        NEXT_PUBLIC_TELEMETRY_SERVICE_URL: https://core-v1.ai4inclusion.org
     container_name: ai4v-simple-ui
     ports:
       - "3000:3000"
@@ -963,13 +949,6 @@ services:
       - HOSTNAME=0.0.0.0
       # Route all frontend API calls through the API Gateway on host
       - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
-      - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
-      # Service-specific API keys for API Gateway authentication / RBAC
-      - NEXT_PUBLIC_ASR_API_KEY=${ASR_API_KEY}
-      - NEXT_PUBLIC_TTS_API_KEY=${TTS_API_KEY}
-      - NEXT_PUBLIC_NMT_API_KEY=${NMT_API_KEY}
-      - NEXT_PUBLIC_PIPELINE_API_KEY=${PIPELINE_API_KEY}
-      - NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${MODEL_MANAGEMENT_API_KEY}
       # Telemetry/Observability service URL (logs and traces) - routed through API Gateway
       - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://core-v1.ai4inclusion.org
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
