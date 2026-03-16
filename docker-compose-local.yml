@@ -972,6 +972,7 @@ services:
       retries: 3
       start_period: 30s
 
+  # Request Profiler Service
   request-profiler-service:
     build:
       context: ./services/request-profiler
@@ -979,34 +980,26 @@ services:
     container_name: ai4v-request-profiler-service
     ports:
       - "8888:8000"
-    volumes:
-      - ./services/request-profiler/models:/app/models:ro
     environment:
+      - PROFILER_API_URL=http://13.201.140.42:8000/api/v1/profile
+      - PROFILER_SOURCE_LANG=en
+      - PROFILER_REQUEST_TIMEOUT=30
+      - PORT=8000
       - LOG_LEVEL=info
-      - MODEL_DIR=/app/models
-      - ENVIRONMENT=production
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: "2.0"
-        reservations:
-          memory: 512M
-          cpus: "1.0"
+      - ENVIRONMENT=development
     networks:
       microservices-network:
         aliases:
           - request-profiler-service
-          - profiler-service
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
       start_period: 20s
     restart: unless-stopped
 
-  
+
   multi-tenant-service:
     build:
       context: .
