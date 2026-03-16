@@ -2107,7 +2107,7 @@ async def update_tenant_user(
             tenant_user.username = new_value
             updated_fields.append("username")
 
-    # Handle email update (store encrypted)
+    # Email is immutable for tenant users; reject any attempt to change it
     if "email" in update_data:
         old_value = decrypt_sensitive_data(tenant_user.email)
         new_value = update_data["email"]
@@ -2338,7 +2338,12 @@ async def update_tenant(
     
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    
+
+    if tenant.status == TenantStatus.PENDING:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot update tenant while status is PENDING",
+        )
     # Get update data excluding unset fields
     update_data = payload.model_dump(exclude_unset=True, exclude={"tenant_id"})
     
@@ -2369,16 +2374,12 @@ async def update_tenant(
             tenant.organization_name = new_value
             updated_fields.append("organization_name")
     
-    # Handle contact_email update (store encrypted)
+    # Contact email is immutable after registration; reject any attempt to change it
     if "contact_email" in update_data:
-        old_value = decrypt_sensitive_data(tenant.contact_email)
-        new_value = update_data["contact_email"]
-        if old_value != new_value:
-            changes["contact_email"] = FieldChange(old=old_value, new=new_value)
-            tenant.contact_email = encrypt_sensitive_data(new_value) if new_value else None
-            # Keep email_hash in sync with the (decrypted) contact_email
-            tenant.email_hash = hash_email(new_value) if new_value else None
-            updated_fields.append("contact_email")
+        raise HTTPException(
+            status_code=400,
+            detail="Contact email cannot be updated for tenants",
+        )
 
     # Handle phone_number update (store encrypted)
     if "phone_number" in update_data:

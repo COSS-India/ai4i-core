@@ -6,10 +6,15 @@ from .user_create import _validate_role
 
 
 class TenantUpdateRequest(BaseModel):
-    """Request model for updating tenant information"""
+    """Request model for updating tenant information.
+
+    Note:
+        Contact email is immutable after tenant registration and cannot
+        be changed via this endpoint.
+    """
+
     tenant_id: str = Field(..., description="Tenant identifier")
     organization_name: Optional[str] = Field(None, min_length=2, max_length=255, description="Organization name")
-    contact_email: Optional[EmailStr] = Field(None, description="Contact email address")
     phone_number: Optional[str] = Field(None, max_length=20, description="Contact phone number")
     domain: Optional[str] = Field(None, min_length=3, max_length=255, description="Domain name")
     requested_quotas: Optional[QuotaStructure] = Field(None, description="Requested quota limits (characters_length, audio_length_in_min)")
