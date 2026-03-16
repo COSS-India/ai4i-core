@@ -491,6 +491,18 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                     }
                 },
             )
+        except ValueError as e:
+            # Fail-closed on suspicious/invalid header values (e.g., CR/LF injection, oversize values)
+            logger.warning("Rejecting request due to invalid header value: %s", e)
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "detail": {
+                        "code": "INVALID_HEADER_VALUE",
+                        "message": "Invalid header value detected.",
+                    }
+                },
+            )
         except HTTPException as e:
             logger.warning(f"HTTPException in Model Resolution Middleware: {e.detail}")
             raise

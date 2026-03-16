@@ -128,7 +128,7 @@ class ModelManagementClient:
                         logger.warning(
                             "Rejected auth header %r due to CR/LF characters in value", key
                         )
-                        continue
+                        raise ValueError("Invalid header value detected")
                     # Enforce a reasonable maximum header value length
                     if len(value) > 4096:
                         logger.warning(
@@ -136,7 +136,7 @@ class ModelManagementClient:
                             key,
                             len(value),
                         )
-                        continue
+                        raise ValueError("Invalid header value detected")
                     # Normalize header casing
                     if key_lower == "authorization":
                         header_name = "Authorization"
