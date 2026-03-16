@@ -171,11 +171,22 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 if service_info.endpoint:
                     endpoint, model_name = self._extract_triton_metadata(service_info, service_id)
                     self._service_registry_cache[service_id] = (endpoint, model_name, expires_at)
+                else:
+                    logger.warning(
+                        f"Model management returned service for service_id={service_id!r} but endpoint is empty; "
+                        "inference will fail until the service row has a non-empty endpoint."
+                    )
+            else:
+                logger.warning(
+                    f"Model management returned no service for service_id={service_id!r} (404 or no data). "
+                    "Check that the id exists in model_management_db.services.service_id or that model-management-service is reachable."
+                )
             return service_info
         except Exception as e:
             logger.error(
                 f"Failed to fetch service info for {service_id} from model management service: {e}. "
-                "Service resolution failed - some services require Model Management database entries."
+                "Service resolution failed - some services require Model Management database entries.",
+                exc_info=True,
             )
             return None
     
@@ -317,7 +328,16 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
 
         # No fallback: if Model Management cannot resolve the serviceId, return no endpoint/model/client.
         # Routers are responsible for returning clear HTTP 4xx/5xx errors in this case.
-        logger.error(f"Model Management did not resolve serviceId: {service_id} and no default endpoint is allowed")
+        if service_info is None:
+            logger.error(
+                f"Model Management did not resolve serviceId: {service_id!r} (no service returned - check 404/connectivity and that service_id exists in model_management_db.services). "
+                "No default endpoint is allowed."
+            )
+        else:
+            logger.error(
+                f"Model Management did not resolve serviceId: {service_id!r} (service found but endpoint is missing or empty in DB). "
+                "No default endpoint is allowed."
+            )
         return None, None, None
         
     async def dispatch(self, request: Request, call_next):

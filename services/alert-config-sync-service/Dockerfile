@@ -27,7 +27,8 @@ COPY services/alert-config-sync-service/ /app/
 
 RUN mkdir -p /etc/prometheus/rules /etc/alertmanager
 
-ENV PYTHONPATH="/app:/app/libs"
+# ENV PYTHONPATH="/app:/app/libs"
+ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8097

@@ -69,14 +69,22 @@ import {
   NumberIncrementStepper,
   NumberDecrementStepper,
   Divider,
-  Radio,
-  RadioGroup,
-  Stack,
   Tooltip,
   InputGroup,
   InputLeftElement,
+  Menu,
+  MenuButton,
+  MenuList,
+  MenuItem,
+  MenuDivider,
+  Radio,
+  RadioGroup,
+  Stack,
 } from "@chakra-ui/react";
-import { AddIcon, DeleteIcon, ViewIcon, EditIcon, SearchIcon } from "@chakra-ui/icons";
+import { AddIcon, DeleteIcon, ViewIcon, EditIcon, SearchIcon, LockIcon } from "@chakra-ui/icons";
+import * as multiTenantService from "../../services/multiTenantService";
+import type { TenantView } from "../../types/multiTenant";
+import type { NotificationReceiver } from "../../types/alerting";
 import { useAlertDefinitions } from "./hooks/useAlertDefinitions";
 import { useNotificationReceivers } from "./hooks/useNotificationReceivers";
 import { useRoutingRules } from "./hooks/useRoutingRules";
@@ -85,6 +93,13 @@ import {
   SEVERITIES,
   URGENCIES,
   RBAC_ROLES,
+  SUB_CATEGORIES_BY_CATEGORY,
+  SIGNALS_BY_SUB_CATEGORY,
+  SIGNAL_METRICS_BY_SIGNAL,
+  TARGET_SERVICES,
+  CONDITION_OPERATORS,
+  LATENCY_THRESHOLD_UNITS,
+  PERCENTAGE_UNIT,
 } from "../../types/alerting";
 
 const EVAL_INTERVALS = ["30s", "1m", "5m"] as const;
@@ -101,6 +116,7 @@ function getAllowedForDurations(evalInterval: string | null | undefined): string
   const key = evalInterval ?? "30s";
   return [...(FOR_DURATION_BY_EVAL_INTERVAL[key] ?? FOR_DURATION_BY_EVAL_INTERVAL["30s"])];
 }
+
 const ALERT_TYPES_BY_CATEGORY: Record<string, { value: string; label: string }[]> = {
   application: [
     { value: "latency", label: "Latency" },
@@ -112,12 +128,6 @@ const ALERT_TYPES_BY_CATEGORY: Record<string, { value: string; label: string }[]
     { value: "Disk", label: "Disk" },
   ],
 };
-const THRESHOLD_UNITS = ["seconds", "percentage"] as const;
-
-/** Threshold unit is fixed by alert type: Latency → seconds, all others → percentage. User should not change it. */
-function getThresholdUnitForAlertType(alertType: string | null | undefined): "seconds" | "percentage" {
-  return alertType === "latency" ? "seconds" : "percentage";
-}
 
 function OptionSelector({
   options,
@@ -129,32 +139,35 @@ function OptionSelector({
   onChange: (v: string) => void;
 }) {
   return (
-    <HStack spacing={0} borderWidth="1px" borderColor="gray.200" borderRadius="md" overflow="hidden">
-      {options.map((opt) => (
-        <Box
-          key={opt}
-          as="button"
-          type="button"
-          flex="1"
-          py={2}
-          px={3}
-          fontSize="sm"
-          fontWeight="semibold"
-          textAlign="center"
-          cursor="pointer"
-          bg={value === opt ? "orange.500" : "white"}
-          color={value === opt ? "white" : "gray.600"}
-          borderRight="1px solid"
-          borderRightColor="gray.200"
-          _last={{ borderRight: "none" }}
-          _hover={{ bg: value === opt ? "orange.600" : "gray.50" }}
-          transition="all 0.15s"
-          onClick={() => onChange(opt)}
-          textTransform="capitalize"
-        >
-          {opt}
-        </Box>
-      ))}
+    <HStack spacing={2}>
+      {options.map((opt) => {
+        const isActive = value === opt;
+        return (
+          <Box
+            key={opt}
+            as="button"
+            type="button"
+            flex="1"
+            py={2}
+            px={3}
+            fontSize="sm"
+            fontWeight="semibold"
+            textAlign="center"
+            cursor="pointer"
+            borderRadius="lg"
+            borderWidth="2px"
+            borderColor={isActive ? "gray.900" : "gray.200"}
+            bg={isActive ? "gray.900" : "white"}
+            color={isActive ? "white" : "gray.500"}
+            _hover={{ bg: isActive ? "gray.800" : "gray.50", borderColor: isActive ? "gray.800" : "gray.300" }}
+            transition="all 0.15s"
+            onClick={() => onChange(opt)}
+            textTransform="capitalize"
+          >
+            {opt}
+          </Box>
+        );
+      })}
     </HStack>
   );
 }
@@ -167,11 +180,79 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
   const [subTabIndex, setSubTabIndex] = useState(0);
-  const [createRuleRole, setCreateRuleRole] = useState("");
-  const [updateRuleRole, setUpdateRuleRole] = useState("");
   const [createRuleDef, setCreateRuleDef] = useState("");
-  const [updateRuleDef, setUpdateRuleDef] = useState("");
-  const [viewRuleDef, setViewRuleDef] = useState("");
+
+  // Create Routing Rule — extended form state
+  const [createRuleScope, setCreateRuleScope] = useState<"global" | "specific_tenant">("global");
+  const [createRuleTenant, setCreateRuleTenant] = useState("");
+  const [createRuleErrors, setCreateRuleErrors] = useState<Record<string, string>>({});
+  const [tenants, setTenants] = useState<TenantView[]>([]);
+  const [isLoadingTenants, setIsLoadingTenants] = useState(false);
+
+  // Edit Routing Rule — extended form state (UI-only fields not in update API)
+  const [editRuleCategory, setEditRuleCategory] = useState("");
+  const [editRuleSeverity, setEditRuleSeverity] = useState("");
+  const [editRuleDef, setEditRuleDef] = useState("");
+  const [editRuleScope, setEditRuleScope] = useState<"global" | "specific_tenant">("global");
+  const [editRuleErrors, setEditRuleErrors] = useState<Record<string, string>>({});
+
+  const resetCreateRuleExtras = () => {
+    setCreateRuleScope("global");
+    setCreateRuleTenant("");
+    setCreateRuleErrors({});
+    setCreateRuleDef("");
+  };
+
+  const resetEditRuleExtras = () => {
+    setEditRuleCategory("");
+    setEditRuleSeverity("");
+    setEditRuleDef("");
+    setEditRuleScope("global");
+    setEditRuleErrors({});
+  };
+
+  const initEditRuleExtras = (item: NotificationReceiver) => {
+    setEditRuleScope(item.tenant ? "specific_tenant" : "global");
+
+    // Prefer direct category/severity from the receiver (backend may return them)
+    const cat = item.category ?? null;
+    const sev = item.severity ?? null;
+
+    // Also try to resolve from the linked alert definition (alert_names[0])
+    const firstName = item.alert_names?.[0];
+    const linkedDef = firstName ? defs.definitions.find((d) => d.name === firstName) : null;
+
+    setEditRuleCategory(cat ?? linkedDef?.category ?? "");
+    setEditRuleSeverity(sev ?? linkedDef?.severity ?? "");
+    setEditRuleDef(linkedDef ? String(linkedDef.id) : "");
+  };
+
+  const fetchTenants = async () => {
+    if (tenants.length > 0) return;
+    setIsLoadingTenants(true);
+    try {
+      const res = await multiTenantService.listTenants();
+      setTenants((res.tenants || []).filter((t) => t.status === "ACTIVE"));
+    } catch {
+      // ignore
+    } finally {
+      setIsLoadingTenants(false);
+    }
+  };
+
+  const validateAndCreate = async () => {
+    const errors: Record<string, string> = {};
+    if (!rules.createForm.rule_name.trim()) errors.ruleName = "Rule name is required.";
+    if (!rules.createForm.category) errors.category = "Please select a category.";
+    if (!rules.createForm.severity) errors.severity = "Please select a severity.";
+    if (createRuleScope === "specific_tenant" && !createRuleTenant) errors.tenant = "Please select a target tenant.";
+    setCreateRuleErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+    await rules.handleCreate({
+      tenant: createRuleScope === "specific_tenant" ? createRuleTenant || null : null,
+    });
+    resetCreateRuleExtras();
+  };
 
   const defs = useAlertDefinitions();
   const recvs = useNotificationReceivers();
@@ -181,6 +262,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const recvDeleteRef = useRef<HTMLButtonElement>(null);
   const ruleDeleteRef = useRef<HTMLButtonElement>(null);
 
+  // Track the item id we last initialized so we don't overwrite user changes during the same open session
+  const editRuleInitRef = useRef<number | null>(null);
+
   useEffect(() => {
     if (isActive) {
       defs.fetchDefinitions();
@@ -189,6 +273,42 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive]);
+
+  // Re-initialize edit-rule category / severity / linked-def once definitions are available
+  // (they may not be loaded yet when the drawer first opens — this effect fires again once they arrive)
+  useEffect(() => {
+    if (!rules.isUpdateOpen) {
+      editRuleInitRef.current = null;
+      return;
+    }
+    if (!rules.updateItem) return;
+    // Only initialize once per open session for this item to avoid overwriting user changes
+    if (editRuleInitRef.current === rules.updateItem.id) return;
+    // Wait until definitions are actually populated
+    if (defs.definitions.length === 0) return;
+
+    editRuleInitRef.current = rules.updateItem.id;
+    const item = rules.updateItem;
+    const cat = item.category ?? null;
+    const sev = item.severity ?? null;
+    const firstName = item.alert_names?.[0];
+    const linkedDef = firstName
+      ? (defs.definitions.find((d) => d.name === firstName) ?? null)
+      : null;
+    const resolvedCat = cat ?? linkedDef?.category ?? "";
+    const resolvedSev = sev ?? linkedDef?.severity ?? "";
+    setEditRuleCategory(resolvedCat);
+    setEditRuleSeverity(resolvedSev);
+    setEditRuleDef(linkedDef ? String(linkedDef.id) : "");
+    setEditRuleScope(item.tenant ? "specific_tenant" : "global");
+    // Keep updateForm in sync so the resolved values are included in the save payload
+    rules.setUpdateForm((prev) => ({
+      ...prev,
+      category: resolvedCat || null,
+      severity: resolvedSev || null,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rules.isUpdateOpen, rules.updateItem, defs.definitions]);
 
   const severityColor = (s: string) => {
     switch (s) {
@@ -301,12 +421,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <Table variant="simple" size="sm">
                   <Thead>
                     <Tr>
-                      <Th>Alert Definition</Th>
+                      <Th>Name</Th>
                       <Th>Category</Th>
-                      <Th>Alert Type</Th>
                       <Th>Severity</Th>
+                      <Th>Subcategory</Th>
                       <Th>Status</Th>
-                      <Th>Created On</Th>
+                      <Th>Created</Th>
                       <Th>Actions</Th>
                     </Tr>
                   </Thead>
@@ -319,20 +439,24 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       >
                         <Td fontWeight="semibold">{d.name}</Td>
                         <Td><Badge colorScheme={categoryColor(d.category)} textTransform="capitalize">{d.category}</Badge></Td>
-                        <Td><Text fontSize="sm">{alertTypeLabel(d.alert_type)}</Text></Td>
                         <Td><Badge colorScheme={severityColor(d.severity)} textTransform="capitalize">{d.severity}</Badge></Td>
-                    <Td>
-                      <Badge
-                        colorScheme={d.enabled ? "green" : "gray"}
-                        variant="subtle"
-                        fontSize="xs"
-                        px={2}
-                        py={0.5}
-                        borderRadius="full"
-                      >
-                        {d.enabled ? "Active" : "Inactive"}
-                      </Badge>
-                    </Td>
+                        <Td>
+                          <Text fontSize="sm">
+                            {d.sub_category ? titleCase(d.sub_category.replace(/_/g, " ")) : "—"}
+                          </Text>
+                        </Td>
+                        <Td>
+                          <Badge
+                            colorScheme={d.enabled ? "green" : "gray"}
+                            variant="subtle"
+                            fontSize="xs"
+                            px={2}
+                            py={0.5}
+                            borderRadius="full"
+                          >
+                            {d.enabled ? "Active" : "Inactive"}
+                          </Badge>
+                        </Td>
                         <Td fontSize="sm">{new Date(d.created_at).toLocaleDateString()}</Td>
                         <Td>
                           <HStack spacing={1} className="row-actions" opacity={0} transition="opacity 0.15s">
@@ -399,163 +523,359 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <Text fontSize="lg" fontWeight="bold">Create Alert Definition</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
-            <VStack spacing={6} align="stretch">
-              {/* ── Identity ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Identity</Text>
-                <VStack spacing={4} align="stretch">
-                  <FormControl isRequired isInvalid={!!defs.createErrors?.name}>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Alert Definition Name</FormLabel>
-                    <Input
-                      placeholder="e.g. HighLatency-ASR-Production"
-                      value={defs.createForm.name}
-                      onChange={(e) => defs.setCreateForm({ ...defs.createForm, name: e.target.value })}
-                      bg="white"
-                    />
-                    <FormErrorMessage>{defs.createErrors?.name}</FormErrorMessage>
-                  </FormControl>
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
-                    <Textarea
-                      placeholder="Optional description..."
-                      value={defs.createForm.description ?? ""}
-                      onChange={(e) => defs.setCreateForm({ ...defs.createForm, description: e.target.value || null })}
-                      bg="white"
-                      rows={3}
-                    />
-                  </FormControl>
-                  <FormControl isRequired isInvalid={!!defs.createErrors?.category}>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
-                    <OptionSelector
-                      options={CATEGORIES}
-                      value={defs.createForm.category ?? "application"}
-                      onChange={(v) => defs.setCreateForm({ ...defs.createForm, category: v, alert_type: null, scope: "percentage" })}
-                    />
-                    <FormErrorMessage>{defs.createErrors?.category}</FormErrorMessage>
-                  </FormControl>
-                  <FormControl isRequired isInvalid={!!defs.createErrors?.severity}>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
-                    <OptionSelector
-                      options={SEVERITIES}
-                      value={defs.createForm.severity}
-                      onChange={(v) => defs.setCreateForm({ ...defs.createForm, severity: v })}
-                    />
-                    <FormErrorMessage>{defs.createErrors?.severity}</FormErrorMessage>
-                  </FormControl>
-                </VStack>
-              </Box>
+            <VStack spacing={5} align="stretch">
+              <FormControl isRequired isInvalid={!!defs.createErrors?.name}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Alert Name</FormLabel>
+                <Input
+                  placeholder="e.g. High Latency — ASR Global"
+                  value={defs.createForm.name}
+                  onChange={(e) => defs.setCreateForm({ ...defs.createForm, name: e.target.value })}
+                  bg="white"
+                />
+                <FormErrorMessage>{defs.createErrors?.name}</FormErrorMessage>
+              </FormControl>
+
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
+                <Textarea
+                  placeholder="Additional context about this alert and why it exists."
+                  value={defs.createForm.description ?? ""}
+                  onChange={(e) => defs.setCreateForm({ ...defs.createForm, description: e.target.value || null })}
+                  bg="white"
+                  rows={3}
+                />
+              </FormControl>
 
               <Divider />
 
-              {/* ── Detection ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Detection</Text>
-                <VStack spacing={4} align="stretch">
-                  <FormControl isRequired isInvalid={!!defs.createErrors?.alert_type}>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Alert Type</FormLabel>
-                    <Select
-                      value={defs.createForm.alert_type ?? ""}
-                      onChange={(e) => {
-                        const newAlertType = e.target.value || null;
-                        const newScope = getThresholdUnitForAlertType(newAlertType);
-                        defs.setCreateForm({ ...defs.createForm, alert_type: newAlertType, scope: newScope });
-                      }}
+              <FormControl isRequired isInvalid={!!defs.createErrors?.category}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+                <OptionSelector
+                  options={CATEGORIES}
+                  value={defs.createForm.category ?? "application"}
+                  onChange={(v) => defs.setCreateForm({
+                    ...defs.createForm,
+                    category: v,
+                    sub_category: null,
+                    signal: null,
+                    signal_metric: null,
+                  })}
+                />
+                <FormErrorMessage>{defs.createErrors?.category}</FormErrorMessage>
+              </FormControl>
+
+              <FormControl isRequired isInvalid={!!defs.createErrors?.sub_category}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Subcategory</FormLabel>
+                <Select
+                  value={defs.createForm.sub_category ?? ""}
+                  onChange={(e) => defs.setCreateForm({
+                    ...defs.createForm,
+                    sub_category: e.target.value || null,
+                    signal: null,
+                    signal_metric: null,
+                    threshold_unit: undefined,
+                  })}
+                  bg="white"
+                  placeholder={defs.createForm.category ? "Select subcategory..." : "Select a category first"}
+                  isDisabled={!defs.createForm.category}
+                >
+                  {(SUB_CATEGORIES_BY_CATEGORY[defs.createForm.category ?? ""] ?? []).map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Select>
+                <FormErrorMessage>{defs.createErrors?.sub_category}</FormErrorMessage>
+              </FormControl>
+
+              <FormControl isRequired isInvalid={!!defs.createErrors?.signal}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Signal</FormLabel>
+                <Select
+                  value={defs.createForm.signal ?? ""}
+                  onChange={(e) => {
+                    const sig = e.target.value || null;
+                    defs.setCreateForm({
+                      ...defs.createForm,
+                      signal: sig,
+                      signal_metric: null,
+                      threshold_unit: sig === "latency" ? "ms" : sig ? PERCENTAGE_UNIT : undefined,
+                    });
+                  }}
+                  bg="white"
+                  placeholder={defs.createForm.sub_category ? "Select signal..." : "Select a subcategory first"}
+                  isDisabled={!defs.createForm.sub_category}
+                >
+                  {(SIGNALS_BY_SUB_CATEGORY[defs.createForm.sub_category ?? ""] ?? []).map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Select>
+                <FormErrorMessage>{defs.createErrors?.signal}</FormErrorMessage>
+              </FormControl>
+
+              <FormControl isRequired isInvalid={!!defs.createErrors?.signal_metric}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Signal Metric</FormLabel>
+                <Select
+                  value={defs.createForm.signal_metric ?? ""}
+                  onChange={(e) => defs.setCreateForm({ ...defs.createForm, signal_metric: e.target.value || null })}
+                  bg="white"
+                  placeholder={defs.createForm.signal ? "Select metric..." : "Select a signal type first"}
+                  isDisabled={!defs.createForm.signal}
+                >
+                  {(SIGNAL_METRICS_BY_SIGNAL[defs.createForm.signal ?? ""] ?? []).map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Select>
+                <FormErrorMessage>{defs.createErrors?.signal_metric}</FormErrorMessage>
+              </FormControl>
+
+              <FormControl isRequired={defs.createForm.category !== "infrastructure"} isInvalid={!!defs.createErrors?.service}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Target</FormLabel>
+                {defs.createForm.category === "infrastructure" ? (
+                  <Box
+                    px={3}
+                    py={2}
+                    bg="gray.100"
+                    borderRadius="md"
+                    borderWidth="1px"
+                    borderColor="gray.200"
+                    color="gray.600"
+                    fontSize="sm"
+                  >
+                    All services (infrastructure monitors the full stack)
+                  </Box>
+                ) : (
+                  <Menu closeOnSelect={false} matchWidth>
+                    <MenuButton
+                      as={Button}
+                      w="100%"
                       bg="white"
-                      placeholder="Select alert type..."
+                      borderWidth="1px"
+                      borderColor="gray.200"
+                      borderRadius="md"
+                      fontWeight="normal"
+                      textAlign="left"
+                      _hover={{ borderColor: "gray.400" }}
+                      _active={{ bg: "white" }}
+                      rightIcon={<Text fontSize="xs" color="gray.500">▾</Text>}
                     >
-                      {(ALERT_TYPES_BY_CATEGORY[defs.createForm.category ?? "application"] || []).map((t) => (
-                        <option key={t.value} value={t.value}>{t.label}</option>
+                      {(() => {
+                        const sel = defs.createForm.service ?? [];
+                        if (sel.length === 0) {
+                          return <Text color="gray.400">Select targets</Text>;
+                        }
+                        if (sel.length === TARGET_SERVICES.length) {
+                          return <Text color="gray.400">All services selected</Text>;
+                        }
+                        if (sel.length === 1) {
+                          const v = sel[0];
+                          return <Text color="gray.400">{TARGET_SERVICES.find((t) => t.value === v)?.label ?? v}</Text>;
+                        }
+                        return <Text color="gray.400">{`${sel.length} services selected`}</Text>;
+                      })()}
+                    </MenuButton>
+                    <MenuList w="100%" maxH="300px" overflowY="auto">
+                      <MenuItem closeOnSelect={false} px={4} py={2}>
+                        <Checkbox
+                          isChecked={(defs.createForm.service ?? []).length === TARGET_SERVICES.length}
+                          isIndeterminate={
+                            (defs.createForm.service ?? []).length > 0 &&
+                            (defs.createForm.service ?? []).length < TARGET_SERVICES.length
+                          }
+                          onChange={(e) => {
+                            defs.setCreateForm({
+                              ...defs.createForm,
+                              service: e.target.checked ? TARGET_SERVICES.map((t) => t.value) : [],
+                            });
+                          }}
+                          fontWeight="semibold"
+                        >
+                          All services
+                        </Checkbox>
+                      </MenuItem>
+                      <MenuDivider my={1} />
+                      {TARGET_SERVICES.map((opt) => (
+                        <MenuItem key={opt.value} closeOnSelect={false} px={4} py={2}>
+                          <Checkbox
+                            isChecked={(defs.createForm.service ?? []).includes(opt.value)}
+                            onChange={(e) => {
+                              const current = defs.createForm.service ?? [];
+                              defs.setCreateForm({
+                                ...defs.createForm,
+                                service: e.target.checked
+                                  ? [...current, opt.value]
+                                  : current.filter((s) => s !== opt.value),
+                              });
+                            }}
+                          >
+                            {opt.label}
+                          </Checkbox>
+                        </MenuItem>
+                      ))}
+                    </MenuList>
+                  </Menu>
+                )}
+                <FormErrorMessage>{defs.createErrors?.service}</FormErrorMessage>
+              </FormControl>
+
+              <Divider />
+
+              <FormControl isRequired isInvalid={!!defs.createErrors?.condition_operator || !!defs.createErrors?.threshold_value || !!defs.createErrors?.threshold_unit}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Condition + Threshold</FormLabel>
+                <SimpleGrid columns={3} spacing={3} mb={1}>
+                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Condition</Text>
+                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Threshold</Text>
+                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Unit</Text>
+                </SimpleGrid>
+                <SimpleGrid columns={3} spacing={3}>
+                  <Select
+                    value={defs.createForm.condition_operator ?? ""}
+                    onChange={(e) => defs.setCreateForm({ ...defs.createForm, condition_operator: e.target.value || null })}
+                    bg="white"
+                    placeholder="—"
+                  >
+                    {CONDITION_OPERATORS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </Select>
+                  <NumberInput
+                    value={defs.createForm.threshold_value ?? ""}
+                    onChange={(_s, val) => defs.setCreateForm({ ...defs.createForm, threshold_value: Number.isNaN(val) ? null : val })}
+                    min={0}
+                    bg="white"
+                  >
+                    <NumberInputField placeholder="Enter value" />
+                    <NumberInputStepper>
+                      <NumberIncrementStepper />
+                      <NumberDecrementStepper />
+                    </NumberInputStepper>
+                  </NumberInput>
+                  {defs.createForm.signal === "latency" ? (
+                    <Select
+                      value={defs.createForm.threshold_unit ?? "ms"}
+                      onChange={(e) => defs.setCreateForm({ ...defs.createForm, threshold_unit: e.target.value || "ms" })}
+                      bg="white"
+                    >
+                      {LATENCY_THRESHOLD_UNITS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
                     </Select>
-                    <FormErrorMessage>{defs.createErrors?.alert_type}</FormErrorMessage>
-                  </FormControl>
-                  <FormControl isRequired isInvalid={!!defs.createErrors?.threshold_value}>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Threshold Configuration</FormLabel>
-                    <SimpleGrid columns={2} spacing={3}>
-                      <NumberInput
-                        value={defs.createForm.promql_expr}
-                        onChange={(val) => defs.setCreateForm({ ...defs.createForm, promql_expr: val })}
-                        min={0}
-                        bg="white"
-                      >
-                        <NumberInputField placeholder="Enter value (e.g., 500, 85, 95)" />
-                        <NumberInputStepper>
-                          <NumberIncrementStepper />
-                          <NumberDecrementStepper />
-                        </NumberInputStepper>
-                      </NumberInput>
-                      <Select
-                        value={getThresholdUnitForAlertType(defs.createForm.alert_type)}
-                        isDisabled
-                        bg="gray.200"
-                        color="gray.700"
-                        cursor="not-allowed"
-                        borderColor="gray.300"
-                      >
-                        <option value={getThresholdUnitForAlertType(defs.createForm.alert_type)}>
-                          {getThresholdUnitForAlertType(defs.createForm.alert_type).charAt(0).toUpperCase() + getThresholdUnitForAlertType(defs.createForm.alert_type).slice(1)}
-                        </option>
-                      </Select>
-                    </SimpleGrid>
-                    <FormErrorMessage>{defs.createErrors?.threshold_value}</FormErrorMessage>
-                  </FormControl>
-                  <SimpleGrid columns={2} spacing={4}>
-                    <FormControl isRequired>
-                      <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
-                      <Select
-                        value={defs.createForm.evaluation_interval ?? "30s"}
-                        onChange={(e) => {
-                          const newEval = e.target.value;
-                          const allowed = getAllowedForDurations(newEval);
-                          const currentFor = defs.createForm.for_duration ?? "5m";
-                          const newFor = allowed.includes(currentFor) ? currentFor : allowed[0];
-                          defs.setCreateForm({ ...defs.createForm, evaluation_interval: newEval, for_duration: newFor });
-                        }}
-                        bg="white"
-                      >
-                        {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
-                      </Select>
-                      <Text fontSize="xs" color="gray.500" mt={1}>How often to check this condition</Text>
-                    </FormControl>
-                    <FormControl isRequired>
-                      <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
-                      <Select
-                        value={(() => {
-                          const allowed = getAllowedForDurations(defs.createForm.evaluation_interval);
-                          const cur = defs.createForm.for_duration ?? "5m";
-                          return allowed.includes(cur) ? cur : allowed[0];
-                        })()}
-                        onChange={(e) => defs.setCreateForm({ ...defs.createForm, for_duration: e.target.value })}
-                        bg="white"
-                      >
-                        {getAllowedForDurations(defs.createForm.evaluation_interval).map((v) => (
-                          <option key={v} value={v}>{v}</option>
-                        ))}
-                      </Select>
-                      <Text fontSize="xs" color="gray.500" mt={1}>How long the condition must persist before triggering</Text>
-                    </FormControl>
-                  </SimpleGrid>
-                </VStack>
-              </Box>
+                  ) : (
+                    <Box
+                      px={3}
+                      py={2}
+                      bg="gray.100"
+                      borderRadius="md"
+                      borderWidth="1px"
+                      borderColor="gray.200"
+                      textAlign="center"
+                      fontSize="sm"
+                      color={defs.createForm.signal ? "gray.700" : "gray.400"}
+                      fontWeight="medium"
+                    >
+                      {defs.createForm.signal ? PERCENTAGE_UNIT : "—"}
+                    </Box>
+                  )}
+                </SimpleGrid>
+                <FormErrorMessage>
+                  {defs.createErrors?.condition_operator ?? defs.createErrors?.threshold_value ?? defs.createErrors?.threshold_unit}
+                </FormErrorMessage>
+              </FormControl>
 
               <Divider />
 
-              {/* ── Status ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Status</Text>
-                <FormControl isRequired>
-                  <RadioGroup value={(defs.createForm.enabled !== false) ? "active" : "inactive"} onChange={(val) => defs.setCreateForm({ ...defs.createForm, enabled: val === "active" })}>
-                    <HStack spacing={4}>
-                      <Radio value="active" colorScheme="green">
-                        <Text fontSize="sm" fontWeight="medium">Active</Text>
-                      </Radio>
-                      <Radio value="inactive" colorScheme="gray">
-                        <Text fontSize="sm" fontWeight="medium">Inactive</Text>
-                      </Radio>
-                    </HStack>
-                  </RadioGroup>
+              <FormControl isRequired isInvalid={!!defs.createErrors?.severity}>
+                <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+                <HStack spacing={2}>
+                  {SEVERITIES.map((s) => {
+                    const isActive = defs.createForm.severity === s;
+                    const colors = s === "critical"
+                      ? { activeBg: "red.100", activeBorder: "red.600", activeText: "red.700", hoverBg: "red.50" }
+                      : s === "warning"
+                      ? { activeBg: "yellow.100", activeBorder: "yellow.600", activeText: "yellow.700", hoverBg: "yellow.50" }
+                      : { activeBg: "blue.100", activeBorder: "blue.600", activeText: "blue.700", hoverBg: "blue.50" };
+                    return (
+                      <Box
+                        key={s}
+                        as="button"
+                        type="button"
+                        flex="1"
+                        py={2}
+                        px={3}
+                        fontSize="sm"
+                        fontWeight="semibold"
+                        textAlign="center"
+                        cursor="pointer"
+                        borderRadius="full"
+                        borderWidth="2px"
+                        borderColor={isActive ? colors.activeBorder : "gray.200"}
+                        bg={isActive ? colors.activeBg : "white"}
+                        color={isActive ? colors.activeText : "gray.500"}
+                        _hover={{ bg: isActive ? colors.activeBg : colors.hoverBg, borderColor: colors.activeBorder }}
+                        transition="all 0.15s"
+                        onClick={() => defs.setCreateForm({ ...defs.createForm, severity: s })}
+                        textTransform="capitalize"
+                      >
+                        {s}
+                      </Box>
+                    );
+                  })}
+                </HStack>
+                <FormErrorMessage>{defs.createErrors?.severity}</FormErrorMessage>
+              </FormControl>
+
+              <Divider />
+
+              <SimpleGrid columns={2} spacing={4}>
+                <FormControl isRequired isInvalid={!!defs.createErrors?.evaluation_interval}>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
+                  <Select
+                    value={defs.createForm.evaluation_interval ?? "30s"}
+                    onChange={(e) => {
+                      const newEval = e.target.value;
+                      const allowed = getAllowedForDurations(newEval);
+                      const currentFor = defs.createForm.for_duration ?? "1m";
+                      const newFor = allowed.includes(currentFor) ? currentFor : allowed[0];
+                      defs.setCreateForm({ ...defs.createForm, evaluation_interval: newEval, for_duration: newFor });
+                    }}
+                    bg="white"
+                  >
+                    {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
+                  </Select>
+                  <Text fontSize="xs" color="gray.500" mt={1}>How often to check</Text>
+                  <FormErrorMessage>{defs.createErrors?.evaluation_interval}</FormErrorMessage>
                 </FormControl>
-              </Box>
+
+                <FormControl isRequired isInvalid={!!defs.createErrors?.for_duration}>
+                  <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
+                  <Select
+                    value={(() => {
+                      const allowed = getAllowedForDurations(defs.createForm.evaluation_interval);
+                      const cur = defs.createForm.for_duration ?? "1m";
+                      return allowed.includes(cur) ? cur : allowed[0];
+                    })()}
+                    onChange={(e) => defs.setCreateForm({ ...defs.createForm, for_duration: e.target.value })}
+                    bg="white"
+                  >
+                    {getAllowedForDurations(defs.createForm.evaluation_interval).map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </Select>
+                  <Text fontSize="xs" color="gray.500" mt={1}>Alert fires only after the condition is met continuously for this duration.</Text>
+                  <FormErrorMessage>{defs.createErrors?.for_duration}</FormErrorMessage>
+                </FormControl>
+              </SimpleGrid>
+
+              <Divider />
+
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm">Status</FormLabel>
+                <HStack>
+                  <Switch
+                    isChecked={defs.createForm.enabled !== false}
+                    onChange={(e) => defs.setCreateForm({ ...defs.createForm, enabled: e.target.checked })}
+                    colorScheme="green"
+                  />
+                  <Text fontSize="sm">Enable this alert</Text>
+                </HStack>
+              </FormControl>
             </VStack>
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
@@ -574,50 +894,74 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <Text fontSize="lg" fontWeight="bold">Alert Definition Details</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
-            {defs.viewItem && (
-              <VStack spacing={5} align="stretch">
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Name</Text>
-                  <Text fontWeight="medium">{defs.viewItem.name}</Text>
+            {defs.viewItem && (() => {
+              const v = defs.viewItem;
+              const signalMetricLabel = v.signal_metric
+                ? (SIGNAL_METRICS_BY_SIGNAL[v.signal ?? ""]?.find((m) => m.value === v.signal_metric)?.label
+                    ?? titleCase(v.signal_metric.replace(/_/g, " ")))
+                : "—";
+              const signalLabel = v.signal
+                ? titleCase(v.signal.replace(/_/g, " "))
+                : v.alert_type ? alertTypeLabel(v.alert_type) : "—";
+              const targetLabel = v.service && v.service.length > 0
+                ? v.service.map((s) => TARGET_SERVICES.find((t) => t.value === s)?.label ?? s).join(", ")
+                : "All services";
+              const conditionThreshold = v.condition_operator && v.threshold_value != null
+                ? `${v.condition_operator} ${v.threshold_value} ${v.threshold_unit ?? ""}`.trim()
+                : formatThreshold(v);
+              const DetailRow = ({ label, children }: { label: string; children: React.ReactNode }) => (
+                <Box borderBottomWidth="1px" borderColor="gray.100" pb={3}>
+                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>{label}</Text>
+                  {children}
                 </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Description</Text>
-                  <Text>{defs.viewItem.description || "—"}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Category</Text>
-                  <Text>{titleCase(defs.viewItem.category)}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Severity</Text>
-                  <Badge colorScheme={severityColor(defs.viewItem.severity)} textTransform="capitalize">{defs.viewItem.severity}</Badge>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Alert Type</Text>
-                  <Text>{alertTypeLabel(defs.viewItem.alert_type)}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Threshold</Text>
-                  <Text>{formatThreshold(defs.viewItem)}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Eval Interval</Text>
-                  <Text fontFamily="mono">{defs.viewItem.evaluation_interval}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>For Duration</Text>
-                  <Text fontFamily="mono">{defs.viewItem.for_duration}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Status</Text>
-                  <Badge colorScheme={defs.viewItem.enabled ? "green" : "gray"} variant="subtle" fontSize="sm" px={2} py={0.5} borderRadius="full">{defs.viewItem.enabled ? "Active" : "Inactive"}</Badge>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Created On</Text>
-                  <Text fontSize="sm">{new Date(defs.viewItem.created_at).toLocaleDateString()}</Text>
-                </Box>
-              </VStack>
-            )}
+              );
+              return (
+                <VStack spacing={4} align="stretch">
+                  <DetailRow label="Alert Name">
+                    <Text fontWeight="semibold" fontSize="md">{v.name}</Text>
+                  </DetailRow>
+                  <DetailRow label="Description">
+                    <Text color={v.description ? "gray.800" : "gray.400"}>{v.description || "—"}</Text>
+                  </DetailRow>
+                  <DetailRow label="Category">
+                    <Text>{titleCase(v.category)}</Text>
+                  </DetailRow>
+                  <DetailRow label="Severity">
+                    <Badge colorScheme={severityColor(v.severity)} textTransform="capitalize" px={3} py={1} borderRadius="full" fontSize="sm">{v.severity}</Badge>
+                  </DetailRow>
+                  <DetailRow label="Signal">
+                    <Text>{signalLabel}</Text>
+                  </DetailRow>
+                  <DetailRow label="Signal Metric">
+                    <Text>{signalMetricLabel}</Text>
+                  </DetailRow>
+                  <DetailRow label="Target">
+                    <Text>{targetLabel}</Text>
+                  </DetailRow>
+                  <DetailRow label="Condition & Threshold">
+                    <Text fontFamily="mono" fontWeight="semibold" fontSize="md">{conditionThreshold}</Text>
+                  </DetailRow>
+                  <DetailRow label="Evaluation Interval">
+                    <Text fontFamily="mono">{v.evaluation_interval}</Text>
+                  </DetailRow>
+                  <DetailRow label="For Duration">
+                    <Text fontFamily="mono">{v.for_duration}</Text>
+                  </DetailRow>
+                  <DetailRow label="Status">
+                    <Badge
+                      colorScheme={v.enabled ? "green" : "gray"}
+                      variant="subtle"
+                      fontSize="sm"
+                      px={3}
+                      py={1}
+                      borderRadius="full"
+                    >
+                      {v.enabled ? "Active" : "Inactive"}
+                    </Badge>
+                  </DetailRow>
+                </VStack>
+              );
+            })()}
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
             <Button variant="outline" mr={3} onClick={() => { defs.closeView(); if (defs.viewItem) defs.openUpdate(defs.viewItem); }}>Edit</Button>
@@ -635,147 +979,307 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <Text fontSize="lg" fontWeight="bold">Update Alert Definition</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
-            <VStack spacing={6} align="stretch">
-              {/* ── Identity ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Identity</Text>
-                <VStack spacing={4} align="stretch">
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Name</FormLabel>
-                    <Input value={defs.updateItem?.name ?? ""} isReadOnly bg="gray.50" cursor="not-allowed" />
-                  </FormControl>
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
-                    <Textarea value={defs.updateForm.description ?? ""} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, description: e.target.value || null })} bg="white" rows={3} />
-                  </FormControl>
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
-                    <OptionSelector
-                      options={CATEGORIES}
-                      value={defs.updateForm.category ?? "application"}
-                      onChange={(v) => defs.setUpdateForm({ ...defs.updateForm, category: v, alert_type: null, scope: "percentage" })}
-                    />
-                  </FormControl>
-                  <FormControl>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
-                    <OptionSelector
-                      options={SEVERITIES}
-                      value={defs.updateForm.severity ?? "warning"}
-                      onChange={(v) => defs.setUpdateForm({ ...defs.updateForm, severity: v })}
-                    />
-                  </FormControl>
-                </VStack>
-              </Box>
-
+            <VStack spacing={5} align="stretch">
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Name</FormLabel>
+                <Input value={defs.updateItem?.name ?? ""} isReadOnly bg="gray.50" cursor="not-allowed" />
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
+                <Textarea value={defs.updateForm.description ?? ""} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, description: e.target.value || null })} bg="white" rows={3} />
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+                <OptionSelector
+                  options={CATEGORIES}
+                  value={defs.updateForm.category ?? "application"}
+                  onChange={(v) => defs.setUpdateForm({ ...defs.updateForm, category: v, sub_category: undefined, signal: undefined, signal_metric: undefined })}
+                />
+              </FormControl>
               <Divider />
-
-              {/* ── Detection ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Detection</Text>
-                <VStack spacing={4} align="stretch">
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Alert Type</FormLabel>
-                    <Select
-                      value={defs.updateForm.alert_type ?? ""}
-                      onChange={(e) => {
-                        const newAlertType = e.target.value || null;
-                        const newScope = getThresholdUnitForAlertType(newAlertType);
-                        defs.setUpdateForm({ ...defs.updateForm, alert_type: newAlertType, scope: newScope });
-                      }}
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Subcategory</FormLabel>
+                <Select
+                  value={defs.updateForm.sub_category ?? ""}
+                  onChange={(e) => defs.setUpdateForm({
+                    ...defs.updateForm,
+                    sub_category: e.target.value || undefined,
+                    signal: undefined,
+                    signal_metric: undefined,
+                    threshold_unit: undefined,
+                  })}
+                  bg="white"
+                  placeholder={defs.updateForm.category ? "Select subcategory..." : "Select a category first"}
+                  isDisabled={!defs.updateForm.category}
+                >
+                  {(SUB_CATEGORIES_BY_CATEGORY[defs.updateForm.category ?? ""] ?? []).map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Signal</FormLabel>
+                <Select
+                  value={defs.updateForm.signal ?? ""}
+                  onChange={(e) => {
+                    const sig = e.target.value || undefined;
+                    defs.setUpdateForm({
+                      ...defs.updateForm,
+                      signal: sig,
+                      signal_metric: undefined,
+                      threshold_unit: sig === "latency" ? "ms" : sig ? PERCENTAGE_UNIT : undefined,
+                    });
+                  }}
+                  bg="white"
+                  placeholder={defs.updateForm.sub_category ? "Select signal..." : "Select a subcategory first"}
+                  isDisabled={!defs.updateForm.sub_category}
+                >
+                  {(SIGNALS_BY_SUB_CATEGORY[defs.updateForm.sub_category ?? ""] ?? []).map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Signal Metric</FormLabel>
+                <Select
+                  value={defs.updateForm.signal_metric ?? ""}
+                  onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, signal_metric: e.target.value || undefined })}
+                  bg="white"
+                  placeholder={defs.updateForm.signal ? "Select metric..." : "Select a signal first"}
+                  isDisabled={!defs.updateForm.signal}
+                >
+                  {(SIGNAL_METRICS_BY_SIGNAL[defs.updateForm.signal ?? ""] ?? []).map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Select>
+              </FormControl>
+              <Divider />
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Target</FormLabel>
+                {defs.updateForm.category === "infrastructure" ? (
+                  <Box
+                    px={3}
+                    py={2}
+                    bg="gray.100"
+                    borderRadius="md"
+                    borderWidth="1px"
+                    borderColor="gray.200"
+                    color="gray.600"
+                    fontSize="sm"
+                  >
+                    All services (infrastructure monitors the full stack)
+                  </Box>
+                ) : (
+                  <Menu closeOnSelect={false} matchWidth>
+                    <MenuButton
+                      as={Button}
+                      w="100%"
                       bg="white"
-                      placeholder="Select alert type..."
+                      borderWidth="1px"
+                      borderColor="gray.200"
+                      borderRadius="md"
+                      fontWeight="normal"
+                      textAlign="left"
+                      _hover={{ borderColor: "gray.400" }}
+                      _active={{ bg: "white" }}
+                      rightIcon={<Text fontSize="xs" color="gray.500">▾</Text>}
                     >
-                      {(ALERT_TYPES_BY_CATEGORY[defs.updateForm.category ?? "application"] || []).map((t) => (
-                        <option key={t.value} value={t.value}>{t.label}</option>
+                      {(() => {
+                        const sel = defs.updateForm.service ?? [];
+                        if (sel.length === 0) {
+                          return <Text color="gray.400">Select targets...</Text>;
+                        }
+                        if (sel.length === TARGET_SERVICES.length) {
+                          return "All services selected";
+                        }
+                        if (sel.length === 1) {
+                          const v = sel[0];
+                          return TARGET_SERVICES.find((t) => t.value === v)?.label ?? v;
+                        }
+                        return `${sel.length} services selected`;
+                      })()}
+                    </MenuButton>
+                    <MenuList w="100%" maxH="300px" overflowY="auto">
+                      <MenuItem closeOnSelect={false} px={4} py={2}>
+                        <Checkbox
+                          isChecked={(defs.updateForm.service ?? []).length === TARGET_SERVICES.length}
+                          isIndeterminate={
+                            (defs.updateForm.service ?? []).length > 0 &&
+                            (defs.updateForm.service ?? []).length < TARGET_SERVICES.length
+                          }
+                          onChange={(e) => {
+                            defs.setUpdateForm({
+                              ...defs.updateForm,
+                              service: e.target.checked ? TARGET_SERVICES.map((t) => t.value) : [],
+                            });
+                          }}
+                          fontWeight="semibold"
+                        >
+                          All services
+                        </Checkbox>
+                      </MenuItem>
+                      <MenuDivider my={1} />
+                      {TARGET_SERVICES.map((opt) => (
+                        <MenuItem key={opt.value} closeOnSelect={false} px={4} py={2}>
+                          <Checkbox
+                            isChecked={(defs.updateForm.service ?? []).includes(opt.value)}
+                            onChange={(e) => {
+                              const current = defs.updateForm.service ?? [];
+                              defs.setUpdateForm({
+                                ...defs.updateForm,
+                                service: e.target.checked
+                                  ? [...current, opt.value]
+                                  : current.filter((s) => s !== opt.value),
+                              });
+                            }}
+                          >
+                            {opt.label}
+                          </Checkbox>
+                        </MenuItem>
+                      ))}
+                    </MenuList>
+                  </Menu>
+                )}
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Condition + Threshold</FormLabel>
+                <SimpleGrid columns={3} spacing={3} mb={1}>
+                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Condition</Text>
+                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Threshold</Text>
+                  <Text fontSize="xs" color="gray.500" fontWeight="medium">Unit</Text>
+                </SimpleGrid>
+                <SimpleGrid columns={3} spacing={3}>
+                  <Select
+                    value={defs.updateForm.condition_operator ?? ""}
+                    onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, condition_operator: e.target.value || undefined })}
+                    bg="white"
+                    placeholder="—"
+                  >
+                    {CONDITION_OPERATORS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </Select>
+                  <NumberInput
+                    value={defs.updateForm.threshold_value ?? ""}
+                    onChange={(_s, val) => defs.setUpdateForm({ ...defs.updateForm, threshold_value: Number.isNaN(val) ? undefined : val })}
+                    min={0}
+                    bg="white"
+                  >
+                    <NumberInputField placeholder="Value" />
+                    <NumberInputStepper>
+                      <NumberIncrementStepper />
+                      <NumberDecrementStepper />
+                    </NumberInputStepper>
+                  </NumberInput>
+                  {defs.updateForm.signal === "latency" ? (
+                    <Select
+                      value={defs.updateForm.threshold_unit ?? "ms"}
+                      onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, threshold_unit: e.target.value || "ms" })}
+                      bg="white"
+                    >
+                      {LATENCY_THRESHOLD_UNITS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
                     </Select>
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Threshold Configuration</FormLabel>
-                    <SimpleGrid columns={2} spacing={3}>
-                      <NumberInput
-                        value={defs.updateForm.promql_expr ?? ""}
-                        onChange={(val) => defs.setUpdateForm({ ...defs.updateForm, promql_expr: val })}
-                        min={0}
-                        bg="white"
+                  ) : (
+                    <Box
+                      px={3}
+                      py={2}
+                      bg="gray.100"
+                      borderRadius="md"
+                      borderWidth="1px"
+                      borderColor="gray.200"
+                      textAlign="center"
+                      fontSize="sm"
+                      color={defs.updateForm.signal ? "gray.700" : "gray.400"}
+                      fontWeight="medium"
+                    >
+                      {defs.updateForm.signal ? PERCENTAGE_UNIT : "—"}
+                    </Box>
+                  )}
+                </SimpleGrid>
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+                <HStack spacing={2}>
+                  {SEVERITIES.map((s) => {
+                    const isActive = (defs.updateForm.severity ?? "") === s;
+                    const colors = s === "critical"
+                      ? { activeBg: "red.100", activeBorder: "red.600", activeText: "red.700", hoverBg: "red.50" }
+                      : s === "warning"
+                      ? { activeBg: "yellow.100", activeBorder: "yellow.600", activeText: "yellow.700", hoverBg: "yellow.50" }
+                      : { activeBg: "blue.100", activeBorder: "blue.600", activeText: "blue.700", hoverBg: "blue.50" };
+                    return (
+                      <Box
+                        key={s}
+                        as="button"
+                        type="button"
+                        flex="1"
+                        py={2}
+                        px={3}
+                        fontSize="sm"
+                        fontWeight="semibold"
+                        textAlign="center"
+                        cursor="pointer"
+                        borderRadius="full"
+                        borderWidth="2px"
+                        borderColor={isActive ? colors.activeBorder : "gray.200"}
+                        bg={isActive ? colors.activeBg : "white"}
+                        color={isActive ? colors.activeText : "gray.500"}
+                        _hover={{ bg: isActive ? colors.activeBg : colors.hoverBg, borderColor: colors.activeBorder }}
+                        transition="all 0.15s"
+                        onClick={() => defs.setUpdateForm({ ...defs.updateForm, severity: s })}
+                        textTransform="capitalize"
                       >
-                        <NumberInputField placeholder="Enter value (e.g., 500, 85, 95)" />
-                        <NumberInputStepper>
-                          <NumberIncrementStepper />
-                          <NumberDecrementStepper />
-                        </NumberInputStepper>
-                      </NumberInput>
-                      <Select
-                        value={getThresholdUnitForAlertType(defs.updateForm.alert_type)}
-                        isDisabled
-                        bg="gray.200"
-                        color="gray.700"
-                        cursor="not-allowed"
-                        borderColor="gray.300"
-                      >
-                        <option value={getThresholdUnitForAlertType(defs.updateForm.alert_type)}>
-                          {getThresholdUnitForAlertType(defs.updateForm.alert_type).charAt(0).toUpperCase() + getThresholdUnitForAlertType(defs.updateForm.alert_type).slice(1)}
-                        </option>
-                      </Select>
-                    </SimpleGrid>
-                  </FormControl>
-                  <SimpleGrid columns={2} spacing={4}>
-                    <FormControl isRequired>
-                      <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
-                      <Select
-                        value={defs.updateForm.evaluation_interval ?? "30s"}
-                        onChange={(e) => {
-                          const newEval = e.target.value;
-                          const allowed = getAllowedForDurations(newEval);
-                          const currentFor = defs.updateForm.for_duration ?? "5m";
-                          const newFor = allowed.includes(currentFor) ? currentFor : allowed[0];
-                          defs.setUpdateForm({ ...defs.updateForm, evaluation_interval: newEval, for_duration: newFor });
-                        }}
-                        bg="white"
-                      >
-                        {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
-                      </Select>
-                      <Text fontSize="xs" color="gray.500" mt={1}>How often to check this condition</Text>
-                    </FormControl>
-                    <FormControl isRequired>
-                      <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
-                      <Select
-                        value={(() => {
-                          const allowed = getAllowedForDurations(defs.updateForm.evaluation_interval);
-                          const cur = defs.updateForm.for_duration ?? "5m";
-                          return allowed.includes(cur) ? cur : allowed[0];
-                        })()}
-                        onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, for_duration: e.target.value })}
-                        bg="white"
-                      >
-                        {getAllowedForDurations(defs.updateForm.evaluation_interval).map((v) => (
-                          <option key={v} value={v}>{v}</option>
-                        ))}
-                      </Select>
-                      <Text fontSize="xs" color="gray.500" mt={1}>How long the condition must persist before triggering</Text>
-                    </FormControl>
-                  </SimpleGrid>
-                </VStack>
-              </Box>
-
-              <Divider />
-
-              {/* ── Status ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Status</Text>
-                <FormControl isRequired>
-                  <RadioGroup value={(defs.updateForm.enabled ?? true) ? "active" : "inactive"} onChange={(val) => defs.setUpdateForm({ ...defs.updateForm, enabled: val === "active" })}>
-                    <HStack spacing={4}>
-                      <Radio value="active" colorScheme="green">
-                        <Text fontSize="sm" fontWeight="medium">Active</Text>
-                      </Radio>
-                      <Radio value="inactive" colorScheme="gray">
-                        <Text fontSize="sm" fontWeight="medium">Inactive</Text>
-                      </Radio>
-                    </HStack>
-                  </RadioGroup>
-                </FormControl>
-              </Box>
+                        {s}
+                      </Box>
+                    );
+                  })}
+                </HStack>
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
+                <Select
+                  value={defs.updateForm.evaluation_interval ?? "30s"}
+                  onChange={(e) => {
+                    const newEval = e.target.value;
+                    const allowed = getAllowedForDurations(newEval);
+                    const currentFor = defs.updateForm.for_duration ?? "5m";
+                    const newFor = allowed.includes(currentFor) ? currentFor : allowed[0];
+                    defs.setUpdateForm({ ...defs.updateForm, evaluation_interval: newEval, for_duration: newFor });
+                  }}
+                  bg="white"
+                >
+                  {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
+                </Select>
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
+                <Select
+                  value={(() => {
+                    const allowed = getAllowedForDurations(defs.updateForm.evaluation_interval);
+                    const cur = defs.updateForm.for_duration ?? "5m";
+                    return allowed.includes(cur) ? cur : allowed[0];
+                  })()}
+                  onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, for_duration: e.target.value })}
+                  bg="white"
+                >
+                  {getAllowedForDurations(defs.updateForm.evaluation_interval).map((v) => (
+                    <option key={v} value={v}>{v}</option>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl>
+                <FormLabel fontWeight="semibold" fontSize="sm">Status</FormLabel>
+                <HStack>
+                  <Switch
+                    isChecked={defs.updateForm.enabled ?? true}
+                    onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, enabled: e.target.checked })}
+                    colorScheme="green"
+                  />
+                  <Text fontSize="sm">Enable this alert</Text>
+                </HStack>
+              </FormControl>
             </VStack>
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
@@ -1037,7 +1541,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <VStack spacing={4} align="stretch">
               <FormControl>
                 <FormLabel fontWeight="semibold">Receiver Name</FormLabel>
-                <Input value={recvs.updateForm.receiver_name ?? ""} onChange={(e) => recvs.setUpdateForm({ ...recvs.updateForm, receiver_name: e.target.value })} bg="white" />
+                <Input value={recvs.updateForm.rule_name ?? ""} onChange={(e) => recvs.setUpdateForm({ ...recvs.updateForm, rule_name: e.target.value })} bg="white" />
               </FormControl>
               <FormControl>
                 <FormLabel fontWeight="semibold">Recipient Type</FormLabel>
@@ -1130,12 +1634,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 bg="white"
               />
             </InputGroup>
-            <Select size="sm" maxW="140px" value={rules.filterRole} onChange={(e) => rules.setFilterRole(e.target.value)} bg="white">
-              <option value="all">Role</option>
-              {RBAC_ROLES.map((role) => (
-                <option key={role} value={role}>{titleCase(role)}</option>
-              ))}
-            </Select>
             <Select size="sm" maxW="120px" value={rules.filterEnabled} onChange={(e) => rules.setFilterEnabled(e.target.value)} bg="white">
               <option value="all">Status</option>
               <option value="enabled">Active</option>
@@ -1148,8 +1646,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               variant="link"
               colorScheme="gray"
               textDecoration="underline"
-              onClick={() => { rules.setSearchQuery(""); rules.setFilterRole("all"); rules.setFilterEnabled("all"); }}
-              isDisabled={!rules.searchQuery && rules.filterRole === "all" && rules.filterEnabled === "all"}
+              onClick={() => { rules.setSearchQuery(""); rules.setFilterEnabled("all"); }}
+              isDisabled={!rules.searchQuery && rules.filterEnabled === "all"}
             >
               Reset Filters
             </Button>
@@ -1157,7 +1655,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               size="sm"
               colorScheme="orange"
               leftIcon={<AddIcon />}
-              onClick={() => { setCreateRuleRole(""); defs.fetchDefinitions(); rules.openCreate(); }}
+              onClick={() => { resetCreateRuleExtras(); defs.fetchDefinitions(); fetchTenants(); rules.openCreate(); }}
             >
               Create Routing Rule
             </Button>
@@ -1171,72 +1669,69 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Text color="gray.600">Loading alert routing...</Text>
             </VStack>
           </Center>
-        ) : rules.filteredReceivers.filter((rv) => rules.getRuleForReceiver(rv.id)).length > 0 ? (
+        ) : rules.filteredRules.length > 0 ? (
           <TableContainer>
             <Table variant="simple" size="sm" w="100%">
               <Thead>
                 <Tr>
                   <Th>Rule Name</Th>
-                  <Th>Category</Th>
-                  <Th>Severity</Th>
-                  <Th>Definitions</Th>
-                  <Th>Assigned Role</Th>
+                  <Th>Alert Definitions</Th>
+                  <Th>Tenant</Th>
                   <Th>Status</Th>
                   <Th>Actions</Th>
                 </Tr>
               </Thead>
               <Tbody>
-                {rules.filteredReceivers.filter((rv) => rules.getRuleForReceiver(rv.id)).map((rv) => {
-                  const linkedRule = rules.getRuleForReceiver(rv.id);
-                  const parts = rv.receiver_name.split("-");
-                  const rowSeverity = linkedRule?.match_severity || (parts.length >= 1 ? parts[0] : null);
-                  const rowCategory = linkedRule?.match_category || (parts.length >= 2 ? parts[1] : null);
-                  const matchingDefs = defs.definitions.filter(
-                    (d) =>
-                      (!rowCategory || d.category === rowCategory) &&
-                      (!rowSeverity || d.severity === rowSeverity)
-                  );
-                  return (
+                {rules.filteredRules.map((rule) => (
                     <Tr
-                      key={rv.id}
+                      key={rule.id}
                       _hover={{ bg: "gray.50", "& .row-actions": { opacity: 1 } }}
                       transition="background 0.15s"
                     >
-                      <Td fontWeight="semibold">{linkedRule?.rule_name ?? <Text as="span" color="gray.400" fontStyle="italic">—</Text>}</Td>
-                      <Td><Badge colorScheme={categoryColor(rowCategory)} textTransform="capitalize">{rowCategory ?? "All"}</Badge></Td>
-                      <Td>{rowSeverity ? <Badge colorScheme={severityColor(rowSeverity)} textTransform="capitalize">{rowSeverity}</Badge> : <Text fontSize="sm" color="gray.500">All</Text>}</Td>
+                      <Td fontWeight="semibold">{rule.rule_name ?? rule.receiver_name}</Td>
                       <Td>
-                        {matchingDefs.length > 0 ? (
+                        {rule.alert_names && rule.alert_names.length > 0 ? (
                           <Text fontSize="sm" color="gray.700">
-                            {matchingDefs.slice(0, 2).map((d) => d.name).join(", ")}
-                            {matchingDefs.length > 2 ? ` +${matchingDefs.length - 2}` : ""}
+                            {rule.alert_names.slice(0, 2).join(", ")}
+                            {rule.alert_names.length > 2 ? ` +${rule.alert_names.length - 2}` : ""}
                           </Text>
                         ) : (
-                          <Text fontSize="sm" color="gray.500">—</Text>
+                          <Text fontSize="sm" color="gray.500">All</Text>
                         )}
                       </Td>
-                      <Td>{rv.rbac_role ? <Badge colorScheme="purple">{titleCase(rv.rbac_role)}</Badge> : <Text fontSize="sm" color="gray.500">—</Text>}</Td>
                       <Td>
-                        <Badge colorScheme={rv.enabled ? "green" : "gray"} variant="subtle" fontSize="xs" px={2} py={0.5} borderRadius="full">
-                          {rv.enabled ? "Active" : "Inactive"}
+                        {rule.tenant ? (
+                          <Badge colorScheme="purple" variant="subtle" textTransform="none">{rule.tenant}</Badge>
+                        ) : (
+                          <Text fontSize="sm" color="gray.500">Global</Text>
+                        )}
+                      </Td>
+                      <Td>
+                        <Badge colorScheme={rule.enabled ? "green" : "gray"} variant="subtle" fontSize="xs" px={2} py={0.5} borderRadius="full">
+                          {rule.enabled ? "Active" : "Inactive"}
                         </Badge>
                       </Td>
                       <Td>
                         <HStack spacing={1} className="row-actions" opacity={0} transition="opacity 0.15s">
                           <Tooltip label="View" placement="top" hasArrow>
-                            <IconButton aria-label="View" icon={<ViewIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "blue.500", bg: "blue.50" }} onClick={() => { setViewRuleDef(""); defs.fetchDefinitions(); if (linkedRule) rules.openView(linkedRule); }} />
+                            <IconButton aria-label="View" icon={<ViewIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "blue.500", bg: "blue.50" }} onClick={() => { defs.fetchDefinitions(); rules.openView(rule); }} />
                           </Tooltip>
                           <Tooltip label="Edit" placement="top" hasArrow>
-                            <IconButton aria-label="Edit" icon={<EditIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "green.500", bg: "green.50" }} onClick={() => { setUpdateRuleRole(rv.rbac_role ?? ""); setUpdateRuleDef(""); defs.fetchDefinitions(); if (linkedRule) rules.openUpdate(linkedRule); }} />
+                            <IconButton aria-label="Edit" icon={<EditIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "green.500", bg: "green.50" }} onClick={() => {
+                              defs.fetchDefinitions();
+                              fetchTenants();
+                              resetEditRuleExtras();
+                              initEditRuleExtras(rule);
+                              rules.openUpdate(rule);
+                            }} />
                           </Tooltip>
                           <Tooltip label="Delete" placement="top" hasArrow>
-                            <IconButton aria-label="Delete" icon={<DeleteIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "red.500", bg: "red.50" }} onClick={() => { if (linkedRule) rules.openDelete(linkedRule); }} />
+                            <IconButton aria-label="Delete" icon={<DeleteIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "red.500", bg: "red.50" }} onClick={() => rules.openDelete(rule)} />
                           </Tooltip>
                         </HStack>
                       </Td>
                     </Tr>
-                  );
-                })}
+                  ))}
               </Tbody>
             </Table>
           </TableContainer>
@@ -1244,7 +1739,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
           <Alert status="info" borderRadius="md">
             <AlertIcon />
             <AlertDescription>
-              {rules.receivers.length === 0
+              {rules.rules.length === 0
                 ? "No alert routing configured. Click 'Create Routing Rule' to add one."
                 : "No entries match the current filters."}
             </AlertDescription>
@@ -1254,7 +1749,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       </Box>
 
       {/* ── Create Routing Rule Drawer ── */}
-      <Drawer isOpen={rules.isCreateOpen} onClose={rules.closeCreate} placement="right" size="md">
+      <Drawer isOpen={rules.isCreateOpen} onClose={() => { rules.closeCreate(); resetCreateRuleExtras(); }} placement="right" size="md">
         <DrawerOverlay />
         <DrawerContent>
           <DrawerCloseButton />
@@ -1262,106 +1757,163 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <Text fontSize="lg" fontWeight="bold">Create Routing Rule</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
-            <VStack spacing={6} align="stretch">
-              {/* ── Identity ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Identity</Text>
-                <VStack spacing={4} align="stretch">
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Rule Name</FormLabel>
-                    <Input placeholder="e.g. Critical-to-SRE" value={rules.createForm.rule_name} onChange={(e) => rules.setCreateForm({ ...rules.createForm, rule_name: e.target.value })} bg="white" />
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
-                    <OptionSelector
-                      options={CATEGORIES}
-                      value={rules.createForm.match_category ?? "application"}
-                      onChange={(v) => rules.setCreateForm({ ...rules.createForm, match_category: v })}
-                    />
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
-                    <OptionSelector
-                      options={SEVERITIES}
-                      value={rules.createForm.match_severity ?? "critical"}
-                      onChange={(v) => rules.setCreateForm({ ...rules.createForm, match_severity: v })}
-                    />
-                  </FormControl>
-                </VStack>
-              </Box>
+            <VStack spacing={0} align="stretch">
 
-              <Divider />
+              {/* ── Rule Name + Description ── */}
+              <VStack spacing={4} align="stretch" pb={6}>
+                <FormControl isRequired isInvalid={!!createRuleErrors.ruleName}>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Rule Name</FormLabel>
+                  <Input
+                    placeholder="e.g. Route Critical ASR Alerts"
+                    value={rules.createForm.rule_name}
+                    onChange={(e) => { rules.setCreateForm({ ...rules.createForm, rule_name: e.target.value }); if (e.target.value.trim()) setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.ruleName; return n; }); }}
+                    bg="white"
+                  />
+                  <FormErrorMessage>{createRuleErrors.ruleName}</FormErrorMessage>
+                </FormControl>
+              </VStack>
 
-              {/* ── Alert Definitions Preview ── */}
-              <Box>
-                <HStack justify="space-between" mb={3}>
-                  <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider">View Alert Definitions</Text>
-                  <Badge colorScheme="orange" fontSize="xs" borderRadius="full" px={2}>{defs.definitions.filter((d) => (!rules.createForm.match_category || d.category === rules.createForm.match_category) && (!rules.createForm.match_severity || d.severity === rules.createForm.match_severity)).length}</Badge>
-                </HStack>
-                {(() => {
-                  const matchingDefs = defs.definitions.filter((d) =>
-                    (!rules.createForm.match_category || d.category === rules.createForm.match_category) &&
-                    (!rules.createForm.match_severity || d.severity === rules.createForm.match_severity)
-                  );
-                  return (
+              <Divider mb={6} />
+
+              {/* ── Category + Severity + Alert Definition ── */}
+              <VStack spacing={4} align="stretch" pb={6}>
+                <FormControl isRequired isInvalid={!!createRuleErrors.category}>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+                  <OptionSelector
+                    options={CATEGORIES}
+                    value={rules.createForm.category ?? ""}
+                    onChange={(v) => { rules.setCreateForm({ ...rules.createForm, category: v }); setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.category; return n; }); }}
+                  />
+                  <FormErrorMessage>{createRuleErrors.category}</FormErrorMessage>
+                </FormControl>
+                <FormControl isRequired isInvalid={!!createRuleErrors.severity}>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+                  <HStack spacing={2}>
+                    {SEVERITIES.map((s) => {
+                      const isActive = rules.createForm.severity === s;
+                      const colors = s === "critical"
+                        ? { activeBg: "red.100", activeBorder: "red.600", activeText: "red.700", hoverBg: "red.50" }
+                        : s === "warning"
+                        ? { activeBg: "yellow.100", activeBorder: "yellow.600", activeText: "yellow.700", hoverBg: "yellow.50" }
+                        : { activeBg: "blue.100", activeBorder: "blue.600", activeText: "blue.700", hoverBg: "blue.50" };
+                      return (
+                        <Box
+                          key={s}
+                          as="button"
+                          type="button"
+                          flex="1"
+                          py={2}
+                          px={3}
+                          fontSize="sm"
+                          fontWeight="semibold"
+                          textAlign="center"
+                          cursor="pointer"
+                          borderRadius="full"
+                          borderWidth="2px"
+                          borderColor={isActive ? colors.activeBorder : "gray.200"}
+                          bg={isActive ? colors.activeBg : "white"}
+                          color={isActive ? colors.activeText : "gray.500"}
+                          _hover={{ bg: isActive ? colors.activeBg : colors.hoverBg, borderColor: colors.activeBorder }}
+                          transition="all 0.15s"
+                          onClick={() => { rules.setCreateForm({ ...rules.createForm, severity: s }); setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.severity; return n; }); }}
+                          textTransform="capitalize"
+                        >
+                          {s}
+                        </Box>
+                      );
+                    })}
+                  </HStack>
+                  <FormErrorMessage>{createRuleErrors.severity}</FormErrorMessage>
+                </FormControl>
+                <FormControl>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Alert Definitions</FormLabel>
+                  {(() => {
+                    const cat = rules.createForm.category;
+                    const sev = rules.createForm.severity;
+                    const hasFilter = !!cat && !!sev;
+                    const matchingDefs = defs.definitions.filter((d) =>
+                      (!cat || d.category === cat) && (!sev || d.severity === sev)
+                    );
+                    return (
+                      <Select
+                        bg="white"
+                        value={createRuleDef}
+                        isDisabled={!hasFilter}
+                        onChange={(e) => setCreateRuleDef(e.target.value)}
+                        placeholder={!hasFilter ? "Select Category and Severity first" : matchingDefs.length === 0 ? "No definitions match" : `${matchingDefs.length} alert definition${matchingDefs.length !== 1 ? "s" : ""} affected`}
+                      >
+                        {matchingDefs.map((d) => (
+                          <option key={d.id} value={String(d.id)}>{d.name}</option>
+                        ))}
+                      </Select>
+                    );
+                  })()}
+                </FormControl>
+              </VStack>
+
+              <Divider mb={6} />
+
+              {/* ── Scope ── */}
+              <VStack spacing={4} align="stretch" pb={6}>
+                <FormControl isRequired>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Scope</FormLabel>
+                  <Select
+                    value={createRuleScope}
+                    onChange={(e) => { setCreateRuleScope(e.target.value as "global" | "specific_tenant"); setCreateRuleTenant(""); setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; }); }}
+                    bg="white"
+                  >
+                    <option value="global">Global</option>
+                    <option value="specific_tenant">Specific Tenant</option>
+                  </Select>
+                </FormControl>
+                {createRuleScope === "specific_tenant" && (
+                  <FormControl isRequired isInvalid={!!createRuleErrors.tenant}>
+                    <FormLabel fontWeight="semibold" fontSize="sm">Target Tenant</FormLabel>
                     <Select
+                      value={createRuleTenant}
+                      onChange={(e) => { setCreateRuleTenant(e.target.value); if (e.target.value) setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; }); }}
                       bg="white"
-                      size="sm"
-                      value={createRuleDef}
-                      onChange={(e) => setCreateRuleDef(e.target.value)}
-                      placeholder={`${matchingDefs.length} alert definition${matchingDefs.length !== 1 ? "s" : ""}`}
+                      placeholder="Select tenant"
+                      isDisabled={isLoadingTenants}
                     >
-                      {matchingDefs.map((d) => (
-                        <option key={d.id} value={String(d.id)}>{d.name}</option>
+                      {tenants.map((t) => (
+                        <option key={t.tenant_id} value={t.tenant_id}>{t.organization_name || t.tenant_id}</option>
                       ))}
                     </Select>
-                  );
-                })()}
-              </Box>
+                    <FormErrorMessage>{createRuleErrors.tenant}</FormErrorMessage>
+                  </FormControl>
+                )}
+              </VStack>
 
-              <Divider />
+              <Divider mb={6} />
 
-              {/* ── Assign Role ── */}
-              <Box>
+              {/* ── Delivery Channel ── */}
+              <VStack spacing={2} align="stretch" pb={6}>
                 <FormControl isRequired>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Assign to Role</FormLabel>
-                  <Select
-                    value={createRuleRole}
-                    onChange={(e) => setCreateRuleRole(e.target.value)}
-                    bg="white"
-                    placeholder="Select a role..."
+                  <FormLabel fontWeight="semibold" fontSize="sm">Delivery Channel</FormLabel>
+                  <Box
+                    bg="gray.50"
+                    border="1px solid"
+                    borderColor="gray.200"
+                    borderRadius="md"
+                    px={4}
+                    py={3}
+                    cursor="not-allowed"
                   >
-                    {RBAC_ROLES.map((role) => (
-                      <option key={role} value={role}>{titleCase(role)}</option>
-                    ))}
-                  </Select>
-                  <Text fontSize="xs" color="gray.500" mt={1}>The user with selected role will receive matching alerts.</Text>
-                </FormControl>
-              </Box>
-
-              <Divider />
-
-              {/* ── Status ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Status</Text>
-                <FormControl isRequired>
-                  <RadioGroup defaultValue="active">
-                    <HStack spacing={4}>
-                      <Radio value="active" colorScheme="green">
-                        <Text fontSize="sm" fontWeight="medium">Active</Text>
-                      </Radio>
-                      <Radio value="inactive" colorScheme="gray">
-                        <Text fontSize="sm" fontWeight="medium">Inactive</Text>
-                      </Radio>
+                    <HStack spacing={2}>
+                      <LockIcon color="gray.400" boxSize={3} />
+                      <Text fontSize="sm" color="gray.400" fontWeight="medium">Email</Text>
                     </HStack>
-                  </RadioGroup>
+                  </Box>
+                  <Text fontSize="xs" color="gray.500" mt={1}>Email delivery is automatically configured. Additional channels coming soon.</Text>
                 </FormControl>
-              </Box>
+              </VStack>
+
             </VStack>
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
-            <Button variant="outline" mr={3} onClick={rules.closeCreate} isDisabled={rules.isCreating}>Cancel</Button>
-            <Button colorScheme="orange" onClick={() => rules.handleCreate(createRuleRole || undefined)} isLoading={rules.isCreating} loadingText="Saving...">Save Routing Rule</Button>
+            <Button variant="outline" mr={3} onClick={() => { rules.closeCreate(); resetCreateRuleExtras(); }} isDisabled={rules.isCreating}>Cancel</Button>
+            <Button colorScheme="orange" onClick={validateAndCreate} isLoading={rules.isCreating} loadingText="Saving...">Save Routing Rule</Button>
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
@@ -1372,52 +1924,180 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         <DrawerContent>
           <DrawerCloseButton />
           <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
-            <Text fontSize="lg" fontWeight="bold">Alert Routing Details</Text>
+            <Text fontSize="lg" fontWeight="bold">View Routing Rule</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
             {rules.viewItem && (() => {
-              const viewReceiver = rules.receivers.find((rv) => rv.id === rules.viewItem!.receiver_id);
-              const nameParts = (viewReceiver?.receiver_name ?? "").split("-");
-              const viewSeverity = rules.viewItem.match_severity || (nameParts.length >= 1 ? nameParts[0] : null);
-              const viewCategory = rules.viewItem.match_category || (nameParts.length >= 2 ? nameParts[1] : null);
-              const viewMatchDefs = defs.definitions.filter((d) => (!viewCategory || d.category === viewCategory) && (!viewSeverity || d.severity === viewSeverity));
+              const item = rules.viewItem;
+              const firstName = item.alert_names?.[0];
+              const linkedDef = firstName
+                ? (defs.definitions.find((d) => d.name === firstName) ?? null)
+                : null;
+              const category = item.category ?? linkedDef?.category ?? null;
+              const severity = item.severity ?? linkedDef?.severity ?? null;
+              const sevColors =
+                severity === "critical" ? { bg: "red.100", color: "red.700", border: "red.300" }
+                : severity === "warning" ? { bg: "yellow.100", color: "yellow.700", border: "yellow.300" }
+                : severity === "info" ? { bg: "blue.100", color: "blue.700", border: "blue.300" }
+                : { bg: "gray.100", color: "gray.600", border: "gray.300" };
+              const catColor = category === "application" ? "orange" : category === "infrastructure" ? "purple" : "gray";
               return (
-                <VStack spacing={5} align="stretch">
-                  <Box><Text fontWeight="semibold" color="gray.500" fontSize="xs" mb={1}>Rule Name</Text><Text fontWeight="medium">{rules.viewItem.rule_name}</Text></Box>
-                  <Box><Text fontWeight="semibold" color="gray.500" fontSize="xs" mb={1}>Category</Text><Badge colorScheme="purple" textTransform="capitalize">{viewCategory ?? "All"}</Badge></Box>
-                  <Box><Text fontWeight="semibold" color="gray.500" fontSize="xs" mb={1}>Severity</Text><Badge colorScheme={viewSeverity ? severityColor(viewSeverity) : "gray"} textTransform="capitalize">{viewSeverity ?? "All"}</Badge></Box>
-                  <Box>
-                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" mb={2}>Matching Alert Definitions</Text>
-                    {viewMatchDefs.length > 0 ? (
+                <VStack spacing={0} align="stretch">
+
+                  {/* Rule Name */}
+                  <Box pb={5}>
+                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={1}>Rule Name</Text>
+                    <Text fontWeight="semibold" fontSize="sm" color="gray.800">{item.rule_name ?? item.receiver_name}</Text>
+                  </Box>
+
+                  <Divider mb={5} />
+
+                  {/* Category + Severity */}
+                  <SimpleGrid columns={2} spacing={5} pb={5}>
+                    <Box>
+                      <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Category</Text>
+                      {category ? (
+                        <Badge colorScheme={catColor} variant="subtle" textTransform="capitalize" fontSize="xs" px={2} py={0.5} borderRadius="full">{category}</Badge>
+                      ) : (
+                        <Text fontSize="sm" color="gray.400">—</Text>
+                      )}
+                    </Box>
+                    <Box>
+                      <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Severity</Text>
+                      {severity ? (
+                        <Box
+                          display="inline-block"
+                          bg={sevColors.bg}
+                          color={sevColors.color}
+                          fontSize="xs"
+                          fontWeight="semibold"
+                          px={2}
+                          py={0.5}
+                          borderRadius="full"
+                          textTransform="capitalize"
+                          border="1px solid"
+                          borderColor={sevColors.border}
+                        >{severity}</Box>
+                      ) : (
+                        <Text fontSize="sm" color="gray.400">—</Text>
+                      )}
+                    </Box>
+                  </SimpleGrid>
+
+                  {/* Alert Definition */}
+                  <Box pb={5}>
+                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Alert Definition</Text>
+                    {item.alert_names && item.alert_names.length > 0 ? (
                       <VStack spacing={1} align="stretch">
-                        {viewMatchDefs.map((d) => (
-                          <HStack key={d.id} spacing={2}>
-                            <Text fontSize="sm" color="gray.700">• {d.name}</Text>
-                          </HStack>
+                        {item.alert_names.map((name) => (
+                          <Text key={name} fontSize="sm" color="gray.700">{name}</Text>
                         ))}
                       </VStack>
+                    ) : (() => {
+                      const matchCount = defs.definitions.filter(
+                        (d) => (!category || d.category === category) && (!severity || d.severity === severity)
+                      ).length;
+                      const hasFilter = category || severity;
+                      return (
+                        <HStack spacing={2}>
+                          <Text fontSize="sm" color="gray.500">
+                            {hasFilter
+                              ? `All matching definitions`
+                              : "All definitions"}
+                          </Text>
+                          {matchCount > 0 && (
+                            <Badge colorScheme="gray" variant="subtle" fontSize="xs">{matchCount}</Badge>
+                          )}
+                        </HStack>
+                      );
+                    })()}
+                  </Box>
+
+                  <Divider mb={5} />
+
+                  {/* Scope */}
+                  <Box pb={5}>
+                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Scope</Text>
+                    {item.tenant ? (
+                      <HStack spacing={1.5}>
+                        <Text fontSize="sm" color="gray.700" fontWeight="medium">Specific Tenant</Text>
+                        <Text fontSize="sm" color="gray.400">—</Text>
+                        <Badge colorScheme="purple" variant="subtle" textTransform="none" fontSize="xs">{item.tenant}</Badge>
+                      </HStack>
                     ) : (
-                      <Text fontSize="sm" color="gray.400">No matching definitions</Text>
+                      <HStack spacing={1.5}>
+                        <Badge colorScheme="gray" variant="subtle" fontSize="xs" textTransform="none">Global</Badge>
+                        <Text fontSize="xs" color="gray.400">All tenants</Text>
+                      </HStack>
                     )}
                   </Box>
-                  <Box><Text fontWeight="semibold" color="gray.500" fontSize="xs" mb={1}>Assigned Role</Text><Text fontSize="sm" fontWeight="medium">{viewReceiver?.rbac_role ? titleCase(viewReceiver.rbac_role) : "—"}</Text></Box>
-                  <Box>
-                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" mb={1}>Status</Text>
-                    <Badge colorScheme={viewReceiver?.enabled ? "green" : "gray"} variant="subtle" fontSize="xs" px={2} py={0.5} borderRadius="full">{viewReceiver?.enabled ? "Active" : "Inactive"}</Badge>
+
+                  {/* Notify — only show when there is meaningful recipient info */}
+                  {((item.rbac_role && item.tenant) || (item.email_to && item.email_to.length > 0)) && (
+                    <Box pb={5}>
+                      <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Notify</Text>
+                      {item.rbac_role && item.tenant ? (
+                        <HStack spacing={1.5}>
+                          <Badge colorScheme="blue" variant="subtle" fontSize="xs" textTransform="capitalize">{item.rbac_role}</Badge>
+                          <Text fontSize="sm" color="gray.400">—</Text>
+                          <Text fontSize="sm" color="gray.600" fontWeight="medium">{item.tenant}</Text>
+                        </HStack>
+                      ) : (
+                        <Wrap spacing={1}>
+                          {(item.email_to ?? []).map((e) => (
+                            <WrapItem key={e}><Badge colorScheme="blue" variant="subtle" fontSize="xs">{e}</Badge></WrapItem>
+                          ))}
+                        </Wrap>
+                      )}
+                    </Box>
+                  )}
+
+                  <Divider mb={5} />
+
+                  {/* Delivery Channel */}
+                  <Box pb={5}>
+                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Delivery Channel</Text>
+                    <HStack spacing={2}>
+                      <LockIcon color="gray.400" boxSize={3} />
+                      <Text fontSize="sm" color="gray.700" fontWeight="medium">Email</Text>
+                    </HStack>
                   </Box>
+
+                  {/* Status */}
+                  <Box>
+                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wide" mb={2}>Status</Text>
+                    <Badge
+                      colorScheme={item.enabled ? "green" : "gray"}
+                      variant="subtle"
+                      fontSize="xs"
+                      px={2}
+                      py={0.5}
+                      borderRadius="full"
+                    >{item.enabled ? "Active" : "Inactive"}</Badge>
+                  </Box>
+
                 </VStack>
               );
             })()}
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
-            <Button variant="outline" mr={3} onClick={() => { rules.closeView(); if (rules.viewItem) { const recv = rules.receivers.find((r) => r.id === rules.viewItem!.receiver_id); setUpdateRuleRole(recv?.rbac_role ?? ""); setUpdateRuleDef(""); defs.fetchDefinitions(); rules.openUpdate(rules.viewItem); } }}>Edit</Button>
+            <Button variant="outline" mr={3} onClick={() => {
+                rules.closeView();
+                if (rules.viewItem) {
+                  defs.fetchDefinitions();
+                  fetchTenants();
+                  resetEditRuleExtras();
+                  initEditRuleExtras(rules.viewItem);
+                  rules.openUpdate(rules.viewItem);
+                }
+              }}>Edit</Button>
             <Button onClick={rules.closeView}>Close</Button>
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
 
       {/* ── Update Routing Rule Drawer ── */}
-      <Drawer isOpen={rules.isUpdateOpen} onClose={rules.closeUpdate} placement="right" size="md">
+      <Drawer isOpen={rules.isUpdateOpen} onClose={() => { rules.closeUpdate(); resetEditRuleExtras(); }} placement="right" size="md">
         <DrawerOverlay />
         <DrawerContent>
           <DrawerCloseButton />
@@ -1425,106 +2105,231 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <Text fontSize="lg" fontWeight="bold">Edit Routing Rule</Text>
           </DrawerHeader>
           <DrawerBody py={6}>
-            <VStack spacing={6} align="stretch">
-              {/* ── Identity ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Identity</Text>
-                <VStack spacing={4} align="stretch">
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Rule Name</FormLabel>
-                    <Input value={rules.updateForm.rule_name ?? ""} onChange={(e) => rules.setUpdateForm({ ...rules.updateForm, rule_name: e.target.value })} bg="white" />
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
-                    <OptionSelector
-                      options={CATEGORIES}
-                      value={rules.updateForm.match_category ?? "application"}
-                      onChange={(v) => rules.setUpdateForm({ ...rules.updateForm, match_category: v })}
-                    />
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
-                    <OptionSelector
-                      options={SEVERITIES}
-                      value={rules.updateForm.match_severity ?? "critical"}
-                      onChange={(v) => rules.setUpdateForm({ ...rules.updateForm, match_severity: v })}
-                    />
-                  </FormControl>
-                </VStack>
-              </Box>
+            <VStack spacing={0} align="stretch">
 
-              <Divider />
+              {/* ── Rule Name ── */}
+              <VStack spacing={4} align="stretch" pb={6}>
+                <FormControl isRequired isInvalid={!!editRuleErrors.ruleName}>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Rule Name *</FormLabel>
+                  <Input
+                    value={rules.updateForm.rule_name ?? ""}
+                    onChange={(e) => {
+                      rules.setUpdateForm({ ...rules.updateForm, rule_name: e.target.value });
+                      if (e.target.value.trim()) setEditRuleErrors((prev) => { const n = { ...prev }; delete n.ruleName; return n; });
+                    }}
+                    bg="white"
+                    placeholder="e.g. Route Critical ASR Alerts"
+                  />
+                  <FormErrorMessage>{editRuleErrors.ruleName}</FormErrorMessage>
+                </FormControl>
+              </VStack>
 
-              {/* ── Alert Definitions Preview ── */}
-              <Box>
-                <HStack justify="space-between" mb={3}>
-                  <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider">View Alert Definitions</Text>
-                  <Badge colorScheme="orange" fontSize="xs" borderRadius="full" px={2}>{defs.definitions.filter((d) => (!rules.updateForm.match_category || d.category === rules.updateForm.match_category) && (!rules.updateForm.match_severity || d.severity === rules.updateForm.match_severity)).length}</Badge>
-                </HStack>
-                {(() => {
-                  const editMatchDefs = defs.definitions.filter((d) =>
-                    (!rules.updateForm.match_category || d.category === rules.updateForm.match_category) &&
-                    (!rules.updateForm.match_severity || d.severity === rules.updateForm.match_severity)
-                  );
-                  return (
+              <Divider mb={6} />
+
+              {/* ── Category + Severity + Alert Definition ── */}
+              <VStack spacing={4} align="stretch" pb={6}>
+                <FormControl>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+                  <OptionSelector
+                    options={CATEGORIES}
+                    value={editRuleCategory}
+                    onChange={(v) => {
+                      setEditRuleCategory(v);
+                      setEditRuleDef("");
+                      rules.setUpdateForm({ ...rules.updateForm, category: v || null, alert_names: null });
+                    }}
+                  />
+                </FormControl>
+                <FormControl>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+                  <HStack spacing={2}>
+                    {SEVERITIES.map((s) => {
+                      const isActive = editRuleSeverity === s;
+                      const colors = s === "critical"
+                        ? { activeBg: "red.100", activeBorder: "red.600", activeText: "red.700", hoverBg: "red.50" }
+                        : s === "warning"
+                        ? { activeBg: "yellow.100", activeBorder: "yellow.600", activeText: "yellow.700", hoverBg: "yellow.50" }
+                        : { activeBg: "blue.100", activeBorder: "blue.600", activeText: "blue.700", hoverBg: "blue.50" };
+                      return (
+                        <Box
+                          key={s}
+                          as="button"
+                          type="button"
+                          flex="1"
+                          py={2}
+                          px={3}
+                          fontSize="sm"
+                          fontWeight="semibold"
+                          textAlign="center"
+                          cursor="pointer"
+                          borderRadius="full"
+                          borderWidth="2px"
+                          borderColor={isActive ? colors.activeBorder : "gray.200"}
+                          bg={isActive ? colors.activeBg : "white"}
+                          color={isActive ? colors.activeText : "gray.500"}
+                          _hover={{ bg: isActive ? colors.activeBg : colors.hoverBg, borderColor: colors.activeBorder }}
+                          transition="all 0.15s"
+                          onClick={() => {
+                            setEditRuleSeverity(s);
+                            setEditRuleDef("");
+                            rules.setUpdateForm({ ...rules.updateForm, severity: s, alert_names: null });
+                          }}
+                          textTransform="capitalize"
+                        >
+                          {s}
+                        </Box>
+                      );
+                    })}
+                  </HStack>
+                </FormControl>
+                <FormControl>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Alert Definition</FormLabel>
+                  {(() => {
+                    const cat = editRuleCategory;
+                    const sev = editRuleSeverity;
+                    const filtered = defs.definitions.filter((d) =>
+                      (!cat || d.category === cat) && (!sev || d.severity === sev)
+                    );
+                    const displayDefs = cat || sev ? filtered : defs.definitions;
+                    return (
+                      <Select
+                        bg="white"
+                        value={editRuleDef}
+                        onChange={(e) => {
+                          setEditRuleDef(e.target.value);
+                          const chosen = defs.definitions.find((d) => String(d.id) === e.target.value);
+                          rules.setUpdateForm({
+                            ...rules.updateForm,
+                            alert_names: chosen ? [chosen.name] : null,
+                            category: chosen ? chosen.category : (rules.updateForm.category ?? null),
+                            severity: chosen ? chosen.severity : (rules.updateForm.severity ?? null),
+                          });
+                        }}
+                        placeholder={displayDefs.length === 0 ? "No definitions match" : `${displayDefs.length} alert definition${displayDefs.length !== 1 ? "s" : ""} affected`}
+                      >
+                        {displayDefs.map((d) => (
+                          <option key={d.id} value={String(d.id)}>{d.name}</option>
+                        ))}
+                      </Select>
+                    );
+                  })()}
+                  <Text fontSize="xs" color="gray.500" mt={1}>Filter by category/severity, then select a specific definition (optional).</Text>
+                </FormControl>
+              </VStack>
+
+              <Divider mb={6} />
+
+              {/* ── Scope ── */}
+              <VStack spacing={4} align="stretch" pb={6}>
+                <FormControl isRequired>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Scope *</FormLabel>
+                  <Select
+                    value={editRuleScope}
+                    onChange={(e) => {
+                      const v = e.target.value as "global" | "specific_tenant";
+                      setEditRuleScope(v);
+                      if (v === "global") {
+                        rules.setUpdateForm({ ...rules.updateForm, tenant: null });
+                        setEditRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; });
+                      } else {
+                        rules.setUpdateForm({ ...rules.updateForm, tenant: rules.updateItem?.tenant ?? "" });
+                      }
+                    }}
+                    bg="white"
+                  >
+                    <option value="global">Global</option>
+                    <option value="specific_tenant">Specific Tenant</option>
+                  </Select>
+                </FormControl>
+                {editRuleScope === "specific_tenant" && (
+                  <FormControl isRequired isInvalid={!!editRuleErrors.tenant}>
+                    <FormLabel fontWeight="semibold" fontSize="sm">Target Tenant *</FormLabel>
                     <Select
+                      value={rules.updateForm.tenant ?? ""}
+                      onChange={(e) => {
+                        rules.setUpdateForm({ ...rules.updateForm, tenant: e.target.value || null });
+                        if (e.target.value) setEditRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; });
+                      }}
                       bg="white"
-                      size="sm"
-                      value={updateRuleDef}
-                      onChange={(e) => setUpdateRuleDef(e.target.value)}
-                      placeholder={`${editMatchDefs.length} alert definition${editMatchDefs.length !== 1 ? "s" : ""}`}
+                      placeholder="Select tenant"
+                      isDisabled={isLoadingTenants}
                     >
-                      {editMatchDefs.map((d) => (
-                        <option key={d.id} value={String(d.id)}>{d.name}</option>
+                      {tenants.map((t) => (
+                        <option key={t.tenant_id} value={t.tenant_id}>{t.organization_name || t.tenant_id}</option>
                       ))}
                     </Select>
-                  );
-                })()}
-              </Box>
+                    <FormErrorMessage>{editRuleErrors.tenant}</FormErrorMessage>
+                  </FormControl>
+                )}
+              </VStack>
 
-              <Divider />
+              <Divider mb={6} />
 
-              {/* ── Assign Role ── */}
-              <Box>
-                <FormControl isRequired>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Assign to Role</FormLabel>
-                  <Select
-                    value={updateRuleRole}
-                    onChange={(e) => setUpdateRuleRole(e.target.value)}
-                    bg="white"
-                    placeholder="Select a role..."
+              {/* ── Delivery Channel ── */}
+              <VStack spacing={2} align="stretch" pb={6}>
+                <FormControl>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Delivery Channel</FormLabel>
+                  <Box
+                    bg="gray.50"
+                    border="1px solid"
+                    borderColor="gray.200"
+                    borderRadius="md"
+                    px={4}
+                    py={3}
+                    cursor="not-allowed"
                   >
-                    {RBAC_ROLES.map((role) => (
-                      <option key={role} value={role}>{titleCase(role)}</option>
-                    ))}
-                  </Select>
-                  <Text fontSize="xs" color="gray.500" mt={1}>The user with selected role will receive matching alerts.</Text>
+                    <HStack spacing={2}>
+                      <LockIcon color="gray.400" boxSize={3} />
+                      <Text fontSize="sm" color="gray.400" fontWeight="medium">Email</Text>
+                    </HStack>
+                  </Box>
+                  <Text fontSize="xs" color="gray.500" mt={1}>Email delivery is automatically configured. Additional channels coming soon.</Text>
                 </FormControl>
-              </Box>
+              </VStack>
 
-              <Divider />
+              <Divider mb={6} />
 
               {/* ── Status ── */}
-              <Box>
-                <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Status</Text>
+              <VStack spacing={2} align="stretch">
                 <FormControl isRequired>
-                  <RadioGroup value={rules.updateForm.enabled === false ? "inactive" : "active"} onChange={(v) => rules.setUpdateForm({ ...rules.updateForm, enabled: v === "active" })}>
-                    <HStack spacing={4}>
-                      <Radio value="active" colorScheme="green">
-                        <Text fontSize="sm" fontWeight="medium">Active</Text>
-                      </Radio>
-                      <Radio value="inactive" colorScheme="gray">
-                        <Text fontSize="sm" fontWeight="medium">Inactive</Text>
-                      </Radio>
-                    </HStack>
-                  </RadioGroup>
+                  <FormLabel fontWeight="semibold" fontSize="sm">Status *</FormLabel>
+                  <HStack>
+                    <Switch
+                      isChecked={rules.updateForm.enabled ?? true}
+                      onChange={(e) => rules.setUpdateForm({ ...rules.updateForm, enabled: e.target.checked })}
+                      colorScheme="green"
+                    />
+                    <Text fontSize="sm">Enable this rule</Text>
+                  </HStack>
                 </FormControl>
-              </Box>
+              </VStack>
+
             </VStack>
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
-            <Button variant="outline" mr={3} onClick={rules.closeUpdate} isDisabled={rules.isUpdating}>Cancel</Button>
-            <Button colorScheme="orange" onClick={() => rules.handleUpdate({ rbac_role: updateRuleRole })} isLoading={rules.isUpdating} loadingText="Saving...">Save Changes</Button>
+            <Button
+              variant="outline"
+              mr={3}
+              onClick={() => { rules.closeUpdate(); resetEditRuleExtras(); }}
+              isDisabled={rules.isUpdating}
+            >
+              Cancel
+            </Button>
+            <Button
+              colorScheme="orange"
+              isLoading={rules.isUpdating}
+              loadingText="Saving..."
+              onClick={() => {
+                const errors: Record<string, string> = {};
+                if (!rules.updateForm.rule_name?.trim()) errors.ruleName = "Rule name is required.";
+                if (editRuleScope === "specific_tenant" && !rules.updateForm.tenant) errors.tenant = "Please select a target tenant.";
+                setEditRuleErrors(errors);
+                if (Object.keys(errors).length > 0) return;
+                rules.handleUpdate();
+              }}
+            >
+              Save Changes
+            </Button>
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
