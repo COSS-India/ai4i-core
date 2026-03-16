@@ -469,7 +469,6 @@ components:
       properties:
         tenant_id: { type: string }
         organization_name: { type: string }
-        contact_email: { type: string }
         phone_number: { type: string }
         domain: { type: string }
         requested_quotas:
