@@ -33,3 +33,6 @@ alembic>=1.12.0
 
 # Password hashing (used in seeders like auth default admin)
 bcrypt>=4.0.0
+
+# Local shared libs (used by migration framework config)
+-e ../../libs/ai4icore_env

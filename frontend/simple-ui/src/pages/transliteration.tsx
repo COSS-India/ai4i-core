@@ -189,8 +189,8 @@ const TransliterationPage: React.FC = () => {
           mx="auto"
         >
             {/* Configuration Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Service Selection */}
                 <FormControl>
                   <FormLabel fontSize="sm" fontWeight="semibold">
@@ -351,8 +351,8 @@ const TransliterationPage: React.FC = () => {
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Progress Indicator */}
                 {fetching && (
                   <Box>
