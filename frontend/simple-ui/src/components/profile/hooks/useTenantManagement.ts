@@ -243,6 +243,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setAvailableServicesForCreate(null);
     setTenantModalStep(1);
     setIsTenantModalOpen(true);
+    loadServicesForCreateTenant();
   };
 
   const closeTenantModal = () => {
@@ -675,8 +676,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     try {
       const res = await multiTenantService.listServices();
       setAvailableServices(res.services || []);
-      toast({ title: "Services loaded", description: (res.services?.length ?? 0) + " service(s) available", status: "success", duration: 2000, isClosable: true });
-    } catch (err) {
+         } catch (err) {
       console.error("Failed to load services:", err);
       const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
       toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
@@ -729,7 +729,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     try {
       const res = await multiTenantService.listServices();
       setAvailableServicesForCreate(res.services || []);
-      toast({ title: "Services loaded", description: (res.services?.length ?? 0) + " service(s) available. Select requested subscriptions below.", status: "success", duration: 3000, isClosable: true });
     } catch (err) {
       console.error("Failed to load services:", err);
       const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
