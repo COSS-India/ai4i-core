@@ -122,6 +122,8 @@ class ModelManagementClient:
                     # Reject values containing CR/LF to prevent header injection
                     if value is None:
                         continue
+                    if not isinstance(value, str):
+                        continue
                     if "\r" in value or "\n" in value:
                         logger.warning(
                             "Rejected auth header %r due to CR/LF characters in value", key
