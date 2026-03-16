@@ -1,7 +1,6 @@
 """
 Model Management Default Seeder
 Seeds default AI models and services for all task types in model_management_db.
-All endpoint URLs are read from .env via app_env — no hardcoded URLs.
 """
 from infrastructure.databases.core.base_seeder import BaseSeeder
 from ai4icore_env import app_env
@@ -28,13 +27,131 @@ def generate_uuid(*parts: str) -> str:
     raw = ":".join(part.strip().lower() for part in parts)
     return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
 
-
 # Model/service definitions — endpoint comes from app_env at runtime
 MODELS = [
     {
-        "name": "asr_am_ensemble",
+        "name": "indiclid",
         "version": "1.0.0",
-        "description": "Automatic Speech Recognition model for Hindi language using Conformer architecture.",
+        "description": "Indic Language Identification for text. Supports 47 language classes (24 native-script, 21 roman-script, plus English and Others). Uses IndicLID-FTN, IndicLID-FTR, and IndicLID-BERT based on ai4bharat/IndicBERTv2-MLM-only. Input: INPUT_TEXT (STRING). Output: OUTPUT_TEXT (STRING). Python backend, max batch 64, 1 GPU, dynamic batching.",
+        "task_type": "language-detection",
+        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "or"}]',
+        "domain": '["general"]',
+        "license": "MIT",
+        "endpoint_attr": "triton_endpoint_langdetect",
+        "services": [
+            {
+                "name": "indiclid-gpu",
+                "description": "IndicLID Triton service. Language identification for Indic languages. HTTP: 8000, gRPC: 8001, Metrics: 8002.",
+                "hardware": "GPU: 1 instance, max batch 64, dynamic batching.",
+            }
+        ],
+    },
+    {
+        "name": "ald",
+        "version": "1.0.0",
+        "description": "Audio Language Detection from speech audio. Uses SpeechBrain EncoderClassifier. Input: AUDIO_DATA (STRING). Output: LANGUAGE_CODE (STRING), CONFIDENCE (FP32), ALL_SCORES (STRING). Python backend, max batch 64, 1 GPU, dynamic batching.",
+        "task_type": "audio-lang-detection",
+        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}]',
+        "domain": '["general"]',
+        "license": "MIT",
+        "endpoint_attr": "triton_endpoint_audio_langdetect",
+        "services": [
+            {
+                "name": "ald-gpu",
+                "description": "ALD Triton service. Audio language detection from speech. HTTP: 8100, gRPC: 8101, Metrics: 8102.",
+                "hardware": "GPU: 1 instance, max batch 64, dynamic batching.",
+            }
+        ],
+    },
+    {
+        "name": "surya-ocr",
+        "version": "1.0.0",
+        "description": "Surya OCR for document images. OCR in 90+ languages using Surya OCR models (Foundation, Detection, Recognition). Input: IMAGE_DATA (STRING). Output: OUTPUT_TEXT (STRING). Python backend, max batch 8, 1 GPU, dynamic batching.",
+        "task_type": "ocr",
+        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}]',
+        "domain": '["documents", "handwritten", "printed"]',
+        "license": "Apache-2.0",
+        "endpoint_attr": "triton_endpoint_ocr",
+        "services": [
+            {
+                "name": "surya-ocr-gpu",
+                "description": "Surya OCR Triton service. OCR on document images. HTTP: 8400, gRPC: 8401, Metrics: 8402.",
+                "hardware": "GPU: 1 instance, max batch 8, dynamic batching.",
+            }
+        ],
+    },
+    {
+        "name": "ner",
+        "version": "1.0.0",
+        "description": "Named Entity Recognition for Indian languages. Model: ai4bharat/IndicNER. Supports 11 Indian languages. Input: INPUT_TEXT (STRING), LANG_ID (STRING). Output: OUTPUT_TEXT (STRING). Python backend, max batch 64, 1 GPU, dynamic batching.",
+        "task_type": "ner",
+        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}]',
+        "domain": '["general", "news", "legal"]',
+        "license": "MIT",
+        "endpoint_attr": "triton_endpoint_ner",
+        "services": [
+            {
+                "name": "ner-gpu",
+                "description": "NER Triton service. Named Entity Recognition for Indian languages. HTTP: 8300, gRPC: 8301, Metrics: 8302.",
+                "hardware": "GPU: 1 instance, max batch 64, dynamic batching.",
+            }
+        ],
+    },
+    {
+        "name": "speaker-diarization",
+        "version": "1.0.0",
+        "description": "Speaker diarization from audio. Input: AUDIO_DATA (STRING), NUM_SPEAKERS (STRING, optional). Output: DIARIZATION_RESULT (STRING). Python backend, max batch 16, 1 GPU, dynamic batching.",
+        "task_type": "speaker-diarization",
+        "languages": '[{"sourceLanguage": "*"}]',
+        "domain": '["general", "meetings", "podcasts"]',
+        "license": "MIT",
+        "endpoint_attr": "triton_endpoint_speaker_diarization",
+        "services": [
+            {
+                "name": "sd-gpu",
+                "description": "Speaker Diarization Triton service. Speaker diarization from audio. HTTP: 8700, gRPC: 8701, Metrics: 8702.",
+                "hardware": "GPU: 1 instance, max batch 16, dynamic batching.",
+            }
+        ],
+    },
+    {
+        "name": "lang-diarization",
+        "version": "1.0.0",
+        "description": "Language diarization from audio. Uses SpeechBrain EncoderClassifier for language identification. Input: AUDIO_DATA (STRING), LANGUAGE (STRING). Output: DIARIZATION_RESULT (STRING). Python backend, max batch 32, 1 GPU, dynamic batching.",
+        "task_type": "language-diarization",
+        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}]',
+        "domain": '["code-switching", "multilingual"]',
+        "license": "Apache-2.0",
+        "endpoint_attr": "triton_endpoint_lang_diarization",
+        "services": [
+            {
+                "name": "lang-diarization-gpu",
+                "description": "Language Diarization Triton service. Language diarization from audio. HTTP: 8600, gRPC: 8601, Metrics: 8602.",
+                "hardware": "GPU: 1 instance, max batch 32, dynamic batching.",
+            }
+        ],
+    },
+    {
+        "name": "transliteration",
+        "version": "1.0.0",
+        "description": "Indic Transliteration (Indic-Xlit). English-to-Indic and Indic-to-English using ai4bharat.transliteration.XlitEngine. Input: INPUT_TEXT (STRING), INPUT_LANGUAGE_ID (STRING), OUTPUT_LANGUAGE_ID (STRING), IS_WORD_LEVEL (BOOL), TOP_K (UINT8). Output: OUTPUT_TEXT (STRING). Python backend, 1 CPU instance (only CPU model in inventory).",
+        "task_type": "transliteration",
+        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "or"}]',
+        "domain": '["general"]',
+        "license": "MIT",
+        "endpoint_attr": "triton_endpoint_transliteration",
+        "services": [
+            {
+                "name": "indic-xlit-cpu",
+                "description": "Indic-Xlit Triton service. Transliteration between English and Indic languages. HTTP: 8200, gRPC: 8201, Metrics: 8202.",
+                "hardware": "CPU: 1 instance.",
+            }
+        ],
+    },
+    {
+        "name": "asr-am-ensemble",
+        "version": "1.0.0",
+        "description": "Automatic Speech Recognition model for Indic languages.",
         "task_type": "asr",
         "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}]',
         "domain": '["general", "conversational"]',
@@ -51,7 +168,7 @@ MODELS = [
     {
         "name": "tts",
         "version": "1.0.0",
-        "description": "Text-to-Speech model for Hindi language using FastPitch architecture.",
+        "description": "Text-to-Speech model for Indic languages.",
         "task_type": "tts",
         "languages": '[{"sourceLanguage": "hi"}]',
         "domain": '["general"]',
@@ -68,7 +185,7 @@ MODELS = [
     {
         "name": "nmt",
         "version": "1.0.0",
-        "description": "Neural Machine Translation model for English to Hindi using IndicTrans2.",
+        "description": "Neural Machine Translation model for English-Hindi.",
         "task_type": "nmt",
         "languages": '[{"sourceLanguage": "en", "targetLanguage": "hi"}]',
         "domain": '["general", "news", "conversational"]',
@@ -77,7 +194,7 @@ MODELS = [
         "services": [
             {
                 "name": "nmt-en-hi-prod",
-                "description": "Production NMT service for English-Hindi translation.",
+                "description": "Production NMT service for English-Hindi.",
                 "hardware": "GPU: NVIDIA A10, RAM: 32GB",
             }
         ],
@@ -85,7 +202,7 @@ MODELS = [
     {
         "name": "ai4bharat/indictrans",
         "version": "1.0.0",
-        "description": "IndicTrans - Neural Machine Translation model supporting multiple Indic languages.",
+        "description": "IndicTrans NMT model supporting multiple Indic languages.",
         "task_type": "nmt",
         "languages": '[{"sourceLanguage": "en", "targetLanguage": "hi"}, {"sourceLanguage": "hi", "targetLanguage": "en"}]',
         "domain": '["general", "news", "conversational"]',
@@ -93,7 +210,7 @@ MODELS = [
         "endpoint_attr": "triton_endpoint_nmt",
         "services": [
             {
-                "name": "gpu-t4",
+                "name": "indictrans-gpu-t4",
                 "description": "IndicTrans NMT service on GPU T4.",
                 "hardware": "GPU: NVIDIA T4, RAM: 16GB",
             }
@@ -113,125 +230,6 @@ MODELS = [
                 "name": "llm-indic-prod",
                 "description": "Production LLM service for Indic languages.",
                 "hardware": "GPU: NVIDIA A100, RAM: 80GB",
-            }
-        ],
-    },
-    {
-        "name": "transliteration",
-        "version": "1.0.0",
-        "description": "Transliteration model for Indic scripts using IndicXlit.",
-        "task_type": "transliteration",
-        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "or"}]',
-        "domain": '["general"]',
-        "license": "MIT",
-        "endpoint_attr": "triton_endpoint_transliteration",
-        "services": [
-            {
-                "name": "xlit-indic-prod",
-                "description": "Production Transliteration service.",
-                "hardware": "CPU: 8 cores, RAM: 16GB",
-            }
-        ],
-    },
-    {
-        "name": "indiclid",
-        "version": "1.0.0",
-        "description": "Text language detection model for Indic languages.",
-        "task_type": "language-detection",
-        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "or"}]',
-        "domain": '["general"]',
-        "license": "MIT",
-        "endpoint_attr": "triton_endpoint_langdetect",
-        "services": [
-            {
-                "name": "langdetect-prod",
-                "description": "Production Language Detection service.",
-                "hardware": "CPU: 4 cores, RAM: 8GB",
-            }
-        ],
-    },
-    {
-        "name": "speaker_diarization",
-        "version": "1.0.0",
-        "description": "Speaker diarization model using Pyannote.",
-        "task_type": "speaker-diarization",
-        "languages": '[{"sourceLanguage": "*"}]',
-        "domain": '["general", "meetings", "podcasts"]',
-        "license": "MIT",
-        "endpoint_attr": "triton_endpoint_speaker_diarization",
-        "services": [
-            {
-                "name": "speaker-diarize-prod",
-                "description": "Production Speaker Diarization service.",
-                "hardware": "GPU: NVIDIA T4, RAM: 16GB",
-            }
-        ],
-    },
-    {
-        "name": "AudioLangDetect-Whisper",
-        "version": "1.0.0",
-        "description": "Audio language detection model using Whisper.",
-        "task_type": "audio-lang-detection",
-        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}]',
-        "domain": '["general"]',
-        "license": "MIT",
-        "endpoint_attr": "triton_endpoint_audio_langdetect",
-        "services": [
-            {
-                "name": "audio-langdetect-prod",
-                "description": "Production Audio Language Detection service.",
-                "hardware": "GPU: NVIDIA T4, RAM: 16GB",
-            }
-        ],
-    },
-    {
-        "name": "lang_diarization",
-        "version": "1.0.0",
-        "description": "Language diarization model for multi-language audio.",
-        "task_type": "language-diarization",
-        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}]',
-        "domain": '["code-switching", "multilingual"]',
-        "license": "Apache-2.0",
-        "endpoint_attr": "triton_endpoint_lang_diarization",
-        "services": [
-            {
-                "name": "lang-diarize-prod",
-                "description": "Production Language Diarization service.",
-                "hardware": "GPU: NVIDIA T4, RAM: 16GB",
-            }
-        ],
-    },
-    {
-        "name": "surya_ocr",
-        "version": "1.0.0",
-        "description": "Optical Character Recognition model for Indic scripts.",
-        "task_type": "ocr",
-        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}]',
-        "domain": '["documents", "handwritten", "printed"]',
-        "license": "Apache-2.0",
-        "endpoint_attr": "triton_endpoint_ocr",
-        "services": [
-            {
-                "name": "ocr-indic-prod",
-                "description": "Production OCR service for Indic scripts.",
-                "hardware": "GPU: NVIDIA T4, RAM: 16GB",
-            }
-        ],
-    },
-    {
-        "name": "ner",
-        "version": "1.0.0",
-        "description": "Named Entity Recognition model for Indic languages.",
-        "task_type": "ner",
-        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}]',
-        "domain": '["general", "news", "legal"]',
-        "license": "MIT",
-        "endpoint_attr": "triton_endpoint_ner",
-        "services": [
-            {
-                "name": "ner-indic-prod",
-                "description": "Production NER service for Indic languages.",
-                "hardware": "CPU: 8 cores, RAM: 16GB",
             }
         ],
     },
