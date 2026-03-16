@@ -151,7 +151,7 @@ MODELS = [
     {
         "name": "asr-am-ensemble",
         "version": "1.0.0",
-        "description": "Automatic Speech Recognition model for Indic languages (placeholder until deployment).",
+        "description": "Automatic Speech Recognition model for Indic languages.",
         "task_type": "asr",
         "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}]',
         "domain": '["general", "conversational"]',
@@ -160,7 +160,7 @@ MODELS = [
         "services": [
             {
                 "name": "asr-hindi-prod",
-                "description": "Production ASR service for Hindi (placeholder).",
+                "description": "Production ASR service for Hindi.",
                 "hardware": "GPU: NVIDIA T4, RAM: 16GB",
             }
         ],
@@ -168,7 +168,7 @@ MODELS = [
     {
         "name": "tts",
         "version": "1.0.0",
-        "description": "Text-to-Speech model for Indic languages (placeholder until deployment).",
+        "description": "Text-to-Speech model for Indic languages.",
         "task_type": "tts",
         "languages": '[{"sourceLanguage": "hi"}]',
         "domain": '["general"]',
@@ -177,7 +177,7 @@ MODELS = [
         "services": [
             {
                 "name": "tts-hindi-prod",
-                "description": "Production TTS service for Hindi (placeholder).",
+                "description": "Production TTS service for Hindi.",
                 "hardware": "GPU: NVIDIA T4, RAM: 16GB",
             }
         ],
@@ -185,7 +185,7 @@ MODELS = [
     {
         "name": "nmt",
         "version": "1.0.0",
-        "description": "Neural Machine Translation model for English-Hindi (placeholder until deployment).",
+        "description": "Neural Machine Translation model for English-Hindi.",
         "task_type": "nmt",
         "languages": '[{"sourceLanguage": "en", "targetLanguage": "hi"}]',
         "domain": '["general", "news", "conversational"]',
@@ -194,7 +194,7 @@ MODELS = [
         "services": [
             {
                 "name": "nmt-en-hi-prod",
-                "description": "Production NMT service for English-Hindi (placeholder).",
+                "description": "Production NMT service for English-Hindi.",
                 "hardware": "GPU: NVIDIA A10, RAM: 32GB",
             }
         ],
@@ -202,7 +202,7 @@ MODELS = [
     {
         "name": "ai4bharat/indictrans",
         "version": "1.0.0",
-        "description": "IndicTrans NMT model supporting multiple Indic languages (placeholder until deployment).",
+        "description": "IndicTrans NMT model supporting multiple Indic languages.",
         "task_type": "nmt",
         "languages": '[{"sourceLanguage": "en", "targetLanguage": "hi"}, {"sourceLanguage": "hi", "targetLanguage": "en"}]',
         "domain": '["general", "news", "conversational"]',
@@ -211,7 +211,7 @@ MODELS = [
         "services": [
             {
                 "name": "indictrans-gpu-t4",
-                "description": "IndicTrans NMT service on GPU T4 (placeholder).",
+                "description": "IndicTrans NMT service on GPU T4.",
                 "hardware": "GPU: NVIDIA T4, RAM: 16GB",
             }
         ],
@@ -219,7 +219,7 @@ MODELS = [
     {
         "name": "llm",
         "version": "1.0.0",
-        "description": "Large Language Model for Indic languages chat/completion (placeholder until deployment).",
+        "description": "Large Language Model for Indic languages chat/completion.",
         "task_type": "llm",
         "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "or"}]',
         "domain": '["general", "conversational", "qa"]',
@@ -228,7 +228,7 @@ MODELS = [
         "services": [
             {
                 "name": "llm-indic-prod",
-                "description": "Production LLM service for Indic languages (placeholder).",
+                "description": "Production LLM service for Indic languages.",
                 "hardware": "GPU: NVIDIA A100, RAM: 80GB",
             }
         ],
