@@ -29,7 +29,20 @@ dist/
 .idea/
 
 # Local data, logs, and temp files
-*.log
+.log
+
+# Next.js build output
+.next/
+out/
+next-env.d.ts
+
+# Testing folders
+__tests__/
+jest.config.js
+jest.setup.js
+
+# Local env files
+.env*.local
 logs/
 .tmp/
 .temp/
