@@ -114,11 +114,27 @@ class ModelManagementClient:
         
         # Use auth headers from incoming request if provided (preferred)
         if auth_headers:
-            # Forward all relevant headers
+            # Forward all relevant headers (with value sanitization)
             for key, value in auth_headers.items():
                 key_lower = key.lower()
                 # Forward Authorization, X-API-Key, X-Auth-Source, and X-Try-It headers
                 if key_lower in ["authorization", "x-api-key", "x-auth-source", "x-try-it"]:
+                    # Reject values containing CR/LF to prevent header injection
+                    if value is None:
+                        continue
+                    if "\r" in value or "\n" in value:
+                        logger.warning(
+                            "Rejected auth header %r due to CR/LF characters in value", key
+                        )
+                        continue
+                    # Enforce a reasonable maximum header value length
+                    if len(value) > 4096:
+                        logger.warning(
+                            "Rejected auth header %r due to excessive length (%d bytes)",
+                            key,
+                            len(value),
+                        )
+                        continue
                     # Normalize header casing
                     if key_lower == "authorization":
                         header_name = "Authorization"
