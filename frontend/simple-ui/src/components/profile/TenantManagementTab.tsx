@@ -727,7 +727,12 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 </FormControl>
                 <FormControl isRequired>
                   <FormLabel>Requested subscriptions</FormLabel>
-                  {tm.availableServicesForCreate && tm.availableServicesForCreate.length > 0 ? (
+                  {tm.isLoadingServicesForCreate ? (
+                    <Box borderWidth="1px" borderRadius="md" p={4} bg="white">
+                      <Spinner size="sm" mr={2} />
+                      <Text as="span" fontSize="sm" color="gray.600">Loading services…</Text>
+                    </Box>
+                  ) : tm.availableServicesForCreate && tm.availableServicesForCreate.length > 0 ? (
                     <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="200px" overflowY="auto">
                       <Text fontSize="xs" color="gray.500" mb={2}>Select from loaded services:</Text>
                       <CheckboxGroup value={tm.tenantForm.requested_subscriptions || []} onChange={(values) => tm.setTenantForm((f) => ({ ...f, requested_subscriptions: values as string[] }))}>
@@ -741,25 +746,18 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                       </CheckboxGroup>
                     </Box>
                   ) : (
-                    <>
-                      {/* <Button size="sm" colorScheme="blue" variant="outline" mb={2} onClick={tm.loadServicesForCreateTenant} isLoading={tm.isLoadingServicesForCreate} loadingText="Loading...">
-                        Load Services
+                    <Box borderWidth="1px" borderRadius="md" p={3} bg="white">
+                      <Text fontSize="sm" color="gray.600" mb={2}>
+                        {tm.availableServicesForCreate && tm.availableServicesForCreate.length === 0
+                          ? "No services available from the server."
+                          : "Could not load services."}
+                      </Text>
+                      <Button size="sm" colorScheme="blue" variant="outline" onClick={tm.loadServicesForCreateTenant} isLoading={tm.isLoadingServicesForCreate} loadingText="Loading...">
+                        Load services
                       </Button>
-                      <Text fontSize="xs" color="gray.500" mb={2}>Load available services from the server, or use the list below.</Text>
-                       */}
-                      <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="140px" overflowY="auto">
-                        <CheckboxGroup value={tm.tenantForm.requested_subscriptions || []} onChange={(values) => tm.setTenantForm((f) => ({ ...f, requested_subscriptions: values as string[] }))}>
-                          <SimpleGrid columns={2} spacing={2}>
-                            {tm.TENANT_SUBSCRIPTION_OPTIONS.map((opt) => (
-                              <Checkbox key={opt.value} value={opt.value} colorScheme="blue" size="sm">{opt.label}</Checkbox>
-                            ))}
-                          </SimpleGrid>
-                        </CheckboxGroup>
-                      </Box>
-                    </>
+                    </Box>
                   )}
-                  <Text fontSize="xs" color="gray.500">e.g. pipeline, language_detection, tts, asr</Text>
-                </FormControl>
+                  </FormControl>
                 <Text fontSize="sm" color="gray.500">Tenant ID will be auto-generated (e.g. TNT_xxxx).</Text>
               </VStack>
             )}
