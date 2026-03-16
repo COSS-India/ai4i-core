@@ -27,7 +27,7 @@ def generate_uuid(*parts: str) -> str:
     raw = ":".join(part.strip().lower() for part in parts)
     return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
 
-#Endpoint URLs from app_env.
+# Model/service definitions — endpoint comes from app_env at runtime
 MODELS = [
     {
         "name": "indiclid",
