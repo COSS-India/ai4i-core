@@ -64,6 +64,8 @@ export const TENANT_USER_ROLE_OPTIONS = [
   { value: "USER", label: "User" },
   { value: "ADMIN", label: "Admin" },
   { value: "GUEST", label: "Guest" },
+  { value: "MODERATOR", label: "Moderator" },
+  { value: "TENANT ADMIN", label: "Tenant Admin" },
 ] as const;
 
 export interface EditTenantFormState {
