@@ -48,24 +48,20 @@ import {
   ModalFooter,
   ModalBody,
   ModalCloseButton,
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogContent,
-  AlertDialogOverlay,
   Menu,
   MenuButton,
   MenuList,
   MenuItem,
   IconButton,
   Tooltip,
+  useDisclosure,
 } from "@chakra-ui/react";
 import { FiBriefcase, FiUsers, FiMoreVertical, FiEye, FiEdit2, FiUserPlus, FiPlayCircle, FiRefreshCw, FiPlus, FiSettings, FiArrowLeft, FiMail, FiPause, FiPower, FiTrash2 } from "react-icons/fi";
 import { ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import { TENANT_USER_ROLE_OPTIONS } from "./types";
+import ConfirmDialog from "../common/ConfirmDialog";
 import type { TenantUserView } from "../../types/multiTenant";
 
 /** Users table for tenant detail view: filters by tenant and shows search/filters + actions. */
@@ -211,6 +207,28 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
   const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
 
   const tm = useTenantManagement({ user: user ?? null });
+
+  const {
+    isOpen: isEditTenantConfirmOpen,
+    onOpen: onEditTenantConfirmOpen,
+    onClose: onEditTenantConfirmClose,
+  } = useDisclosure();
+
+  const {
+    isOpen: isEditUserConfirmOpen,
+    onOpen: onEditUserConfirmOpen,
+    onClose: onEditUserConfirmClose,
+  } = useDisclosure();
+
+  const handleConfirmEditTenant = async () => {
+    await tm.handleSaveEditTenant();
+    onEditTenantConfirmClose();
+  };
+
+  const handleConfirmEditUser = async () => {
+    await tm.handleSaveEditUser();
+    onEditUserConfirmClose();
+  };
 
   // When user switches to this tab or subview (Adopter vs Tenant Admin), fetch the right list.
   // In User Management also fetch tenants so "Manage User Services" can resolve tenant subscriptions without calling view/tenant.
@@ -1169,7 +1187,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             <Button variant="ghost" mr={3} onClick={tm.closeEditTenantModal} isDisabled={tm.isSubmittingEditTenant}>Cancel</Button>
             <Button
               colorScheme="blue"
-              onClick={tm.handleSaveEditTenant}
+              onClick={onEditTenantConfirmOpen}
               isLoading={tm.isSubmittingEditTenant}
               isDisabled={!tm.editTenantForm.organization_name?.trim() || !tm.editTenantForm.contact_email?.trim() || !tm.editTenantForm.domain?.trim()}
             >
@@ -1225,7 +1243,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             <Button variant="ghost" mr={3} onClick={tm.closeEditUserModal} isDisabled={tm.isSubmittingEditUser}>Cancel</Button>
             <Button
               colorScheme="blue"
-              onClick={tm.handleSaveEditUser}
+              onClick={onEditUserConfirmOpen}
               isLoading={tm.isSubmittingEditUser}
               isDisabled={!tm.editUserForm.username?.trim() || tm.editUserForm.username.trim().length < 3 || !tm.editUserForm.email?.trim()}
             >
@@ -1236,47 +1254,95 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
       </Modal>
 
       {/* Delete User Confirmation */}
-      <AlertDialog isOpen={tm.isDeleteUserDialogOpen} leastDestructiveRef={cancelRef} onClose={tm.closeDeleteUserDialog}>
-        <AlertDialogOverlay>
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize="lg" fontWeight="bold">
-              Delete user?
-            </AlertDialogHeader>
-            <AlertDialogBody>
-              {tm.deleteUserTarget && (
-                <>This will permanently delete the user {tm.deleteUserTarget.username ? `"${tm.deleteUserTarget.username}"` : `(ID ${tm.deleteUserTarget.user_id})`} from the tenant. This action cannot be undone.</>
-              )}
-            </AlertDialogBody>
-            <AlertDialogFooter>
-              <Button ref={cancelRef} onClick={tm.closeDeleteUserDialog} isDisabled={tm.isDeletingUser}>Cancel</Button>
-              <Button colorScheme="red" onClick={tm.handleConfirmDeleteUser} ml={3} isLoading={tm.isDeletingUser}>Delete</Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
+      <ConfirmDialog
+        isOpen={tm.isDeleteUserDialogOpen}
+        onClose={tm.closeDeleteUserDialog}
+        onConfirm={tm.handleConfirmDeleteUser}
+        title="Delete user?"
+        body={
+          tm.deleteUserTarget && (
+            <>
+              This will permanently delete the user{" "}
+              {tm.deleteUserTarget.username
+                ? `"${tm.deleteUserTarget.username}"`
+                : `(ID ${tm.deleteUserTarget.user_id})`}{" "}
+              from the tenant. This action cannot be undone.
+            </>
+          )
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        confirmColorScheme="red"
+        isConfirmLoading={tm.isDeletingUser}
+        leastDestructiveRef={cancelRef}
+      />
 
       {/* Status Update Confirmation */}
-      <AlertDialog isOpen={tm.isStatusDialogOpen} leastDestructiveRef={cancelRef} onClose={tm.closeStatusDialog}>
-        <AlertDialogOverlay>
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize="lg" fontWeight="bold">
-              Update status to {tm.statusUpdateNewStatus}?
-            </AlertDialogHeader>
-            <AlertDialogBody>
-              {tm.statusUpdateTarget?.type === "tenant" && (
-                <>Tenant <strong>{tm.statusUpdateTarget.tenant_id}</strong> will be set to <strong>{tm.statusUpdateNewStatus}</strong>. Current status: {tm.statusUpdateTarget.currentStatus}.</>
-              )}
-              {tm.statusUpdateTarget?.type === "user" && (
-                <>User ID <strong>{tm.statusUpdateTarget.user_id}</strong> (tenant {tm.statusUpdateTarget.tenant_id}) will be set to <strong>{tm.statusUpdateNewStatus}</strong>. Current status: {tm.statusUpdateTarget.currentStatus}.</>
-              )}
-            </AlertDialogBody>
-            <AlertDialogFooter>
-              <Button ref={cancelRef} onClick={tm.closeStatusDialog} isDisabled={tm.isSubmittingStatus}>Cancel</Button>
-              <Button colorScheme="orange" onClick={tm.handleConfirmStatusUpdate} ml={3} isLoading={tm.isSubmittingStatus}>Confirm</Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
+      <ConfirmDialog
+        isOpen={tm.isStatusDialogOpen}
+        onClose={tm.closeStatusDialog}
+        onConfirm={tm.handleConfirmStatusUpdate}
+        title={`Update status to ${tm.statusUpdateNewStatus}?`}
+        body={
+          tm.statusUpdateTarget?.type === "tenant" ? (
+            <>
+              Tenant <strong>{tm.statusUpdateTarget.tenant_id}</strong> will be
+              set to <strong>{tm.statusUpdateNewStatus}</strong>. Current
+              status: {tm.statusUpdateTarget.currentStatus}.
+            </>
+          ) : tm.statusUpdateTarget?.type === "user" ? (
+            <>
+              User ID <strong>{tm.statusUpdateTarget.user_id}</strong> (tenant{" "}
+              {tm.statusUpdateTarget.tenant_id}) will be set to{" "}
+              <strong>{tm.statusUpdateNewStatus}</strong>. Current status:{" "}
+              {tm.statusUpdateTarget.currentStatus}.
+            </>
+          ) : null
+        }
+        confirmLabel="Confirm"
+        cancelLabel="Cancel"
+        confirmColorScheme="orange"
+        isConfirmLoading={tm.isSubmittingStatus}
+        leastDestructiveRef={cancelRef}
+      />
+
+      {/* Edit Tenant Confirmation */}
+      <ConfirmDialog
+        isOpen={isEditTenantConfirmOpen}
+        onClose={onEditTenantConfirmClose}
+        onConfirm={handleConfirmEditTenant}
+        title="Save tenant changes?"
+        body={
+          <>
+            Are you sure you want to update the details for tenant{" "}
+            <strong>{tm.editTenantForm.tenant_id}</strong>?
+          </>
+        }
+        confirmLabel="Confirm"
+        cancelLabel="Cancel"
+        confirmColorScheme="blue"
+        isConfirmLoading={tm.isSubmittingEditTenant}
+        leastDestructiveRef={cancelRef}
+      />
+
+      {/* Edit User Confirmation */}
+      <ConfirmDialog
+        isOpen={isEditUserConfirmOpen}
+        onClose={onEditUserConfirmClose}
+        onConfirm={handleConfirmEditUser}
+        title="Save user changes?"
+        body={
+          <>
+            Are you sure you want to update the details for user{" "}
+            <strong>{tm.editUserForm.username || tm.editUserForm.email}</strong>?
+          </>
+        }
+        confirmLabel="Confirm"
+        cancelLabel="Cancel"
+        confirmColorScheme="blue"
+        isConfirmLoading={tm.isSubmittingEditUser}
+        leastDestructiveRef={cancelRef}
+      />
     </>
   );
 }

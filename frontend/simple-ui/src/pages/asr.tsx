@@ -116,8 +116,9 @@ const ASRPage: React.FC = () => {
                   <Select
                     value={inferenceMode}
                     onChange={(e) =>
-                      setInferenceMode(e.target.value as "rest" | "streaming")
+                      setInferenceMode(e.target.value as "" | "rest" | "streaming")
                     }
+                    placeholder="Select"
                   >
                     <option value="rest">REST API</option>
                     <option value="streaming">WebSocket Streaming</option>
@@ -149,19 +150,25 @@ const ASRPage: React.FC = () => {
                     })}
                   </Select>
                   {serviceId && asrServices && (
-                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                    <Box
+                      mt={2}
+                      p={3}
+                      bg="orange.50"
+                      borderRadius="md"
+                      border="1px"
+                      borderColor="orange.200"
+                    >
                       {(() => {
                         const selectedService = asrServices.find((s) => s.service_id === serviceId);
                         return selectedService ? (
                           <>
                             <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service ID:</strong> {selectedService.service_id}
+                              <strong>Service Name:</strong>{" "}
+                              {selectedService.name || selectedService.service_id}
                             </Text>
                             <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
-                            </Text>
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Description:</strong> {selectedService.description || "No description available"}
+                              <strong>Service Description:</strong>{" "}
+                              {selectedService.description || "No description available"}
                             </Text>
                           </>
                         ) : null;
