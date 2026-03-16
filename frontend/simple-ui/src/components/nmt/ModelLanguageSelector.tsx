@@ -183,15 +183,23 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
             </FormControl>
             
             {selectedService && (
-              <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+              <Box
+                mt={2}
+                p={3}
+                bg="orange.50"
+                borderRadius="md"
+                border="1px"
+                borderColor="orange.200"
+              >
                 <Text fontSize="sm" color="gray.700" mb={1}>
-                  <strong>Service ID:</strong> {selectedService.service_id}
+                  <strong>Service Name:</strong>{" "}
+                  {selectedService.name || selectedService.service_id}
                 </Text>
                 <Text fontSize="sm" color="gray.700" mb={1}>
-                  <strong>Name:</strong> {selectedService.name || selectedService.service_id}
-                </Text>
-                <Text fontSize="sm" color="gray.700" mb={1}>
-                  <strong>Description:</strong> {selectedService.serviceDescription || selectedService.description || 'No description available'}
+                  <strong>Service Description:</strong>{" "}
+                  {selectedService.serviceDescription ||
+                    selectedService.description ||
+                    "No description available"}
                 </Text>
               </Box>
             )}

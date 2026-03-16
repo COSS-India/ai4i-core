@@ -16,7 +16,7 @@ export const useASR = (): UseASRReturn => {
   const [language, setLanguage] = useState<string>(DEFAULT_ASR_CONFIG.language);
   const [sampleRate, setSampleRate] = useState<number>(DEFAULT_ASR_CONFIG.sampleRate);
   const [serviceId, setServiceId] = useState<string>(DEFAULT_ASR_CONFIG.serviceId);
-  const [inferenceMode, setInferenceMode] = useState<'rest' | 'streaming'>('rest');
+  const [inferenceMode, setInferenceMode] = useState<'' | 'rest' | 'streaming'>('');
   const [recording, setRecording] = useState<boolean>(false);
   const [fetching, setFetching] = useState<boolean>(false);
   const [fetched, setFetched] = useState<boolean>(false);
