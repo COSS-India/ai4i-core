@@ -3,7 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { runPipelineInference } from '../services/pipelineService';
-import { convertWebmToWav } from '../utils/helpers';
+import { convertWebmToWav, base64ToAudioObjectUrl } from '../utils/helpers';
 import { 
   PipelineInferenceRequest, 
   PipelineResult 
@@ -27,7 +27,18 @@ export const usePipeline = () => {
   const processRecordedAudioRef = useRef<((base64Audio: string) => Promise<void>) | null>(null);
   const microphoneErrorToastShownRef = useRef(false);
   const recordingDurationRef = useRef<number>(0);
+  const pipelineAudioUrlRef = useRef<string | null>(null);
   const toast = useToastWithDeduplication();
+
+  // Revoke pipeline result audio blob URL on unmount
+  useEffect(() => {
+    return () => {
+      if (pipelineAudioUrlRef.current) {
+        URL.revokeObjectURL(pipelineAudioUrlRef.current);
+        pipelineAudioUrlRef.current = null;
+      }
+    };
+  }, []);
 
   // Initialize audio stream on mount
   useEffect(() => {
@@ -527,6 +538,10 @@ export const usePipeline = () => {
     request: PipelineInferenceRequest
   ) => {
     setIsLoading(true);
+    if (pipelineAudioUrlRef.current) {
+      URL.revokeObjectURL(pipelineAudioUrlRef.current);
+      pipelineAudioUrlRef.current = null;
+    }
     setResult(null);
 
     try {
@@ -549,19 +564,16 @@ export const usePipeline = () => {
         const targetText = nmtOutput?.target || '';
         const audioContent = ttsAudio?.audioContent || '';
 
-        // Create audio element for duration calculation
-        let audioDuration = 0;
+        let audioUrl = '';
         if (audioContent) {
-          const audio = new Audio(`data:audio/wav;base64,${audioContent}`);
-          audio.addEventListener('loadedmetadata', () => {
-            audioDuration = audio.duration;
-          });
+          audioUrl = base64ToAudioObjectUrl(audioContent, 'wav');
+          pipelineAudioUrlRef.current = audioUrl;
         }
 
         const pipelineResult: PipelineResult = {
           sourceText,
           targetText,
-          audio: audioContent ? `data:audio/wav;base64,${audioContent}` : '',
+          audio: audioUrl,
         };
 
         setResult(pipelineResult);

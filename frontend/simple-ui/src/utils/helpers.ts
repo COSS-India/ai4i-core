@@ -97,6 +97,30 @@ export const formatFileSize = (bytes: number): string => {
 };
 
 /**
+ * Map audio format (e.g. "wav", "mp3") to MIME type for playback.
+ * Used so <audio src> and CSP media-src work (blob URLs with correct type).
+ */
+export const audioFormatToMime = (format: string): string => {
+  const f = (format || 'wav').toLowerCase();
+  if (f === 'mp3') return 'audio/mpeg';
+  return 'audio/wav';
+};
+
+/**
+ * Create a blob URL from base64-encoded audio. Use this for playback so CSP
+ * allows it (media-src allows blob:, not data:). Caller must revoke the URL
+ * when done (e.g. when replacing with new audio or on unmount).
+ * @param base64 - Base64 encoded audio
+ * @param format - Audio format e.g. "wav" or "mp3" (default "wav")
+ * @returns Object URL string (blob:...)
+ */
+export const base64ToAudioObjectUrl = (base64: string, format: string = 'wav'): string => {
+  const mime = audioFormatToMime(format);
+  const blob = base64ToBlob(base64, mime);
+  return URL.createObjectURL(blob);
+};
+
+/**
  * Convert base64 string to Blob
  * @param base64 - Base64 encoded string
  * @param mimeType - MIME type of the blob
