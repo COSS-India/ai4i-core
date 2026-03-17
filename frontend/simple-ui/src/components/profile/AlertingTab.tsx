@@ -248,8 +248,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     if (createRuleScope === "specific_tenant" && !createRuleTenant) errors.tenant = "Please select a target tenant.";
     setCreateRuleErrors(errors);
     if (Object.keys(errors).length > 0) return;
+    const tenantName =
+      createRuleScope === "specific_tenant" && createRuleTenant
+        ? tenants.find((t) => t.tenant_id === createRuleTenant)?.organization_name ?? createRuleTenant
+        : null;
     await rules.handleCreate({
-      tenant: createRuleScope === "specific_tenant" ? createRuleTenant || null : null,
+      tenant: tenantName,
     });
     resetCreateRuleExtras();
   };
@@ -434,7 +438,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     {defs.filteredDefinitions.map((d) => (
                       <Tr
                         key={d.id}
-                        _hover={{ bg: "gray.50", "& .row-actions": { opacity: 1 } }}
+                        _hover={{ bg: "gray.50" }}
                         transition="background 0.15s"
                       >
                         <Td fontWeight="semibold">{d.name}</Td>
@@ -459,7 +463,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                         </Td>
                         <Td fontSize="sm">{new Date(d.created_at).toLocaleDateString()}</Td>
                         <Td>
-                          <HStack spacing={1} className="row-actions" opacity={0} transition="opacity 0.15s">
+                          <HStack spacing={1} className="row-actions">
                             <Tooltip label="View" placement="top" hasArrow>
                               <IconButton
                                 aria-label="View"
@@ -1359,7 +1363,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     {recvs.filteredReceivers.map((r) => (
                       <Tr
                         key={r.id}
-                        _hover={{ bg: "gray.50", "& .row-actions": { opacity: 1 } }}
+                        _hover={{ bg: "gray.50" }}
                         transition="background 0.15s"
                       >
                         <Td fontWeight="semibold" fontSize="sm">{r.receiver_name}</Td>
@@ -1381,7 +1385,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                         <Td fontSize="sm">{r.organization}</Td>
                         <Td fontSize="sm">{new Date(r.created_at).toLocaleDateString()}</Td>
                         <Td>
-                          <HStack spacing={1} className="row-actions" opacity={0} transition="opacity 0.15s">
+                          <HStack spacing={1} className="row-actions">
                             <Tooltip label="View" placement="top" hasArrow>
                               <IconButton aria-label="View" icon={<ViewIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "blue.500", bg: "blue.50" }} onClick={() => recvs.openView(r)} />
                             </Tooltip>
@@ -1685,7 +1689,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 {rules.filteredRules.map((rule) => (
                     <Tr
                       key={rule.id}
-                      _hover={{ bg: "gray.50", "& .row-actions": { opacity: 1 } }}
+                      _hover={{ bg: "gray.50" }}
                       transition="background 0.15s"
                     >
                       <Td fontWeight="semibold">{rule.rule_name ?? rule.receiver_name}</Td>
@@ -1712,7 +1716,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                         </Badge>
                       </Td>
                       <Td>
-                        <HStack spacing={1} className="row-actions" opacity={0} transition="opacity 0.15s">
+                        <HStack spacing={1} className="row-actions">
                           <Tooltip label="View" placement="top" hasArrow>
                             <IconButton aria-label="View" icon={<ViewIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "blue.500", bg: "blue.50" }} onClick={() => { defs.fetchDefinitions(); rules.openView(rule); }} />
                           </Tooltip>
@@ -2245,9 +2249,16 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   <FormControl isRequired isInvalid={!!editRuleErrors.tenant}>
                     <FormLabel fontWeight="semibold" fontSize="sm">Target Tenant *</FormLabel>
                     <Select
-                      value={rules.updateForm.tenant ?? ""}
+                      value={
+                        tenants.find(
+                          (t) =>
+                            t.tenant_id === rules.updateForm.tenant || t.organization_name === rules.updateForm.tenant
+                        )?.tenant_id ?? rules.updateForm.tenant ?? ""
+                      }
                       onChange={(e) => {
-                        rules.setUpdateForm({ ...rules.updateForm, tenant: e.target.value || null });
+                        const selectedName =
+                          tenants.find((t) => t.tenant_id === e.target.value)?.organization_name ?? e.target.value;
+                        rules.setUpdateForm({ ...rules.updateForm, tenant: e.target.value ? selectedName : null });
                         if (e.target.value) setEditRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; });
                       }}
                       bg="white"

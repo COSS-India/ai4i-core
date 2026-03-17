@@ -1122,7 +1122,7 @@ async def validate_api_key(
     valid_services = [
         'asr', 'tts', 'nmt', 'pipeline', 'model-management', 'llm',
         'audio-lang-detection', 'language-detection', 'language-diarization',
-        'ner', 'ocr', 'speaker-diarization', 'transliteration'
+        'ner', 'ocr', 'speaker-diarization', 'transliteration', 'multi-tenant'
     ]
     if service not in valid_services:
         raise HTTPException(

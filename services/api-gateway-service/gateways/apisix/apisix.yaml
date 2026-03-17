@@ -544,9 +544,11 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    # Use headers.add so client Authorization is preserved (required for tenant_id in observability metrics)
     proxy-rewrite:
       headers:
-        X-Gateway: apisix
+        add:
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
       headers:

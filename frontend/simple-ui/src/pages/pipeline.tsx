@@ -318,19 +318,27 @@ const PipelinePage: React.FC = () => {
                     ))}
                   </Select>
                   {asrServiceId && asrServices && (
-                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                    <Box
+                      mt={2}
+                      p={3}
+                      bg="orange.50"
+                      borderRadius="md"
+                      border="1px"
+                      borderColor="orange.200"
+                    >
                       {(() => {
-                        const selectedService = asrServices.find((s) => s.service_id === asrServiceId);
+                        const selectedService = asrServices.find(
+                          (s) => s.service_id === asrServiceId
+                        );
                         return selectedService ? (
                           <>
                             <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service ID:</strong> {selectedService.service_id}
+                              <strong>Service Name:</strong>{" "}
+                              {selectedService.name || selectedService.service_id}
                             </Text>
                             <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
-                            </Text>
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Description:</strong> {selectedService.description || "No description available"}
+                              <strong>Service Description:</strong>{" "}
+                              {selectedService.description || "No description available"}
                             </Text>
                           </>
                         ) : null;
@@ -365,19 +373,29 @@ const PipelinePage: React.FC = () => {
                       ))}
                   </Select>
                   {nmtServiceId && nmtServices && (
-                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                    <Box
+                      mt={2}
+                      p={3}
+                      bg="orange.50"
+                      borderRadius="md"
+                      border="1px"
+                      borderColor="orange.200"
+                    >
                       {(() => {
-                        const selectedService = nmtServices.find((s) => s.service_id === nmtServiceId);
+                        const selectedService = nmtServices.find(
+                          (s) => s.service_id === nmtServiceId
+                        );
                         return selectedService ? (
                           <>
                             <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service ID:</strong> {selectedService.service_id}
+                              <strong>Service Name:</strong>{" "}
+                              {selectedService.name || selectedService.service_id}
                             </Text>
                             <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
-                            </Text>
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Description:</strong> {selectedService.serviceDescription || selectedService.description || "No description available"}
+                              <strong>Service Description:</strong>{" "}
+                              {selectedService.serviceDescription ||
+                                selectedService.description ||
+                                "No description available"}
                             </Text>
                           </>
                         ) : null;
@@ -404,19 +422,27 @@ const PipelinePage: React.FC = () => {
                     ))}
                   </Select>
                   {ttsServiceId && ttsServices && (
-                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                    <Box
+                      mt={2}
+                      p={3}
+                      bg="orange.50"
+                      borderRadius="md"
+                      border="1px"
+                      borderColor="orange.200"
+                    >
                       {(() => {
-                        const selectedService = ttsServices.find((s) => s.service_id === ttsServiceId);
+                        const selectedService = ttsServices.find(
+                          (s) => s.service_id === ttsServiceId
+                        );
                         return selectedService ? (
                           <>
                             <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service ID:</strong> {selectedService.service_id}
+                              <strong>Service Name:</strong>{" "}
+                              {selectedService.name || selectedService.service_id}
                             </Text>
                             <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
-                            </Text>
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                              <strong>Service Description:</strong>{" "}
+                              {selectedService.serviceDescription || "No description available"}
                             </Text>
                           </>
                         ) : null;
@@ -441,6 +467,19 @@ const PipelinePage: React.FC = () => {
                       <AlertDescription>
                         Recording Time: {formatDuration(timer)} /{" "}
                         {formatDuration(MAX_RECORDING_DURATION)} seconds
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {/* Upload / recording confirmation - show when audio is ready */}
+                  {!isRecording && pendingAudio && (
+                    <Alert status="success" borderRadius="md" mt={4}>
+                      <AlertIcon />
+                      <AlertDescription>
+                        {uploadedFileName
+                          ? `File "${uploadedFileName}" is ready.`
+                          : "Recording complete. Audio is ready."}{" "}
+                        Click Run Pipeline to generate results.
                       </AlertDescription>
                     </Alert>
                   )}

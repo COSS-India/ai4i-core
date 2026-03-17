@@ -32,13 +32,8 @@ import {
   Textarea,
   SimpleGrid,
   Grid,
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogContent,
-  AlertDialogOverlay,
   useDisclosure,
+  Tooltip,
 } from "@chakra-ui/react";
 import Head from "next/head";
 import { SearchIcon } from "@chakra-ui/icons";
@@ -59,6 +54,7 @@ import { useAuth } from "../hooks/useAuth";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import ConfirmDialog from "../components/common/ConfirmDialog";
 
 const ServicesManagementPage: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
@@ -92,6 +88,8 @@ const ServicesManagementPage: React.FC = () => {
   const [filterTaskType, setFilterTaskType] = useState<string>("");
   const [confirmPublishService, setConfirmPublishService] = useState<Service | null>(null);
   const [confirmUnpublishService, setConfirmUnpublishService] = useState<Service | null>(null);
+  /** When viewing a service, true if its model is deprecated (fetched by modelId); null until we know */
+  const [selectedServiceModelDeprecated, setSelectedServiceModelDeprecated] = useState<boolean | null>(null);
   const { isOpen: isPublishConfirmOpen, onOpen: onPublishConfirmOpen, onClose: onPublishConfirmClose } = useDisclosure();
   const { isOpen: isUnpublishConfirmOpen, onOpen: onUnpublishConfirmOpen, onClose: onUnpublishConfirmClose } = useDisclosure();
   const cancelPublishRef = useRef<HTMLButtonElement>(null);
@@ -100,6 +98,16 @@ const ServicesManagementPage: React.FC = () => {
   const { user } = useAuth();
 
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+
+  const isServiceModelDeprecated = (service: Service | null | undefined): boolean => {
+    if (!service) return false;
+    const modelVersionStatus =
+      (service.model as any)?.versionStatus ??
+      (service.model as any)?.version_status ??
+      (service as any).versionStatus ??
+      (service as any).version_status;
+    return typeof modelVersionStatus === "string" && modelVersionStatus.toLowerCase() === "deprecated";
+  };
 
   /** Sort by latest update (publishedAt/unpublishedAt) then fallback to publishedOn/created_at; for list ordering */
   const getServiceSortTime = (s: Service): number => {
@@ -285,7 +293,17 @@ const ServicesManagementPage: React.FC = () => {
       );
       if (inActiveList && formData.modelId !== modelId) {
         handleModelNameChange(modelId);
-        router.replace("/services-management", undefined, { shallow: true });
+        // Preserve current tab (e.g. ?tab=create) while clearing modelId from URL
+        const { tab: currentTab } = router.query;
+        const nextQuery: Record<string, string> = {};
+        if (typeof currentTab === "string") {
+          nextQuery.tab = currentTab;
+        }
+        router.replace(
+          { pathname: "/services-management", query: nextQuery },
+          undefined,
+          { shallow: true }
+        );
         return;
       }
 
@@ -303,7 +321,16 @@ const ServicesManagementPage: React.FC = () => {
         } catch (e) {
           console.error("Failed to load preselected model:", e);
         }
-        router.replace("/services-management", undefined, { shallow: true });
+        const { tab: currentTab } = router.query;
+        const nextQuery: Record<string, string> = {};
+        if (typeof currentTab === "string") {
+          nextQuery.tab = currentTab;
+        }
+        router.replace(
+          { pathname: "/services-management", query: nextQuery },
+          undefined,
+          { shallow: true }
+        );
       }
     };
 
@@ -501,10 +528,16 @@ const ServicesManagementPage: React.FC = () => {
     }
   };
 
+  const canCreateService =
+    !!formData.name?.trim() &&
+    !!formData.serviceDescription?.trim() &&
+    !!formData.modelId?.trim() &&
+    !!formData.endpoint?.trim();
+
   const handleViewService = async (serviceId: string) => {
     // Check session expiry before viewing service
     if (!checkSessionExpiry()) return;
-    
+    setSelectedServiceModelDeprecated(null);
     try {
       const service = await getServiceById(serviceId);
       setSelectedService(service);
@@ -512,6 +545,22 @@ const ServicesManagementPage: React.FC = () => {
       setIsViewingService(true);
       setActiveTab(2);
       router.replace({ pathname: "/services-management", query: { ...router.query, tab: "2" } }, undefined, { shallow: true });
+      // Fetch model to know if deprecated (detail API may not include model.versionStatus)
+      const modelId = service.modelId || service.model_id;
+      if (modelId) {
+        try {
+          const modelDetails = await getModelById(modelId);
+          const deprecated =
+            modelDetails?.versionStatus &&
+            typeof modelDetails.versionStatus === "string" &&
+            modelDetails.versionStatus.toLowerCase() === "deprecated";
+          setSelectedServiceModelDeprecated(!!deprecated);
+        } catch {
+          setSelectedServiceModelDeprecated(false);
+        }
+      } else {
+        setSelectedServiceModelDeprecated(false);
+      }
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : "Failed to fetch service details";
       const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
@@ -609,6 +658,34 @@ const ServicesManagementPage: React.FC = () => {
   };
 
   const handlePublishService = async (service: Service) => {
+    // Frontend safeguard: do not allow publishing if the associated model is deprecated
+    try {
+      const modelId = service.modelId || service.model_id;
+      if (modelId) {
+        const modelDetails = await getModelById(modelId);
+        const isDeprecated =
+          modelDetails?.versionStatus &&
+          typeof modelDetails.versionStatus === "string" &&
+          modelDetails.versionStatus.toLowerCase() === "deprecated";
+        if (isDeprecated) {
+          toast({
+            title: "Publish blocked",
+            description:
+              "This service cannot be published because its associated model version is deprecated. Please restore the model to ACTIVE before publishing the service.",
+            status: "error",
+            duration: 6000,
+            isClosable: true,
+          });
+          return;
+        }
+      }
+    } catch (e) {
+      // If model lookup fails, fall through and let backend validation (if any) handle it
+      // Do not block publish solely due to a transient read error.
+      // eslint-disable-next-line no-console
+      console.warn("Failed to verify model status before publishing service:", e);
+    }
+
     if (!service.serviceId) {
       toast({
         title: "Publish Failed",
@@ -782,6 +859,7 @@ const ServicesManagementPage: React.FC = () => {
       if (selectedService?.uuid === serviceToDelete.uuid) {
         setIsViewingService(false);
         setSelectedService(null);
+        setSelectedServiceModelDeprecated(null);
         setActiveTab(0);
       }
     } catch (error: any) {
@@ -830,6 +908,7 @@ const ServicesManagementPage: React.FC = () => {
                   if (index !== 2) {
                     setIsViewingService(false);
                     setSelectedService(null);
+                    setSelectedServiceModelDeprecated(null);
                   }
                   const q = { ...router.query } as Record<string, string>;
                   if (index === 0) delete q.tab;
@@ -1000,17 +1079,31 @@ const ServicesManagementPage: React.FC = () => {
                                             Unpublish
                                           </Button>
                                         ) : (
-                                          <Button
-                                            size="sm"
-                                            colorScheme="green"
-                                            variant="outline"
-                                            onClick={() => { setConfirmPublishService(service); onPublishConfirmOpen(); }}
-                                            isLoading={publishingServiceUuid === service.uuid}
-                                            loadingText="Publishing..."
-                                            isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
+                                          // Disable Publish when the associated model is deprecated; show message on hover
+                                          <Tooltip
+                                            label="This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
+                                            isDisabled={!isServiceModelDeprecated(service)}
+                                            hasArrow
+                                            placement="top"
                                           >
-                                            Publish
-                                          </Button>
+                                            <Box as="span" display="inline-block">
+                                              <Button
+                                                size="sm"
+                                                colorScheme="green"
+                                                variant="outline"
+                                                onClick={() => { setConfirmPublishService(service); onPublishConfirmOpen(); }}
+                                                isLoading={publishingServiceUuid === service.uuid}
+                                                loadingText="Publishing..."
+                                                isDisabled={
+                                                  unpublishingServiceUuid !== null ||
+                                                  publishingServiceUuid !== null ||
+                                                  isServiceModelDeprecated(service)
+                                                }
+                                              >
+                                                Publish
+                                              </Button>
+                                            </Box>
+                                          </Tooltip>
                                         )}
                                         <Button
                                           size="sm"
@@ -1123,24 +1216,34 @@ const ServicesManagementPage: React.FC = () => {
                         <form onSubmit={handleSubmit}>
                           <VStack spacing={6} align="stretch">
                             <FormControl isRequired>
-                              <FormLabel fontWeight="semibold">Name</FormLabel>
+                              <FormLabel fontWeight="semibold">
+                                Service Name{" "}
+                                <Text as="span" color="red.500">
+                                  *
+                                </Text>
+                              </FormLabel>
                               <Input
                                 value={formData.name || ""}
                                 onChange={(e) => handleInputChange("name", e.target.value)}
-                                placeholder="Enter service name"
+                                placeholder="Enter service name e.g. asr-conformer-gpu"
                                 bg="white"
                               />
                               <Text fontSize="xs" color="gray.500" mt={1}>
-                                Service ID will be auto-generated from the name
+                                Enter service name e.g. asr-conformer-gpu. Service ID will be auto-generated based on this.
                               </Text>
                             </FormControl>
 
                             <FormControl isRequired>
-                              <FormLabel fontWeight="semibold">Description</FormLabel>
+                              <FormLabel fontWeight="semibold">
+                                Service Description{" "}
+                                <Text as="span" color="red.500">
+                                  *
+                                </Text>
+                              </FormLabel>
                               <Textarea
                                 value={formData.serviceDescription || ""}
                                 onChange={(e) => handleInputChange("serviceDescription", e.target.value)}
-                                placeholder="Enter service description"
+                                placeholder="Provide a brief description of what this service does"
                                 bg="white"
                                 rows={4}
                               />
@@ -1148,7 +1251,12 @@ const ServicesManagementPage: React.FC = () => {
 
                             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                               <FormControl isRequired>
-                                <FormLabel fontWeight="semibold">Model Name</FormLabel>
+                                <FormLabel fontWeight="semibold">
+                                  Model Name{" "}
+                                  <Text as="span" color="red.500">
+                                    *
+                                  </Text>
+                                </FormLabel>
                                 <Select
                                   value={formData.modelId || ""}
                                   onChange={(e) => handleModelNameChange(e.target.value)}
@@ -1162,16 +1270,27 @@ const ServicesManagementPage: React.FC = () => {
                                     </option>
                                   ))}
                                 </Select>
+                                <Text fontSize="xs" color="gray.500" mt={1}>
+                                  Select the model to be associated with this service.
+                                </Text>
                               </FormControl>
 
                               <FormControl isRequired>
-                                <FormLabel fontWeight="semibold">Endpoint</FormLabel>
+                              <FormLabel fontWeight="semibold">
+                                Endpoint{" "}
+                                <Text as="span" color="red.500">
+                                  *
+                                </Text>
+                              </FormLabel>
                                 <Input
                                   value={formData.endpoint || ""}
                                   onChange={(e) => handleInputChange("endpoint", e.target.value)}
-                                  placeholder="Enter endpoint URL (e.g., http://localhost:8088)"
+                                  placeholder="Enter endpoint URL, e.g. http://localhost:8088"
                                   bg="white"
                                 />
+                                <Text fontSize="xs" color="gray.500" mt={1}>
+                                  Enter the full HTTP endpoint where this service is hosted.
+                                </Text>
                               </FormControl>
                             </SimpleGrid>
 
@@ -1228,6 +1347,7 @@ const ServicesManagementPage: React.FC = () => {
                                 colorScheme="blue"
                                 isLoading={isSubmitting}
                                 loadingText="Creating..."
+                                isDisabled={!canCreateService || isSubmitting}
                               >
                                 Create Service
                               </Button>
@@ -1311,17 +1431,31 @@ const ServicesManagementPage: React.FC = () => {
                                         Unpublish
                                       </Button>
                                     ) : (
-                                      <Button
-                                        size="sm"
-                                        colorScheme="green"
-                                        variant="outline"
-                                        onClick={() => { setConfirmPublishService(selectedService); onPublishConfirmOpen(); }}
-                                        isLoading={publishingServiceUuid === selectedService.uuid}
-                                        loadingText="Publishing..."
-                                        isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
+                                      <Tooltip
+                                        label="This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
+                                        isDisabled={!(isServiceModelDeprecated(selectedService) || selectedServiceModelDeprecated === true)}
+                                        hasArrow
+                                        placement="top"
                                       >
-                                        Publish
-                                      </Button>
+                                        <Box as="span" display="inline-block">
+                                          <Button
+                                            size="sm"
+                                            colorScheme="green"
+                                            variant="outline"
+                                            onClick={() => { setConfirmPublishService(selectedService); onPublishConfirmOpen(); }}
+                                            isLoading={publishingServiceUuid === selectedService.uuid}
+                                            loadingText="Publishing..."
+                                            isDisabled={
+                                              unpublishingServiceUuid !== null ||
+                                              publishingServiceUuid !== null ||
+                                              isServiceModelDeprecated(selectedService) ||
+                                              selectedServiceModelDeprecated === true
+                                            }
+                                          >
+                                            Publish
+                                          </Button>
+                                        </Box>
+                                      </Tooltip>
                                     )}
                                   </HStack>
                                 </Box>
@@ -1409,87 +1543,71 @@ const ServicesManagementPage: React.FC = () => {
         </VStack>
       </ContentLayout>
 
-      <AlertDialog isOpen={isOpen} leastDestructiveRef={cancelRef} onClose={onClose}>
-        <AlertDialogOverlay>
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize="lg" fontWeight="bold">
-              Delete service
-            </AlertDialogHeader>
-            <AlertDialogBody>
-              Are you sure you want to delete the service{" "}
-              <strong>{serviceToDelete?.name || serviceToDelete?.service_id}</strong>? This action cannot be undone.
-            </AlertDialogBody>
-            <AlertDialogFooter>
-              <Button ref={cancelRef} onClick={onClose}>
-                Cancel
-              </Button>
-              <Button
-                colorScheme="red"
-                onClick={handleDeleteConfirm}
-                ml={3}
-                isLoading={deletingServiceUuid === serviceToDelete?.uuid}
-                loadingText="Deleting..."
-              >
-                Confirm
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
+      <ConfirmDialog
+        isOpen={isOpen}
+        onClose={onClose}
+        onConfirm={handleDeleteConfirm}
+        title="Delete service"
+        body={
+          <>
+            Are you sure you want to delete the service{" "}
+            <strong>{serviceToDelete?.name || serviceToDelete?.service_id}</strong>?
+            This action cannot be undone.
+          </>
+        }
+        confirmLabel="Confirm"
+        cancelLabel="Cancel"
+        confirmColorScheme="red"
+        isConfirmLoading={deletingServiceUuid === serviceToDelete?.uuid}
+        confirmLoadingText="Deleting..."
+        leastDestructiveRef={cancelRef}
+      />
 
-      <AlertDialog isOpen={isPublishConfirmOpen} leastDestructiveRef={cancelPublishRef} onClose={() => { onPublishConfirmClose(); setConfirmPublishService(null); }}>
-        <AlertDialogOverlay>
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize="lg" fontWeight="bold">
-              Publish service
-            </AlertDialogHeader>
-            <AlertDialogBody>
-              Are you sure you want to publish <strong>{confirmPublishService?.name || confirmPublishService?.serviceId}</strong>? The service will be available for use.
-            </AlertDialogBody>
-            <AlertDialogFooter>
-              <Button ref={cancelPublishRef} onClick={() => { onPublishConfirmClose(); setConfirmPublishService(null); }}>
-                Cancel
-              </Button>
-              <Button
-                colorScheme="green"
-                onClick={handlePublishConfirm}
-                ml={3}
-                isLoading={publishingServiceUuid === confirmPublishService?.uuid}
-                loadingText="Publishing..."
-              >
-                Confirm
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
+      <ConfirmDialog
+        isOpen={isPublishConfirmOpen}
+        onClose={() => {
+          onPublishConfirmClose();
+          setConfirmPublishService(null);
+        }}
+        onConfirm={handlePublishConfirm}
+        title="Publish service"
+        body={
+          <>
+            Are you sure you want to publish{" "}
+            <strong>{confirmPublishService?.name || confirmPublishService?.serviceId}</strong>?
+            The service will be available for use.
+          </>
+        }
+        confirmLabel="Confirm"
+        cancelLabel="Cancel"
+        confirmColorScheme="green"
+        isConfirmLoading={publishingServiceUuid === confirmPublishService?.uuid}
+        confirmLoadingText="Publishing..."
+        leastDestructiveRef={cancelPublishRef}
+      />
 
-      <AlertDialog isOpen={isUnpublishConfirmOpen} leastDestructiveRef={cancelUnpublishRef} onClose={() => { onUnpublishConfirmClose(); setConfirmUnpublishService(null); }}>
-        <AlertDialogOverlay>
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize="lg" fontWeight="bold">
-              Unpublish service
-            </AlertDialogHeader>
-            <AlertDialogBody>
-              Are you sure you want to unpublish <strong>{confirmUnpublishService?.name || confirmUnpublishService?.serviceId}</strong>? The service will no longer be available for use.
-            </AlertDialogBody>
-            <AlertDialogFooter>
-              <Button ref={cancelUnpublishRef} onClick={() => { onUnpublishConfirmClose(); setConfirmUnpublishService(null); }}>
-                Cancel
-              </Button>
-              <Button
-                colorScheme="red"
-                onClick={handleUnpublishConfirm}
-                ml={3}
-                isLoading={unpublishingServiceUuid === confirmUnpublishService?.uuid}
-                loadingText="Unpublishing..."
-              >
-                Confirm
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
+      <ConfirmDialog
+        isOpen={isUnpublishConfirmOpen}
+        onClose={() => {
+          onUnpublishConfirmClose();
+          setConfirmUnpublishService(null);
+        }}
+        onConfirm={handleUnpublishConfirm}
+        title="Unpublish service"
+        body={
+          <>
+            Are you sure you want to unpublish{" "}
+            <strong>{confirmUnpublishService?.name || confirmUnpublishService?.serviceId}</strong>?
+            The service will no longer be available for use.
+          </>
+        }
+        confirmLabel="Confirm"
+        cancelLabel="Cancel"
+        confirmColorScheme="red"
+        isConfirmLoading={unpublishingServiceUuid === confirmUnpublishService?.uuid}
+        confirmLoadingText="Unpublishing..."
+        leastDestructiveRef={cancelUnpublishRef}
+      />
     </>
   );
 };
