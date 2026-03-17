@@ -2138,7 +2138,6 @@ async def update_tenant_user(
             tenant_user.username = new_value
             updated_fields.append("username")
 
-    # Email is immutable for tenant users; reject any attempt to change it
     if "email" in update_data:
         old_value = decrypt_sensitive_data(tenant_user.email)
         new_value = update_data["email"]
@@ -2405,13 +2404,6 @@ async def update_tenant(
             tenant.organization_name = new_value
             updated_fields.append("organization_name")
     
-    # Contact email is immutable after registration; reject any attempt to change it
-    if "contact_email" in update_data:
-        raise HTTPException(
-            status_code=400,
-            detail="Contact email cannot be updated for tenants",
-        )
-
     # Handle phone_number update (store encrypted)
     if "phone_number" in update_data:
         old_value = decrypt_sensitive_data(tenant.phone_number)
