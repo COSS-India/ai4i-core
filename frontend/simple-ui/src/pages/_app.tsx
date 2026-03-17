@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { AppProps } from 'next/app';
+import Head from 'next/head';
 import { ChakraProvider } from '@chakra-ui/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
@@ -60,6 +61,9 @@ export default function App({ Component, pageProps }: AppProps) {
 
   return (
     <ChakraProvider theme={customTheme}>
+      <Head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover" />
+      </Head>
       <QueryClientProvider client={queryClient}>
         {/* Conditional Layout Rendering with Auth Guard */}
         <AuthGuard>

@@ -1,7 +1,7 @@
 // Main layout component that wraps pages with Sidebar and Header
 
 import React, { useState } from 'react';
-import { Grid, GridItem, Box, useMediaQuery } from '@chakra-ui/react';
+import { Grid, GridItem, Box } from '@chakra-ui/react';
 import Sidebar from './Sidebar';
 import Header from './Header';
 
@@ -11,31 +11,23 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isSidebarBlurred, setIsSidebarBlurred] = useState(false);
-  const [isMobile] = useMediaQuery('(max-width: 1080px)');
 
   const handleSidebarHover = (isHovered: boolean) => {
     setIsSidebarBlurred(isHovered);
   };
 
-  if (isMobile) {
-    // Mobile layout - no sidebar
-    return (
-      <Box minH="100vh" bg="gray.50">
-        <Header />
-        <Box as="main" p={4}>
-          {children}
-        </Box>
-      </Box>
-    );
-  }
-
-  // Desktop layout
   return (
     <Grid
       templateAreas="'nav main'"
-      gridTemplateColumns="95px 1fr"
-      h="100vh"
+      gridTemplateColumns="4.5rem 1fr"
+      minH="100vh"
+      h="100%"
       gap={0}
+      sx={{
+        minHeight: '100svh',
+        minHeight: '100dvh',
+        height: '100%',
+      }}
     >
       {/* Sidebar */}
       <GridItem area="nav">
@@ -47,19 +39,37 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </Box>
       </GridItem>
 
-      {/* Main Content - no outer scroll; only inner content scrolls */}
-      <GridItem area="main" overflow="hidden" display="flex" flexDirection="column" minH={0}>
+      {/* Main Content: scroll when content overflows (vertical + horizontal) so nothing is trimmed */}
+      <GridItem
+        area="main"
+        overflow="auto"
+        display="flex"
+        flexDirection="column"
+        minH={0}
+        minW={0}
+        sx={{ minHeight: '200px' }}
+      >
         <Box
           opacity={isSidebarBlurred ? 0.3 : 1}
           transition="opacity 0.2s"
           flex="1"
           minH={0}
+          minW={0}
           display="flex"
           flexDirection="column"
           bg="gray.50"
         >
           <Header />
-          <Box as="main" p={4} flex="1" minH={0} overflow="hidden" display="flex" flexDirection="column">
+          <Box
+            as="main"
+            p={4}
+            flex="1"
+            minH={0}
+            minW={0}
+            overflow="auto"
+            display="flex"
+            flexDirection="column"
+          >
             {children}
           </Box>
         </Box>
