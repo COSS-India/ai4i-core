@@ -35,6 +35,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
   const { register, isLoading, error, clearError } = useAuth();
   const toast = useToastWithDeduplication();
   const [formData, setFormData] = useState<RegisterRequest>({
+    full_name: '',
     email: '',
     username: '',
     password: '',
@@ -51,6 +52,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
     // Only reset when switching from inactive to active (not on initial mount or re-renders)
     if (isActive && !prevIsActiveRef.current) {
       setFormData({
+        full_name: '',
         email: '',
         username: '',
         password: '',
@@ -66,6 +68,15 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
 
   const validateForm = (): boolean => {
     const errors: Record<string, string> = {};
+
+    const trimmedFullName = formData.full_name?.trim() ?? '';
+    if (!trimmedFullName) {
+      errors.full_name = 'Full name is required';
+    } else if (trimmedFullName.length < 2) {
+      errors.full_name = 'Full name must be at least 2 characters';
+    } else if (trimmedFullName.length > 100) {
+      errors.full_name = 'Full name must be at most 100 characters';
+    }
 
     if (formData.password !== formData.confirm_password) {
       errors.confirm_password = 'Passwords do not match';
@@ -96,10 +107,14 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
     }
 
     try {
-      await register(formData);
+      await register({
+        ...formData,
+        full_name: formData.full_name.trim(),
+      });
       
       // Clear form data after successful registration
       setFormData({
+        full_name: '',
         email: '',
         username: '',
         password: '',
@@ -239,6 +254,24 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
 
       <form onSubmit={handleSubmit} autoComplete="off">
         <VStack spacing={4}>
+          <FormControl isRequired isInvalid={!!validationErrors.full_name}>
+            <FormLabel>Full Name</FormLabel>
+            <Input
+              type="text"
+              name="full_name"
+              value={formData.full_name}
+              onChange={handleChange}
+              placeholder="Enter your full name"
+              size="md"
+              autoComplete="name"
+              data-form-type="other"
+              maxLength={100}
+            />
+            {validationErrors.full_name && (
+              <FormErrorMessage>{validationErrors.full_name}</FormErrorMessage>
+            )}
+          </FormControl>
+
           <FormControl isRequired isInvalid={!!validationErrors.email}>
             <FormLabel>Email</FormLabel>
             <Input
