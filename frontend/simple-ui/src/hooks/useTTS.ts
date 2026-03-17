@@ -1,10 +1,10 @@
 // Custom React hook for TTS functionality with text input and audio generation
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { performTTSInference } from '../services/ttsService';
-import { getWordCount } from '../utils/helpers';
+import { getWordCount, base64ToAudioObjectUrl } from '../utils/helpers';
 import { UseTTSReturn, TTSInferenceRequest, Gender, AudioFormat, SampleRate } from '../types/tts';
 import { DEFAULT_TTS_CONFIG, MAX_TEXT_LENGTH, MIN_TTS_TEXT_LENGTH, TTS_ERRORS } from '../config/constants';
 import { extractErrorInfo } from '../utils/errorHandler';
@@ -47,9 +47,21 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
 
   // Only show "text exceeds limit" toast once per exceed (not every keystroke)
   const hasShownTextLimitToastRef = useRef(false);
+  // Blob URL for current audio (CSP allows blob: for media-src; data: is blocked)
+  const audioObjectUrlRef = useRef<string | null>(null);
 
   // Toast hook
   const toast = useToastWithDeduplication();
+
+  // Revoke blob URL on unmount to avoid leaks
+  useEffect(() => {
+    return () => {
+      if (audioObjectUrlRef.current) {
+        URL.revokeObjectURL(audioObjectUrlRef.current);
+        audioObjectUrlRef.current = null;
+      }
+    };
+  }, []);
 
   // TTS inference mutation
   const ttsMutation = useMutation({
@@ -71,14 +83,20 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
       try {
         const audioContent = response.data.audio[0]?.audioContent;
         if (audioContent) {
-          const dataUrl = `data:audio/wav;base64,${audioContent}`;
-          setAudio(dataUrl);
+          if (audioObjectUrlRef.current) {
+            URL.revokeObjectURL(audioObjectUrlRef.current);
+            audioObjectUrlRef.current = null;
+          }
+          const format = (response.data.config?.audioFormat as string) || audioFormat || 'wav';
+          const blobUrl = base64ToAudioObjectUrl(audioContent, format);
+          audioObjectUrlRef.current = blobUrl;
+          setAudio(blobUrl);
           
           // Set response time
           setRequestTime(response.responseTime.toString());
           
-          // Get audio duration
-          const audioElement = new Audio(dataUrl);
+          // Get audio duration using blob URL (same as playback)
+          const audioElement = new Audio(blobUrl);
           audioElement.addEventListener('loadedmetadata', () => {
             setAudioDuration(audioElement.duration);
           });
