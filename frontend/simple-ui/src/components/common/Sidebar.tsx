@@ -477,9 +477,7 @@ const Sidebar: React.FC = () => {
       borderColor={borderColor}
       sx={{
         /* Small viewport height so sidebar never extends past visible area (1312×848, scaled Mac) */
-        minHeight: '100vh',
         minHeight: '100svh',
-        height: '100vh',
         height: '100svh',
       }}
     >

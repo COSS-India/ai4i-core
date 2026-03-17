@@ -24,7 +24,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       h="100%"
       gap={0}
       sx={{
-        minHeight: '100svh',
         minHeight: '100dvh',
         height: '100%',
       }}
