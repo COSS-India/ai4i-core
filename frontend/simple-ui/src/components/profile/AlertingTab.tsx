@@ -438,7 +438,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     {defs.filteredDefinitions.map((d) => (
                       <Tr
                         key={d.id}
-                        _hover={{ bg: "gray.50", "& .row-actions": { opacity: 1 } }}
+                        _hover={{ bg: "gray.50" }}
                         transition="background 0.15s"
                       >
                         <Td fontWeight="semibold">{d.name}</Td>
@@ -463,7 +463,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                         </Td>
                         <Td fontSize="sm">{new Date(d.created_at).toLocaleDateString()}</Td>
                         <Td>
-                          <HStack spacing={1} className="row-actions" opacity={0} transition="opacity 0.15s">
+                          <HStack spacing={1} className="row-actions">
                             <Tooltip label="View" placement="top" hasArrow>
                               <IconButton
                                 aria-label="View"
@@ -1363,7 +1363,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     {recvs.filteredReceivers.map((r) => (
                       <Tr
                         key={r.id}
-                        _hover={{ bg: "gray.50", "& .row-actions": { opacity: 1 } }}
+                        _hover={{ bg: "gray.50" }}
                         transition="background 0.15s"
                       >
                         <Td fontWeight="semibold" fontSize="sm">{r.receiver_name}</Td>
@@ -1385,7 +1385,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                         <Td fontSize="sm">{r.organization}</Td>
                         <Td fontSize="sm">{new Date(r.created_at).toLocaleDateString()}</Td>
                         <Td>
-                          <HStack spacing={1} className="row-actions" opacity={0} transition="opacity 0.15s">
+                          <HStack spacing={1} className="row-actions">
                             <Tooltip label="View" placement="top" hasArrow>
                               <IconButton aria-label="View" icon={<ViewIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "blue.500", bg: "blue.50" }} onClick={() => recvs.openView(r)} />
                             </Tooltip>
@@ -1689,7 +1689,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 {rules.filteredRules.map((rule) => (
                     <Tr
                       key={rule.id}
-                      _hover={{ bg: "gray.50", "& .row-actions": { opacity: 1 } }}
+                      _hover={{ bg: "gray.50" }}
                       transition="background 0.15s"
                     >
                       <Td fontWeight="semibold">{rule.rule_name ?? rule.receiver_name}</Td>
@@ -1716,7 +1716,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                         </Badge>
                       </Td>
                       <Td>
-                        <HStack spacing={1} className="row-actions" opacity={0} transition="opacity 0.15s">
+                        <HStack spacing={1} className="row-actions">
                           <Tooltip label="View" placement="top" hasArrow>
                             <IconButton aria-label="View" icon={<ViewIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "blue.500", bg: "blue.50" }} onClick={() => { defs.fetchDefinitions(); rules.openView(rule); }} />
                           </Tooltip>
