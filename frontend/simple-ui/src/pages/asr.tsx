@@ -24,6 +24,7 @@ import ASRResults from "../components/asr/ASRResults";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
 import LoadingSpinner from "../components/common/LoadingSpinner";
+import AudioInputPreview from "../components/common/AudioInputPreview";
 import { ASR_SUPPORTED_LANGUAGES } from "../config/constants";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { useASR } from "../hooks/useASR";
@@ -219,12 +220,18 @@ const ASRPage: React.FC = () => {
                   />
                   {/* Upload / recording confirmation - show when audio is ready */}
                   {!recording && pendingAudio && (
-                    <Alert status="success" borderRadius="md" mt={4}>
-                      <AlertIcon />
-                      <AlertDescription>
-                        Audio ready (recording or upload). Click Transcribe to generate the transcript.
-                      </AlertDescription>
-                    </Alert>
+                    <>
+                      <Alert status="success" borderRadius="md" mt={4}>
+                        <AlertIcon />
+                        <AlertDescription>
+                          Audio ready (recording or upload). Click Transcribe to generate the transcript.
+                        </AlertDescription>
+                      </Alert>
+                      <AudioInputPreview
+                        audioBase64OrDataUrl={pendingAudio}
+                        label="Review your audio"
+                      />
+                    </>
                   )}
                 </Box>
 
