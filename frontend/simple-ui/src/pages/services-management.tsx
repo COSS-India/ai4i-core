@@ -33,6 +33,7 @@ import {
   SimpleGrid,
   Grid,
   useDisclosure,
+  Tooltip,
 } from "@chakra-ui/react";
 import Head from "next/head";
 import { SearchIcon } from "@chakra-ui/icons";
@@ -87,6 +88,8 @@ const ServicesManagementPage: React.FC = () => {
   const [filterTaskType, setFilterTaskType] = useState<string>("");
   const [confirmPublishService, setConfirmPublishService] = useState<Service | null>(null);
   const [confirmUnpublishService, setConfirmUnpublishService] = useState<Service | null>(null);
+  /** When viewing a service, true if its model is deprecated (fetched by modelId); null until we know */
+  const [selectedServiceModelDeprecated, setSelectedServiceModelDeprecated] = useState<boolean | null>(null);
   const { isOpen: isPublishConfirmOpen, onOpen: onPublishConfirmOpen, onClose: onPublishConfirmClose } = useDisclosure();
   const { isOpen: isUnpublishConfirmOpen, onOpen: onUnpublishConfirmOpen, onClose: onUnpublishConfirmClose } = useDisclosure();
   const cancelPublishRef = useRef<HTMLButtonElement>(null);
@@ -95,6 +98,16 @@ const ServicesManagementPage: React.FC = () => {
   const { user } = useAuth();
 
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+
+  const isServiceModelDeprecated = (service: Service | null | undefined): boolean => {
+    if (!service) return false;
+    const modelVersionStatus =
+      (service.model as any)?.versionStatus ??
+      (service.model as any)?.version_status ??
+      (service as any).versionStatus ??
+      (service as any).version_status;
+    return typeof modelVersionStatus === "string" && modelVersionStatus.toLowerCase() === "deprecated";
+  };
 
   /** Sort by latest update (publishedAt/unpublishedAt) then fallback to publishedOn/created_at; for list ordering */
   const getServiceSortTime = (s: Service): number => {
@@ -524,7 +537,7 @@ const ServicesManagementPage: React.FC = () => {
   const handleViewService = async (serviceId: string) => {
     // Check session expiry before viewing service
     if (!checkSessionExpiry()) return;
-    
+    setSelectedServiceModelDeprecated(null);
     try {
       const service = await getServiceById(serviceId);
       setSelectedService(service);
@@ -532,6 +545,22 @@ const ServicesManagementPage: React.FC = () => {
       setIsViewingService(true);
       setActiveTab(2);
       router.replace({ pathname: "/services-management", query: { ...router.query, tab: "2" } }, undefined, { shallow: true });
+      // Fetch model to know if deprecated (detail API may not include model.versionStatus)
+      const modelId = service.modelId || service.model_id;
+      if (modelId) {
+        try {
+          const modelDetails = await getModelById(modelId);
+          const deprecated =
+            modelDetails?.versionStatus &&
+            typeof modelDetails.versionStatus === "string" &&
+            modelDetails.versionStatus.toLowerCase() === "deprecated";
+          setSelectedServiceModelDeprecated(!!deprecated);
+        } catch {
+          setSelectedServiceModelDeprecated(false);
+        }
+      } else {
+        setSelectedServiceModelDeprecated(false);
+      }
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : "Failed to fetch service details";
       const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
@@ -629,6 +658,34 @@ const ServicesManagementPage: React.FC = () => {
   };
 
   const handlePublishService = async (service: Service) => {
+    // Frontend safeguard: do not allow publishing if the associated model is deprecated
+    try {
+      const modelId = service.modelId || service.model_id;
+      if (modelId) {
+        const modelDetails = await getModelById(modelId);
+        const isDeprecated =
+          modelDetails?.versionStatus &&
+          typeof modelDetails.versionStatus === "string" &&
+          modelDetails.versionStatus.toLowerCase() === "deprecated";
+        if (isDeprecated) {
+          toast({
+            title: "Publish blocked",
+            description:
+              "This service cannot be published because its associated model version is deprecated. Please restore the model to ACTIVE before publishing the service.",
+            status: "error",
+            duration: 6000,
+            isClosable: true,
+          });
+          return;
+        }
+      }
+    } catch (e) {
+      // If model lookup fails, fall through and let backend validation (if any) handle it
+      // Do not block publish solely due to a transient read error.
+      // eslint-disable-next-line no-console
+      console.warn("Failed to verify model status before publishing service:", e);
+    }
+
     if (!service.serviceId) {
       toast({
         title: "Publish Failed",
@@ -802,6 +859,7 @@ const ServicesManagementPage: React.FC = () => {
       if (selectedService?.uuid === serviceToDelete.uuid) {
         setIsViewingService(false);
         setSelectedService(null);
+        setSelectedServiceModelDeprecated(null);
         setActiveTab(0);
       }
     } catch (error: any) {
@@ -850,6 +908,7 @@ const ServicesManagementPage: React.FC = () => {
                   if (index !== 2) {
                     setIsViewingService(false);
                     setSelectedService(null);
+                    setSelectedServiceModelDeprecated(null);
                   }
                   const q = { ...router.query } as Record<string, string>;
                   if (index === 0) delete q.tab;
@@ -1020,17 +1079,31 @@ const ServicesManagementPage: React.FC = () => {
                                             Unpublish
                                           </Button>
                                         ) : (
-                                          <Button
-                                            size="sm"
-                                            colorScheme="green"
-                                            variant="outline"
-                                            onClick={() => { setConfirmPublishService(service); onPublishConfirmOpen(); }}
-                                            isLoading={publishingServiceUuid === service.uuid}
-                                            loadingText="Publishing..."
-                                            isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
+                                          // Disable Publish when the associated model is deprecated; show message on hover
+                                          <Tooltip
+                                            label="This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
+                                            isDisabled={!isServiceModelDeprecated(service)}
+                                            hasArrow
+                                            placement="top"
                                           >
-                                            Publish
-                                          </Button>
+                                            <Box as="span" display="inline-block">
+                                              <Button
+                                                size="sm"
+                                                colorScheme="green"
+                                                variant="outline"
+                                                onClick={() => { setConfirmPublishService(service); onPublishConfirmOpen(); }}
+                                                isLoading={publishingServiceUuid === service.uuid}
+                                                loadingText="Publishing..."
+                                                isDisabled={
+                                                  unpublishingServiceUuid !== null ||
+                                                  publishingServiceUuid !== null ||
+                                                  isServiceModelDeprecated(service)
+                                                }
+                                              >
+                                                Publish
+                                              </Button>
+                                            </Box>
+                                          </Tooltip>
                                         )}
                                         <Button
                                           size="sm"
@@ -1358,17 +1431,31 @@ const ServicesManagementPage: React.FC = () => {
                                         Unpublish
                                       </Button>
                                     ) : (
-                                      <Button
-                                        size="sm"
-                                        colorScheme="green"
-                                        variant="outline"
-                                        onClick={() => { setConfirmPublishService(selectedService); onPublishConfirmOpen(); }}
-                                        isLoading={publishingServiceUuid === selectedService.uuid}
-                                        loadingText="Publishing..."
-                                        isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
+                                      <Tooltip
+                                        label="This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
+                                        isDisabled={!(isServiceModelDeprecated(selectedService) || selectedServiceModelDeprecated === true)}
+                                        hasArrow
+                                        placement="top"
                                       >
-                                        Publish
-                                      </Button>
+                                        <Box as="span" display="inline-block">
+                                          <Button
+                                            size="sm"
+                                            colorScheme="green"
+                                            variant="outline"
+                                            onClick={() => { setConfirmPublishService(selectedService); onPublishConfirmOpen(); }}
+                                            isLoading={publishingServiceUuid === selectedService.uuid}
+                                            loadingText="Publishing..."
+                                            isDisabled={
+                                              unpublishingServiceUuid !== null ||
+                                              publishingServiceUuid !== null ||
+                                              isServiceModelDeprecated(selectedService) ||
+                                              selectedServiceModelDeprecated === true
+                                            }
+                                          >
+                                            Publish
+                                          </Button>
+                                        </Box>
+                                      </Tooltip>
                                     )}
                                   </HStack>
                                 </Box>
