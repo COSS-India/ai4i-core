@@ -1,5 +1,7 @@
 """Main profiler orchestration - combines feature extraction and ML models."""
+import hashlib
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -41,6 +43,19 @@ from .schemas import (
 class RequestProfiler:
     """Main profiler class that orchestrates feature extraction and ML predictions."""
 
+    # Allowed directory for model files - only models under this base are trusted
+    ALLOWED_MODEL_BASE = Path(os.getenv(
+        "ALLOWED_MODEL_DIR",
+        str(Path(settings.model_dir).resolve())
+    )).resolve()
+
+    # Optional SHA-256 checksums for model integrity verification.
+    # Set via env vars MODEL_CHECKSUM_DOMAIN / MODEL_CHECKSUM_COMPLEXITY.
+    EXPECTED_CHECKSUMS: Dict[str, Optional[str]] = {
+        "domain": os.getenv("MODEL_CHECKSUM_DOMAIN"),
+        "complexity": os.getenv("MODEL_CHECKSUM_COMPLEXITY"),
+    }
+
     def __init__(self):
         """Initialize profiler with models."""
         self.domain_model = None
@@ -49,6 +64,47 @@ class RequestProfiler:
         self.model_version = "2.0.0"
         self.load_attempts = 0
         self.max_load_attempts = 3
+
+    @staticmethod
+    def _validate_model_path(model_path: Path, allowed_base: Path) -> Path:
+        """Validate that a model path is within the allowed base directory."""
+        resolved = model_path.resolve()
+        if not resolved.is_relative_to(allowed_base):
+            raise ModelError(
+                f"Model path '{resolved}' is outside the allowed directory '{allowed_base}'. "
+                "Refusing to load to prevent path traversal attacks.",
+                recoverable=False,
+            )
+        if not resolved.suffix in (".pkl", ".joblib", ".gz"):
+            raise ModelError(
+                f"Model file '{resolved.name}' has untrusted extension '{resolved.suffix}'. "
+                "Only .pkl, .joblib, and .gz are allowed.",
+                recoverable=False,
+            )
+        return resolved
+
+    @staticmethod
+    def _verify_checksum(file_path: Path, expected: Optional[str]) -> None:
+        """Verify SHA-256 checksum of a model file if an expected checksum is provided."""
+        if expected is None:
+            logger.warning(
+                f"No checksum configured for {file_path.name} — skipping integrity check. "
+                "Set MODEL_CHECKSUM_DOMAIN / MODEL_CHECKSUM_COMPLEXITY for production use."
+            )
+            return
+        sha256 = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha256.update(chunk)
+        actual = sha256.hexdigest()
+        if actual != expected.lower():
+            raise ModelError(
+                f"Checksum mismatch for {file_path.name}: "
+                f"expected {expected.lower()}, got {actual}. "
+                "The model file may have been tampered with.",
+                recoverable=False,
+            )
+        logger.info(f"Checksum verified for {file_path.name}")
 
     @retry_with_backoff(max_retries=2, initial_delay=1.0, exceptions=(FileNotFoundError, IOError))
     def load_models(self) -> None:
@@ -75,9 +131,21 @@ class RequestProfiler:
                     f"Complexity model not found at: {settings.complexity_model_path}"
                 )
 
+            # Validate paths are within allowed directory (prevents path traversal / RCE)
+            domain_path = self._validate_model_path(
+                settings.domain_model_path, self.ALLOWED_MODEL_BASE
+            )
+            complexity_path = self._validate_model_path(
+                settings.complexity_model_path, self.ALLOWED_MODEL_BASE
+            )
+
+            # Verify file integrity via checksums before deserializing
+            self._verify_checksum(domain_path, self.EXPECTED_CHECKSUMS["domain"])
+            self._verify_checksum(complexity_path, self.EXPECTED_CHECKSUMS["complexity"])
+
             # Load domain classifier
-            logger.info(f"Loading domain classifier from {settings.domain_model_path}")
-            self.domain_model = joblib.load(settings.domain_model_path)
+            logger.info(f"Loading domain classifier from {domain_path}")
+            self.domain_model = joblib.load(domain_path)
 
             # Validate model has required methods
             if not hasattr(self.domain_model, 'predict_proba'):
@@ -87,8 +155,8 @@ class RequestProfiler:
                 )
 
             # Load complexity regressor
-            logger.info(f"Loading complexity regressor from {settings.complexity_model_path}")
-            self.complexity_model = joblib.load(settings.complexity_model_path)
+            logger.info(f"Loading complexity regressor from {complexity_path}")
+            self.complexity_model = joblib.load(complexity_path)
 
             # Validate model has required methods
             if not hasattr(self.complexity_model, 'predict'):
