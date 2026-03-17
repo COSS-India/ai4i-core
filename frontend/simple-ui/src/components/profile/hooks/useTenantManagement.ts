@@ -472,10 +472,20 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       toast({ title: "Validation", description: "Username must be at least 3 characters.", status: "error", isClosable: true });
       return;
     }
+    const tenant = tenants.find((t) => t.tenant_id === userForm.tenant_id);
+    const allowedServices = tenant?.subscriptions ?? [];
+    if (allowedServices.length > 0 && (userForm.services?.length ?? 0) === 0) {
+      toast({
+        title: "Validation",
+        description: "At least one service must be assigned to the new user.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
     setIsSubmittingUser(true);
     try {
-      const tenant = tenants.find((t) => t.tenant_id === userForm.tenant_id);
-      const allowedServices = tenant?.subscriptions ?? [];
       const servicesToSend = userForm.services.filter((s) => allowedServices.includes(s));
       await multiTenantService.registerUser({
         tenant_id: userForm.tenant_id,
@@ -813,8 +823,18 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  /** Save Changes for tenant Manage Services: front-end only (close + refetch), no API. */
+  /** Save Changes for tenant Manage Services: validate active tenant has at least one service, then close + refetch. */
   const saveManageServices = () => {
+    if (manageServicesTenant?.status === "ACTIVE" && manageServicesSelected.length === 0) {
+      toast({
+        title: "Validation",
+        description: "Active tenants must have at least one service assigned.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
     closeManageServices();
     handleFetchTenants();
   };
@@ -923,8 +943,18 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  /** Save Changes for user Manage Services: front-end only (close + refetch), no API. */
+  /** Save Changes for user Manage Services: validate active user has at least one service, then close + refetch. */
   const saveManageUserServices = () => {
+    if (manageUserServicesUser?.status === "ACTIVE" && manageUserServicesSelected.length === 0) {
+      toast({
+        title: "Validation",
+        description: "Active users must have at least one service assigned.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
     closeManageUserServices();
     handleFetchTenantUsers();
   };
