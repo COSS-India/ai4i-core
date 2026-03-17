@@ -141,7 +141,8 @@ const ModelManagementPage: React.FC = () => {
   const [isValidating, setIsValidating] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [updatingModelId, setUpdatingModelId] = useState<string | null>(null);
-  const [modelIdsWithService, setModelIdsWithService] = useState<Set<string>>(new Set());
+  /** Model IDs that have at least one published service; deprecate is disabled for these until all are unpublished */
+  const [modelIdsWithPublishedService, setModelIdsWithPublishedService] = useState<Set<string>>(new Set());
   const [modelToConfirm, setModelToConfirm] = useState<Model | null>(null);
   const [confirmAction, setConfirmAction] = useState<"deprecate" | "activate" | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -208,7 +209,7 @@ const ModelManagementPage: React.FC = () => {
     fetchModels();
   }, [toast]);
 
-  // Fetch services to know which models have a service associated (no deprecate for those)
+  // Fetch services: deprecate is only disabled when the model has at least one published service
   useEffect(() => {
     const fetchServices = async () => {
       try {
@@ -216,11 +217,12 @@ const ModelManagementPage: React.FC = () => {
         const ids = new Set<string>();
         (svcs || []).forEach((s: any) => {
           const id = s.modelId ?? s.model_id;
-          if (id) ids.add(String(id));
+          const published = s.isPublished === true || s.is_published === true;
+          if (id && published) ids.add(String(id));
         });
-        setModelIdsWithService(ids);
+        setModelIdsWithPublishedService(ids);
       } catch {
-        setModelIdsWithService(new Set());
+        setModelIdsWithPublishedService(new Set());
       }
     };
     fetchServices();
@@ -1071,7 +1073,7 @@ const ModelManagementPage: React.FC = () => {
                                     >
                                       View
                                     </Button>
-                                    {(model.versionStatus?.toLowerCase() === "active" || !model.versionStatus) && !modelIdsWithService.has(model.modelId) ? (
+                                    {(model.versionStatus?.toLowerCase() === "active" || !model.versionStatus) && !modelIdsWithPublishedService.has(model.modelId) ? (
                                       <Button
                                         size="sm"
                                         colorScheme="orange"
@@ -1429,7 +1431,7 @@ const ModelManagementPage: React.FC = () => {
                                 Create Service
                               </Button>
                             )}
-                            {(selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithService.has(selectedModel.modelId) ? (
+                            {(selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithPublishedService.has(selectedModel.modelId) ? (
                               <Button
                                 size="sm"
                                 colorScheme="orange"
