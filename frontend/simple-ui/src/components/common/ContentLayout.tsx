@@ -1,7 +1,7 @@
 // Content layout wrapper component for page content
 
 import React from 'react';
-import { Box, useColorModeValue, useMediaQuery } from '@chakra-ui/react';
+import { Box, useColorModeValue } from '@chakra-ui/react';
 
 interface ContentLayoutProps {
   children: React.ReactNode;
@@ -9,16 +9,15 @@ interface ContentLayoutProps {
 
 const ContentLayout: React.FC<ContentLayoutProps> = ({ children }) => {
   const bgColor = useColorModeValue('light.100', 'dark.100');
-  const [isMobile] = useMediaQuery('(max-width: 1080px)');
 
   return (
-    <Box 
-      pt={isMobile ? "3.5rem" : "calc(3.5rem + 0.5rem)"}
-      pl={isMobile ? 4 : "calc(4.5rem + 1rem)"}
-      pr={4}
+    <Box
+      pt="calc(3.5rem + 0.5rem)"
+      px={6}
       pb={4}
       flex="1"
       minH={0}
+      minW={0}
       display="flex"
       flexDirection="column"
       w="100%"
@@ -30,10 +29,12 @@ const ContentLayout: React.FC<ContentLayoutProps> = ({ children }) => {
         borderRadius="md"
         flex="1"
         minH={0}
+        minW={0}
         overflow="auto"
         w="100%"
         maxW="1400px"
         mx="auto"
+        sx={{ maxWidth: '100%' }}
       >
         {children}
       </Box>
