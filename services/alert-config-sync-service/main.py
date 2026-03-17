@@ -53,8 +53,8 @@ DB_NAME = "alerting_db"
 # Auth DB (same host/user/password, different database) - for resolving ADMIN emails for default receiver
 AUTH_DB_NAME = app_env.auth_db_name
 
-# Multi-tenant DB (same host/user/password) - for resolving tenant name -> tenant_id and tenant user email
-MULTI_TENANT_DB_NAME = (app_env.multi_tenant_db_name or os.getenv("MULTI_TENANT_DB_NAME", "multi_tenant_db")).strip() or "multi_tenant_db"
+# Multi-tenant DB (same host/user/password) - for resolving tenant name -> tenant_id and tenant user email. Set via MULTI_TENANT_DB_NAME env.
+MULTI_TENANT_DB_NAME = (app_env.multi_tenant_db_name or os.getenv("MULTI_TENANT_DB_NAME") or "").strip() or None
 
 PROMETHEUS_URL = app_env.prometheus_url
 ALERTMANAGER_URL = app_env.alertmanager_url
@@ -143,10 +143,10 @@ async def close_auth_db_pool():
         logger.info("Auth database connection pool closed")
 
 async def init_multi_tenant_db_pool():
-    """Initialize multi-tenant database connection pool for resolving tenant name to tenant_id and tenant user email."""
+    """Initialize multi-tenant database connection pool for resolving tenant name to tenant_id and tenant user email. Requires MULTI_TENANT_DB_NAME env."""
     global multi_tenant_db_pool
     async with multi_tenant_db_pool_lock:
-        if multi_tenant_db_pool is None:
+        if multi_tenant_db_pool is None and MULTI_TENANT_DB_NAME:
             try:
                 multi_tenant_db_pool = await asyncpg.create_pool(
                     host=DB_HOST,
@@ -161,6 +161,8 @@ async def init_multi_tenant_db_pool():
             except Exception as e:
                 logger.warning(f"Could not initialize multi_tenant_db pool (tenant resolution will be skipped): {e}")
                 multi_tenant_db_pool = None
+        elif not MULTI_TENANT_DB_NAME:
+            logger.debug("MULTI_TENANT_DB_NAME not set; tenant resolution will be skipped")
 
 async def close_multi_tenant_db_pool():
     """Close multi-tenant database connection pool"""
