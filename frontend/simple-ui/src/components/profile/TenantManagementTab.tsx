@@ -956,6 +956,14 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     <Text fontSize="sm" color="gray.500">
                       {tm.manageServicesSelected.length} service(s) selected
                     </Text>
+                    {tm.manageServicesTenant?.status === "ACTIVE" && tm.manageServicesSelected.length === 0 && (
+                      <Alert status="error" borderRadius="md" mt={2}>
+                        <AlertIcon />
+                        <AlertDescription>
+                          Active tenants must have at least one service assigned. Select at least one service before saving.
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </VStack>
                 )}
               </>
@@ -965,7 +973,11 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             {tm.availableServices.length > 0 && (
               <>
                 <Button variant="ghost" mr={3} onClick={tm.closeManageServices}>Cancel</Button>
-                <Button colorScheme="blue" onClick={tm.saveManageServices}>
+                <Button
+                  colorScheme="blue"
+                  onClick={tm.saveManageServices}
+                  isDisabled={tm.manageServicesTenant?.status === "ACTIVE" && tm.manageServicesSelected.length === 0}
+                >
                   Done
                 </Button>
               </>
@@ -1068,6 +1080,14 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     <Text fontSize="sm" color="gray.500">
                       {tm.manageUserServicesSelected.length} service(s) selected
                     </Text>
+                    {tm.manageUserServicesUser?.status === "ACTIVE" && tm.manageUserServicesSelected.length === 0 && (
+                      <Alert status="error" borderRadius="md" mt={2}>
+                        <AlertIcon />
+                        <AlertDescription>
+                          Active users must have at least one service assigned. Select at least one service before saving.
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </VStack>
                 )}
               </>
@@ -1077,7 +1097,11 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             {tm.availableServicesForUser.length > 0 && (
               <>
                 <Button variant="ghost" mr={3} onClick={tm.closeManageUserServices}>Cancel</Button>
-                <Button colorScheme="blue" onClick={tm.saveManageUserServices}>
+                <Button
+                  colorScheme="blue"
+                  onClick={tm.saveManageUserServices}
+                  isDisabled={tm.manageUserServicesUser?.status === "ACTIVE" && tm.manageUserServicesSelected.length === 0}
+                >
                   Done
                 </Button>
               </>
@@ -1139,7 +1163,13 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   ))}
                 </Select>
               </FormControl>
-              <FormControl>
+              <FormControl
+                isInvalid={(() => {
+                  const selectedTenant = tm.tenants.find((t) => t.tenant_id === tm.userForm.tenant_id);
+                  const tenantServices = selectedTenant?.subscriptions ?? [];
+                  return tenantServices.length > 0 && (tm.userForm.services?.length ?? 0) === 0;
+                })()}
+              >
                 <FormLabel>Services</FormLabel>
                 {(() => {
                   const selectedTenant = tm.tenants.find((t) => t.tenant_id === tm.userForm.tenant_id);
@@ -1157,6 +1187,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   const allSelected =
                     tenantServices.length > 0 &&
                     tenantServices.every((svc) => tm.userForm.services.includes(svc));
+                  const noServicesSelected = (tm.userForm.services?.length ?? 0) === 0;
                   return (
                     <>
                       <HStack justify="space-between" mb={2}>
@@ -1191,6 +1222,11 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                           ))}
                         </SimpleGrid>
                       </CheckboxGroup>
+                      {noServicesSelected && (
+                        <FormErrorMessage mt={2}>
+                          At least one service must be assigned to the new user.
+                        </FormErrorMessage>
+                      )}
                     </>
                   );
                 })()}
@@ -1199,7 +1235,24 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           </ModalBody>
           <ModalFooter>
             <Button variant="ghost" mr={3} onClick={tm.closeUserModal} isDisabled={tm.isSubmittingUser}>Cancel</Button>
-            <Button colorScheme="blue" onClick={tm.handleRegisterUser} isLoading={tm.isSubmittingUser} loadingText="Adding..." isDisabled={!tm.userForm.tenant_id || !tm.userForm.full_name?.trim() || !tm.userForm.email.trim() || !tm.userForm.username.trim() || tm.userForm.username.trim().length < 3}>
+            <Button
+              colorScheme="blue"
+              onClick={tm.handleRegisterUser}
+              isLoading={tm.isSubmittingUser}
+              loadingText="Adding..."
+              isDisabled={
+                !tm.userForm.tenant_id ||
+                !tm.userForm.full_name?.trim() ||
+                !tm.userForm.email.trim() ||
+                !tm.userForm.username.trim() ||
+                tm.userForm.username.trim().length < 3 ||
+                (() => {
+                  const selectedTenant = tm.tenants.find((t) => t.tenant_id === tm.userForm.tenant_id);
+                  const tenantServices = selectedTenant?.subscriptions ?? [];
+                  return tenantServices.length > 0 && (tm.userForm.services?.length ?? 0) === 0;
+                })()
+              }
+            >
               + Add User
             </Button>
           </ModalFooter>

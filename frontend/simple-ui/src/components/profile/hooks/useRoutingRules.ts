@@ -181,11 +181,8 @@ export function useRoutingRules() {
     if (!updateItem) return;
     const hasEmail = updateForm.email_to && updateForm.email_to.length > 0;
     const hasRole = !!updateForm.rbac_role;
-    // When backend returns both (e.g. role-based receiver with resolved email_to), prefer original delivery mode so we send only one.
-    const originalUsedRole = !!updateItem.rbac_role;
-    const useEmail = hasEmail && (!hasRole || !originalUsedRole);
-    const useRole = hasRole && (!hasEmail || originalUsedRole);
-    if (useEmail && useRole) {
+    // Validate raw form state: user must not submit both delivery modes.
+    if (hasEmail && hasRole) {
       toast({ title: "Validation Error", description: "Provide either email_to or rbac_role, not both", status: "warning", duration: 3000, isClosable: true });
       return;
     }
@@ -203,10 +200,10 @@ export function useRoutingRules() {
       if (updateForm.email_body_template !== undefined) payload.email_body_template = updateForm.email_body_template ?? null;
       if (updateForm.enabled !== undefined) payload.enabled = updateForm.enabled;
       // Only include delivery fields when we have a single clear choice; otherwise omit so backend keeps existing (update by id with only changed fields).
-      if (useEmail) {
+      if (hasEmail && !hasRole) {
         payload.email_to = updateForm.email_to;
         payload.rbac_role = null;
-      } else if (useRole) {
+      } else if (hasRole && !hasEmail) {
         payload.rbac_role = updateForm.rbac_role;
         payload.email_to = undefined;
       }
