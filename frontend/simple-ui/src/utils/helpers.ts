@@ -1,4 +1,17 @@
 // Utility helper functions for Simple UI
+import { getStoredAccessToken } from './tokenStorage';
+
+/**
+ * Masks phone for view mode: only last 4 digits visible, e.g. "+91 xxxxxx1234"
+ * Used consistently across user profile and tenant/contact views.
+ */
+export function maskPhoneForDisplay(phone: string | undefined): string {
+  if (!phone || !phone.trim()) return "—";
+  const digits = phone.replace(/\D/g, "");
+  const last4 = digits.slice(-4);
+  if (last4.length === 0) return "—";
+  return `+91 xxxxxx${last4}`;
+}
 
 /**
  * Decode JWT token and extract tenant_id
@@ -8,8 +21,7 @@ export const getTenantIdFromToken = (): string | null => {
   if (typeof window === 'undefined') return null;
   
   try {
-    // Get token from localStorage or sessionStorage
-    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    const token = getStoredAccessToken();
     if (!token || token.trim() === '') {
       return null;
     }
@@ -82,6 +94,30 @@ export const formatFileSize = (bytes: number): string => {
   }
   
   return `${bytes} B`;
+};
+
+/**
+ * Map audio format (e.g. "wav", "mp3") to MIME type for playback.
+ * Used so <audio src> and CSP media-src work (blob URLs with correct type).
+ */
+export const audioFormatToMime = (format: string): string => {
+  const f = (format || 'wav').toLowerCase();
+  if (f === 'mp3') return 'audio/mpeg';
+  return 'audio/wav';
+};
+
+/**
+ * Create a blob URL from base64-encoded audio. Use this for playback so CSP
+ * allows it (media-src allows blob:, not data:). Caller must revoke the URL
+ * when done (e.g. when replacing with new audio or on unmount).
+ * @param base64 - Base64 encoded audio
+ * @param format - Audio format e.g. "wav" or "mp3" (default "wav")
+ * @returns Object URL string (blob:...)
+ */
+export const base64ToAudioObjectUrl = (base64: string, format: string = 'wav'): string => {
+  const mime = audioFormatToMime(format);
+  const blob = base64ToBlob(base64, mime);
+  return URL.createObjectURL(blob);
 };
 
 /**

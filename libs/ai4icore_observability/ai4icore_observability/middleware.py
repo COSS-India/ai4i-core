@@ -1,5 +1,5 @@
 """
-Middleware for Dhruva Observability Plugin
+Middleware for AI4ICore Observability Plugin
 
 Handles request tracking, service detection, and metrics collection.
 """
@@ -15,6 +15,8 @@ import random
 from typing import Optional, Dict, Any
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from ai4icore_env import app_env
+
 from .config import PluginConfig
 from .metrics import MetricsCollector
 import httpx
@@ -49,6 +51,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         
         # Extract tenant_id from JWT token or database
         tenant_id = await self._extract_tenant_id(request)
+        
+        # Normalize tenant for metrics: use tenant_id from JWT/resolution or "unknown" for normal users
+        tenant = str(tenant_id) if tenant_id else "unknown"
         
         # Store organization and tenant_id in request.state for other middlewares to access
         # IMPORTANT: Set this BEFORE await call_next() so it's available to inner middlewares
@@ -186,11 +191,12 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 endpoint=path,
                 status_code=response.status_code,
                 duration=duration,
-                service_type=service_type
+                service_type=service_type,
+                tenant=tenant,
             )
             
             # Track additional metrics based on service type
-            self._track_additional_metrics(organization, app, service_type, path, duration, tts_characters, translation_characters, asr_audio_length, ocr_characters, ocr_image_size_kb, transliteration_characters, language_detection_characters, audio_lang_detection_length, ner_tokens, speaker_verification_length, speaker_diarization_length, language_diarization_length)
+            self._track_additional_metrics(organization, app, tenant, service_type, path, duration, tts_characters, translation_characters, asr_audio_length, ocr_characters, ocr_image_size_kb, transliteration_characters, language_detection_characters, audio_lang_detection_length, ner_tokens, speaker_verification_length, speaker_diarization_length, language_diarization_length)
             
         except Exception as e:
             # Don't let metrics collection break the request
@@ -291,10 +297,10 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 tenant_id = decoded_token.get("tenant_id")
                 if self.config.debug:
                     logger.debug(f"[TENANT_DEBUG] Extracted tenant_id from JWT: {tenant_id} (type: {type(tenant_id)})")
-                if tenant_id:
+                if tenant_id is not None and tenant_id != "":
                     if self.config.debug:
                         logger.debug(f"Extracted tenant_id from JWT: {tenant_id}")
-                    return tenant_id
+                    return str(tenant_id)
                 
                 # If tenant_id not in JWT, try to resolve from user_id
                 user_id = decoded_token.get("sub")
@@ -340,11 +346,10 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     if self.config.debug:
                         logger.debug("[TENANT_DEBUG] JWT token has no 'sub' field, cannot resolve tenant from user_id")
         
-        # Last resort: use default value only if we truly can't determine tenant
-        # This prevents logs without tenant_id, but logs a warning
-        default_tenant_id = getattr(self.config, 'default_tenant_id', "new-organization-487578")
-        logger.warning(f"tenant_id not found in JWT and could not be resolved, using default: {default_tenant_id}")
-        return default_tenant_id
+        # Last resort: normal user (no tenant in JWT and could not resolve from user_id)
+        if self.config.debug:
+            logger.debug("[TENANT_DEBUG] No tenant_id in JWT and could not resolve; using 'unknown' for normal user")
+        return "unknown"
     
     async def _resolve_tenant_from_user_id(self, user_id: int, request: Request) -> Optional[str]:
         """
@@ -358,20 +363,19 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             tenant_id if found, None otherwise
         """
         try:
-            # Get multi-tenant service URL from config or environment variable
+            # Get multi-tenant service URL from config or db_settings
             # Supports both environment variable and service discovery (Kubernetes/Docker service names)
-            import os
             multi_tenant_service_url = getattr(self.config, 'multi_tenant_service_url', None)
             if not multi_tenant_service_url:
-                multi_tenant_service_url = os.getenv("MULTI_TENANT_SERVICE_URL")
-            
+                multi_tenant_service_url = app_env.multi_tenant_service_url
+
             # If not set, try to construct from service name (for Kubernetes/Docker service discovery)
             if not multi_tenant_service_url:
                 # Try common service discovery patterns
-                service_name = os.getenv("MULTI_TENANT_SERVICE_NAME", "multi-tenant-service")
+                service_name = app_env.multi_tenant_service_name
                 # Default port is 8001 (internal Docker port), not 8100 (external mapped port)
-                service_port = os.getenv("MULTI_TENANT_SERVICE_PORT", "8001")
-                service_scheme = os.getenv("MULTI_TENANT_SERVICE_SCHEME", "http")
+                service_port = app_env.multi_tenant_service_port
+                service_scheme = app_env.multi_tenant_service_scheme
                 # Construct URL from service name (works with Docker service names and Kubernetes DNS)
                 multi_tenant_service_url = f"{service_scheme}://{service_name}:{service_port}"
                 if self.config.debug:
@@ -548,7 +552,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         else:
             return "unknown"
     
-    def _track_additional_metrics(self, organization: str, app: str, service_type: str, path: str, duration: float, tts_characters: int = 0, translation_characters: int = 0, asr_audio_length: float = 0, ocr_characters: int = 0, ocr_image_size_kb: float = 0.0, transliteration_characters: int = 0, language_detection_characters: int = 0, audio_lang_detection_length: float = 0, ner_tokens: int = 0, speaker_verification_length: float = 0, speaker_diarization_length: float = 0, language_diarization_length: float = 0):
+    def _track_additional_metrics(self, organization: str, app: str, tenant: str, service_type: str, path: str, duration: float, tts_characters: int = 0, translation_characters: int = 0, asr_audio_length: float = 0, ocr_characters: int = 0, ocr_image_size_kb: float = 0.0, transliteration_characters: int = 0, language_detection_characters: int = 0, audio_lang_detection_length: float = 0, ner_tokens: int = 0, speaker_verification_length: float = 0, speaker_diarization_length: float = 0, language_diarization_length: float = 0):
         """Track additional metrics based on service type."""
         try:
             # Track component latency
@@ -556,7 +560,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 organization=organization,
                 app=app,
                 component=service_type,
-                duration=duration
+                duration=duration,
+                tenant=tenant,
             )
             
             # Track data processing based on service type
@@ -567,7 +572,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     organization=organization,
                     app=app,
                     model="gpt-3.5-turbo",  # Mock model
-                    tokens=tokens
+                    tokens=tokens,
+                    tenant=tenant,
                 )
             elif service_type == "tts":
                 # Track real TTS character count
@@ -576,7 +582,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         organization=organization,
                         app=app,
                         language="en",  # Default language
-                        characters=tts_characters
+                        characters=tts_characters,
+                        tenant=tenant,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real TTS characters: {tts_characters}")
@@ -588,7 +595,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         app=app,
                         source_lang="en",  # Default source language
                         target_lang="hi",  # Default target language
-                        characters=translation_characters
+                        characters=translation_characters,
+                        tenant=tenant,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real translation characters: {translation_characters}")
@@ -599,7 +607,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         organization=organization,
                         app=app,
                         language="en",  # Default language
-                        audio_seconds=asr_audio_length
+                        audio_seconds=asr_audio_length,
+                        tenant=tenant,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real ASR audio length: {asr_audio_length:.2f} seconds")
@@ -609,7 +618,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     self.metrics_collector.track_ocr_characters(
                         organization=organization,
                         app=app,
-                        characters=ocr_characters
+                        characters=ocr_characters,
+                        tenant=tenant,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real OCR characters: {ocr_characters}")
@@ -618,7 +628,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     self.metrics_collector.track_ocr_image_size(
                         organization=organization,
                         app=app,
-                        image_size_kb=ocr_image_size_kb
+                        image_size_kb=ocr_image_size_kb,
+                        tenant=tenant,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked OCR image size: {ocr_image_size_kb:.2f} KB")
@@ -630,7 +641,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         app=app,
                         source_lang="en",  # Default source language
                         target_lang="hi",  # Default target language
-                        characters=transliteration_characters
+                        characters=transliteration_characters,
+                        tenant=tenant,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real transliteration characters: {transliteration_characters}")
@@ -640,7 +652,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     self.metrics_collector.track_language_detection_characters(
                         organization=organization,
                         app=app,
-                        characters=language_detection_characters
+                        characters=language_detection_characters,
+                        tenant=tenant,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real language detection characters: {language_detection_characters}")
@@ -650,7 +663,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     self.metrics_collector.track_audio_lang_detection_length(
                         organization=organization,
                         app=app,
-                        audio_seconds=audio_lang_detection_length
+                        audio_seconds=audio_lang_detection_length,
+                        tenant=tenant,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real audio language detection audio length: {audio_lang_detection_length:.2f} seconds")
@@ -660,7 +674,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     self.metrics_collector.track_ner_tokens(
                         organization=organization,
                         app=app,
-                        tokens=ner_tokens
+                        tokens=ner_tokens,
+                        tenant=tenant,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real NER tokens (words): {ner_tokens}")
@@ -670,7 +685,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     self.metrics_collector.track_speaker_verification_length(
                         organization=organization,
                         app=app,
-                        audio_seconds=speaker_verification_length
+                        audio_seconds=speaker_verification_length,
+                        tenant=tenant,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real speaker verification audio length: {speaker_verification_length:.2f} seconds")
@@ -680,7 +696,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     self.metrics_collector.track_speaker_diarization_length(
                         organization=organization,
                         app=app,
-                        audio_seconds=speaker_diarization_length
+                        audio_seconds=speaker_diarization_length,
+                        tenant=tenant,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real speaker diarization audio length: {speaker_diarization_length:.2f} seconds")
@@ -690,7 +707,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     self.metrics_collector.track_language_diarization_length(
                         organization=organization,
                         app=app,
-                        audio_seconds=language_diarization_length
+                        audio_seconds=language_diarization_length,
+                        tenant=tenant,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real language diarization audio length: {language_diarization_length:.2f} seconds")
@@ -701,7 +719,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 organization=organization,
                 app=app,
                 sla_type=f"{service_type}_availability",
-                compliance_percent=compliance
+                compliance_percent=compliance,
+                tenant=tenant,
             )
             
         except Exception as e:

@@ -54,6 +54,7 @@ interface ProcessedSpan {
   errorMessage?: string;
   relativeStart: number; // milliseconds from trace start
   relativeEnd: number;
+  effectiveDuration?: number; // exclusive duration: span.duration minus direct children (used for root/wrapper spans)
 }
 
 const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number): ProcessedSpan => {
@@ -180,11 +181,15 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
         errorMessage += ` (${errorReasonTag.value})`;
       }
     }
-    // Priority 3: Check for error tags (but skip boolean true values)
+    // Priority 3: Check for error tags (but skip boolean false/true values)
     else if (errorTag) {
       const errorValue = errorTag.value;
-      // Skip if it's just a boolean true - not helpful
-      if (errorValue !== true && errorValue !== "true" && String(errorValue).toLowerCase() !== "true") {
+      // Skip if value is explicitly false - this means NO error (e.g., has_errors: false)
+      if (errorValue === false || errorValue === "false" || String(errorValue).toLowerCase() === "false") {
+        // Value is false - not an error, do nothing
+      }
+      // Skip if it's just a boolean true - not helpful as message
+      else if (errorValue !== true && errorValue !== "true" && String(errorValue).toLowerCase() !== "true") {
         hasError = true;
         errorMessage = String(errorValue);
       } else {
@@ -352,11 +357,25 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     if (downloadStatus) descParts.push(`- ${downloadStatus}`);
     description = descParts.join(" ");
   }
-  // Skip nested process_batch, resolve_images (plural), build_response - they're redundant
-  else if (opName.includes("process_batch") || opName.includes("resolve_images") || 
-           opName.includes("build_response")) {
+  // process_batch is an important AI processing step; resolve_images (plural) and build_response are redundant
+  else if (opName.includes("process_batch")) {
     category = "processing";
-    isImportant = false; // Don't show nested processing steps
+    isImportant = true; // Show batch processing step - it's a key AI inference step
+    icon = FiCpu;
+    // Build a friendly display name from the operation name (e.g. "audio-lang-detection.process_batch" → "Batch Processing")
+    const servicePart = span.operationName.split(".")[0];
+    displayName = "Batch Processing";
+    const outputCount = getTag("audio-lang-detection.output_count") || getTag("output_count");
+    const processingTime = getTag("audio-lang-detection.processing_time_seconds") || getTag("processing_time_seconds");
+    let descParts = [`Processes ${servicePart} batch`];
+    if (outputCount) descParts.push(`(${outputCount} output${parseInt(outputCount) !== 1 ? "s" : ""})`);
+    if (processingTime) descParts.push(`in ${parseFloat(processingTime).toFixed(2)}s`);
+    description = descParts.join(" ");
+  }
+  // Skip resolve_images (plural) and build_response - they're redundant
+  else if (opName.includes("resolve_images") || opName.includes("build_response")) {
+    category = "processing";
+    isImportant = false; // Don't show these nested processing steps
     icon = FiCpu;
     displayName = span.operationName;
     description = "Internal processing step";
@@ -451,6 +470,8 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     const batchSize = getTag("triton.batch_size");
     const status = getTag("triton.status");
     const outputCount = getTag("triton.output_count");
+    const parseErrors = getTag("triton.parse_errors");
+    const outputStatus = getTag("triton.output_status");
     displayName = "AI Model Inference";
     let descParts = ["Runs AI model"];
     if (modelName) descParts.push(`(${modelName})`);
@@ -458,6 +479,53 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     if (outputCount) descParts.push(`→ ${outputCount} result${parseInt(outputCount) !== 1 ? "s" : ""}`);
     if (status) descParts.push(`- ${status}`);
     description = descParts.join(" ");
+    
+    // Override error detection for triton spans: check triton.status explicitly
+    // Priority 1: If triton.status is "success", clear any error flags (definitive success)
+    if (status && String(status).trim().toLowerCase() === "success") {
+      hasError = false;
+      errorMessage = undefined;
+    }
+    // Priority 2: If triton.status is "failed", mark as error (definitive failure)
+    else if (status && String(status).trim().toLowerCase() === "failed") {
+      hasError = true;
+      if (!errorMessage) {
+        errorMessage = "Triton inference failed";
+      }
+    }
+    // Priority 3: If parse_errors exists and is > 0, mark as error
+    else if (parseErrors && parseInt(parseErrors) > 0) {
+      hasError = true;
+      if (!errorMessage) {
+        errorMessage = `Triton parsing errors: ${parseErrors}`;
+      }
+    }
+    // Priority 4: If output_status is "error" or "failed", mark as error
+    else if (outputStatus && (String(outputStatus).toLowerCase() === "error" || String(outputStatus).toLowerCase() === "failed")) {
+      hasError = true;
+      if (!errorMessage) {
+        errorMessage = `Triton output status: ${outputStatus}`;
+      }
+    }
+    // Priority 5: If triton.status is empty/missing but indicators suggest success:
+    // - parse_errors is 0 or missing
+    // - output_status is "parsed" or "success"
+    // - No explicit error tags from checkForErrors
+    // Then clear error flags (assume success)
+    else if ((!status || String(status).trim() === "") && 
+             (!parseErrors || parseInt(parseErrors) === 0) && 
+             outputStatus && 
+             (String(outputStatus).toLowerCase() === "parsed" || String(outputStatus).toLowerCase() === "success")) {
+      // Only clear error if there's no explicit error tag from OpenTelemetry
+      const hasExplicitError = tags.some(t => 
+        (t.key === "error" && t.value === true) ||
+        (t.key === "otel.status_code" && String(t.value) === "ERROR")
+      );
+      if (!hasExplicitError) {
+        hasError = false;
+        errorMessage = undefined;
+      }
+    }
   }
   // Batch processing - but exclude triton_batch (already handled above)
   else if (opName.includes("batch") && !opName.includes("triton")) {
@@ -609,6 +677,53 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     return categorized;
   });
 
+  // Detect VAD fallback pattern: VAD failed but ASR preprocessing succeeded with single chunk
+  // This indicates graceful degradation - VAD failed but processing continued with fallback
+  const detectVadFallback = () => {
+    // Find failed VAD triton inference spans
+    const failedVadSpans = processed.filter(p => {
+      const opName = p.span.operationName.toLowerCase();
+      const tags = p.span.tags || [];
+      const modelName = tags.find(t => t.key.toLowerCase() === "triton.model_name");
+      return opName.includes("triton") && 
+             p.hasError && 
+             modelName && 
+             String(modelName.value).toLowerCase() === "vad";
+    });
+
+    if (failedVadSpans.length === 0) return;
+
+    // For each failed VAD span, check if its parent is a successful preprocessing span
+    failedVadSpans.forEach(vadSpan => {
+      const vadSpanId = vadSpan.span.spanID;
+      const parentId = spanToParent.get(vadSpanId);
+
+      if (parentId) {
+        const parentSpan = processed.find(p => p.span.spanID === parentId);
+
+        if (parentSpan) {
+          const parentOpName = parentSpan.span.operationName.toLowerCase();
+          const parentTags = parentSpan.span.tags || [];
+          const chunksCount = parentTags.find(t => t.key.toLowerCase() === "asr.chunks_count");
+          const isAsrPreprocess = (parentOpName.includes("preprocess") || parentOpName.includes("asr.preprocess")) &&
+                                  parentSpan.serviceName.toLowerCase().includes("asr");
+
+          // If parent is ASR preprocessing that succeeded with single chunk, VAD error was handled
+          if (isAsrPreprocess && !parentSpan.hasError && chunksCount && parseInt(String(chunksCount.value)) === 1) {
+            // Mark VAD span as not important - it's a handled error, don't show it prominently
+            vadSpan.isImportant = false;
+            // Add note to parent preprocessing span about fallback
+            if (!parentSpan.description.includes("fallback")) {
+              parentSpan.description = `${parentSpan.description} (VAD fallback activated - processing continued with single chunk)`;
+            }
+          }
+        }
+      }
+    });
+  };
+
+  detectVadFallback();
+
   // Debug: Log how many spans are marked as important
   const importantCount = processed.filter(p => p.isImportant).length;
   console.log(`Processed ${processed.length} spans, ${importantCount} marked as important`);
@@ -743,6 +858,58 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
   // Sort by start time
   const sorted = filtered.sort((a, b) => a.relativeStart - b.relativeStart);
 
+  // ─── Displayed-tree exclusive duration ────────────────────────────────────
+  // Each displayed span should show ONLY the time it spends on its OWN work,
+  // not time covered by any displayed descendant. This ensures all step
+  // durations add up correctly to the total trace duration.
+  //
+  // Algorithm: build a "displayed tree" where the parent of each displayed
+  // span is its nearest displayed ancestor (walking up the Jaeger parent chain).
+  // Then: effectiveDuration = span.duration − Σ(displayed direct children durations)
+  const computeEffectiveDurations = (spanList: ProcessedSpan[]): void => {
+    const displayedIds = new Set(spanList.map(p => p.span.spanID));
+    const processedById = new Map<string, ProcessedSpan>(
+      spanList.map(p => [p.span.spanID, p])
+    );
+
+    // For each displayed span, walk up the Jaeger parent chain to find the
+    // nearest displayed ancestor (which may be a grandparent if the direct
+    // parent is not in the displayed list).
+    const displayedParentOf = new Map<string, string>(); // childId → parentId
+    spanList.forEach(p => {
+      let cur: string | undefined = spanToParent.get(p.span.spanID);
+      while (cur) {
+        if (displayedIds.has(cur)) {
+          displayedParentOf.set(p.span.spanID, cur);
+          break;
+        }
+        cur = spanToParent.get(cur);
+      }
+    });
+
+    // Invert: parentId → [childId, ...]
+    const displayedChildrenOf = new Map<string, string[]>();
+    displayedParentOf.forEach((parentId, childId) => {
+      if (!displayedChildrenOf.has(parentId)) displayedChildrenOf.set(parentId, []);
+      displayedChildrenOf.get(parentId)!.push(childId);
+    });
+
+    // Set effectiveDuration for each span that has displayed children
+    spanList.forEach(p => {
+      const children = displayedChildrenOf.get(p.span.spanID) || [];
+      if (children.length > 0) {
+        const childrenSum = children.reduce((sum, childId) => {
+          const child = processedById.get(childId);
+          return sum + (child ? child.span.duration : 0);
+        }, 0);
+        const exclusive = p.span.duration - childrenSum;
+        p.effectiveDuration = exclusive >= 0 ? exclusive : 0;
+      } else {
+        p.effectiveDuration = undefined; // no displayed children → show full span duration
+      }
+    });
+  };
+
   // If we have too few spans, include some important non-top-level ones
   if (sorted.length < 3) {
     const additional = processed
@@ -758,7 +925,9 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       .sort((a, b) => a.relativeStart - b.relativeStart)
       .slice(0, 5 - sorted.length);
     
-    return [...sorted, ...additional].sort((a, b) => a.relativeStart - b.relativeStart);
+    const combined = [...sorted, ...additional].sort((a, b) => a.relativeStart - b.relativeStart);
+    computeEffectiveDurations(combined);
+    return combined;
   }
 
   // If still no spans, include any spans that have significant duration (>10ms) or are root spans
@@ -844,9 +1013,11 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     }).sort((a, b) => a.relativeStart - b.relativeStart);
     
     console.log("Final fallback spans:", finalSpans.length, finalSpans.map(s => s.displayName));
+    computeEffectiveDurations(finalSpans);
     return finalSpans;
   }
 
+  computeEffectiveDurations(sorted);
   return sorted;
 };
 
@@ -1509,11 +1680,16 @@ const TracesPage: React.FC = () => {
   // Build span map and parent-child relationships for tag merging
   const spanRelationships = useMemo(() => {
     if (!traceDetails || !traceDetails.spans) {
-      return { spanMap: new Map<string, Span>(), spanToParent: new Map<string, string>() };
+      return { 
+        spanMap: new Map<string, Span>(), 
+        spanToParent: new Map<string, string>(),
+        childSpans: new Map<string, string[]>()
+      };
     }
     
     const spanMap = new Map<string, Span>();
     const spanToParent = new Map<string, string>();
+    const childSpans = new Map<string, string[]>(); // parentSpanID -> [childSpanIDs]
     
     traceDetails.spans.forEach((span: Span) => {
       spanMap.set(span.spanID, span);
@@ -1522,11 +1698,16 @@ const TracesPage: React.FC = () => {
         const parentRef = span.references.find(ref => ref.refType === "CHILD_OF");
         if (parentRef) {
           spanToParent.set(span.spanID, parentRef.spanID);
+          // Build child spans map
+          if (!childSpans.has(parentRef.spanID)) {
+            childSpans.set(parentRef.spanID, []);
+          }
+          childSpans.get(parentRef.spanID)!.push(span.spanID);
         }
       }
     });
     
-    return { spanMap, spanToParent };
+    return { spanMap, spanToParent, childSpans };
   }, [traceDetails]);
 
   // Extract primary error message from the most descriptive failed span
@@ -1930,7 +2111,7 @@ const TracesPage: React.FC = () => {
                             {processedSpans && processedSpans.length > 0 ? (
                               processedSpans.map((processed: ProcessedSpan, idx: number) => {
                                 const relativeTime = formatRelativeTime(processed.relativeStart);
-                                const duration = formatDuration(processed.span.duration);
+                                const duration = formatDuration(processed.effectiveDuration ?? processed.span.duration);
                                 return (
                                   <Box
                                     key={idx}
@@ -2049,7 +2230,7 @@ const TracesPage: React.FC = () => {
                         <VStack spacing={3} align="stretch">
                           {processedSpans && processedSpans.length > 0 ? (
                             processedSpans.map((processed: ProcessedSpan, idx: number) => {
-                            const duration = formatDuration(processed.span.duration);
+                            const duration = formatDuration(processed.effectiveDuration ?? processed.span.duration);
                             
                             // Merge tags from current span and all ancestor spans
                             // Parent tags are useful for input-related info (e.g., nmt.input.* on parent nmt.inference)
@@ -2079,6 +2260,7 @@ const TracesPage: React.FC = () => {
                                        tagKey.startsWith('ocr.') ||
                                        tagKey.startsWith('tts.') ||
                                        tagKey.startsWith('asr.') ||
+                                       tagKey.startsWith('triton.') ||
                                        tagKey === 'correlation.id' ||
                                        tagKey === 'organization' ||
                                        tagKey.startsWith('user.') ||
@@ -2130,8 +2312,49 @@ const TracesPage: React.FC = () => {
                               currentParentId = spanRelationships.spanToParent.get(currentParentId);
                             }
                             
+                            // Traverse down to child spans to collect triton.* and internal.* tags
+                            // This is important because triton tags might be on child spans (e.g., triton.inference under ocr.triton_batch)
+                            const collectTagsFromChildren = (spanId: string, visited: Set<string>) => {
+                              if (visited.has(spanId)) return; // Prevent infinite loops
+                              visited.add(spanId);
+                              
+                              const childSpanIds = spanRelationships.childSpans.get(spanId) || [];
+                              childSpanIds.forEach((childSpanId: string) => {
+                                const childSpan = spanRelationships.spanMap.get(childSpanId);
+                                if (childSpan && childSpan.tags) {
+                                  childSpan.tags.forEach((childTag: { key: string; value: any }) => {
+                                    const tagKey = childTag.key.toLowerCase();
+                                    // Always include triton.* and internal.* tags from children
+                                    if ((tagKey.startsWith("triton.") || tagKey.startsWith("internal.")) && 
+                                        !childTagKeys.has(tagKey)) {
+                                      allTags.push(childTag);
+                                      childTagKeys.add(tagKey);
+                                    }
+                                  });
+                                }
+                                // Recursively collect from grandchildren
+                                collectTagsFromChildren(childSpanId, visited);
+                              });
+                            };
+                            
+                            // Collect triton and internal tags from all child spans
+                            const visitedChildren = new Set<string>();
+                            collectTagsFromChildren(processed.span.spanID, visitedChildren);
+                            
                             const relevantTags = allTags.filter((t: { key: string; value: any }) => {
                               const key = t.key.toLowerCase();
+                              
+                              // PRIORITY: Always include triton.* tags FIRST (important for AI Model Inference spans)
+                              // This ensures they're never filtered out by other rules
+                              if (key.startsWith("triton.")) {
+                                return true;
+                              }
+                              
+                              // PRIORITY: Always include internal.* tags (span metadata)
+                              if (key.startsWith("internal.")) {
+                                return true;
+                              }
+                              
                               // Filter out truly irrelevant tags
                               if (key.includes("telemetry.") ||
                                   key.includes("http.flavor") ||
@@ -2193,8 +2416,8 @@ const TracesPage: React.FC = () => {
                                     key.includes("request.size") || key.startsWith("http.request")) return 1;
                                 // High priority: client IP (important for request tracking)
                                 if (key === "client.ip" || key === "http.client_ip") return 1.5;
-                                // High priority: service-specific tags
-                                if (key.startsWith("nmt.") || key.startsWith("ocr.") || key.startsWith("tts.") || key.startsWith("asr.")) return 2;
+                                // High priority: service-specific tags (including triton tags for AI Model Inference)
+                                if (key.startsWith("nmt.") || key.startsWith("ocr.") || key.startsWith("tts.") || key.startsWith("asr.") || key.startsWith("triton.")) return 2;
                                 if (key === "http.status_code" || key === "otel.status_code") return 3;
                                 if (key === "organization") return 4;
                                 if (key === "correlation.id") return 5;
@@ -2355,7 +2578,7 @@ const TracesPage: React.FC = () => {
                                           borderRadius="full"
                                           textTransform="none"
                                         >
-                                          {formatDuration(processed.span.duration)}
+                                          {duration}
                                         </Badge>
                                       </VStack>
                                     </HStack>

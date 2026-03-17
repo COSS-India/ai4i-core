@@ -2,16 +2,13 @@
 Create database tables for auth service
 """
 import asyncio
-import os
 from sqlalchemy.ext.asyncio import create_async_engine
 from models import Base, Role, Permission, UserRole, RolePermission
+from ai4icore_env import app_env
 
 async def create_tables():
     """Create all database tables"""
-    database_url = os.getenv(
-        'DATABASE_URL', 
-        'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db'
-    )
+    database_url = app_env.database_url
     
     engine = create_async_engine(database_url, echo=True)
     

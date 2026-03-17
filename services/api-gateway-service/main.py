@@ -1,3 +1,4 @@
+
 """
 API Gateway Service - Central entry point for all microservice requests
 """
@@ -1540,7 +1541,7 @@ class APIKeyUpdateBody(BaseModel):
     )
 
 class APIKeySelectBody(BaseModel):
-    api_key_id: int = Field(..., description="API key ID to mark as selected for the current user")
+    api_key_id: int | None = Field(default=None, description="API key ID to mark as selected for the current user")
 
 class AssignRoleBody(BaseModel):
     user_id: int = Field(..., description="ID of the user to assign role to")
@@ -2194,8 +2195,8 @@ def determine_service_and_action(request: Request) -> Tuple[str, str]:
     path = request.url.path.lower()
     method = request.method.upper()
     service = "unknown"
-    # Check for all services including NER
-    for svc in ["asr", "nmt", "tts", "pipeline", "model-management", "llm", "ner", "ocr", "transliteration", "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection"]:
+    # Check for all services including multi-tenant and NER (multi-tenant before single-word prefixes to avoid false matches)
+    for svc in ["multi-tenant", "asr", "nmt", "tts", "pipeline", "model-management", "llm", "ner", "ocr", "transliteration", "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection"]:
         if f"/api/v1/{svc}" in path:
             service = svc
             break
@@ -2389,7 +2390,7 @@ class AlertAnnotation(BaseModel):
     value: str = Field(..., description="Annotation value")
 
 class AlertDefinitionCreate(BaseModel):
-    """Request model for creating an alert definition. PromQL is built from alert_type and threshold."""
+    """Request model for creating an alert definition. PromQL is built from alert_type+threshold OR from sub_category/signal/signal_metric/condition_operator."""
     name: str = Field(..., description="Alert name (e.g., 'HighLatency')")
     description: Optional[str] = Field(None, description="Alert description")
     threshold_value: float = Field(..., description="Threshold value (e.g. seconds for latency, percent for error_rate/CPU/Memory/Disk)")
@@ -2397,8 +2398,13 @@ class AlertDefinitionCreate(BaseModel):
     category: str = Field(default="application", description="Category: 'application' or 'infrastructure'")
     severity: str = Field(..., description="Severity: 'critical', 'warning', or 'info'")
     urgency: str = Field(default="medium", description="Urgency: 'high', 'medium', or 'low'")
-    alert_type: str = Field(..., description="Application: 'Latency' or 'Error Rate'. Infrastructure: 'CPU', 'Memory', or 'Disk'")
+    alert_type: Optional[str] = Field(None, description="Application: 'Latency' or 'Error Rate'. Infrastructure: 'CPU', 'Memory', or 'Disk'. Required when not using sub_category/signal/signal_metric.")
+    sub_category: Optional[str] = Field(None, description="Sub-category filtered by category (e.g. 'Performance', 'Availability')")
+    signal: Optional[str] = Field(None, description="Monitoring signal type (e.g. 'Latency', 'Error rate')")
+    signal_metric: Optional[str] = Field(None, description="Specific metric within the selected signal (e.g. 'Latency P50', '4xx error rate')")
+    condition_operator: Optional[str] = Field(None, description="Comparison operator: '>', '>=', '<', '<='")
     scope: Optional[str] = Field(None, description="Scope (e.g., 'all_services', 'per_service')")
+    service: Optional[List[str]] = Field(None, description="Optional list of service names; when set, adds service label (or service=~ regex for multiple) to the generated PromQL")
     evaluation_interval: str = Field(default="30s", description="Prometheus evaluation interval")
     for_duration: str = Field(default="5m", description="Duration before alert fires")
     enabled: Optional[bool] = Field(default=True, description="Whether the alert definition is enabled")
@@ -2413,7 +2419,12 @@ class AlertDefinitionUpdate(BaseModel):
     severity: Optional[str] = None
     urgency: Optional[str] = None
     alert_type: Optional[str] = None
+    sub_category: Optional[str] = None
+    signal: Optional[str] = None
+    signal_metric: Optional[str] = None
+    condition_operator: Optional[str] = None
     scope: Optional[str] = None
+    service: Optional[List[str]] = None
     evaluation_interval: Optional[str] = None
     for_duration: Optional[str] = None
     enabled: Optional[bool] = None
@@ -2424,6 +2435,9 @@ class NotificationReceiverCreate(BaseModel):
     category: str = Field(..., description="Category: 'application' or 'infrastructure'")
     severity: str = Field(..., description="Severity: 'critical', 'warning', or 'info'")
     alert_type: Optional[str] = Field(None, description="Optional alert type filter (e.g., 'latency', 'error_rate')")
+    alert_names: Optional[List[str]] = Field(None, description="Optional list of alert definition names to route only those alerts")
+    tenant: Optional[str] = Field(None, description="Optional tenant name; when set, route by tenant_id and use tenant user email")
+    rule_name: Optional[str] = Field(None, description="Optional rule name; stored on the receiver and used for the auto-created routing rule")
     email_to: Optional[List[str]] = Field(None, description="Email addresses (required if rbac_role not provided)", min_items=1)
     rbac_role: Optional[str] = Field(None, description="RBAC role name (ADMIN, MODERATOR, USER, GUEST) - if provided, emails will be resolved from users with this role")
     email_subject_template: Optional[str] = Field(None, description="Email subject template")
@@ -2432,6 +2446,9 @@ class NotificationReceiverCreate(BaseModel):
 class NotificationReceiverUpdate(BaseModel):
     """Request model for updating a notification receiver"""
     receiver_name: Optional[str] = None
+    rule_name: Optional[str] = None
+    alert_names: Optional[List[str]] = Field(None, description="Optional list of alert definition names")
+    tenant: Optional[str] = Field(None, description="Optional tenant name")
     email_to: Optional[List[str]] = Field(None, description="Email addresses (required if rbac_role not provided)", min_items=1)
     rbac_role: Optional[str] = Field(None, description="RBAC role name (ADMIN, MODERATOR, USER, GUEST) - if provided, emails will be resolved from users with this role")
     email_subject_template: Optional[str] = None
@@ -2445,6 +2462,8 @@ class RoutingRuleCreate(BaseModel):
     match_severity: Optional[str] = Field(None, description="Match severity (critical, warning, info)")
     match_category: Optional[str] = Field(None, description="Match category (application, infrastructure)")
     match_alert_type: Optional[str] = Field(None, description="Match alert type")
+    match_alert_names: Optional[List[str]] = Field(None, description="Optional list of alert names to match")
+    match_tenant_id: Optional[str] = Field(None, description="Optional tenant_id to match")
     group_by: Optional[List[str]] = Field(None, description="Group by labels")
     group_wait: Optional[str] = Field(None, description="Group wait time")
     group_interval: Optional[str] = Field(None, description="Group interval")
@@ -2459,6 +2478,8 @@ class RoutingRuleUpdate(BaseModel):
     match_severity: Optional[str] = None
     match_category: Optional[str] = None
     match_alert_type: Optional[str] = None
+    match_alert_names: Optional[List[str]] = None
+    match_tenant_id: Optional[str] = None
     group_by: Optional[List[str]] = None
     group_wait: Optional[str] = None
     group_interval: Optional[str] = None

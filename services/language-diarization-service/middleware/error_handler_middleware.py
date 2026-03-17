@@ -1,11 +1,10 @@
 """
 Global error handler middleware for consistent error responses.
 """
-import os
 import re
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     AuthenticationError, 
     AuthorizationError, 
     RateLimitExceededError,
@@ -15,6 +14,7 @@ import logging
 import time
 import traceback
 import json
+from ai4icore_env import app_env
 
 # OpenTelemetry imports
 try:
@@ -28,7 +28,7 @@ except ImportError:
 
 # NOTE:
 # Unlike ASR/API Gateway containers, language-diarization-service's Docker image only copies this
-# service directory into /app, so the shared `services.constants` package
+# service directory into /app, so the shared `ai4icore_constants` package
 # is not available at runtime. To keep the same user-facing message for
 # expired/invalid tokens, we duplicate the constant value here.
 AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."
@@ -115,31 +115,13 @@ def add_error_handlers(app: FastAPI) -> None:
                 },
             )
 
-        # PRIORITY 3: For invalid API key errors in BOTH mode, check if it's actually an ownership issue
-        # This matches language-detection / OCR / NMT behavior.
+        # PRIORITY 3: For invalid API key errors, always surface the actual
+        # "Invalid API key" style message from auth-service instead of converting
+        # it into an ownership error. This ensures that when an invalid/unknown
+        # API key is provided, clients see an "Invalid API key ..." message and
+        # not "API key does not belong to the authenticated user".
         error_msg_lower_check = (error_msg or "").lower()
         if "invalid api key" in error_msg_lower_check:
-            # Check if this is BOTH mode (request has Authorization header with Bearer token)
-            authorization_header = request.headers.get("authorization", "")
-            is_both_mode = authorization_header.startswith("Bearer ")
-
-            # In BOTH mode, when auth-service returns
-            #   "Invalid API key: This key does not have access to LANGUAGE_DIARIZATION service"
-            # for a key that belongs to a **different** user, we want to surface it as an
-            # ownership problem, not a permission problem – same as other services.
-            if is_both_mode and "does not have access" in error_msg_lower_check:
-                return JSONResponse(
-                    status_code=401,
-                    content={
-                        "detail": {
-                            "error": "AUTHORIZATION_ERROR",
-                            "message": "API key does not belong to the authenticated user",
-                        }
-                    },
-                )
-
-            # Otherwise (non‑BOTH mode or other invalid‑key messages), treat it as a
-            # regular permission error and preserve the original message.
             clean_message = _strip_status_prefix(error_msg or "Invalid API key")
             return JSONResponse(
                 status_code=401,
@@ -401,8 +383,8 @@ def add_error_handlers(app: FastAPI) -> None:
             pass
         
         # Check if health/metrics logs should be excluded
-        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
-        exclude_metrics_logs = os.getenv("EXCLUDE_METRICS_LOGS", "false").lower() == "true"
+        exclude_health_logs = app_env.exclude_health_logs
+        exclude_metrics_logs = app_env.exclude_metrics_logs
         
         path = request.url.path.lower().rstrip('/')
         should_skip = False

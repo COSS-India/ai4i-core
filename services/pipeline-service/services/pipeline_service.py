@@ -2,7 +2,6 @@
 Pipeline Service - Main orchestration logic
 
 Handles the execution of multi-task AI pipelines (e.g., Speech-to-Speech translation).
-Adapted from Dhruva-Platform-2 inference_service.py run_pipeline_inference method.
 Includes distributed tracing for end-to-end observability.
 """
 
@@ -14,7 +13,7 @@ from typing import Dict, Any, List, Optional
 from models.pipeline_request import PipelineInferenceRequest, TaskType, PipelineTask
 from models.pipeline_response import PipelineInferenceResponse, PipelineTaskOutput
 from utils.http_client import ServiceClient
-from middleware.exceptions import (
+from ai4icore_constants.exceptions import (
     PipelineTaskError, 
     ServiceUnavailableError, 
     ModelNotFoundError,
@@ -606,7 +605,6 @@ class PipelineService:
         """
         Transform task output to input format for next task.
         
-        Adapted from Dhruva-Platform-2 inference_service.py logic.
         """
         output_dict = output.dict()
         

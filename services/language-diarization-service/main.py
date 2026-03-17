@@ -12,10 +12,7 @@ import sys
 from contextlib import asynccontextmanager
 from typing import Optional
 
-# CRITICAL: Prioritize mounted volume over installed package for development
-# This ensures code changes in libs/ai4icore_observability are picked up immediately
-if "/app/libs" not in sys.path:
-    sys.path.insert(0, "/app/libs")
+# Libs are pip-installed in editable mode; bind mounts update source in place.
 
 import redis.asyncio as redis
 from fastapi import FastAPI, Request
@@ -28,16 +25,17 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from ai4icore_env import app_env
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig, AuthContextMiddleware
 
 # Logging imports (structured JSON logging to OpenSearch via ai4icore_logging)
 LOGGING_AVAILABLE = False
-configure_logging = None
 get_logger = None
-CorrelationMiddleware = None
+LoggingConfig = None
+register_logging_plugin = None
 try:
-    from ai4icore_logging import configure_logging, get_logger, CorrelationMiddleware
+    from ai4icore_logging import get_logger, LoggingConfig, register_logging_plugin
     LOGGING_AVAILABLE = True
 except ImportError:
     pass
@@ -57,19 +55,13 @@ from routers import inference_router
 from models import database_models, auth_models
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
-from middleware.tenant_middleware import TenantMiddleware
-from middleware.tenant_schema_router import TenantSchemaRouter
+from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from utils.triton_client import TritonClient
 
 # Configure structured logging (JSON) so Fluent Bit can forward logs to OpenSearch.
 # Fallback to basic logging if ai4icore_logging is not available.
 if LOGGING_AVAILABLE:
-    configure_logging(
-        service_name=os.getenv("SERVICE_NAME", "language-diarization-service"),
-        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
-    )
     logger = get_logger(__name__)
 
     # Disable uvicorn access logger to avoid duplicate plain-text logs
@@ -80,27 +72,24 @@ if LOGGING_AVAILABLE:
     uvicorn_access.setLevel(logging.CRITICAL + 1)
 else:
     logging.basicConfig(
-        level=os.getenv("LOG_LEVEL", "INFO"),
+        level=app_env.log_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     logger = logging.getLogger(__name__)
 
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
-REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
+REDIS_HOST = app_env.redis_host
+REDIS_PORT = app_env.redis_port
+REDIS_PASSWORD = app_env.redis_password
+REDIS_TIMEOUT = app_env.redis_timeout
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db",
-)
+DATABASE_URL = app_env.get_database_url()
 
 # Multi-tenant database URL for tenant schema routing
-MULTI_TENANT_DB_URL = os.getenv("MULTI_TENANT_DB_URL")
+MULTI_TENANT_DB_URL = app_env.get_multi_tenant_db_url()
 
-TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "")
-TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
-TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT", "300.0"))
+TRITON_ENDPOINT = app_env.triton_endpoint or ""
+TRITON_API_KEY = app_env.triton_api_key
+TRITON_TIMEOUT = app_env.triton_timeout
 
 redis_client: Optional[redis.Redis] = None
 db_engine: Optional[AsyncEngine] = None
@@ -199,19 +188,7 @@ async def lifespan(app: FastAPI):
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
     
-    # Initialize tenant schema router for multi-tenant routing
-    # Use MULTI_TENANT_DB_URL for tenant schema routing (different from auth DATABASE_URL)
-    if not MULTI_TENANT_DB_URL:
-        logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
-        # Fallback to DATABASE_URL but log warning
-        multi_tenant_db_url = DATABASE_URL
-    else:
-        multi_tenant_db_url = MULTI_TENANT_DB_URL
-    
-    logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")  # Mask password in logs
-    tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
-    app.state.tenant_schema_router = tenant_schema_router
-    logger.info("Tenant schema router initialized with multi-tenant database")
+    # Tenant schema router is created by MultiTenantPlugin at registration time
     
     app.state.triton_endpoint = TRITON_ENDPOINT
     app.state.triton_api_key = TRITON_API_KEY
@@ -220,16 +197,16 @@ async def lifespan(app: FastAPI):
     # Service registry
     try:
         registry_client = ServiceRegistryHttpClient()
-        service_name = os.getenv("SERVICE_NAME", "language-diarization-service")
-        service_port = int(os.getenv("SERVICE_PORT", "9002"))
-        public_base_url = os.getenv("SERVICE_PUBLIC_URL")
+        service_name = app_env.service_name or "language-diarization-service"
+        service_port = app_env.service_port
+        public_base_url = app_env.service_public_url
         if public_base_url:
             service_url = public_base_url.rstrip("/")
         else:
-            service_host = os.getenv("SERVICE_HOST", service_name)
+            service_host = app_env.service_host or service_name
             service_url = f"http://{service_host}:{service_port}"
         health_url = service_url + "/health"
-        instance_id = os.getenv("SERVICE_INSTANCE_ID", f"{service_name}-{os.getpid()}")
+        instance_id = app_env.service_instance_id or f"{service_name}-{os.getpid()}"
         registered_instance_id = await registry_client.register(
             service_name=service_name,
             service_url=service_url,
@@ -257,7 +234,7 @@ async def lifespan(app: FastAPI):
     try:
         try:
             if registry_client and registered_instance_id:
-                service_name = os.getenv("SERVICE_NAME", "language-diarization-service")
+                service_name = app_env.service_name or "language-diarization-service"
                 await registry_client.deregister(service_name, registered_instance_id)
         except Exception as e:
             logger.warning("Service registry deregistration error: %s", e)
@@ -269,6 +246,11 @@ async def lifespan(app: FastAPI):
         if db_engine:
             await db_engine.dispose()
             logger.info("PostgreSQL connection closed")
+
+        tenant_router = getattr(app.state, "tenant_schema_router", None)
+        if tenant_router:
+            await tenant_router.close_all()
+            logger.info("Tenant schema router connections closed")
     except Exception as e:
         logger.error("Error during shutdown: %s", e)
 
@@ -287,15 +269,6 @@ app = FastAPI(
         {"name": "Language Diarization Inference", "description": "Language diarization inference endpoints"},
         {"name": "Health", "description": "Service health and readiness checks"},
     ],
-    contact={
-        "name": "AI4ICore Team",
-        "url": "https://github.com/AI4X",
-        "email": "support@ai4x.com",
-    },
-    license_info={
-        "name": "MIT",
-        "url": "https://opensource.org/licenses/MIT",
-    },
     lifespan=lifespan,
 )
 
@@ -328,8 +301,8 @@ else:
 # Model Management Plugin - single source of truth for Triton endpoint/model (no env fallback)
 try:
     mm_config = ModelManagementConfig(
-        model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
-        model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
+        model_management_service_url=app_env.model_management_service_url,
+        model_management_api_key=app_env.model_management_service_api_key,
         cache_ttl_seconds=300,
         triton_endpoint_cache_ttl=300,
         default_triton_endpoint="",
@@ -354,15 +327,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Request logging
-app.add_middleware(RequestLoggingMiddleware)
-
-# Tenant middleware (must be before rate limiting to mark tenant-aware endpoints)
-app.add_middleware(TenantMiddleware)
+# Initialize AI4ICore Logging Plugin
+if LOGGING_AVAILABLE and register_logging_plugin and LoggingConfig:
+    logging_config = LoggingConfig.from_env()
+    logging_config.service_name = app_env.service_name
+    logging_config.use_kafka = app_env.use_kafka_logging
+    register_logging_plugin(app, config=logging_config)
+    logger.info("✅ AI4ICore Logging Plugin initialized for Language Diarization service")
 
 # Rate limiting (Redis client will be picked from app.state)
-rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+rate_limit_per_minute = app_env.rate_limit_per_minute
+rate_limit_per_hour = app_env.rate_limit_per_hour
 app.add_middleware(
     RateLimitMiddleware,
     redis_client=None,
@@ -372,6 +347,14 @@ app.add_middleware(
 
 # Error handlers
 add_error_handlers(app)
+
+# Multi-tenant plugin (tenant schema router + middleware)
+multi_tenant_db_url = MULTI_TENANT_DB_URL or DATABASE_URL
+multi_tenant_config = MultiTenantConfig.from_env()
+multi_tenant_config.tenant_paths = ["/api/v1/language-diarization"]
+multi_tenant_plugin = MultiTenantPlugin(multi_tenant_config)
+multi_tenant_plugin.register_plugin(app, multi_tenant_db_url=multi_tenant_db_url)
+logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for Language Diarization service")
 
 # Routers
 app.include_router(inference_router.inference_router)
@@ -394,7 +377,7 @@ async def health(request: Request):
     triton_ok = False
 
     # Check if health logs should be excluded
-    exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+    exclude_health_logs = app_env.exclude_health_logs
     
     try:
         rc = getattr(request.app.state, "redis_client", None)
@@ -441,8 +424,8 @@ async def health(request: Request):
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("SERVICE_PORT", "9002"))
-    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    port = app_env.service_port
+    log_level = app_env.log_level.lower()
 
     uvicorn.run(
         "main:app",

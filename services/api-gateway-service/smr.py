@@ -828,5 +828,3 @@ async def inject_service_id_if_missing(
     body_dict["config"] = config
 
     return service_id, body_dict, policy_result
-
-

@@ -1,570 +1,305 @@
 """
 Model Management Default Seeder
-Seeds default AI models and services for all task types in model_management_db
+Seeds default AI models and services for all task types in model_management_db.
 """
 from infrastructure.databases.core.base_seeder import BaseSeeder
+from ai4icore_env import app_env
+import hashlib
 import time
+import uuid
+
+
+def generate_model_id(model_name: str, version: str) -> str:
+    normalized_name = model_name.strip().lower()
+    normalized_version = version.strip().lower()
+    return hashlib.sha256(f"{normalized_name}:{normalized_version}".encode("utf-8")).hexdigest()[:32]
+
+
+def generate_service_id(model_name: str, model_version: str, service_name: str) -> str:
+    normalized_model_name = model_name.strip().lower()
+    normalized_model_version = model_version.strip().lower()
+    normalized_service_name = service_name.strip().lower()
+    raw = f"{normalized_model_name}:{normalized_model_version}:{normalized_service_name}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def generate_uuid(*parts: str) -> str:
+    raw = ":".join(part.strip().lower() for part in parts)
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
+
+# Model/service definitions — endpoint comes from app_env at runtime
+MODELS = [
+    {
+        "name": "indiclid",
+        "version": "1.0.0",
+        "triton_model_name": "indiclid",
+        "description": "Indic Language Identification for text. Supports 47 language classes (24 native-script, 21 roman-script, plus English and Others). Uses IndicLID-FTN, IndicLID-FTR, and IndicLID-BERT based on ai4bharat/IndicBERTv2-MLM-only. Input: INPUT_TEXT (STRING). Output: OUTPUT_TEXT (STRING). Python backend, max batch 64, 1 GPU, dynamic batching.",
+        "task_type": "language-detection",
+        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "or"}]',
+        "domain": '["general"]',
+        "license": "MIT",
+        "endpoint_attr": "triton_endpoint_langdetect",
+        "services": [
+            {
+                "name": "indiclid-gpu",
+                "description": "IndicLID Triton service. Language identification for Indic languages. HTTP: 8000, gRPC: 8001, Metrics: 8002.",
+                "hardware": "GPU: 1 instance, max batch 64, dynamic batching.",
+            }
+        ],
+    },
+    {
+        "name": "ald",
+        "version": "1.0.0",
+        "triton_model_name": "ald",
+        "description": "Audio Language Detection from speech audio. Uses SpeechBrain EncoderClassifier. Input: AUDIO_DATA (STRING). Output: LANGUAGE_CODE (STRING), CONFIDENCE (FP32), ALL_SCORES (STRING). Python backend, max batch 64, 1 GPU, dynamic batching.",
+        "task_type": "audio-lang-detection",
+        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}]',
+        "domain": '["general"]',
+        "license": "MIT",
+        "endpoint_attr": "triton_endpoint_audio_langdetect",
+        "services": [
+            {
+                "name": "ald-gpu",
+                "description": "ALD Triton service. Audio language detection from speech. HTTP: 8100, gRPC: 8101, Metrics: 8102.",
+                "hardware": "GPU: 1 instance, max batch 64, dynamic batching.",
+            }
+        ],
+    },
+    {
+        "name": "surya-ocr",
+        "version": "1.0.0",
+        "triton_model_name": "surya_ocr",
+        "description": "Surya OCR for document images. OCR in 90+ languages using Surya OCR models (Foundation, Detection, Recognition). Input: IMAGE_DATA (STRING). Output: OUTPUT_TEXT (STRING). Python backend, max batch 8, 1 GPU, dynamic batching.",
+        "task_type": "ocr",
+        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}]',
+        "domain": '["documents", "handwritten", "printed"]',
+        "license": "Apache-2.0",
+        "endpoint_attr": "triton_endpoint_ocr",
+        "services": [
+            {
+                "name": "surya-ocr-gpu",
+                "description": "Surya OCR Triton service. OCR on document images. HTTP: 8400, gRPC: 8401, Metrics: 8402.",
+                "hardware": "GPU: 1 instance, max batch 8, dynamic batching.",
+            }
+        ],
+    },
+    {
+        "name": "ner",
+        "version": "1.0.0",
+        "triton_model_name": "ner",
+        "description": "Named Entity Recognition for Indian languages. Model: ai4bharat/IndicNER. Supports 11 Indian languages. Input: INPUT_TEXT (STRING), LANG_ID (STRING). Output: OUTPUT_TEXT (STRING). Python backend, max batch 64, 1 GPU, dynamic batching.",
+        "task_type": "ner",
+        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}]',
+        "domain": '["general", "news", "legal"]',
+        "license": "MIT",
+        "endpoint_attr": "triton_endpoint_ner",
+        "services": [
+            {
+                "name": "ner-gpu",
+                "description": "NER Triton service. Named Entity Recognition for Indian languages. HTTP: 8300, gRPC: 8301, Metrics: 8302.",
+                "hardware": "GPU: 1 instance, max batch 64, dynamic batching.",
+            }
+        ],
+    },
+    {
+        "name": "speaker-diarization",
+        "version": "1.0.0",
+        "triton_model_name": "speaker_diarization",
+        "description": "Speaker diarization from audio. Input: AUDIO_DATA (STRING), NUM_SPEAKERS (STRING, optional). Output: DIARIZATION_RESULT (STRING). Python backend, max batch 16, 1 GPU, dynamic batching.",
+        "task_type": "speaker-diarization",
+        "languages": '[{"sourceLanguage": "*"}]',
+        "domain": '["general", "meetings", "podcasts"]',
+        "license": "MIT",
+        "endpoint_attr": "triton_endpoint_speaker_diarization",
+        "services": [
+            {
+                "name": "sd-gpu",
+                "description": "Speaker Diarization Triton service. Speaker diarization from audio. HTTP: 8700, gRPC: 8701, Metrics: 8702.",
+                "hardware": "GPU: 1 instance, max batch 16, dynamic batching.",
+            }
+        ],
+    },
+    {
+        "name": "lang-diarization",
+        "version": "1.0.0",
+        "triton_model_name": "lang_diarization",
+        "description": "Language diarization from audio. Uses SpeechBrain EncoderClassifier for language identification. Input: AUDIO_DATA (STRING), LANGUAGE (STRING). Output: DIARIZATION_RESULT (STRING). Python backend, max batch 32, 1 GPU, dynamic batching.",
+        "task_type": "language-diarization",
+        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}]',
+        "domain": '["code-switching", "multilingual"]',
+        "license": "Apache-2.0",
+        "endpoint_attr": "triton_endpoint_lang_diarization",
+        "services": [
+            {
+                "name": "lang-diarization-gpu",
+                "description": "Language Diarization Triton service. Language diarization from audio. HTTP: 8600, gRPC: 8601, Metrics: 8602.",
+                "hardware": "GPU: 1 instance, max batch 32, dynamic batching.",
+            }
+        ],
+    },
+    {
+        "name": "transliteration",
+        "version": "1.0.0",
+        "triton_model_name": "transliteration",
+        "description": "Indic Transliteration (Indic-Xlit). English-to-Indic and Indic-to-English using ai4bharat.transliteration.XlitEngine. Input: INPUT_TEXT (STRING), INPUT_LANGUAGE_ID (STRING), OUTPUT_LANGUAGE_ID (STRING), IS_WORD_LEVEL (BOOL), TOP_K (UINT8). Output: OUTPUT_TEXT (STRING). Python backend, 1 CPU instance (only CPU model in inventory).",
+        "task_type": "transliteration",
+        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "or"}]',
+        "domain": '["general"]',
+        "license": "MIT",
+        "endpoint_attr": "triton_endpoint_transliteration",
+        "services": [
+            {
+                "name": "indic-xlit-cpu",
+                "description": "Indic-Xlit Triton service. Transliteration between English and Indic languages. HTTP: 8200, gRPC: 8201, Metrics: 8202.",
+                "hardware": "CPU: 1 instance.",
+            }
+        ],
+    },
+    {
+        "name": "asr-am-ensemble",
+        "version": "1.0.0",
+        "triton_model_name": "asr_am_ensemble",
+        "description": "Multilingual ASR ensemble for end-to-end speech-to-text over multiple Indic languages. Primary Triton model: asr_am_ensemble (ensemble backend). Pipeline: asr_preprocessor → asr_am → asr_greedy_decoder. Uses CTC decoding via pyctcdecode and exposes top-k decoding via asr_am_topk_ensemble. Input: AUDIO_SIGNAL (FP32, [-1, -1]), NUM_SAMPLES (INT32, [-1, 1]), LANG_ID (STRING/BYTES, [-1, 1]). Output: TRANSCRIPTS (STRING/BYTES, [-1, -1]).",
+        "task_type": "asr",
+        "languages": '[{"sourceLanguage": "as"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "brx"}, {"sourceLanguage": "doi"}, {"sourceLanguage": "kok"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "hi"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ks"}, {"sourceLanguage": "mai"}, {"sourceLanguage": "ml"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "mni"}, {"sourceLanguage": "ne"}, {"sourceLanguage": "or"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "sa"}, {"sourceLanguage": "sat"}, {"sourceLanguage": "sd"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "ur"}]',
+        "domain": '["general", "conversational"]',
+        "license": "Apache-2.0",
+        "endpoint_attr": "triton_endpoint_asr",
+        "services": [
+            {
+                "name": "asr-gpu",
+                "description": "Multilingual ASR Triton service (ai4bharat/triton-multilingual-asr:latest). HTTP: 5000, gRPC: 5001, Metrics: 5002. Runs asr_preprocessor (PyTorch, GPU), asr_am (ONNXRuntime, GPU), and asr_greedy_decoder (Python, CPU) as an ensemble.",
+                "hardware": "GPU: 1 instance (encoder + preprocessing), CPU: 1 instance (decoder), dynamic batching (up to batch 32 for encoder, 512 for preprocessor).",
+            }
+        ],
+    },
+    {
+        "name": "tts",
+        "version": "1.0.0",
+        "triton_model_name": "tts",
+        "description": "Indo-Aryan TTS model to generate speech waveforms from text using FastPitch + HiFiGAN per language. Checkpoints loaded from /models/checkpoints/<lang_code>/. Supported speaker IDs: male, female. Supported languages (minimum): as, bn, gu, hi, mr, or, pa, raj. Input: INPUT_TEXT, INPUT_SPEAKER_ID, INPUT_LANGUAGE_ID (STRING/BYTES, [1]). Output: OUTPUT_GENERATED_AUDIO (FP32, [-1]).",
+        "task_type": "tts",
+        "languages": '[{"sourceLanguage": "as"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "hi"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "or"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "raj"}]',
+        "domain": '["general"]',
+        "license": "MIT",
+        "endpoint_attr": "triton_endpoint_tts",
+        "services": [
+            {
+                "name": "indo-aryan-tts-gpu",
+                "description": "Indo-Aryan TTS Triton service (ai4bharat/triton-indo-aryan-tts:latest). HTTP: 9000, gRPC: 9001, Metrics: 9002. Uses FastPitch and HiFiGAN per language to synthesize speech from text.",
+                "hardware": "GPU: 1 instance, max batch size 0.",
+            }
+        ],
+    },
+    {
+        "name": "indictrans",
+        "version": "1.0.0",
+        "triton_model_name": "nmt",
+        "description": "IndicTrans NMT model supporting multiple Indic languages.",
+        "task_type": "nmt",
+        "languages": '[{"sourceLanguage": "en", "targetLanguage": "hi"}, {"sourceLanguage": "hi", "targetLanguage": "en"}]',
+        "domain": '["general", "news", "conversational"]',
+        "license": "MIT",
+        "endpoint_attr": "triton_endpoint_nmt",
+        "services": [
+            {
+                "name": "indictrans-gpu-t4",
+                "description": "IndicTrans NMT service on GPU T4.",
+                "hardware": "GPU: NVIDIA T4, RAM: 16GB",
+            }
+        ],
+    },
+    {
+        "name": "llm",
+        "version": "1.0.0",
+        "triton_model_name": "llm",
+        "description": "Large Language Model for Indic languages chat/completion.",
+        "task_type": "llm",
+        "languages": '[{"sourceLanguage": "hi"}, {"sourceLanguage": "en"}, {"sourceLanguage": "ta"}, {"sourceLanguage": "te"}, {"sourceLanguage": "bn"}, {"sourceLanguage": "mr"}, {"sourceLanguage": "gu"}, {"sourceLanguage": "kn"}, {"sourceLanguage": "ml"}, {"sourceLanguage": "pa"}, {"sourceLanguage": "or"}]',
+        "domain": '["general", "conversational", "qa"]',
+        "license": "Apache-2.0",
+        "endpoint_attr": "triton_endpoint_llm",
+        "services": [
+            {
+                "name": "llm-indic-prod",
+                "description": "Production LLM service for Indic languages.",
+                "hardware": "GPU: NVIDIA A100, RAM: 80GB",
+            }
+        ],
+    },
+]
 
 
 class ModelManagementDefaultSeeder(BaseSeeder):
     """Seed default models and services for model_management_db."""
-    
-    database = 'model_management_db'  # Target database
-    
+
+    database = 'model_management_db'
+
     def run(self, adapter):
         """Run the seeder."""
-        # Get current timestamp in epoch milliseconds
         timestamp_ms = int(time.time() * 1000)
-        
+
         print("    Seeding models and services...")
-        
-        # ========================================================================
-        # 1. ASR (Automatic Speech Recognition) Model and Service
-        # ========================================================================
-        adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
-            VALUES (
-                generate_model_id('asr_am_ensemble', '1.0.0'),
-                '1.0.0',
-                'asr_am_ensemble',
-                'Automatic Speech Recognition model for Hindi language using Conformer architecture. UPDATE ENDPOINT before use.',
-                '{{"type": "asr"}}'::jsonb,
-                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}]'::jsonb,
-                '["general", "conversational"]'::jsonb,
-                'Apache-2.0',
-                '{{"schema": {{"modelProcessingType": {{"type": "asr"}}, "model_name": "asr_am_ensemble", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8001/asr/v1/recognize"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
-                {timestamp_ms},
-                'ACTIVE'
-            ) ON CONFLICT (name, version) DO UPDATE SET
-                inference_endpoint = jsonb_set(
-                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
-                    '{{schema,model_name}}',
-                    '"asr_am_ensemble"'::jsonb,
-                    true
-                ),
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        
-        adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
-            VALUES (
-                generate_service_id('asr_am_ensemble', '1.0.0', 'asr-hindi-prod'),
-                'asr-hindi-prod',
-                generate_model_id('asr_am_ensemble', '1.0.0'),
-                '1.0.0',
-                'http://localhost:8001/asr/v1/recognize',
-                'Production ASR service for Hindi. UPDATE ENDPOINT to your actual service URL.',
-                'GPU: NVIDIA T4, RAM: 16GB',
-                {timestamp_ms},
-                false
-            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        print("    ✓ ASR model and service")
-        
-        # ========================================================================
-        # 2. TTS (Text-to-Speech) Model and Service
-        # ========================================================================
-        adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
-            VALUES (
-                generate_model_id('tts', '1.0.0'),
-                '1.0.0',
-                'tts',
-                'Text-to-Speech model for Hindi language using FastPitch architecture. UPDATE ENDPOINT before use.',
-                '{{"type": "tts"}}'::jsonb,
-                '[{{"sourceLanguage": "hi"}}]'::jsonb,
-                '["general"]'::jsonb,
-                'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "tts"}}, "model_name": "tts", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8002/tts/v1/synthesize"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
-                {timestamp_ms},
-                'ACTIVE'
-            ) ON CONFLICT (name, version) DO UPDATE SET
-                inference_endpoint = jsonb_set(
-                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
-                    '{{schema,model_name}}',
-                    '"tts"'::jsonb,
-                    true
-                ),
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        
-        adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
-            VALUES (
-                generate_service_id('tts', '1.0.0', 'tts-hindi-prod'),
-                'tts-hindi-prod',
-                generate_model_id('tts', '1.0.0'),
-                '1.0.0',
-                'http://localhost:8002/tts/v1/synthesize',
-                'Production TTS service for Hindi. UPDATE ENDPOINT to your actual service URL.',
-                'GPU: NVIDIA T4, RAM: 16GB',
-                {timestamp_ms},
-                false
-            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        print("    ✓ TTS model and service")
-        
-        # ========================================================================
-        # 3. NMT (Neural Machine Translation) Model and Service
-        # ========================================================================
-        adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
-            VALUES (
-                generate_model_id('nmt', '1.0.0'),
-                '1.0.0',
-                'nmt',
-                'Neural Machine Translation model for English to Hindi using IndicTrans2. UPDATE ENDPOINT before use.',
-                '{{"type": "nmt"}}'::jsonb,
-                '[{{"sourceLanguage": "en", "targetLanguage": "hi"}}]'::jsonb,
-                '["general", "news", "conversational"]'::jsonb,
-                'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "nmt"}}, "model_name": "nmt", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8003/nmt/v1/translate"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
-                {timestamp_ms},
-                'ACTIVE'
-            ) ON CONFLICT (name, version) DO UPDATE SET
-                inference_endpoint = jsonb_set(
-                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
-                    '{{schema,model_name}}',
-                    '"nmt"'::jsonb,
-                    true
-                ),
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        
-        adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
-            VALUES (
-                generate_service_id('nmt', '1.0.0', 'nmt-en-hi-prod'),
-                'nmt-en-hi-prod',
-                generate_model_id('nmt', '1.0.0'),
-                '1.0.0',
-                'http://localhost:8003/nmt/v1/translate',
-                'Production NMT service for English-Hindi translation. UPDATE ENDPOINT to your actual service URL.',
-                'GPU: NVIDIA A10, RAM: 32GB',
-                {timestamp_ms},
-                false
-            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        
-        # Add ai4bharat/indictrans model and service for compatibility with frontend
-        adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
-            VALUES (
-                generate_model_id('ai4bharat/indictrans', '1.0.0'),
-                '1.0.0',
-                'ai4bharat/indictrans',
-                'IndicTrans - Neural Machine Translation model supporting multiple Indic languages.',
-                '{{"type": "nmt"}}'::jsonb,
-                '[{{"sourceLanguage": "en", "targetLanguage": "hi"}}, {{"sourceLanguage": "hi", "targetLanguage": "en"}}]'::jsonb,
-                '["general", "news", "conversational"]'::jsonb,
-                'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "nmt"}}, "model_name": "nmt", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://13.200.133.97:8000"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
-                {timestamp_ms},
-                'ACTIVE'
-            ) ON CONFLICT (name, version) DO UPDATE SET
-                inference_endpoint = jsonb_set(
-                    jsonb_set(
+
+        for m in MODELS:
+            name = m["name"]
+            version = m["version"]
+            task_type = m["task_type"]
+            triton_model_name = m.get("triton_model_name", name)
+            endpoint_url = getattr(app_env, m["endpoint_attr"], "") or ""
+            model_id = generate_model_id(name, version)
+
+            adapter.execute(f"""
+                INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+                VALUES (
+                    '{generate_uuid("model", name, version)}',
+                    '{model_id}',
+                    '{version}',
+                    '{name}',
+                    '{m["description"]}',
+                    '{{"type": "{task_type}"}}'::jsonb,
+                    '{m["languages"]}'::jsonb,
+                    '{m["domain"]}'::jsonb,
+                    '{m["license"]}',
+                    '{{"schema": {{"modelProcessingType": {{"type": "{task_type}"}}, "model_name": "{triton_model_name}", "request": {{}}, "response": {{}}}}, "callbackUrl": "{endpoint_url}"}}'::jsonb,
+                    '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
+                    {timestamp_ms},
+                    'ACTIVE'
+                ) ON CONFLICT (name, version) DO UPDATE SET
+                    inference_endpoint = jsonb_set(
                         COALESCE(models.inference_endpoint, '{{}}'::jsonb),
                         '{{schema,model_name}}',
-                        '"nmt"'::jsonb,
+                        '"{triton_model_name}"'::jsonb,
                         true
                     ),
-                    '{{callbackUrl}}',
-                    '"http://13.200.133.97:8000"'::jsonb,
-                    true
-                ),
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        
-        adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
-            VALUES (
-                'ai4bharat/indictrans--gpu-t4',
-                'gpu-t4',
-                generate_model_id('ai4bharat/indictrans', '1.0.0'),
-                '1.0.0',
-                'http://13.200.133.97:8000',
-                'IndicTrans NMT service on GPU T4.',
-                'GPU: NVIDIA T4, RAM: 16GB',
-                {timestamp_ms},
-                false
-            ) ON CONFLICT (service_id) DO UPDATE SET
-                model_id = generate_model_id('ai4bharat/indictrans', '1.0.0'),
-                model_version = '1.0.0',
-                endpoint = 'http://13.200.133.97:8000',
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        print("    ✓ NMT model and service (including ai4bharat/indictrans--gpu-t4)")
-        
-        # ========================================================================
-        # 4. LLM (Large Language Model) Model and Service
-        # ========================================================================
-        adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
-            VALUES (
-                generate_model_id('llm', '1.0.0'),
-                '1.0.0',
-                'llm',
-                'Large Language Model for Indic languages chat/completion. UPDATE ENDPOINT before use.',
-                '{{"type": "llm"}}'::jsonb,
-                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}, {{"sourceLanguage": "gu"}}, {{"sourceLanguage": "kn"}}, {{"sourceLanguage": "ml"}}, {{"sourceLanguage": "pa"}}, {{"sourceLanguage": "or"}}]'::jsonb,
-                '["general", "conversational", "qa"]'::jsonb,
-                'Apache-2.0',
-                '{{"schema": {{"modelProcessingType": {{"type": "llm"}}, "model_name": "llm", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8004/llm/v1/completions"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
-                {timestamp_ms},
-                'ACTIVE'
-            ) ON CONFLICT (name, version) DO UPDATE SET
-                inference_endpoint = jsonb_set(
-                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
-                    '{{schema,model_name}}',
-                    '"llm"'::jsonb,
-                    true
-                ),
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        
-        adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
-            VALUES (
-                generate_service_id('llm', '1.0.0', 'llm-indic-prod'),
-                'llm-indic-prod',
-                generate_model_id('llm', '1.0.0'),
-                '1.0.0',
-                'http://localhost:8004/llm/v1/completions',
-                'Production LLM service for Indic languages. UPDATE ENDPOINT to your actual service URL.',
-                'GPU: NVIDIA A100, RAM: 80GB',
-                {timestamp_ms},
-                false
-            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        print("    ✓ LLM model and service")
-        
-        # ========================================================================
-        # 5. Transliteration Model and Service
-        # ========================================================================
-        adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
-            VALUES (
-                generate_model_id('transliteration', '1.0.0'),
-                '1.0.0',
-                'transliteration',
-                'Transliteration model for Indic scripts using IndicXlit. UPDATE ENDPOINT before use.',
-                '{{"type": "transliteration"}}'::jsonb,
-                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}, {{"sourceLanguage": "gu"}}, {{"sourceLanguage": "kn"}}, {{"sourceLanguage": "ml"}}, {{"sourceLanguage": "pa"}}, {{"sourceLanguage": "or"}}]'::jsonb,
-                '["general"]'::jsonb,
-                'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "transliteration"}}, "model_name": "transliteration", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8005/transliteration/v1/transliterate"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
-                {timestamp_ms},
-                'ACTIVE'
-            ) ON CONFLICT (name, version) DO UPDATE SET
-                inference_endpoint = jsonb_set(
-                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
-                    '{{schema,model_name}}',
-                    '"transliteration"'::jsonb,
-                    true
-                ),
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        
-        adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
-            VALUES (
-                generate_service_id('transliteration', '1.0.0', 'xlit-indic-prod'),
-                'xlit-indic-prod',
-                generate_model_id('transliteration', '1.0.0'),
-                '1.0.0',
-                'http://localhost:8005/transliteration/v1/transliterate',
-                'Production Transliteration service. UPDATE ENDPOINT to your actual service URL.',
-                'CPU: 8 cores, RAM: 16GB',
-                {timestamp_ms},
-                false
-            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        print("    ✓ Transliteration model and service")
-        
-        # ========================================================================
-        # 6. Language Detection Model and Service
-        # ========================================================================
-        adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
-            VALUES (
-                generate_model_id('indiclid', '1.0.0'),
-                '1.0.0',
-                'indiclid',
-                'Text language detection model for Indic languages. UPDATE ENDPOINT before use.',
-                '{{"type": "language-detection"}}'::jsonb,
-                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}, {{"sourceLanguage": "gu"}}, {{"sourceLanguage": "kn"}}, {{"sourceLanguage": "ml"}}, {{"sourceLanguage": "pa"}}, {{"sourceLanguage": "or"}}]'::jsonb,
-                '["general"]'::jsonb,
-                'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "language-detection"}}, "model_name": "indiclid", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8006/langdetect/v1/detect"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
-                {timestamp_ms},
-                'ACTIVE'
-            ) ON CONFLICT (name, version) DO UPDATE SET
-                inference_endpoint = jsonb_set(
-                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
-                    '{{schema,model_name}}',
-                    '"indiclid"'::jsonb,
-                    true
-                ),
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        
-        adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
-            VALUES (
-                generate_service_id('indiclid', '1.0.0', 'langdetect-prod'),
-                'langdetect-prod',
-                generate_model_id('indiclid', '1.0.0'),
-                '1.0.0',
-                'http://localhost:8006/langdetect/v1/detect',
-                'Production Language Detection service. UPDATE ENDPOINT to your actual service URL.',
-                'CPU: 4 cores, RAM: 8GB',
-                {timestamp_ms},
-                false
-            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        print("    ✓ Language Detection model and service")
-        
-        # ========================================================================
-        # 7. Speaker Diarization Model and Service
-        # ========================================================================
-        adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
-            VALUES (
-                generate_model_id('speaker_diarization', '1.0.0'),
-                '1.0.0',
-                'speaker_diarization',
-                'Speaker diarization model using Pyannote. UPDATE ENDPOINT before use.',
-                '{{"type": "speaker-diarization"}}'::jsonb,
-                '[{{"sourceLanguage": "*"}}]'::jsonb,
-                '["general", "meetings", "podcasts"]'::jsonb,
-                'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "speaker-diarization"}}, "model_name": "speaker_diarization", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8007/speaker-diarization/v1/diarize"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
-                {timestamp_ms},
-                'ACTIVE'
-            ) ON CONFLICT (name, version) DO UPDATE SET
-                inference_endpoint = jsonb_set(
-                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
-                    '{{schema,model_name}}',
-                    '"speaker_diarization"'::jsonb,
-                    true
-                ),
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        
-        adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
-            VALUES (
-                generate_service_id('speaker_diarization', '1.0.0', 'speaker-diarize-prod'),
-                'speaker-diarize-prod',
-                generate_model_id('speaker_diarization', '1.0.0'),
-                '1.0.0',
-                'http://localhost:8007/speaker-diarization/v1/diarize',
-                'Production Speaker Diarization service. UPDATE ENDPOINT to your actual service URL.',
-                'GPU: NVIDIA T4, RAM: 16GB',
-                {timestamp_ms},
-                false
-            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        print("    ✓ Speaker Diarization model and service")
-        
-        # ========================================================================
-        # 8. Audio Language Detection Model and Service
-        # ========================================================================
-        adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
-            VALUES (
-                generate_model_id('AudioLangDetect-Whisper', '1.0.0'),
-                '1.0.0',
-                'AudioLangDetect-Whisper',
-                'Audio language detection model using Whisper. UPDATE ENDPOINT before use.',
-                '{{"type": "audio-lang-detection"}}'::jsonb,
-                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}]'::jsonb,
-                '["general"]'::jsonb,
-                'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "audio-lang-detection"}}, "model_name": "AudioLangDetect-Whisper", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8008/audio-langdetect/v1/detect"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
-                {timestamp_ms},
-                'ACTIVE'
-            ) ON CONFLICT (name, version) DO UPDATE SET
-                inference_endpoint = jsonb_set(
-                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
-                    '{{schema,model_name}}',
-                    '"AudioLangDetect-Whisper"'::jsonb,
-                    true
-                ),
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        
-        adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
-            VALUES (
-                generate_service_id('AudioLangDetect-Whisper', '1.0.0', 'audio-langdetect-prod'),
-                'audio-langdetect-prod',
-                generate_model_id('AudioLangDetect-Whisper', '1.0.0'),
-                '1.0.0',
-                'http://localhost:8008/audio-langdetect/v1/detect',
-                'Production Audio Language Detection service. UPDATE ENDPOINT to your actual service URL.',
-                'GPU: NVIDIA T4, RAM: 16GB',
-                {timestamp_ms},
-                false
-            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        print("    ✓ Audio Language Detection model and service")
-        
-        # ========================================================================
-        # 9. Language Diarization Model and Service
-        # ========================================================================
-        adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
-            VALUES (
-                generate_model_id('lang_diarization', '1.0.0'),
-                '1.0.0',
-                'lang_diarization',
-                'Language diarization model for multi-language audio. UPDATE ENDPOINT before use.',
-                '{{"type": "language-diarization"}}'::jsonb,
-                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}]'::jsonb,
-                '["code-switching", "multilingual"]'::jsonb,
-                'Apache-2.0',
-                '{{"schema": {{"modelProcessingType": {{"type": "language-diarization"}}, "model_name": "lang_diarization", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8009/lang-diarization/v1/diarize"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
-                {timestamp_ms},
-                'ACTIVE'
-            ) ON CONFLICT (name, version) DO UPDATE SET
-                inference_endpoint = jsonb_set(
-                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
-                    '{{schema,model_name}}',
-                    '"lang_diarization"'::jsonb,
-                    true
-                ),
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        
-        adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
-            VALUES (
-                generate_service_id('lang_diarization', '1.0.0', 'lang-diarize-prod'),
-                'lang-diarize-prod',
-                generate_model_id('lang_diarization', '1.0.0'),
-                '1.0.0',
-                'http://localhost:8009/lang-diarization/v1/diarize',
-                'Production Language Diarization service. UPDATE ENDPOINT to your actual service URL.',
-                'GPU: NVIDIA T4, RAM: 16GB',
-                {timestamp_ms},
-                false
-            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        print("    ✓ Language Diarization model and service")
-        
-        # ========================================================================
-        # 10. OCR (Optical Character Recognition) Model and Service
-        # ========================================================================
-        adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
-            VALUES (
-                generate_model_id('surya_ocr', '1.0.0'),
-                '1.0.0',
-                'surya_ocr',
-                'Optical Character Recognition model for Indic scripts. UPDATE ENDPOINT before use.',
-                '{{"type": "ocr"}}'::jsonb,
-                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}, {{"sourceLanguage": "gu"}}, {{"sourceLanguage": "kn"}}, {{"sourceLanguage": "ml"}}]'::jsonb,
-                '["documents", "handwritten", "printed"]'::jsonb,
-                'Apache-2.0',
-                '{{"schema": {{"modelProcessingType": {{"type": "ocr"}}, "model_name": "surya_ocr", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8010/ocr/v1/recognize"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
-                {timestamp_ms},
-                'ACTIVE'
-            ) ON CONFLICT (name, version) DO UPDATE SET
-                inference_endpoint = jsonb_set(
-                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
-                    '{{schema,model_name}}',
-                    '"surya_ocr"'::jsonb,
-                    true
-                ),
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        
-        adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
-            VALUES (
-                generate_service_id('surya_ocr', '1.0.0', 'ocr-indic-prod'),
-                'ocr-indic-prod',
-                generate_model_id('surya_ocr', '1.0.0'),
-                '1.0.0',
-                'http://localhost:8010/ocr/v1/recognize',
-                'Production OCR service for Indic scripts. UPDATE ENDPOINT to your actual service URL.',
-                'GPU: NVIDIA T4, RAM: 16GB',
-                {timestamp_ms},
-                false
-            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        print("    ✓ OCR model and service")
-        
-        # ========================================================================
-        # 11. NER (Named Entity Recognition) Model and Service
-        # ========================================================================
-        adapter.execute(f"""
-            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
-            VALUES (
-                generate_model_id('ner', '1.0.0'),
-                '1.0.0',
-                'ner',
-                'Named Entity Recognition model for Indic languages. UPDATE ENDPOINT before use.',
-                '{{"type": "ner"}}'::jsonb,
-                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}]'::jsonb,
-                '["general", "news", "legal"]'::jsonb,
-                'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "ner"}}, "model_name": "ner", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8011/ner/v1/extract"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
-                {timestamp_ms},
-                'ACTIVE'
-            ) ON CONFLICT (name, version) DO UPDATE SET
-                inference_endpoint = jsonb_set(
-                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
-                    '{{schema,model_name}}',
-                    '"ner"'::jsonb,
-                    true
-                ),
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        
-        adapter.execute(f"""
-            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
-            VALUES (
-                generate_service_id('ner', '1.0.0', 'ner-indic-prod'),
-                'ner-indic-prod',
-                generate_model_id('ner', '1.0.0'),
-                '1.0.0',
-                'http://localhost:8011/ner/v1/extract',
-                'Production NER service for Indic languages. UPDATE ENDPOINT to your actual service URL.',
-                'CPU: 8 cores, RAM: 16GB',
-                {timestamp_ms},
-                false
-            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
-                updated_at = CURRENT_TIMESTAMP;
-        """)
-        print("    ✓ NER model and service")
-        
+                    updated_at = CURRENT_TIMESTAMP;
+            """)
+
+            for svc in m["services"]:
+                svc_name = svc["name"]
+                service_id = generate_service_id(name, version, svc_name)
+
+                adapter.execute(f"""
+                    INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+                    VALUES (
+                        '{generate_uuid("service", name, version, svc_name)}',
+                        '{service_id}',
+                        '{svc_name}',
+                        '{model_id}',
+                        '{version}',
+                        '{endpoint_url}',
+                        '{svc["description"]}',
+                        '{svc["hardware"]}',
+                        {timestamp_ms},
+                        false
+                    ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
+                        endpoint = '{endpoint_url}',
+                        updated_at = CURRENT_TIMESTAMP;
+                """)
+
+            print(f"    ✓ {name} model and service(s)")
+
         print("")
         print("    ════════════════════════════════════════════════════════════")
-        print("    ✅ Seeded 11 models and 11 services for all AI task types")
-        print("    ⚠️  IMPORTANT: Update endpoint URLs before publishing!")
+        print(f"    ✅ Seeded {len(MODELS)} models and services for all AI task types")
         print("    ════════════════════════════════════════════════════════════")

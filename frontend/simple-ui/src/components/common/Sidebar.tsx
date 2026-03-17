@@ -10,7 +10,6 @@ import {
   Image,
   Text,
   useColorModeValue,
-  useMediaQuery,
   VStack,
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
@@ -36,6 +35,7 @@ import {
   IoPulseOutline,
   IoNotificationsOutline,
 } from "react-icons/io5";
+import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { useFeatureFlagsBulk, ALL_UI_FEATURE_FLAG_NAMES } from "../../hooks/useFeatureFlag";
@@ -247,11 +247,11 @@ const topNavItems: NavItem[] = [
   },
 ];
 
-// Services (grouped under Services section)
+// Services (grouped under Services section) — labels from serviceMetadata to match header & homepage
 const baseNavItems: NavItem[] = [
   {
     id: "asr",
-    label: "Automatic Speech Recognition (ASR)",
+    label: getServiceTitle("asr"),
     path: "/asr",
     icon: FaMicrophone,
     iconSize: 10,
@@ -261,7 +261,7 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "tts",
-    label: "Text-to-Speech (TTS)",
+    label: getServiceTitle("tts"),
     path: "/tts",
     icon: IoVolumeHighOutline,
     iconSize: 10,
@@ -271,7 +271,7 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "nmt",
-    label: "Neural Machine Translation (NMT)",
+    label: getServiceTitle("nmt"),
     path: "/nmt",
     icon: IoLanguageOutline,
     iconSize: 10,
@@ -281,7 +281,7 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "llm",
-    label: "Large Language Model (LLM)",
+    label: getServiceTitle("llm"),
     path: "/llm",
     icon: IoSparklesOutline,
     iconSize: 10,
@@ -291,7 +291,7 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "pipeline",
-    label: "Speech to Speech-Pipeline",
+    label: getServiceTitle("pipeline"),
     path: "/pipeline",
     icon: DoubleMicrophoneIcon,
     iconSize: 10,
@@ -301,7 +301,7 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "ocr",
-    label: "Optical Character Recognition (OCR)",
+    label: getServiceTitle("ocr"),
     path: "/ocr",
     icon: IoDocumentTextOutline,
     iconSize: 10,
@@ -311,7 +311,7 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "transliteration",
-    label: "Transliteration Service",
+    label: getServiceTitle("transliteration"),
     path: "/transliteration",
     icon: IoSwapHorizontalOutline,
     iconSize: 10,
@@ -321,7 +321,7 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "language-detection",
-    label: "Language Detection",
+    label: getServiceTitle("language-detection"),
     path: "/language-detection",
     icon: IoGlobeOutline,
     iconSize: 10,
@@ -331,7 +331,7 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "speaker-diarization",
-    label: "Speaker Diarization",
+    label: getServiceTitle("speaker-diarization"),
     path: "/speaker-diarization",
     icon: IoPeopleOutline,
     iconSize: 10,
@@ -341,7 +341,7 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "language-diarization",
-    label: "Language Diarization",
+    label: getServiceTitle("language-diarization"),
     path: "/language-diarization",
     icon: IoLanguageOutline,
     iconSize: 10,
@@ -351,7 +351,7 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "audio-language-detection",
-    label: "Audio Language Detection",
+    label: getServiceTitle("audio-language-detection"),
     path: "/audio-language-detection",
     icon: IoRadioOutline,
     iconSize: 10,
@@ -361,7 +361,7 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "ner",
-    label: "Named Entity Recognition (NER)",
+    label: getServiceTitle("ner"),
     path: "/ner",
     icon: IoPricetagOutline,
     iconSize: 10,
@@ -377,8 +377,7 @@ const Sidebar: React.FC = () => {
   const { checkSessionExpiry } = useSessionExpiry();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
-  const [isMobile] = useMediaQuery("(max-width: 1080px)");
-  
+
   // Check if user is GUEST or USER
   const isGuest = user?.roles?.includes('GUEST') || false;
   const isUser = user?.roles?.includes('USER') || false;
@@ -427,6 +426,10 @@ const Sidebar: React.FC = () => {
     if (item.id === "alerts-management" && !isAdmin) {
       return false;
     }
+    // Hide logs for users with USER role (regardless of tenant_id)
+    if (item.id === "logs" && isUser) {
+      return false;
+    }
     // Hide logs for users without tenant_id (but allow admins to see it)
     if (item.id === "logs" && !tenantId && !isAdmin) {
       return false;
@@ -450,17 +453,13 @@ const Sidebar: React.FC = () => {
   const borderColor = useColorModeValue("gray.200", "gray.700");
   const hoverBgColor = useColorModeValue("gray.50", "gray.900");
 
-  // Hide sidebar on mobile
-  if (isMobile) {
-    return null;
-  }
-
   return (
     <Box
       position="fixed"
       left={0}
       top={0}
-      h="100vh"
+      minH="100vh"
+      h="100%"
       w={isExpanded ? "350px" : "4.5rem"}
       bg={bgColor}
       boxShadow="md"
@@ -476,8 +475,13 @@ const Sidebar: React.FC = () => {
       }}
       borderRight="1px"
       borderColor={borderColor}
+      sx={{
+        /* Small viewport height so sidebar never extends past visible area (1312×848, scaled Mac) */
+        minHeight: '100svh',
+        height: '100svh',
+      }}
     >
-      <VStack spacing={3} p={3} h="calc(100vh - 3.5rem)" overflowY="auto">
+      <VStack spacing={3} p={3} overflowY="auto" overflowX="hidden" sx={{ height: 'calc(100svh - 3.5rem)', minHeight: 0 }}>
         {/* Logo Section */}
         <VStack spacing={2} w="full">
           <Box

@@ -2,17 +2,10 @@
 Alert Management Service
 Provides CRUD operations for alert definitions, notification receivers, and routing rules.
 """
-import os
-
-from ai4icore_logging import get_logger, configure_logging
+from ai4icore_env import app_env
+from ai4icore_logging import get_logger, LoggingConfig, register_logging_plugin
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-
-# Configure structured logging (same approach as nmt-service, ocr-service)
-configure_logging(
-    service_name=os.getenv("SERVICE_NAME", "alert-management-service"),
-    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
-)
 
 # Disable uvicorn access logger before uvicorn starts
 import logging
@@ -33,6 +26,7 @@ from alert_management import init_db_pool, close_db_pool
 from routers.alert_definitions import router as alert_definitions_router
 from routers.receivers import router as receivers_router
 from routers.routing_rules import router as routing_rules_router
+from routers.alert_history import router as alert_history_router
 from utils.auth_client import close_auth_client
 
 @asynccontextmanager
@@ -79,6 +73,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Initialize AI4ICore Logging Plugin
+logging_config = LoggingConfig.from_env()
+logging_config.service_name = app_env.service_name
+logging_config.use_kafka = app_env.use_kafka_logging
+register_logging_plugin(app, config=logging_config)
+logger.info("✅ AI4ICore Logging Plugin initialized for alert-management-service")
+
 # Distributed tracing (Jaeger) - same pattern as nmt-service, ocr-service
 # IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
 tracer = setup_tracing("alert-management-service")
@@ -93,6 +94,7 @@ else:
 app.include_router(alert_definitions_router)
 app.include_router(receivers_router)
 app.include_router(routing_rules_router)
+app.include_router(alert_history_router)
 
 
 @app.get("/")
@@ -113,7 +115,7 @@ async def health_check():
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8098"))
+    port = app_env.port
     logger.info(
         f"Starting Alert Management Service on http://0.0.0.0:{port}...",
         extra={"context": {"port": port}}

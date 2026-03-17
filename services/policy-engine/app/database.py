@@ -1,14 +1,11 @@
-import os
 import logging
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
+from ai4icore_env import app_env
 
 # Default to the internal Docker DNS for Postgres
-DATABASE_URL = os.getenv(
-    "DATABASE_URL", 
-    "postgresql+asyncpg://dhruva_user:dhruva_password@postgres:5432/dhruva_platform"
-)
+DATABASE_URL = app_env.get_database_url()
 
 logger = logging.getLogger("policy-engine-db")
 

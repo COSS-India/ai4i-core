@@ -16,7 +16,7 @@ services:
       - ./infrastructure/postgres:/docker-entrypoint-initdb.d
     command: >
       postgres
-      -c password_encryption=md5
+      -c password_encryption=scram-sha-256
       -c listen_addresses='*'
     networks:
       - microservices-network
@@ -28,10 +28,37 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  # Run database CLI (migrations, init:external, seed, etc.) inside Docker network
+  # so that POSTGRES_HOST=postgres resolves. Uses project root .env so credentials
+  # match the postgres container (compose substitutes ${POSTGRES_*} from root .env).
+  # Usage:
+  #   docker compose -f docker-compose-local.yml run --rm migration-runner python infrastructure/databases/cli.py init:external
+  #   ./scripts/run-migration-cli.sh init:external
+  migration-runner:
+    image: python:3.11-slim
+    container_name: ai4v-migration-runner
+    working_dir: /app
+    volumes:
+      - .:/app
+    env_file:
+      - ./.env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      AUTH_DB_HOST: postgres
+      APP_DB_HOST: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    entrypoint: ["sh", "-c", "cd /app/infrastructure/databases && pip install -q -r requirements.txt && cd /app && exec \"$@\"", "sh"]
+    command: ["python", "infrastructure/databases/cli.py"]
+
   redis:
     image: redis:7-alpine
     container_name: ai4v-redis
-    command: redis-server /usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf --requirepass "${REDIS_PASSWORD}"
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     ports:
@@ -180,7 +207,99 @@ services:
       start_period: 40s
     restart: unless-stopped
 
-  # Microservices
+  kong:
+    image: kong:3.4-ubuntu
+    container_name: ai4v-gateway
+    profiles:
+      - kong
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+      - "8001:8001"
+      - "8444:8444"
+    environment:
+      KONG_DATABASE: "off"
+      KONG_PROXY_LISTEN: 0.0.0.0:8080
+      KONG_DECLARATIVE_CONFIG: /tmp/kong-substituted.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_ADMIN_GUI_URL: http://localhost:8002
+      KONG_PLUGINS: token-validator
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      AI4VOICE_API_KEY: ${AI4VOICE_API_KEY}
+      ASR_API_KEY: ${ASR_API_KEY}
+      TTS_API_KEY: ${TTS_API_KEY}
+      NMT_API_KEY: ${NMT_API_KEY}
+      PIPELINE_API_KEY: ${PIPELINE_API_KEY}
+      DEVELOPER_API_KEY: ${DEVELOPER_API_KEY}
+      MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
+      LLM_API_KEY: ${LLM_API_KEY}
+    env_file:
+      - ./.env
+    volumes:
+      - ./services/api-gateway-service/gateways/kong/kong.yml:/kong/kong.yml:ro
+      - ./services/api-gateway-service/gateways/kong/substitute-env.sh:/kong/substitute-env.sh:ro
+      - ./services/Konga-API-manager/plugins/token-validator/kong/plugins:/usr/local/share/lua/5.1/kong/plugins:ro
+    command: >
+      sh -c "
+        CR=$(printf '\\r') &&
+        tr -d \"$$CR\" < /kong/substitute-env.sh > /tmp/kong-substitute-env.sh &&
+        sh /tmp/kong-substitute-env.sh &&
+        /docker-entrypoint.sh kong docker-start
+      "
+    networks:
+      microservices-network:
+        aliases:
+          - api-gateway-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  apisix:
+    image: apache/apisix:latest
+    container_name: ai4v-gateway
+    profiles:
+      - apisix
+    ports:
+      - "8080:8080"
+    environment:
+      APISIX_STAND_ALONE: "true"
+      APISIX_PUBLIC_ORIGIN: ${APISIX_PUBLIC_ORIGIN:-http://localhost:3000}
+      APISIX_UPSTREAM_SUFFIX: ${APISIX_UPSTREAM_SUFFIX:-}
+    env_file:
+      - ./.env
+    volumes:
+      - ./services/api-gateway-service/gateways/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./services/api-gateway-service/gateways/apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml.template:ro
+      - ./services/api-gateway-service/gateways/apisix/substitute-env.sh:/usr/local/apisix/substitute-env.sh:ro
+    command: >
+      sh -c "
+        CR=$(printf '\\r') &&
+        tr -d \"$$CR\" < /usr/local/apisix/substitute-env.sh > /tmp/substitute-env.sh &&
+        tr -d \"$$CR\" < /usr/local/apisix/conf/apisix.yaml.template > /tmp/apisix.yaml.template &&
+        APISIX_CONFIG_TEMPLATE=/tmp/apisix.yaml.template sh /tmp/substitute-env.sh &&
+        /usr/bin/apisix init &&
+        exec /usr/local/openresty/bin/openresty -p /usr/local/apisix -g 'daemon off;'
+      "
+    networks:
+      microservices-network:
+        aliases:
+          - api-gateway-service
+    dns_search: []
+    restart: unless-stopped
+
   api-gateway-service:
     build:
       context: .
@@ -231,9 +350,11 @@ services:
       - ./services/auth-service/.env
     volumes:
       - ./services/auth-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./services/constants:/app/services/constants
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
@@ -267,6 +388,8 @@ services:
       - ./services/config-service/.env
     volumes:
       - ./services/config-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -299,23 +422,25 @@ services:
       dockerfile: ./services/docs-manager/Dockerfile
     container_name: ai4v-docs-manager
     ports:
-      - "8103:8103"
+      - "8106:8103"
     environment:
-      - API_GATEWAY_URL=http://api-gateway-service:8080
-      - USE_API_PROXY=true
       - SPECS_ROOT=/app/specs
       - SERVICE_DOCS_REGISTRY_PATH=/app/specs/service-docs-registry.yaml
+    env_file:
+      - ./.env
     volumes:
       - ./services/docs-manager:/app
     command: ["--reload"]
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - docs-manager-service
     restart: unless-stopped
 
   metrics-service:
     build:
-      context: ./services/metrics-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/metrics-service/Dockerfile
     container_name: ai4v-metrics-service
     ports:
       - "8083:8083"
@@ -325,6 +450,7 @@ services:
       - ./services/metrics-service/.env
     volumes:
       - ./services/metrics-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
     command: ["--reload"]
     depends_on:
       postgres:
@@ -356,6 +482,7 @@ services:
       - ./services/telemetry-service/.env
     volumes:
       - ./services/telemetry-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
@@ -392,6 +519,7 @@ services:
       - ./services/alerting-service/.env
     volumes:
       - ./services/alerting-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -414,8 +542,8 @@ services:
 
   dashboard-service:
     build:
-      context: ./services/dashboard-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/dashboard-service/Dockerfile
     container_name: ai4v-dashboard-service
     ports:
       - "8090:8086"
@@ -426,6 +554,7 @@ services:
       - ./services/dashboard-service/.env
     volumes:
       - ./services/dashboard-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
     command: ["--reload"]
     depends_on:
       postgres:
@@ -453,20 +582,23 @@ services:
       - "8087:8087"
     environment:
       - ENV_FILE=.env
-      - AUTH_ENABLED=false
-      - REQUIRE_API_KEY=false
-      - ALLOW_ANONYMOUS_ACCESS=true
-      - TRITON_ENDPOINT=http://13.200.133.97:9000
+      - AUTH_ENABLED=true
+      - REQUIRE_API_KEY=true
+      - ALLOW_ANONYMOUS_ACCESS=false
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
       - TRITON_TIMEOUT=120
     env_file:
       - ./services/asr-service/.env
     volumes:
       - ./services/asr-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
-      - ./services/constants:/app/services/constants
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./services/multi-tenant-feature:/app/services/multi-tenant-feature
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
@@ -499,16 +631,19 @@ services:
       - "8088:8088"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=http://13.200.133.97:9000
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
     env_file:
       - ./services/tts-service/.env
     volumes:
       - ./services/tts-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
-      - ./services/constants:/app/services/constants
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -540,21 +675,32 @@ services:
       - "8091:8089"
     environment:
       - ENV_FILE=.env
+      - API_GATEWAY_URL=http://api-gateway-service:8080
+      - MODEL_MANAGEMENT_SERVICE_URL=http://model-management-service:8091
+      - MODEL_MANAGEMENT_TIMEOUT=20
+      - PYTHONPATH=/app:/app/libs/ai4icore_multi_tenant:/app/libs/ai4icore_observability:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry:/app/libs/ai4icore_model_management:/home/app/.local/lib/python3.11/site-packages
     env_file:
       - ./services/nmt-service/.env
     volumes:
       - ./services/nmt-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
-      - ./services/constants:/app/services/constants
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
     depends_on:
+      apisix:
+        condition: service_started
       config-service:
         condition: service_healthy
+      model-management-service:
+        condition: service_started
       postgres:
         condition: service_healthy
       redis:
@@ -584,10 +730,14 @@ services:
       - ENV_FILE=.env
     volumes:
       - ./services/ocr-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -626,10 +776,14 @@ services:
       - ./services/ner-service/.env
     volumes:
       - ./services/ner-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -661,16 +815,20 @@ services:
       - "8093:8090"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=http://3.235.56.233:8001
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
       - TRITON_TIMEOUT=300
     env_file:
       - ./services/llm-service/.env
     volumes:
       - ./services/llm-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -708,9 +866,13 @@ services:
       - ./services/pipeline-service/.env
     volumes:
       - ./services/pipeline-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -741,8 +903,8 @@ services:
 
   model-management-service:
     build:
-      context: ./services/model-management-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/model-management-service/Dockerfile
     container_name: ai4v-model-management-service
     ports:
       - "8094:8091"
@@ -769,8 +931,14 @@ services:
       - ALLOW_ANONYMOUS_ACCESS=${MODEL_MANAGEMENT_ALLOW_ANONYMOUS_ACCESS:-false}
       - MAX_ACTIVE_VERSIONS_PER_MODEL=${MAX_ACTIVE_VERSIONS_PER_MODEL:-5}
       - ALLOW_DEPRECATED_MODEL_CHANGES=${ALLOW_DEPRECATED_MODEL_CHANGES:-true}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_REFRESH_SECRET_KEY=${JWT_REFRESH_SECRET_KEY}
+      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
     volumes:
       - ./services/model-management-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
     command: ["--reload"]
     depends_on:
       postgres:
@@ -786,13 +954,17 @@ services:
   # Policy Engine
   policy-engine:
     build:
-      context: ./services/policy-engine
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/policy-engine/Dockerfile
     container_name: ai4v-policy-engine
     ports:
       - "8102:8095"
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    volumes:
+      - ./services/policy-engine:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+    command: ["sh", "-c", "pip install --no-cache-dir -e /app/libs/ai4icore_env && uvicorn main:app --host 0.0.0.0 --port 8095 --workers 1 --reload"]
     networks:
       - microservices-network
     restart: unless-stopped
@@ -807,7 +979,7 @@ services:
       dockerfile: ./services/smr-service/Dockerfile
     container_name: ai4v-smr-service
     ports:
-      - "8104:8097"
+      - "8103:8097"
     environment:
       - ENV_FILE=.env
       - APP_DB_USER=${POSTGRES_USER}
@@ -819,6 +991,9 @@ services:
       - REQUEST_PROFILER_SERVICE_URL=http://request-profiler-service:8000
     env_file:
       - ./services/smr-service/.env
+    volumes:
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
     depends_on:
       policy-engine:
         condition: service_started
@@ -851,6 +1026,8 @@ services:
       - LOG_LEVEL=info
       - MODEL_DIR=/app/models
       - ENVIRONMENT=production
+    env_file:
+      - ./.env
     deploy:
       resources:
         limits:
@@ -875,8 +1052,8 @@ services:
   
   multi-tenant-service:
     build:
-      context: ./services/multi-tenant-feature
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/multi-tenant-feature/Dockerfile
     container_name: ai4v-multi-tenant-service
     ports:
       - "8100:8001"
@@ -886,6 +1063,9 @@ services:
       - ./services/multi-tenant-feature/.env
     volumes:
       - ./services/multi-tenant-feature:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
     command: ["--reload"]
     depends_on:
       postgres:
@@ -911,11 +1091,14 @@ services:
       - ./services/transliteration-service/.env
     volumes:
       - ./services/transliteration-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
-      - ./services/constants:/app/services/constants
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -949,10 +1132,14 @@ services:
       - ./services/language-detection-service/.env
     volumes:
       - ./services/language-detection-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -982,13 +1169,17 @@ services:
       - "8095:8095"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=http://65.1.35.3:8700
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
     volumes:
       - ./services/speaker-diarization-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -1018,15 +1209,19 @@ services:
       - "9002:8090"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=65.1.35.3:8600
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
     env_file:
       - ./services/language-diarization-service/.env
     volumes:
       - ./services/language-diarization-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -1056,15 +1251,19 @@ services:
       - "8096:8096"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=65.1.35.3:8100
+      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
     env_file:
       - ./services/audio-lang-detection-service/.env
     volumes:
       - ./services/audio-lang-detection-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -1094,7 +1293,7 @@ services:
         # Browser talks directly to the API Gateway on host port 8080
         # NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
         
-        NEXT_PUBLIC_API_URL: http://localhost:9000
+        NEXT_PUBLIC_API_URL: http://localhost:8080
         # Service-specific API keys from .env file (no hardcoding)
         NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
         NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
@@ -1114,7 +1313,7 @@ services:
       - HOSTNAME=0.0.0.0
       # Route all frontend API calls through the API Gateway on host
       # - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
-      - NEXT_PUBLIC_API_URL=http://localhost:9000
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
 
       - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
       # Service-specific API keys for API Gateway authentication / RBAC
@@ -1127,13 +1326,12 @@ services:
       # - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://core-v1.ai4inclusion.org
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
       - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
+    env_file:
+      - ./.env
     volumes:
       - ./frontend/simple-ui:/app
       - /app/node_modules
       - /app/.next
-    depends_on:
-      api-gateway-service:
-        condition: service_healthy
     networks:
       - microservices-network
     healthcheck:
@@ -1161,8 +1359,8 @@ services:
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--storage.tsdb.retention.time=30d'
       - '--web.enable-lifecycle'
-      - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
-      # - '--web.external-url=http://localhost:9090'
+      # - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
+      - '--web.external-url=http://localhost:9090'
       - '--web.route-prefix=/'
     networks:
       - microservices-network
@@ -1178,15 +1376,21 @@ services:
       retries: 3
 
   # Observability: Alertmanager (POC)
+  # Mount directory; bootstrap copies alertmanager.default.yml to alertmanager.yml if missing
   alertmanager:
-    image: prom/alertmanager:v0.27.0
+    image: prom/alertmanager:v0.26.0
     container_name: ai4v-alertmanager
     ports:
       - "9095:9093"
     volumes:
-      - ./infrastructure/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - ./infrastructure/alertmanager:/etc/alertmanager
+    entrypoint: ["sh", "-c"]
     command:
-      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - |
+        if [ ! -f /etc/alertmanager/alertmanager.yml ]; then
+          cp /etc/alertmanager/alertmanager.default.yml /etc/alertmanager/alertmanager.yml;
+        fi;
+        exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml
     networks:
       - microservices-network
     restart: unless-stopped
@@ -1195,6 +1399,49 @@ services:
       interval: 10s
       timeout: 10s
       retries: 3
+
+  # Alert Management Service
+  # Provides CRUD operations for alert definitions, notification receivers, and routing rules
+  alert-management-service:
+    build:
+      context: .
+      dockerfile: ./services/alert-management-service/Dockerfile
+    container_name: ai4v-alert-management-service
+    ports:
+      - "8104:8098"
+    environment:
+      - SERVICE_NAME=alert-management-service
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - ALERT_CONFIG_SYNC_SERVICE_URL=http://alert-config-sync-service:8097
+      - ALERT_SYNC_ENABLED=true
+      - PORT=8098
+    env_file:
+      - ./.env
+    volumes:
+      - ./services/alert-management-service:/app
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8098/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
 
   # Alert Configuration Sync Service
   # Generates Prometheus and Alertmanager YAML files from database and triggers hot reload
@@ -1206,25 +1453,37 @@ services:
     ports:
       - "8101:8097"
     environment:
+      - PYTHONPATH=/app:/app/libs/ai4icore_env:/app/libs/ai4icore_logging
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - AUTH_DB_NAME=auth_db
+      # Required for tenant receivers: resolve tenant name -> tenant_id and tenant user email
+      - MULTI_TENANT_DB_NAME=multi_tenant_db
       - PROMETHEUS_URL=http://prometheus:9090
       - ALERTMANAGER_URL=http://alertmanager:9093
       - PROMETHEUS_APPLICATION_ALERTS_PATH=/etc/prometheus/rules/application-alerts.yml
       - PROMETHEUS_INFRASTRUCTURE_ALERTS_PATH=/etc/prometheus/rules/infrastructure-alerts.yml
       - ALERTMANAGER_CONFIG_PATH=/etc/alertmanager/alertmanager.yml
+      - ALERT_MANAGEMENT_SERVICE_URL=http://alert-management-service:8098
       - SYNC_INTERVAL=60
       - PORT=8097
+      - SMTP_SMARTHOST=${SMTP_SMARTHOST:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_AUTH_USERNAME=${SMTP_AUTH_USERNAME:-}
+      - SMTP_AUTH_PASSWORD=${SMTP_AUTH_PASSWORD:-}
+    env_file:
+      - ./.env
     volumes:
-      - ./services/alert-config-sync-service:/app/services/alert-config-sync-service
+      - ./services/alert-config-sync-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./infrastructure:/app/infrastructure
       # Mount Prometheus rules directory (writable so sync service can write YAML files)
       - ./infrastructure/prometheus/rules:/etc/prometheus/rules
-      # Mount Alertmanager config file (writable so sync service can write YAML file)
-      # Note: alertmanager mounts this as read-only, but sync service writes to host file
-      - ./infrastructure/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      # Mount alertmanager dir so sync service can write alertmanager.yml
+      - ./infrastructure/alertmanager:/etc/alertmanager
     depends_on:
       postgres:
         condition: service_healthy
@@ -1258,6 +1517,8 @@ services:
       - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
 
+    env_file:
+      - ./.env
     volumes:
       - grafana-data:/var/lib/grafana
       - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning
@@ -1409,8 +1670,8 @@ services:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
       - ./infrastructure/fluent-bit/extract_context.lua:/fluent-bit/scripts/extract_context.lua:ro
-      # - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
+      # - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - microservices-network

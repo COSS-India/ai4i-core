@@ -61,10 +61,35 @@ export function useApiKeyTab({
     }
   };
 
+  const handleUnselectApiKey = async () => {
+    if (!checkSessionExpiry()) return;
+    try {
+      await authService.selectApiKey(null);
+      setSelectedApiKeyId(null);
+      setApiKey("");
+      toast({
+        title: "API Key Unselected",
+        description: "Current API key selection has been cleared",
+        status: "info",
+        duration: 2000,
+        isClosable: true,
+      });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to clear API key selection",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    }
+  };
+
   return {
     showApiKey,
     setShowApiKey,
     handleCopyApiKey,
     handleSelectApiKey,
+    handleUnselectApiKey,
   };
 }

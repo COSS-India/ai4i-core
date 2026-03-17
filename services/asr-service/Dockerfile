@@ -12,12 +12,15 @@ RUN apt-get update && \
 
 # ---- shared plugins (repo-root paths) ----
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
-# ---- shared constants ----
-COPY services/constants /app/services/constants
+# ---- shared constants lib ----
+COPY libs/ai4icore_constants /app/libs/ai4icore_constants
+COPY libs/ai4icore_env /app/libs/ai4icore_env
+COPY libs/ai4icore_auth /app/libs/ai4icore_auth
 
 # ---- multi-tenant-feature (for tenant schema models) ----
 COPY services/multi-tenant-feature /app/services/multi-tenant-feature
@@ -30,9 +33,13 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Install AI4ICore plugins (editable) so logging, telemetry and observability are available
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_multi_tenant
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_constants
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
 
 # Verify packaging is installed (for debugging)
 RUN python -c "import packaging; print(f'packaging version: {packaging.__version__}')" || (echo "ERROR: packaging not found!" && exit 1)
@@ -61,12 +68,15 @@ RUN pip install --no-cache-dir packaging>=21.0 && \
 
 # Copy AI4ICore plugins into runtime image
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY --from=builder /app/libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
-# ---- shared constants ----
-COPY services/constants /app/services/constants
+# ---- shared constants lib ----
+COPY --from=builder /app/libs/ai4icore_constants /app/libs/ai4icore_constants
+COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
+COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
 
 # ---- application code ----
 COPY services/asr-service /app
