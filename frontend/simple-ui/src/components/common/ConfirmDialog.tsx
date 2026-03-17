@@ -1,4 +1,4 @@
-import React, { ReactNode, RefObject } from "react";
+import React, { ReactNode, RefObject, useRef } from "react";
 import {
   AlertDialog,
   AlertDialogBody,
@@ -53,14 +53,16 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   confirmColorScheme = "red",
   isConfirmLoading = false,
   confirmLoadingText,
-  leastDestructiveRef,
+  leastDestructiveRef: leastDestructiveRefProp,
 }) => {
   const dialogBg = useColorModeValue("white", "gray.800");
+  const fallbackRef = useRef<HTMLButtonElement>(null);
+  const leastDestructiveRef = leastDestructiveRefProp ?? fallbackRef;
 
   return (
     <AlertDialog
       isOpen={isOpen}
-      leastDestructiveRef={leastDestructiveRef as any}
+      leastDestructiveRef={leastDestructiveRef}
       onClose={onClose}
     >
       <AlertDialogOverlay>
@@ -71,7 +73,7 @@ const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           <AlertDialogBody>{body}</AlertDialogBody>
           <AlertDialogFooter>
             <Button
-              ref={leastDestructiveRef as any}
+              ref={leastDestructiveRef}
               onClick={onClose}
               mr={3}
               variant="outline"

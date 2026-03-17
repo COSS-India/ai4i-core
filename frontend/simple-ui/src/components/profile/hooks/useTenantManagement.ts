@@ -428,10 +428,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     } else {
       const lower = trimmed.toLowerCase();
       const emailTakenByTenant = tenants.some((t) => (t.email ?? "").toLowerCase() === lower);
-      const emailTakenByOtherUser = tenantUsers.some(
-        (u) => (u.email ?? "").toLowerCase() === lower && u.tenant_id !== userForm.tenant_id
-      );
-      if (emailTakenByTenant || emailTakenByOtherUser) {
+      const emailTakenByUser = tenantUsers.some((u) => (u.email ?? "").toLowerCase() === lower);
+      if (emailTakenByTenant || emailTakenByUser) {
         errors.email = "This email is already registered with another tenant user.";
       } else {
         delete errors.email;
@@ -451,14 +449,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       return;
     }
 
-    // Ensure email is not already used by another tenant or tenant user (best-effort on loaded data)
+    // Ensure email is unique across all tenants and tenant users (best-effort on loaded data)
     const emailLower = userForm.email.trim().toLowerCase();
     if (emailLower) {
       const emailTakenByTenant = tenants.some((t) => (t.email ?? "").toLowerCase() === emailLower);
-      const emailTakenByOtherUser = tenantUsers.some(
-        (u) => (u.email ?? "").toLowerCase() === emailLower && u.tenant_id !== userForm.tenant_id
-      );
-      if (emailTakenByTenant || emailTakenByOtherUser) {
+      const emailTakenByUser = tenantUsers.some((u) => (u.email ?? "").toLowerCase() === emailLower);
+      if (emailTakenByTenant || emailTakenByUser) {
         setUserFormErrors((prev) => ({
           ...prev,
           email: "This email is already registered with another tenant user.",
