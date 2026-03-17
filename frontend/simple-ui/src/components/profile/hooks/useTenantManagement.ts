@@ -89,6 +89,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     role: "USER",
   });
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
+  const [userFormErrors, setUserFormErrors] = useState<Record<string, string>>({});
 
   // View tenant / view user modals
   const [viewTenantDetail, setViewTenantDetail] = useState<TenantView | null>(null);
@@ -273,9 +274,25 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (!isValidEmailFormat(tenantForm.contact_email)) {
       errors.contact_email = "Enter a valid email address (e.g. name@example.com).";
     }
+
+    // Check uniqueness against existing tenants and tenant users (best-effort using loaded lists)
+    const emailLower = tenantForm.contact_email.trim().toLowerCase();
+    if (emailLower) {
+      const emailTakenByTenant = tenants.some((t) => (t.email ?? "").toLowerCase() === emailLower);
+      const emailTakenByUser = tenantUsers.some((u) => (u.email ?? "").toLowerCase() === emailLower);
+      if (emailTakenByTenant || emailTakenByUser) {
+        errors.contact_email = "This email is already registered with another tenant.";
+      }
+    }
+
     setTenantFormErrors(errors);
     if (Object.keys(errors).length > 0) {
-      toast({ title: "Validation", description: errors.contact_email ?? "Please fix the errors below.", status: "error", isClosable: true });
+      toast({
+        title: "Validation",
+        description: errors.contact_email ?? "Please fix the errors below.",
+        status: "error",
+        isClosable: true,
+      });
       return;
     }
     if (!tenantForm.requested_subscriptions?.length) {
@@ -348,6 +365,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       is_approved: false,
       role: "USER",
     });
+    setUserFormErrors({});
     setIsUserModalOpen(true);
   };
 
@@ -364,6 +382,63 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsUserModalOpen(false);
   };
 
+  /**
+   * Inline validation: check whether the tenant contact email is syntactically valid
+   * and not already used by an existing tenant or tenant user (based on loaded lists).
+   */
+  const checkTenantContactEmailUnique = (email: string) => {
+    const trimmed = (email || "").trim();
+    const errors: Record<string, string> = {};
+
+    if (!trimmed) {
+      setTenantFormErrors(errors);
+      return;
+    }
+
+    if (!isValidEmailFormat(trimmed)) {
+      errors.contact_email = "Enter a valid email address (e.g. name@example.com).";
+    } else {
+      const lower = trimmed.toLowerCase();
+      const emailTakenByTenant = tenants.some((t) => (t.email ?? "").toLowerCase() === lower);
+      const emailTakenByUser = tenantUsers.some((u) => (u.email ?? "").toLowerCase() === lower);
+      if (emailTakenByTenant || emailTakenByUser) {
+        errors.contact_email = "This email is already registered with another tenant.";
+      }
+    }
+
+    setTenantFormErrors(errors);
+  };
+
+  /**
+   * Inline validation: check whether the tenant user email is syntactically valid
+   * and not already used by another tenant or tenant user (based on loaded lists).
+   */
+  const checkUserEmailUnique = (email: string) => {
+    const trimmed = (email || "").trim();
+    const errors: Record<string, string> = { ...userFormErrors };
+
+    if (!trimmed) {
+      delete errors.email;
+      setUserFormErrors(errors);
+      return;
+    }
+
+    if (!isValidEmailFormat(trimmed)) {
+      errors.email = "Enter a valid email address (e.g. name@example.com).";
+    } else {
+      const lower = trimmed.toLowerCase();
+      const emailTakenByTenant = tenants.some((t) => (t.email ?? "").toLowerCase() === lower);
+      const emailTakenByUser = tenantUsers.some((u) => (u.email ?? "").toLowerCase() === lower);
+      if (emailTakenByTenant || emailTakenByUser) {
+        errors.email = "This email is already registered with another tenant user.";
+      } else {
+        delete errors.email;
+      }
+    }
+
+    setUserFormErrors(errors);
+  };
+
   const handleRegisterUser = async () => {
     if (!userForm.tenant_id || !userForm.full_name?.trim() || !userForm.email.trim() || !userForm.username.trim()) {
       toast({ title: "Validation", description: "Tenant, full name, email, and username are required.", status: "error", isClosable: true });
@@ -372,6 +447,26 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (!isValidEmailFormat(userForm.email)) {
       toast({ title: "Validation", description: "Enter a valid email address (e.g. name@example.com).", status: "error", isClosable: true });
       return;
+    }
+
+    // Ensure email is unique across all tenants and tenant users (best-effort on loaded data)
+    const emailLower = userForm.email.trim().toLowerCase();
+    if (emailLower) {
+      const emailTakenByTenant = tenants.some((t) => (t.email ?? "").toLowerCase() === emailLower);
+      const emailTakenByUser = tenantUsers.some((u) => (u.email ?? "").toLowerCase() === emailLower);
+      if (emailTakenByTenant || emailTakenByUser) {
+        setUserFormErrors((prev) => ({
+          ...prev,
+          email: "This email is already registered with another tenant user.",
+        }));
+        toast({
+          title: "Validation",
+          description: "This email is already registered with another tenant user.",
+          status: "error",
+          isClosable: true,
+        });
+        return;
+      }
     }
     if (userForm.username.trim().length < 3) {
       toast({ title: "Validation", description: "Username must be at least 3 characters.", status: "error", isClosable: true });
@@ -873,6 +968,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleTenantStepNext,
     handleTenantStepBack,
     handleRegisterTenant,
+    checkTenantContactEmailUnique,
     TENANT_SUBSCRIPTION_OPTIONS,
     availableServicesForCreate,
     isLoadingServicesForCreate,
@@ -907,11 +1003,14 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     isUserModalOpen,
     userForm,
     setUserForm,
+    userFormErrors,
+    setUserFormErrors,
     isSubmittingUser,
     openUserModal,
     closeUserModal,
     setUserFormTenantId,
     handleRegisterUser,
+    checkUserEmailUnique,
     openAddUserForTenant,
     // View tenant/user
     viewTenantDetail,
