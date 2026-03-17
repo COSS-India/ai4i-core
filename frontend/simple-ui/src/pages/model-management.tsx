@@ -1,12 +1,6 @@
 // Model Management page with list and create functionality
 
 import {
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogOverlay,
   Box,
   Button,
   Card,
@@ -58,6 +52,7 @@ import { useAuth } from "../hooks/useAuth";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import ConfirmDialog from "../components/common/ConfirmDialog";
 
 // TypeScript interfaces for model data
 interface OAuthId {
@@ -1561,40 +1556,33 @@ const ModelManagementPage: React.FC = () => {
      </VStack>
       </ContentLayout>
 
-      <AlertDialog
+      <ConfirmDialog
         isOpen={isConfirmOpen}
-        leastDestructiveRef={cancelConfirmRef}
         onClose={closeConfirmDialog}
-      >
-        <AlertDialogOverlay>
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize="lg" fontWeight="bold">
-              {confirmAction === "deprecate" ? "Deprecate model" : "Activate model"}
-            </AlertDialogHeader>
-            <AlertDialogBody>
-              {confirmAction === "deprecate" ? (
-                <>Are you sure you want to deprecate <strong>{modelToConfirm?.name || modelToConfirm?.modelId}</strong>? Deprecated models cannot be used for new services.</>
-              ) : (
-                <>Are you sure you want to activate <strong>{modelToConfirm?.name || modelToConfirm?.modelId}</strong>? The model will be available for services again.</>
-              )}
-            </AlertDialogBody>
-            <AlertDialogFooter>
-              <Button ref={cancelConfirmRef} onClick={closeConfirmDialog}>
-                Cancel
-              </Button>
-              <Button
-                colorScheme={confirmAction === "deprecate" ? "orange" : "green"}
-                onClick={handleConfirmAction}
-                ml={3}
-                isLoading={updatingModelId === modelToConfirm?.modelId}
-                loadingText={confirmAction === "deprecate" ? "Deprecating..." : "Activating..."}
-              >
-                Confirm
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
+        onConfirm={handleConfirmAction}
+        title={confirmAction === "deprecate" ? "Deprecate model" : "Activate model"}
+        body={
+          confirmAction === "deprecate" ? (
+            <>
+              Are you sure you want to deprecate{" "}
+              <strong>{modelToConfirm?.name || modelToConfirm?.modelId}</strong>?
+              Deprecated models cannot be used for new services.
+            </>
+          ) : (
+            <>
+              Are you sure you want to activate{" "}
+              <strong>{modelToConfirm?.name || modelToConfirm?.modelId}</strong>?
+              The model will be available for services again.
+            </>
+          )
+        }
+        confirmLabel="Confirm"
+        cancelLabel="Cancel"
+        confirmColorScheme={confirmAction === "deprecate" ? "orange" : "green"}
+        isConfirmLoading={updatingModelId === modelToConfirm?.modelId}
+        confirmLoadingText={confirmAction === "deprecate" ? "Deprecating..." : "Activating..."}
+        leastDestructiveRef={cancelConfirmRef}
+      />
     </>
   );
 };

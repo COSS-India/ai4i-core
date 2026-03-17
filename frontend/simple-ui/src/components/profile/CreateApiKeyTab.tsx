@@ -97,7 +97,16 @@ export default function CreateApiKeyTab({
                 bg="white"
                 isDisabled={isLoadingUsers}
               >
-                {users.map((u) => (
+                {users
+                  .slice()
+                  .sort((a, b) => {
+                    const nameA = (a.username || a.email || "").toLowerCase();
+                    const nameB = (b.username || b.email || "").toLowerCase();
+                    if (nameA < nameB) return -1;
+                    if (nameA > nameB) return 1;
+                    return 0;
+                  })
+                  .map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.username} ({u.email})
                   </option>

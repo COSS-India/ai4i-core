@@ -151,19 +151,25 @@ const TTSPage: React.FC = () => {
                     </Select>
                   )}
                   {serviceId && ttsServices && (
-                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                    <Box
+                      mt={2}
+                      p={3}
+                      bg="orange.50"
+                      borderRadius="md"
+                      border="1px"
+                      borderColor="orange.200"
+                    >
                       {(() => {
-                        const selectedService = ttsServices.find(s => s.service_id === serviceId);
+                        const selectedService = ttsServices.find((s) => s.service_id === serviceId);
                         return selectedService ? (
                           <>
                             <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service ID:</strong> {selectedService.service_id}
+                              <strong>Service Name:</strong>{" "}
+                              {selectedService.name || selectedService.service_id}
                             </Text>
                             <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
-                            </Text>
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                              <strong>Service Description:</strong>{" "}
+                              {selectedService.serviceDescription || "No description available"}
                             </Text>
                           </>
                         ) : null;
