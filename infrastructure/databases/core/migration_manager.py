@@ -327,6 +327,5 @@ class {class_name}(BaseMigration):
     
     def down(self, adapter):
         """Rollback migration"""
-        # TODO: Implement rollback logic
-        pass
+        raise NotImplementedError("Rollback not implemented for this migration")
 '''
