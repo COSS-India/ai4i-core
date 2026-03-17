@@ -522,9 +522,7 @@ class NotificationReceiverCreate(BaseModel):
         return v
     
     def model_post_init(self, __context):
-        """Validate that either email_to or rbac_role is provided, but not both"""
-        if not self.email_to and not self.rbac_role:
-            raise ValueError("Either 'email_to' or 'rbac_role' must be provided")
+        """If both email_to and rbac_role are set, reject. When neither is set (no tenant), handler defaults to rbac_role=ADMIN."""
         if self.email_to and self.rbac_role:
             raise ValueError("Cannot provide both 'email_to' and 'rbac_role'. Use one or the other.")
 
@@ -769,11 +767,11 @@ def build_promql_from_threshold(
                 f'histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{{endpoint=~"/.*inference.*"{org_filter}}}[5m]))) > {threshold_value}'
             )
         if at == "error_rate":
-            # Error rate: ratio of 5xx to total; sum by (endpoint, tenant) preserves tenant from metric
+            # Error rate: ratio of 4xx/5xx to total; sum by (endpoint, tenant) preserves tenant from metric
             thresh = (threshold_value / 100.0) if (threshold_unit or "").lower() == "percent" else threshold_value
             return (
-                f'sum by (endpoint, tenant)(rate(telemetry_obsv_http_requests_total{{status=~"[45]..", endpoint=~"/.*inference.*"{org_filter}}}[5m])) '
-                f'/ sum by (endpoint, tenant)(rate(telemetry_obsv_http_requests_total{{endpoint=~"/.*inference.*"{org_filter}}}[5m])) > {thresh}'
+                f'sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{{status_code=~"[45]..", endpoint=~"/.*inference.*"{org_filter}}}[5m])) '
+                f'/ sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{{endpoint=~"/.*inference.*"{org_filter}}}[5m])) > {thresh}'
             )
         raise HTTPException(
             status_code=400,
@@ -884,8 +882,8 @@ def build_promql_from_signal_config(
             )
         thresh = (threshold_value / 100.0) if unit in THRESHOLD_UNIT_PERCENT else threshold_value
         status_regex = config["status_regex"]
-        num = f'sum by (endpoint, tenant)(rate(telemetry_obsv_http_requests_total{{status=~"{status_regex}", endpoint=~"/.*inference.*"{org_filter}}}[5m]))'
-        den = f'sum by (endpoint, tenant)(rate(telemetry_obsv_http_requests_total{{endpoint=~"/.*inference.*"{org_filter}}}[5m]))'
+        num = f'sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{{status_code=~"{status_regex}", endpoint=~"/.*inference.*"{org_filter}}}[5m]))'
+        den = f'sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{{endpoint=~"/.*inference.*"{org_filter}}}[5m]))'
         return f"({num} / {den}) {op} {thresh}"
 
     # --- Infrastructure: CPU, Memory, Disk — threshold in % ---
@@ -1687,23 +1685,35 @@ async def create_notification_receiver(
     if data.severity not in ['critical', 'warning', 'info']:
         raise HTTPException(status_code=400, detail="severity must be 'critical', 'warning', or 'info'")
     
-    # Resolve email addresses from RBAC role if provided
+    # Resolve email addresses: tenant (auth user with is_tenant=true for that tenant) or rbac_role or explicit email_to
     email_to = data.email_to
     rbac_role = data.rbac_role
-    
-    if rbac_role:
-        # Resolve emails from role
+    tenant_val = str(data.tenant).strip() if data.tenant and str(data.tenant).strip() else None
+
+    if tenant_val:
+        # Tenant receiver: auth DB user where is_tenant=true for this tenant (from multi_tenant_db.tenants.user_id)
+        email_to = await resolve_tenant_name_to_emails(tenant_val)
+        if not email_to:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No tenant user found for tenant '{tenant_val}' (is_tenant=true in auth DB)"
+            )
+        logger.info(
+            f"Resolved tenant '{tenant_val}' to {len(email_to)} email(s) (tenant user is_tenant=true)",
+            extra={"context": {"tenant": tenant_val, "email_count": len(email_to)}},
+        )
+    elif rbac_role or (not email_to and not tenant_val):
+        # No tenant: use rbac_role (default ADMIN when neither email_to nor rbac_role provided)
+        rbac_role = rbac_role or "ADMIN"
         email_to = await get_users_by_role(rbac_role)
         logger.info(
-            f"Resolved RBAC role '{rbac_role}' to {len(email_to)} email address(es)",
-            extra={"context": {"rbac_role": rbac_role, "email_count": len(email_to)}}
+            f"Resolved RBAC role '{rbac_role}' to {len(email_to)} email address(es)" + (" (default)" if not data.rbac_role else ""),
+            extra={"context": {"rbac_role": rbac_role, "email_count": len(email_to)}},
         )
-    elif not email_to:
-        # This should not happen due to model validation, but double-check
-        raise HTTPException(
-            status_code=400,
-            detail="Either 'email_to' or 'rbac_role' must be provided"
-        )
+    else:
+        # email_to provided explicitly, use as-is
+        if not email_to:
+            raise HTTPException(status_code=400, detail="Either 'email_to' or 'rbac_role' must be provided")
     
     # Auto-generate receiver name: <severity>-<category> optionally + --alerts-A|B and/or --tenant-<name> for uniqueness
     base_name = f"{data.severity}-{data.category}"
@@ -1980,16 +1990,27 @@ async def update_notification_receiver(receiver_id: int, organization: Optional[
         # Use existing organization for the update query
         actual_organization = existing['organization']
         
-        # Handle RBAC role resolution if provided
+        # Handle tenant / RBAC resolution if provided
         email_to = data.email_to
-        rbac_role = data.rbac_role
-        
-        if rbac_role:
-            # Resolve emails from role
+        rbac_role = data.rbac_role if data.rbac_role is not None else existing.get("rbac_role")
+        tenant_for_resolution = (str(data.tenant).strip() if data.tenant and str(data.tenant).strip() else None) or (str(existing.get("tenant") or "").strip() or None)
+
+        if tenant_for_resolution:
+            email_to = await resolve_tenant_name_to_emails(tenant_for_resolution)
+            if not email_to:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No tenant user found for tenant '{tenant_for_resolution}' (is_tenant=true in auth DB)"
+                )
+            logger.info(
+                f"Resolved tenant '{tenant_for_resolution}' to {len(email_to)} email(s) for receiver update",
+                extra={"context": {"tenant": tenant_for_resolution, "email_count": len(email_to), "operation": "update_receiver"}},
+            )
+        elif rbac_role:
             email_to = await get_users_by_role(rbac_role)
             logger.info(
                 f"Resolved RBAC role '{rbac_role}' to {len(email_to)} email address(es) for receiver update",
-                extra={"context": {"rbac_role": rbac_role, "email_count": len(email_to), "operation": "update_receiver"}}
+                extra={"context": {"rbac_role": rbac_role, "email_count": len(email_to), "operation": "update_receiver"}},
             )
         elif data.email_to is None and data.rbac_role is None:
             # Neither email_to nor rbac_role provided - keep existing values

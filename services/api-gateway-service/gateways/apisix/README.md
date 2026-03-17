@@ -27,6 +27,10 @@ The same **`apisix.yaml`** is used for local (Docker Compose) and production (e.
 - **Local:** When `APISIX_UPSTREAM_SUFFIX` is empty or unset, the script defaults to `.` (trailing dot). Upstreams become e.g. `simple-ui.:3000`, `auth-service.:8081`, so the resolver does not append the host search domain and Docker DNS resolves to the correct container IPs.
 - **Production:** Set both variables in the deployment (e.g. Kubernetes env or ConfigMap) so upstreams are e.g. `simple-ui.sandbox.svc.cluster.local:3000`.
 
+## Tenant-aware metrics (Authorization header)
+
+When requests go through APISIX (not the legacy API gateway), upstream services (e.g. NMT, ASR, TTS) need the client’s **Authorization** header to extract `tenant_id` from the JWT for observability metrics. APISIX forwards all client request headers by default. For routes that use `proxy-rewrite`, we use **`headers.add`** (e.g. `X-Gateway: apisix`) so we only add headers and never overwrite or remove `Authorization`. If you add new routes or change proxy-rewrite to `headers.set`, ensure you do not overwrite or remove the `Authorization` header so tenant metrics stay correct.
+
 ## Files
 
 | File | Purpose |

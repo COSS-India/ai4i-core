@@ -1459,6 +1459,8 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - AUTH_DB_NAME=auth_db
+      # Required for tenant receivers: resolve tenant name -> tenant_id and tenant user email
+      - MULTI_TENANT_DB_NAME=multi_tenant_db
       - PROMETHEUS_URL=http://prometheus:9090
       - ALERTMANAGER_URL=http://alertmanager:9093
       - PROMETHEUS_APPLICATION_ALERTS_PATH=/etc/prometheus/rules/application-alerts.yml
