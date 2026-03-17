@@ -53,6 +53,9 @@ DB_NAME = "alerting_db"
 # Auth DB (same host/user/password, different database) - for resolving ADMIN emails for default receiver
 AUTH_DB_NAME = app_env.auth_db_name
 
+# Multi-tenant DB (same host/user/password) - for resolving tenant name -> tenant_id and tenant user email
+MULTI_TENANT_DB_NAME = (app_env.multi_tenant_db_name or os.getenv("MULTI_TENANT_DB_NAME", "multi_tenant_db")).strip() or "multi_tenant_db"
+
 PROMETHEUS_URL = app_env.prometheus_url
 ALERTMANAGER_URL = app_env.alertmanager_url
 
@@ -225,12 +228,22 @@ async def resolve_tenant_name_to_tenant_id_and_emails(tenant_name: str) -> Optio
         logger.warning(f"Failed to resolve tenant '{tenant_name}' to tenant_id/emails: {e}")
         return None
 
+
+
 async def fetch_admin_emails() -> List[str]:
     """Fetch email addresses of active users with ADMIN role from auth DB for default receiver."""
+    return await fetch_emails_by_role("ADMIN")
+
+async def fetch_emails_by_role(role_name: str) -> List[str]:
+    """Fetch email addresses of active users with the given RBAC role from auth DB."""
     if auth_db_pool is None:
         await init_auth_db_pool()
     if auth_db_pool is None:
-        return list(DEFAULT_RECEIVER_EMAILS)
+        return list(DEFAULT_RECEIVER_EMAILS) if role_name == "ADMIN" else []
+    valid_roles = ("ADMIN", "MODERATOR", "USER", "GUEST")
+    if role_name not in valid_roles:
+        logger.warning(f"Invalid role '{role_name}' for email resolution")
+        return []
     try:
         async with auth_db_pool.acquire() as conn:
             rows = await conn.fetch(
@@ -239,17 +252,20 @@ async def fetch_admin_emails() -> List[str]:
                 FROM users u
                 INNER JOIN user_roles ur ON u.id = ur.user_id
                 INNER JOIN roles r ON ur.role_id = r.id
-                WHERE r.name = 'ADMIN' AND u.is_active = true
+                WHERE r.name = $1 AND u.is_active = true AND u.email IS NOT NULL AND u.email != ''
                 ORDER BY u.email
                 """,
+                role_name,
             )
-            emails = [row['email'] for row in rows if row.get('email')]
+            emails = [row["email"] for row in rows if row.get("email")]
             if emails:
-                logger.info(f"Resolved {len(emails)} ADMIN user(s) for default receiver")
-            return emails if emails else list(DEFAULT_RECEIVER_EMAILS)
+                logger.info(f"Resolved {len(emails)} {role_name} user(s) for receivers")
+            if role_name == "ADMIN" and not emails:
+                return list(DEFAULT_RECEIVER_EMAILS)
+            return emails
     except Exception as e:
-        logger.warning(f"Could not fetch ADMIN emails from auth DB: {e}, using DEFAULT_RECEIVER_EMAILS")
-        return list(DEFAULT_RECEIVER_EMAILS)
+        logger.warning(f"Could not fetch {role_name} emails from auth DB: {e}")
+        return list(DEFAULT_RECEIVER_EMAILS) if role_name == "ADMIN" else []
 
 async def fetch_alert_definitions() -> List[Dict[str, Any]]:
     """Fetch all enabled alert definitions from database"""
@@ -474,16 +490,15 @@ def generate_alertmanager_yaml(
     routing_rules: List[Dict[str, Any]],
     default_admin_emails: Optional[List[str]] = None,
     tenant_resolution_map: Optional[Dict[str, Tuple[str, List[str]]]] = None,
+    role_emails_map: Optional[Dict[str, List[str]]] = None,
 ) -> Dict[str, Any]:
     """
     Generate Alertmanager configuration from receivers and routing rules.
-    Global SMTP config is always taken from environment variables (SMTP_*) when writing.
-    Always includes a default receiver 'default-admin' (ADMIN role, not tied to any organization).
-    Only routes whose receiver still exists in the config are included (stale routes removed).
-    When receiver has optional alert_names or tenant, uses unique receiver_name; otherwise merges by severity-category.
-    tenant_resolution_map: optional map tenant_name -> (tenant_id, [emails]) for receivers with tenant set.
+    tenant_resolution_map: tenant_name -> (tenant_id, [emails]) = auth user with is_tenant=true for that tenant.
+    role_emails_map: rbac_role -> [emails] for non-tenant receivers (default ADMIN when role not set).
     """
     tenant_resolution_map = tenant_resolution_map or {}
+    role_emails_map = role_emails_map or {}
     # Always use env for global config when generating (so SMTP is never hardcoded)
     global_config = get_global_config_from_env()
     
@@ -522,33 +537,26 @@ def generate_alertmanager_yaml(
     
     for receiver in receivers:
         receiver_name = receiver['receiver_name']
-        # When tenant is set, use tenant user emails from resolution map; fallback to email_to if none
         tenant_name = (receiver.get('tenant') or '').strip() or None
-        if tenant_name and tenant_name in tenant_resolution_map:
+
+        if tenant_name:
+            # Tenant set: use only the auth user with is_tenant=true for this tenant (tenant_resolution_map).
+            if tenant_name not in tenant_resolution_map:
+                logger.warning(f"Receiver '{receiver_name}' (tenant={tenant_name}): tenant not in resolution map, skipping")
+                continue
             _tid, tenant_emails = tenant_resolution_map[tenant_name]
             email_list = [e for e in tenant_emails if e and str(e).strip()]
             if not email_list:
-                # Fallback to email_to when tenant user has no email
-                logger.info(f"Receiver '{receiver_name}' (tenant={tenant_name}): no tenant user emails, using email_to fallback")
-                email_to = receiver.get('email_to')
-                if isinstance(email_to, str):
-                    email_list = [email_to]
-                elif isinstance(email_to, list):
-                    email_list = list(email_to) if email_to else []
-                else:
-                    email_list = list(email_to) if email_to else []
-            else:
-                logger.debug(f"Receiver '{receiver_name}': using {len(email_list)} tenant user email(s) for tenant '{tenant_name}'")
+                logger.warning(f"Receiver '{receiver_name}' (tenant={tenant_name}): no tenant user email (is_tenant=true), skipping")
+                continue
         else:
-            if tenant_name:
-                logger.warning(f"Tenant '{tenant_name}' could not be resolved for receiver '{receiver_name}'; using email_to")
-            email_to = receiver.get('email_to')
-            if isinstance(email_to, str):
-                email_list = [email_to]
-            elif isinstance(email_to, list):
-                email_list = list(email_to) if email_to else []
-            else:
-                email_list = list(email_to) if email_to else []
+            # No tenant: use all emails for rbac_role (default ADMIN) from auth DB. Ignore stored email_to.
+            effective_role = (receiver.get("rbac_role") or "").strip() or "ADMIN"
+            email_list = role_emails_map.get(effective_role, [])
+            email_list = [e for e in email_list if e and str(e).strip()]
+            if not email_list:
+                logger.warning(f"Receiver '{receiver_name}' (role={effective_role}): no emails for role, skipping")
+                continue
         
         email_configs = []
         email_subject_template = receiver.get('email_subject_template') or DEFAULT_EMAIL_SUBJECT_TEMPLATE
@@ -963,6 +971,16 @@ async def sync_configuration(blocking: bool = True) -> None:
             # Resolve ADMIN emails for default receiver (not tied to any organization)
             default_admin_emails = await fetch_admin_emails()
 
+            # Build role -> [emails] for non-tenant receivers (rbac_role default ADMIN)
+            roles_needed = set()
+            for r in receivers:
+                if not (r.get("tenant") or "").strip():
+                    roles_needed.add((r.get("rbac_role") or "").strip() or "ADMIN")
+            role_emails_map = {"ADMIN": default_admin_emails}
+            for role in roles_needed:
+                if role != "ADMIN":
+                    role_emails_map[role] = await fetch_emails_by_role(role)
+
             # Resolve tenant names to (tenant_id, emails) for receivers that have tenant set
             tenant_resolution_map = {}
             unique_tenant_names = set()
@@ -978,9 +996,9 @@ async def sync_configuration(blocking: bool = True) -> None:
                     if emails:
                         logger.info(f"Tenant '{tname}' resolved to tenant_id={tenant_id}, {len(emails)} email(s) for receiver routing")
                     else:
-                        logger.warning(f"Tenant '{tname}' resolved to tenant_id={tenant_id} but no tenant user email; receivers will use email_to fallback")
+                        logger.warning(f"Tenant '{tname}' resolved to tenant_id={tenant_id} but no tenant user email; tenant receivers will be skipped")
                 else:
-                    logger.warning(f"Could not resolve tenant '{tname}' to tenant_id/emails; routes for this tenant will use email_to fallback")
+                    logger.warning(f"Could not resolve tenant '{tname}' to tenant_id/emails; tenant receivers will be skipped")
 
             # Generate YAML configurations - separate files for application and infrastructure
             application_alerts = generate_prometheus_alerts_yaml(alert_definitions, category='application')
@@ -989,6 +1007,7 @@ async def sync_configuration(blocking: bool = True) -> None:
                 receivers, routing_rules,
                 default_admin_emails=default_admin_emails,
                 tenant_resolution_map=tenant_resolution_map,
+                role_emails_map=role_emails_map,
             )
             
             # Write YAML files - separate files for application and infrastructure alerts
