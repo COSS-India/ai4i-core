@@ -8,7 +8,6 @@ export default function Document() {
       <Head>
         {/* Meta Tags */}
         <meta charSet="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta
           name="description"
           content="AI4Inclusion Console for testing ASR, TTS, and NMT microservices"

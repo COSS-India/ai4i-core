@@ -29,7 +29,11 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             ('ADMIN', 'Administrator with full system access'),
             ('USER', 'Regular user with standard permissions'),
             ('GUEST', 'Guest user with read-only access'),
-            ('MODERATOR', 'Moderator with elevated permissions')
+            ('MODERATOR', 'Moderator with elevated permissions'),
+            # Tenant administrator for a specific tenant. Has read access to
+            # services/models, can manage API keys, and assign roles, but
+            # cannot create/update/delete models or services.
+            ('TENANT ADMIN', 'Tenant administrator with tenant-scoped management permissions'),
         ]
         role_names = [r[0] for r in roles]
         
@@ -156,9 +160,17 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             ('llm.read', 'llm', 'read'),
             ('llm.inference', 'llm', 'inference'),
 
+           ('model-management.read', 'model-management', 'read'),
+           ('model-management.inference', 'model-management', 'inference'),
+
             # Observability
             ('logs.read', 'logs', 'read'),
             ('traces.read', 'traces', 'read'),
+
+            #Multi-tenant
+            ('multi-tenant.read','multi_tenant','read'),
+            ('multi-tenant.inference','multi_tenant','inference')
+
         ]
         permission_names = [p[0] for p in permissions]
         
@@ -356,3 +368,37 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             """
         )
         print("    ✓ Assigned permissions to MODERATOR role (from seed script)")
+
+        # TENANT ADMIN: tenant-scoped management permissions.
+        # - Can read users, services, and models
+        # - Can create/read/update/delete API keys
+        # - Can assign roles (but not remove)
+        # - Cannot create/update/delete/publish/unpublish models or services
+        adapter.execute(
+            """
+            DELETE FROM role_permissions
+            WHERE role_id IN (SELECT id FROM roles WHERE name = 'TENANT ADMIN');
+            """
+        )
+        adapter.execute(
+            """
+            INSERT INTO role_permissions (role_id, permission_id)
+            SELECT r.id, p.id
+            FROM roles r
+            JOIN permissions p ON p.name IN (
+              'users.read',
+              'users.update',
+              'service.read',
+              'model.read',
+              'apiKey.create',
+              'apiKey.read',
+              'apiKey.update',
+              'apiKey.delete',
+              'roles.assign',
+              'roles.read'
+            )
+            WHERE r.name = 'TENANT ADMIN'
+            ON CONFLICT (role_id, permission_id) DO NOTHING;
+            """
+        )
+        print("    ✓ Assigned permissions to TENANT ADMIN role (from seed script)")

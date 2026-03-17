@@ -4,24 +4,29 @@ FROM python:3.11-slim as builder
 # Set working directory
 WORKDIR /app
 
-# Install build dependencies
+# Install build dependencies and upgrade pip first (helps dependency resolution)
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     curl \
     libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Copy AI4ICore libraries from monorepo
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
+COPY libs/ai4icore_env /app/libs/ai4icore_env
 
 # Copy requirements and install Python dependencies
 COPY services/telemetry-service/requirements.txt .
-RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Install AI4ICore telemetry library (editable)
+# Install grpcio first so ai4icore_telemetry's OTLP gRPC exporter resolves without conflicts
+RUN pip install --no-cache-dir --user 'grpcio>=1.63.2,<2.0.0'
+
+# Install AI4ICore libraries (editable)
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
 
 # Verify packaging is installed (for debugging)
 RUN python -c "import packaging; print(f'packaging version: {packaging.__version__}')" || (echo "ERROR: packaging not found!" && exit 1)
@@ -50,6 +55,7 @@ COPY services/telemetry-service /app
 # Create libs directory and copy library AFTER app code (to ensure it's not overwritten)
 RUN mkdir -p /app/libs
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
+COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
 
 # Verify library was copied
 RUN test -d /app/libs/ai4icore_telemetry && test -f /app/libs/ai4icore_telemetry/ai4icore_telemetry/__init__.py || (echo "ERROR: Library directory or __init__.py not found!" && ls -la /app/libs/ 2>&1 && exit 1)
@@ -67,6 +73,8 @@ ENV PYTHONUNBUFFERED=1
 
 # Install the library as app user (non-editable, copies files to site-packages)
 # This ensures the library files are actually in site-packages, not just linked
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_env || \
+    (echo "ERROR: Failed to install ai4icore_env!" && exit 1)
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_telemetry || \
     (echo "ERROR: Failed to install ai4icore_telemetry!" && exit 1)
 

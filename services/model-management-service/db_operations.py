@@ -4,7 +4,6 @@ from sqlalchemy import select, delete, update, func as sql_func, and_, case, des
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 from typing import Dict, Any, List, Optional
-import os
 import hashlib
 
 from models.db_models import Model , Service, VersionStatus, Experiment, ExperimentVariant, ExperimentMetrics, ExperimentStatus
@@ -21,13 +20,14 @@ from models.type_enum import TaskTypeEnum
 
 from db_connection import AppDatabase
 from uuid import UUID, uuid4
+from ai4icore_env import app_env
 from logger import logger
 import json
 import time
 from datetime import datetime, date, timezone
 
-MAX_ACTIVE_VERSIONS_PER_MODEL = int(os.getenv("MAX_ACTIVE_VERSIONS_PER_MODEL", "5"))
-ALLOW_DEPRECATED_MODEL_CHANGES = os.getenv("ALLOW_DEPRECATED_MODEL_CHANGES", "true").lower() == "true"
+MAX_ACTIVE_VERSIONS_PER_MODEL = app_env.max_active_versions_per_model
+ALLOW_DEPRECATED_MODEL_CHANGES = app_env.allow_deprecated_model_changes
 
 
 def generate_model_id(model_name: str, version: str) -> str:
@@ -1108,7 +1108,7 @@ async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
                             new_cache["apiKey"] = value
                         elif key == "modelId":
                             new_cache["modelId"] = value
-                        elif key in cache_fields:
+                        elif key in new_cache:
                             new_cache[key] = value
             except Exception as e:
                 logger.exception(f"Error fetching service from DB for cache: {e}")

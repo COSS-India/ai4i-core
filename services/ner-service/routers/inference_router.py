@@ -13,17 +13,22 @@ from opentelemetry.trace import Status, StatusCode
 from ai4icore_logging import get_correlation_id
 
 from models.ner_request import NerInferenceRequest
-from models.ner_response import NerInferenceResponse
+from models.ner_response import NerInferenceResponse, NerPrediction, NerTokenPrediction
 from services.ner_service import NerService, TritonInferenceError
 from repositories.ner_repository import NERRepository
 from utils.triton_client import TritonClient
 from middleware.auth_provider import AuthProvider
-from middleware.tenant_db_dependency import get_tenant_db_session
-from middleware.tenant_context import try_get_tenant_context
+from ai4icore_multi_tenant import (
+    get_tenant_db_session_factory,
+    try_get_tenant_context,
+    enforce_tenant_and_service_checks,
+)
+
+get_tenant_db_session = get_tenant_db_session_factory()
 from sqlalchemy.ext.asyncio import AsyncSession
-import os
 import httpx
-from middleware.exceptions import ErrorDetail
+from ai4icore_env import app_env
+from ai4icore_constants.exceptions import ErrorDetail
 from fastapi import Depends
 
 logger = logging.getLogger(__name__)
@@ -36,126 +41,22 @@ inference_router = APIRouter(
     dependencies=[Depends(AuthProvider)]  # Enforce auth and permission checks on all routes
 )
 
-API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
-
-
-async def _enforce_tenant_and_service_checks(http_request: Request, service_name: str = "ner"):
-    """
-    Enforce tenant subscription, tenant status (ACTIVE) and global service active flag.
-    Execution order:
-      1) If tenant context exists, ensure tenant subscribes to this service
-      2) Ensure the service is globally active via /list/services
-      3) If tenant context exists, ensure tenant.status == ACTIVE.
-    """
-    auth_header = http_request.headers.get("Authorization") or http_request.headers.get("authorization")
-
-    # Build headers to forward
-    headers = {}
-    if auth_header:
-        headers["Authorization"] = auth_header
-    x_api_key = http_request.headers.get("X-API-Key") or http_request.headers.get("x-api-key")
-    if x_api_key:
-        headers["X-API-Key"] = x_api_key
-    x_auth_source = http_request.headers.get("X-Auth-Source") or http_request.headers.get("x-auth-source")
-    if x_auth_source:
-        headers["X-Auth-Source"] = x_auth_source
-
-    # Determine tenant context in a best-effort way.
-    tenant_context = getattr(http_request.state, "tenant_context", None)
-    jwt_payload = getattr(http_request.state, "jwt_payload", None)
-    tenant_id_from_jwt = jwt_payload.get("tenant_id") if jwt_payload else None
-
-    tenant_data = tenant_context if tenant_context else None
-    tenant_id = tenant_context.get("tenant_id") if tenant_context else (tenant_id_from_jwt or None)
-
-    # If still no tenant info, attempt best-effort resolution (returns None for normal users)
-    if not tenant_id:
-        try:
-            resolved = await try_get_tenant_context(http_request)
-            if resolved:
-                tenant_context = resolved
-                tenant_id = tenant_context.get("tenant_id")
-                tenant_data = tenant_context
-            else:
-                tenant_id = None
-        except Exception as e:
-            logger.debug(f"try_get_tenant_context discovery failed: {e}")
-    
-    # tenant_data may already be populated from tenant_context; only call API gateway if we still need tenant info
-    if tenant_id:
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/admin/view/tenant", params={"tenant_id": tenant_id}, headers=headers)
-                if resp.status_code == 200:
-                    tenant_data = resp.json()
-                    subscriptions = [str(s).lower() for s in (tenant_data.get("subscriptions") or [])]
-                    accepted_names = {service_name.lower(), service_name.replace("-", "_").lower(), service_name.replace("_", "-").lower()}
-                    if not any(name in subscriptions for name in accepted_names):
-                        raise HTTPException(status_code=403, detail={"code": "SERVICE_NOT_SUBSCRIBED", "message": f"Tenant '{tenant_id}' is not subscribed to '{service_name}'"})
-                elif resp.status_code == 404:
-                    raise HTTPException(status_code=403, detail={"code": "TENANT_NOT_FOUND", "message": "Tenant not found"})
-                else:
-                    raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant information"})
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning(f"Failed to retrieve tenant info for tenant_id={tenant_id}: {e}")
-            raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant information"})
-
-    # Next, ensure the service is globally active
-    # Multi-tenant endpoints only require Bearer token (not API key)
-    # Create headers with only Authorization for multi-tenant service check
-    service_check_headers = {}
-    if headers and (headers.get("Authorization") or headers.get("authorization")):
-        service_check_headers["Authorization"] = headers.get("Authorization") or headers.get("authorization")
-    # Don't forward X-API-Key or X-Auth-Source for multi-tenant endpoints
-    
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            svc_resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/list/services", headers=service_check_headers if service_check_headers else None)
-            if svc_resp.status_code == 200:
-                services = svc_resp.json().get("services", [])
-                accepted_names = {service_name.lower(), service_name.replace("-", "_").lower(), service_name.replace("_", "-").lower()}
-                svc_entry = next((s for s in services if str(s.get("service_name")).lower() in accepted_names), None)
-                if not svc_entry or not svc_entry.get("is_active", False):
-                    raise HTTPException(status_code=503, detail=ErrorDetail(code="SERVICE_UNAVAILABLE", message="NER service is not active at the moment. Please contact your administrator").dict())
-            else:
-                raise HTTPException(status_code=503, detail=ErrorDetail(code="SERVICE_UNAVAILABLE", message="Cannot detect service availability. Please contact your administrator").dict())
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=503, detail=ErrorDetail(code="SERVICE_UNAVAILABLE", message="NER service is temporarily unavailable. Please try again in a few minutes.").dict())
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.warning(f"Failed to verify service active state for '{service_name}': {e}")
-        raise HTTPException(status_code=503, detail=ErrorDetail(code="SERVICE_UNAVAILABLE", message="NER service is temporarily unavailable. Please try again in a few minutes.").dict())
-
-    # Finally, if tenant context present, enforce tenant status (must be ACTIVE)
-    if tenant_id:
-        try:
-            if not tenant_data:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/admin/view/tenant", params={"tenant_id": tenant_id}, headers=headers)
-                    if resp.status_code == 200:
-                        tenant_data = resp.json()
-                    elif resp.status_code == 404:
-                        raise HTTPException(status_code=403, detail={"code": "TENANT_NOT_FOUND", "message": "Tenant not found"})
-                    else:
-                        raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant status"})
-
-            status_val = (tenant_data.get("status") or "").upper()
-            if status_val != "ACTIVE":
-                raise HTTPException(status_code=403, detail={"code": "TENANT_INACTIVE", "message": f"Tenant status is {status_val}. Access denied."})
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning(f"Failed to verify tenant status for tenant_id={tenant_id}: {e}")
-            raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant status"})
+#Tenant routing and service checks
+API_GATEWAY_URL = app_env.api_gateway_url
 
 
 async def enforce_ner_checks(request: Request):
     """FastAPI dependency that enforces tenant and service checks for NER before other dependencies run."""
     # the service name is coming from multitenant SubscriptionType enum
-    await _enforce_tenant_and_service_checks(request, service_name="ner")
+    await enforce_tenant_and_service_checks(
+        request,
+        service_name="ner",
+        service_unavailable_code="SERVICE_UNAVAILABLE",
+        service_inactive_message="NER service is not active at the moment. Please contact your administrator",
+        cannot_detect_message="Cannot detect NER service availability. Please contact your administrator",
+        timeout_message="NER service is temporarily unavailable. Please try again in a few minutes.",
+        generic_unavailable_message="NER service is temporarily unavailable. Please try again in a few minutes.",
+    )
 
 # Add as a router-level dependency so it runs before path-operation dependencies like get_ner_service
 inference_router.dependencies.append(Depends(enforce_ner_checks))
@@ -227,7 +128,7 @@ async def get_ner_service(
     "/inference",
     response_model=NerInferenceResponse,
     summary="Perform batch NER inference",
-    description="Run NER on one or more text inputs using Dhruva NER via Triton.",
+    description="Run NER on one or more text inputs via Triton.",
     dependencies=[Depends(AuthProvider)],  # Explicitly enforce auth at endpoint level (in addition to router-level)
 )
 async def run_inference(
@@ -357,6 +258,40 @@ async def run_inference(
                 detail=str(exc),
             ) from exc
         except TritonInferenceError as exc:
+            try:
+                from ai4icore_constants.static_fallback_responses import (
+                    is_static_fallback_enabled,
+                    get_ner_static_response,
+                )
+            except Exception:
+                # If the shared constants package is not available in this
+                # runtime (e.g. not copied into the image or import is
+                # shadowed), gracefully disable static fallback rather than
+                # failing the entire request with an import error.
+                def is_static_fallback_enabled() -> bool:  # type: ignore[no-redef]
+                    return False
+
+                get_ner_static_response = None  # type: ignore[assignment]
+
+            if is_static_fallback_enabled():
+                input_texts = [inp.source for inp in request_body.input]
+                static_data = (
+                    get_ner_static_response(input_texts)
+                    if get_ner_static_response is not None
+                    else None
+                )
+                if static_data is None:
+                    raise
+                output = []
+                for item in static_data["output"]:
+                    predictions = [
+                        NerTokenPrediction(**p) for p in item["nerPrediction"]
+                    ]
+                    output.append(NerPrediction(source=item["source"], nerPrediction=predictions))
+                span.add_event("ner.inference.static_fallback", {"reason": "Triton unreachable"})
+                span.set_status(Status(StatusCode.OK))
+                logger.info("Returning static NER fallback (Triton unreachable)")
+                return NerInferenceResponse(output=output)
             service_id = getattr(http_request.state, "service_id", None)
             triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
             model_name = getattr(http_request.state, "triton_model_name", None)
@@ -449,7 +384,10 @@ async def _run_ner_inference_impl(
     ner_service: NerService,
 ) -> NerInferenceResponse:
     """Fallback implementation when tracing is not available."""
-    # Extract auth context from request.state (if middleware is configured)
+    from ai4icore_constants.static_fallback_responses import (
+        is_static_fallback_enabled,
+        get_ner_static_response,
+    )
     user_id = getattr(http_request.state, "user_id", None)
     api_key_id = getattr(http_request.state, "api_key_id", None)
     session_id = getattr(http_request.state, "session_id", None)
@@ -463,14 +401,30 @@ async def _run_ner_inference_impl(
         session_id,
     )
 
-    response = await ner_service.run_inference(
-        request_body,
-        user_id=user_id,
-        api_key_id=api_key_id,
-        session_id=session_id
-    )
-    logger.info("NER inference completed successfully")
-    return response
+    try:
+        response = await ner_service.run_inference(
+            request_body,
+            user_id=user_id,
+            api_key_id=api_key_id,
+            session_id=session_id
+        )
+        logger.info("NER inference completed successfully")
+        return response
+    except TritonInferenceError as exc:
+        if is_static_fallback_enabled():
+            input_texts = [inp.source for inp in request_body.input]
+            static_data = get_ner_static_response(input_texts)
+            output = []
+            for item in static_data["output"]:
+                predictions = [NerTokenPrediction(**p) for p in item["nerPrediction"]]
+                output.append(NerPrediction(source=item["source"], nerPrediction=predictions))
+            logger.info("Returning static NER fallback (Triton unreachable)")
+            return NerInferenceResponse(output=output)
+        logger.error("NER Triton inference failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
 
 
 

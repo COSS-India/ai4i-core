@@ -5,13 +5,14 @@ with caching support for efficient and scalable operations
 """
 
 import logging
-import os
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
+from urllib.parse import quote
 import json
 
 import httpx
 from pydantic import BaseModel
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +55,7 @@ class ModelManagementClient:
             cache_ttl_seconds: Cache TTL in seconds
             timeout: Request timeout in seconds
         """
-        self.base_url = base_url or os.getenv(
-            "MODEL_MANAGEMENT_SERVICE_URL",
-            "http://model-management-service:8091"
-        )
+        self.base_url = base_url or app_env.model_management_service_url
         # Ensure base_url doesn't end with /
         self.base_url = self.base_url.rstrip("/")
         self.api_key = api_key
@@ -337,7 +335,9 @@ class ModelManagementClient:
         # Fetch from API
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/api/v1/model-management/services/{service_id}"
+            # Encode service_id so IDs containing '/' (e.g. "ai4bharat/indictrans-v2-all-gpu") are one path segment
+            encoded_service_id = quote(service_id, safe="")
+            url = f"{self.base_url}/api/v1/model-management/services/{encoded_service_id}"
             headers = self._get_headers(auth_headers)
             payload = {"serviceId": service_id}
             

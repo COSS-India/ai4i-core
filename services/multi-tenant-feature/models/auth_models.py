@@ -3,7 +3,7 @@ Auth Models
 SQLAlchemy ORM models for authentication-related database tables
 """
 
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, func
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, func, PrimaryKeyConstraint
 from sqlalchemy.orm import relationship
 from db_connection import AuthDBBase
 
@@ -25,17 +25,6 @@ class UserDB(AuthDBBase):
     # Relationships
     api_keys = relationship("ApiKeyDB", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("SessionDB", back_populates="user", cascade="all, delete-orphan")
-    
-    # Compatibility property for code that uses 'password_hash'
-    @property
-    def password_hash(self):
-        """Get password_hash (alias for hashed_password)"""
-        return self.hashed_password
-    
-    @password_hash.setter
-    def password_hash(self, value):
-        """Set password_hash (alias for hashed_password)"""
-        self.hashed_password = value
 
 
 class ApiKeyDB(AuthDBBase):
@@ -54,27 +43,6 @@ class ApiKeyDB(AuthDBBase):
     
     # Relationships
     user = relationship("UserDB", back_populates="api_keys")
-    
-    # Compatibility properties for code that uses 'name' and 'last_used_at'
-    @property
-    def name(self):
-        """Get name (alias for key_name)"""
-        return self.key_name
-    
-    @name.setter
-    def name(self, value):
-        """Set name (alias for key_name)"""
-        self.key_name = value
-    
-    @property
-    def last_used_at(self):
-        """Get last_used_at (alias for last_used)"""
-        return self.last_used
-    
-    @last_used_at.setter
-    def last_used_at(self, value):
-        """Set last_used_at (alias for last_used)"""
-        self.last_used = value
 
 
 class SessionDB(AuthDBBase):
@@ -91,3 +59,34 @@ class SessionDB(AuthDBBase):
     
     # Relationships
     user = relationship("UserDB", back_populates="sessions")
+
+
+class Role(AuthDBBase):
+    """Role database model for RBAC"""
+    __tablename__ = "roles"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, index=True, nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    user_roles = relationship("UserRole", back_populates="role", cascade="all, delete-orphan")
+
+
+class UserRole(AuthDBBase):
+    """User-Role mapping for RBAC"""
+    __tablename__ = "user_roles"
+    
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, index=True)
+    assigned_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Composite primary key
+    __table_args__ = (
+        PrimaryKeyConstraint("user_id", "role_id"),
+    )
+    
+    # Relationships
+    user = relationship("UserDB")
+    role = relationship("Role", back_populates="user_roles")

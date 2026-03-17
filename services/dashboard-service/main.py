@@ -1,9 +1,9 @@
 """
 Dashboard Service - Visualization and reporting
 """
-import os
 import asyncio
 import logging
+from ai4icore_env import app_env
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,18 +48,12 @@ async def startup_event():
     
     try:
         # Initialize Redis connection
-        redis_client = redis.from_url(
-            f"redis://:{os.getenv('REDIS_PASSWORD', 'redis_secure_password_2024')}@"
-            f"{os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', '6379')}"
-        )
+        redis_client = redis.from_url(app_env.get_redis_url())
         await redis_client.ping()
         logger.info("Connected to Redis")
         
         # Initialize PostgreSQL connection
-        database_url = os.getenv(
-            'DATABASE_URL', 
-            'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/dashboard_db'
-        )
+        database_url = app_env.get_database_url()
         db_engine = create_async_engine(
             database_url,
             pool_size=10,
@@ -74,9 +68,9 @@ async def startup_event():
         logger.info("Connected to PostgreSQL")
         
         # Initialize InfluxDB client
-        influx_url = os.getenv('INFLUXDB_URL', 'http://influxdb:8086')
-        influx_token = os.getenv('INFLUXDB_TOKEN', 'dhruva-influx-token-2024')
-        influx_org = os.getenv('INFLUXDB_ORG', 'dhruva-org')
+        influx_url = app_env.influxdb_url
+        influx_token = app_env.influxdb_token
+        influx_org = app_env.influxdb_org
         
         influx_client = InfluxDBClient(
             url=influx_url,
@@ -122,7 +116,7 @@ async def root():
         "version": "1.0.0",
         "status": "running",
         "description": "Visualization and reporting for microservices",
-        "streamlit_url": f"http://localhost:{os.getenv('STREAMLIT_PORT', '8501')}"
+        "streamlit_url": f"http://localhost:{app_env.streamlit_port}"
     }
 
 @app.get("/health")

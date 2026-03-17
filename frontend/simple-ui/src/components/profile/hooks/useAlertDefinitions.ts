@@ -8,36 +8,7 @@ import type {
   AlertAnnotation,
 } from "../../../types/alerting";
 
-const DEFAULT_THRESHOLD_UNIT = "percentage";
-
-/** Map API alert_type (label or value) to form dropdown value */
-const ALERT_TYPE_FORM_VALUES: Record<string, { value: string; label: string }[]> = {
-  application: [
-    { value: "latency", label: "Latency" },
-    { value: "error_rate", label: "Error Rate" },
-  ],
-  infrastructure: [
-    { value: "CPU", label: "CPU" },
-    { value: "Memory", label: "Memory" },
-    { value: "Disk", label: "Disk" },
-  ],
-};
-
-function getAlertTypeFormValue(category: string, apiAlertType: string | null | undefined): string | null {
-  if (apiAlertType == null || apiAlertType === "") return null;
-  const types = ALERT_TYPE_FORM_VALUES[category] ?? ALERT_TYPE_FORM_VALUES.application;
-  const found = types.find(
-    (t) => t.value === apiAlertType || t.label === apiAlertType || t.value.toLowerCase() === apiAlertType.toLowerCase()
-  );
-  return found ? found.value : apiAlertType;
-}
-
-function getThresholdUnitFormValue(apiUnit: string | null | undefined): string {
-  const u = (apiUnit ?? "").trim().toLowerCase();
-  if (u === "seconds" || u === "percentage") return u;
-  if (u === "percent") return "percentage";
-  return DEFAULT_THRESHOLD_UNIT;
-}
+const DEFAULT_THRESHOLD_UNIT = "%"; // overridden to "ms" when signal is latency
 
 /** Allowed for_duration per evaluation_interval (for_duration must be >= eval interval). */
 const FOR_DURATION_BY_EVAL: Record<string, string[]> = {
@@ -55,14 +26,19 @@ function normalizeForDuration(evalInterval: string | null | undefined, forDurati
 
 const EMPTY_CREATE_FORM: AlertDefinitionCreate = {
   name: "",
-  promql_expr: "",
+  description: null,
   category: "application",
-  severity: "warning",
+  severity: "",
   urgency: "medium",
-  alert_type: null,
-  scope: DEFAULT_THRESHOLD_UNIT,
+  sub_category: null,
+  signal: null,
+  signal_metric: null,
+  condition_operator: null,
+  threshold_value: null,
+  threshold_unit: undefined,
+  service: [],
   evaluation_interval: "30s",
-  for_duration: "5m",
+  for_duration: "1m",
   enabled: true,
   annotations: [],
 };
@@ -151,20 +127,33 @@ export function useAlertDefinitions() {
     (form: AlertDefinitionCreate): Record<string, string> => {
       const errors: Record<string, string> = {};
       const nameTrimmed = (form.name ?? "").trim();
-      if (!nameTrimmed) errors.name = "Name is required";
+      if (!nameTrimmed) errors.name = "Alert name is required";
       const category = (form.category ?? "").trim();
       if (!category) errors.category = "Category is required";
       const severity = (form.severity ?? "").trim();
       if (!severity) errors.severity = "Severity is required";
-      const alertType = (form.alert_type ?? "").trim();
-      if (!alertType) errors.alert_type = "Alert type is required";
-      const thresholdStr = (form.promql_expr ?? "").toString().trim();
-      if (!thresholdStr) {
+      const subCategory = (form.sub_category ?? "").trim();
+      if (!subCategory) errors.sub_category = "Subcategory is required";
+      const signal = (form.signal ?? "").trim();
+      if (!signal) errors.signal = "Signal is required";
+      const signalMetric = (form.signal_metric ?? "").trim();
+      if (!signalMetric) errors.signal_metric = "Signal metric is required";
+      const conditionOp = (form.condition_operator ?? "").trim();
+      if (!conditionOp) errors.condition_operator = "Condition is required";
+      const thresholdVal = form.threshold_value;
+      if (thresholdVal == null || (typeof thresholdVal === "number" && Number.isNaN(thresholdVal))) {
         errors.threshold_value = "Threshold value is required";
-      } else {
-        const num = Number(thresholdStr);
-        if (Number.isNaN(num)) errors.threshold_value = "Enter a valid number";
-        else if (num < 0) errors.threshold_value = "Must be 0 or greater";
+      } else if (typeof thresholdVal === "number" && thresholdVal < 0) {
+        errors.threshold_value = "Must be 0 or greater";
+      }
+      const evalInterval = (form.evaluation_interval ?? "").trim();
+      if (!evalInterval) errors.evaluation_interval = "Evaluation interval is required";
+      const forDuration = (form.for_duration ?? "").trim();
+      if (!forDuration) errors.for_duration = "For duration is required";
+      // Infrastructure always targets all services; only validate service for application category
+      if (form.category !== "infrastructure") {
+        const serviceList = form.service ?? [];
+        if (serviceList.length === 0) errors.service = "Select at least one target";
       }
       return errors;
     },
@@ -186,29 +175,46 @@ export function useAlertDefinitions() {
       return;
     }
 
-    const thresholdValue = Number(createForm.promql_expr);
+    const thresholdValue =
+      typeof createForm.threshold_value === "number"
+        ? createForm.threshold_value
+        : Number(createForm.threshold_value);
+    if (Number.isNaN(thresholdValue)) {
+      setCreateErrors({ threshold_value: "Enter a valid number" });
+      return;
+    }
+
     setIsCreating(true);
     try {
-      const scope = createForm.scope;
-      const thresholdUnit =
-        typeof scope === "string" && scope.trim() !== ""
-          ? scope.trim()
-          : DEFAULT_THRESHOLD_UNIT;
+      const serviceList = createForm.service ?? [];
+      // Infrastructure always monitors all services — send empty array (backend treats as all)
+      const isInfra = (createForm.category ?? "application") === "infrastructure";
+      const hasAll = serviceList.includes("all");
+      const servicePayload = isInfra || hasAll || serviceList.length === 0
+        ? []
+        : serviceList.filter((s) => s !== "all");
 
-      const payload = {
-        name: createForm.name,
-        description: createForm.description,
-        category: createForm.category,
+      const payload: AlertDefinitionCreate = {
+        name: createForm.name.trim(),
+        description: createForm.description?.trim() || null,
+        category: createForm.category ?? "application",
         severity: createForm.severity,
-        urgency: createForm.urgency,
-        alert_type: createForm.alert_type,
-        evaluation_interval: createForm.evaluation_interval,
-        for_duration: createForm.for_duration,
+        urgency: createForm.urgency ?? "medium",
+        sub_category: createForm.sub_category ?? null,
+        signal: createForm.signal ?? null,
+        signal_metric: createForm.signal_metric ?? null,
+        condition_operator: createForm.condition_operator ?? null,
         threshold_value: thresholdValue,
-        threshold_unit: thresholdUnit,
+        threshold_unit: createForm.signal === "latency"
+          ? (createForm.threshold_unit ?? "ms").trim()
+          : "%",
+        service: servicePayload.length > 0 ? servicePayload : undefined,
+        evaluation_interval: createForm.evaluation_interval ?? "30s",
+        for_duration: createForm.for_duration ?? "1m",
         enabled: createForm.enabled !== false,
+        annotations: createForm.annotations?.length ? createForm.annotations : undefined,
       };
-      await alertingService.createDefinition(payload as any);
+      await alertingService.createDefinition(payload);
       toast({
         title: "Alert Definition Created",
         status: "success",
@@ -245,23 +251,20 @@ export function useAlertDefinitions() {
   const openUpdate = (item: AlertDefinition) => {
     setUpdateItem(item);
     const category = item.category ?? "application";
-    const thresholdValue =
-      item.threshold_value != null && item.threshold_value !== undefined && !Number.isNaN(Number(item.threshold_value))
-        ? String(item.threshold_value)
-        : (item.promql_expr ?? "");
-    const scope = getThresholdUnitFormValue(item.threshold_unit ?? item.scope);
-    const alertType = getAlertTypeFormValue(category, item.alert_type);
-
     const evalInterval = item.evaluation_interval ?? "30s";
     const forDuration = normalizeForDuration(evalInterval, item.for_duration ?? "5m");
     setUpdateForm({
       description: item.description ?? "",
-      promql_expr: thresholdValue,
       category,
       severity: item.severity ?? "warning",
       urgency: item.urgency ?? "medium",
-      alert_type: alertType,
-      scope,
+      sub_category: item.sub_category ?? undefined,
+      signal: item.signal ?? undefined,
+      signal_metric: item.signal_metric ?? undefined,
+      condition_operator: item.condition_operator ?? undefined,
+      threshold_value: item.threshold_value ?? undefined,
+      threshold_unit: item.threshold_unit ?? undefined,
+      service: item.service ?? undefined,
       evaluation_interval: evalInterval,
       for_duration: forDuration,
       enabled: item.enabled,
@@ -279,27 +282,27 @@ export function useAlertDefinitions() {
     if (!updateItem) return;
     setIsUpdating(true);
     try {
-      const payload: Record<string, unknown> = {};
+      const payload: AlertDefinitionUpdate = {};
       if (updateForm.description !== undefined) payload.description = updateForm.description;
       if (updateForm.category !== undefined) payload.category = updateForm.category;
       if (updateForm.severity !== undefined) payload.severity = updateForm.severity;
       if (updateForm.urgency !== undefined) payload.urgency = updateForm.urgency;
-      if (updateForm.alert_type !== undefined) payload.alert_type = updateForm.alert_type;
+      if (updateForm.sub_category !== undefined) payload.sub_category = updateForm.sub_category;
+      if (updateForm.signal !== undefined) payload.signal = updateForm.signal;
+      if (updateForm.signal_metric !== undefined) payload.signal_metric = updateForm.signal_metric;
+      if (updateForm.condition_operator !== undefined) payload.condition_operator = updateForm.condition_operator;
+      if (updateForm.threshold_value !== undefined) payload.threshold_value = updateForm.threshold_value;
+      if (updateForm.threshold_unit !== undefined) payload.threshold_unit = updateForm.threshold_unit;
+      const svc = updateForm.service ?? [];
+      if (updateForm.service !== undefined) {
+        const list = svc.filter((s) => s !== "all");
+        payload.service = list.length === 0 || svc.includes("all") ? [] : list;
+      }
       if (updateForm.evaluation_interval !== undefined) payload.evaluation_interval = updateForm.evaluation_interval;
       if (updateForm.for_duration !== undefined) payload.for_duration = updateForm.for_duration;
       if (updateForm.enabled !== undefined) payload.enabled = updateForm.enabled;
 
-      if (updateForm.promql_expr !== undefined) {
-        const thresholdValue = Number(updateForm.promql_expr);
-        if (!Number.isNaN(thresholdValue)) {
-          payload.threshold_value = thresholdValue;
-        }
-      }
-      if (updateForm.scope !== undefined) {
-        payload.threshold_unit = updateForm.scope;
-      }
-
-      await alertingService.updateDefinition(updateItem.id, payload as any);
+      await alertingService.updateDefinition(updateItem.id, payload);
       toast({
         title: "Alert Definition Updated",
         status: "success",

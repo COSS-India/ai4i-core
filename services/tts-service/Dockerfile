@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     curl \
     libpq-dev \
+    libffi-dev \
     libsndfile1-dev \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
@@ -24,17 +25,27 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Copy AI4ICore plugins from monorepo
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
-# Copy constants folder
-COPY services/constants /app/services/constants
+# Copy shared constants lib
+COPY libs/ai4icore_constants /app/libs/ai4icore_constants
+COPY libs/ai4icore_env /app/libs/ai4icore_env
+COPY libs/ai4icore_auth /app/libs/ai4icore_auth
+
+# Install grpcio first so ai4icore_telemetry's OTLP gRPC exporter resolves without conflicts
+RUN pip install --no-cache-dir --user 'grpcio>=1.63.2,<2.0.0'
 
 # Install AI4ICore plugins
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_multi_tenant
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_constants
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
 
 # Verify packaging is installed (for debugging)
 RUN python -c "import packaging; print(f'packaging version: {packaging.__version__}')" || (echo "ERROR: packaging not found!" && exit 1)
@@ -72,12 +83,15 @@ RUN pip install --no-cache-dir packaging>=21.0 && \
 
 # Copy AI4ICore plugins into runtime image
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY --from=builder /app/libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
-# Copy constants folder
-COPY services/constants /app/services/constants
+# Copy shared constants lib
+COPY --from=builder /app/libs/ai4icore_constants /app/libs/ai4icore_constants
+COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
+COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
 
 # Copy app code
 COPY services/tts-service /app

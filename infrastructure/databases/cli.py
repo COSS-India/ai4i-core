@@ -19,6 +19,10 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+from dotenv import load_dotenv
+load_dotenv(project_root / ".env")
+load_dotenv(project_root / "infrastructure" / "databases" / "migrations" / "postgres" / "alembic" / ".env", override=True)
+
 from infrastructure.databases.core.migration_manager import MigrationManager
 from infrastructure.databases.config import MigrationConfig
 
@@ -36,7 +40,7 @@ class MigrationCLI:
         'dashboard_db',
         'model_management_db', 
         'multi_tenant_db',
-        'dhruva_platform'
+        'ai4i_platform'
     ]
     
     # External service databases (managed by third-party services, not our migration framework)
@@ -337,7 +341,7 @@ Examples:
         # Databases that have seeders
         postgres_dbs_with_seeders = [
             'auth_db', 'config_db', 'alerting_db',
-            'dashboard_db', 'model_management_db', 'multi_tenant_db', 'dhruva_platform'
+            'dashboard_db', 'model_management_db', 'multi_tenant_db', 'ai4i_platform'
         ]
         
         # Seed PostgreSQL databases
@@ -348,8 +352,8 @@ Examples:
                 manager = self._get_manager('postgres', db)
                 manager.seed()
             except Exception as e:
-                print(f"  ⚠️  No seeders or failed: {db}")
-        
+                print(f"  ⚠️  Failed seeding {db}: {e}")
+
         # Seed other databases
         print("\n📊 Other Databases:")
         for db in ['redis', 'influxdb']:
@@ -358,7 +362,7 @@ Examples:
                 manager = self._get_manager(db)
                 manager.seed()
             except Exception as e:
-                print(f"  ⚠️  No seeders or failed: {db}")
+                print(f"  ⚠️  Failed seeding {db}: {e}")
         
         print("\n" + "="*80)
         print("✅ Seeding completed!")

@@ -17,9 +17,11 @@ import {
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
+import AudioInputPreview from "../components/common/AudioInputPreview";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performSpeakerDiarizationInference, listSpeakerDiarizationServices } from "../services/speakerDiarizationService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { extractErrorInfo } from "../utils/errorHandler";
@@ -42,15 +44,6 @@ const SpeakerDiarizationPage: React.FC = () => {
     queryFn: listSpeakerDiarizationServices,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
-
-  // Auto-select first available Speaker Diarization service when list loads
-  useEffect(() => {
-    if (!speakerDiarizationServices || speakerDiarizationServices.length === 0) return;
-    if (!serviceId) {
-      // If no service selected, select first available
-      setServiceId(speakerDiarizationServices[0].service_id);
-    }
-  }, [speakerDiarizationServices, serviceId]);
 
   const {
     isRecording,
@@ -170,10 +163,10 @@ const SpeakerDiarizationPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Speaker Diarization
+              {getServiceTitle("speaker-diarization")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Separate conversations into segments based on who is speaking. Identify different speakers in audio recordings and segment the audio accordingly.
+              {getServiceDescription("speaker-diarization")}
             </Text>
           </Box>
 
@@ -185,12 +178,13 @@ const SpeakerDiarizationPage: React.FC = () => {
           mx="auto"
         >
             {/* Configuration Panel */}
-          <GridItem>
-            <VStack spacing={6} align="stretch">
+          <GridItem pt={0} mt={0} alignSelf="flex-start">
+            <VStack spacing={6} align="stretch" pt={0} mt={0}>
               {/* Service Selection */}
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  Speaker Diarization Service:
+                  Speaker Diarization Service{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 {servicesLoading ? (
                   <HStack spacing={2} p={2}>
@@ -201,7 +195,7 @@ const SpeakerDiarizationPage: React.FC = () => {
                   <Select
                     value={serviceId}
                     onChange={(e) => setServiceId(e.target.value)}
-                    placeholder="Select a Speaker Diarization service"
+                    placeholder="Select"
                     disabled={fetching}
                     size="md"
                     borderColor="gray.300"
@@ -218,19 +212,27 @@ const SpeakerDiarizationPage: React.FC = () => {
                   </Select>
                 )}
                 {serviceId && speakerDiarizationServices && (
-                  <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                  <Box
+                    mt={2}
+                    p={3}
+                    bg="orange.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="orange.200"
+                  >
                     {(() => {
-                      const selectedService = speakerDiarizationServices.find(s => s.service_id === serviceId);
+                      const selectedService = speakerDiarizationServices.find(
+                        (s) => s.service_id === serviceId
+                      );
                       return selectedService ? (
                         <>
                           <Text fontSize="sm" color="gray.700" mb={1}>
-                            <strong>Service ID:</strong> {selectedService.service_id}
+                            <strong>Service Name:</strong>{" "}
+                            {selectedService.name || selectedService.service_id}
                           </Text>
                           <Text fontSize="sm" color="gray.700" mb={1}>
-                            <strong>Name:</strong> {selectedService.name || selectedService.service_id}
-                          </Text>
-                          <Text fontSize="sm" color="gray.700" mb={1}>
-                            <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                            <strong>Service Description:</strong>{" "}
+                            {selectedService.serviceDescription || "No description available"}
                           </Text>
                         </>
                       ) : null;
@@ -241,7 +243,8 @@ const SpeakerDiarizationPage: React.FC = () => {
 
               <Box>
                 <Text mb={4} fontSize="sm" fontWeight="semibold">
-                  Audio Input:
+                  Audio Input{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </Text>
                 <AudioRecorder
                   onAudioReady={handleAudioReady}
@@ -253,20 +256,31 @@ const SpeakerDiarizationPage: React.FC = () => {
                 />
               </Box>
 
-              {/* Audio Status */}
+              {/* Audio Status + Review/play */}
               {audioData && (
-                <Box
-                  p={3}
-                  bg="green.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="green.200"
-                >
-                  <Text fontSize="sm" color="green.700" fontWeight="semibold">
-                    ✓ Audio ready for processing
-                  </Text>
-                </Box>
+                <>
+                  <Box
+                    p={3}
+                    bg="green.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="green.200"
+                  >
+                    <Text fontSize="sm" color="green.700" fontWeight="semibold">
+                      ✓ Audio ready for processing
+                    </Text>
+                  </Box>
+                  <AudioInputPreview
+                    audioBase64OrDataUrl={audioData}
+                    label="Review your audio"
+                  />
+                </>
               )}
+
+              {/* Instruction above Submit (consistent with other services) */}
+              <Text fontSize="sm" color="gray.600">
+                Record audio or upload a file above, then click &quot;Submit for Diarization&quot; to separate the conversation by speaker.
+              </Text>
 
               {/* Submit Button */}
               <Button
@@ -276,7 +290,7 @@ const SpeakerDiarizationPage: React.FC = () => {
                 loadingText="Processing..."
                 size="md"
                 w="full"
-                isDisabled={!audioData || fetching}
+                isDisabled={!audioData || !serviceId || fetching}
               >
                 Submit for Diarization
               </Button>
@@ -284,8 +298,8 @@ const SpeakerDiarizationPage: React.FC = () => {
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Progress Indicator */}
                 {fetching && (
                   <Box>

@@ -6,13 +6,14 @@ with caching support for efficient and scalable operations
 
 import json
 import logging
-import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel
+
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +56,7 @@ class ModelManagementClient:
             cache_ttl_seconds: Cache TTL in seconds
             timeout: Request timeout in seconds
         """
-        self.base_url = base_url or os.getenv(
-            "MODEL_MANAGEMENT_SERVICE_URL",
-            "http://model-management-service:8091"
-        )
+        self.base_url = base_url or app_env.model_management_service_url
         # Ensure base_url doesn't end with /
         self.base_url = self.base_url.rstrip("/")
         self.api_key = api_key
@@ -116,11 +114,29 @@ class ModelManagementClient:
         
         # Use auth headers from incoming request if provided (preferred)
         if auth_headers:
-            # Forward all relevant headers
+            # Forward all relevant headers (with value sanitization)
             for key, value in auth_headers.items():
                 key_lower = key.lower()
                 # Forward Authorization, X-API-Key, X-Auth-Source, and X-Try-It headers
                 if key_lower in ["authorization", "x-api-key", "x-auth-source", "x-try-it"]:
+                    # Reject values containing CR/LF to prevent header injection
+                    if value is None:
+                        continue
+                    if not isinstance(value, str):
+                        continue
+                    if "\r" in value or "\n" in value:
+                        logger.warning(
+                            "Rejected auth header %r due to CR/LF characters in value", key
+                        )
+                        raise ValueError("Invalid header value detected")
+                    # Enforce a reasonable maximum header value length
+                    if len(value) > 4096:
+                        logger.warning(
+                            "Rejected auth header %r due to excessive length (%d bytes)",
+                            key,
+                            len(value),
+                        )
+                        raise ValueError("Invalid header value detected")
                     # Normalize header casing
                     if key_lower == "authorization":
                         header_name = "Authorization"
@@ -310,6 +326,10 @@ class ModelManagementClient:
             response = await client.post(url, headers=headers)
             
             if response.status_code == 404:
+                logger.warning(
+                    f"Service not found (404) for service_id={service_id!r} from model management at {url}. "
+                    "Ensure the service_id exists in the model_management_db services table (or use a valid service_id)."
+                )
                 return None
             
             response.raise_for_status()
@@ -326,6 +346,11 @@ class ModelManagementClient:
             # Extract triton_model from model.task (not top-level task)
             triton_model = model_data.get("task", {}).get("type", "unknown") if model_data else "unknown"
 
+            if not endpoint or not str(endpoint).strip():
+                logger.warning(
+                    f"Model management returned service for service_id={service_id!r} but endpoint is missing or empty. "
+                    f"Response keys: {list(data.keys())}. NMT/inference requires a non-empty endpoint."
+                )
             service_info = ServiceInfo(
                 service_id=data.get("serviceId", service_id),
                 model_id=data.get("modelId", ""),

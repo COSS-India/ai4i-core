@@ -11,8 +11,12 @@ const EMPTY_CREATE_FORM: NotificationReceiverCreate = {
   category: "application",
   severity: "warning",
   alert_type: null,
+  alert_names: null,
+  tenant: null,
+  rule_name: null,
+  description: null,
   email_to: [],
-  rbac_role: null,
+  rbac_role: "ADMIN",
   email_subject_template: null,
   email_body_template: null,
 };
@@ -138,9 +142,19 @@ export function useNotificationReceivers() {
       const payload: NotificationReceiverCreate = {
         category: createForm.category,
         severity: createForm.severity,
-        alert_type: createForm.alert_type || undefined,
-        email_subject_template: createForm.email_subject_template || undefined,
-        email_body_template: createForm.email_body_template || undefined,
+        ...(createForm.alert_type ? { alert_type: createForm.alert_type } : {}),
+        ...(createForm.alert_names && createForm.alert_names.length > 0
+          ? { alert_names: createForm.alert_names }
+          : {}),
+        ...(createForm.tenant ? { tenant: createForm.tenant } : {}),
+        ...(createForm.rule_name ? { rule_name: createForm.rule_name } : {}),
+        ...(createForm.description ? { description: createForm.description } : {}),
+        ...(createForm.email_subject_template
+          ? { email_subject_template: createForm.email_subject_template }
+          : {}),
+        ...(createForm.email_body_template
+          ? { email_body_template: createForm.email_body_template }
+          : {}),
       };
       if (recipientMode === "email") {
         payload.email_to = createForm.email_to;
@@ -186,7 +200,13 @@ export function useNotificationReceivers() {
     const mode = item.rbac_role ? "role" : "email";
     setUpdateRecipientMode(mode);
     setUpdateForm({
-      receiver_name: item.receiver_name,
+      rule_name: item.rule_name ?? undefined,
+      description: item.description ?? undefined,
+      category: item.category ?? undefined,
+      severity: item.severity ?? undefined,
+      alert_type: item.alert_type ?? undefined,
+      alert_names: item.alert_names ?? undefined,
+      tenant: item.tenant ?? undefined,
       email_to: item.email_to ?? [],
       rbac_role: item.rbac_role,
       email_subject_template: item.email_subject_template,
@@ -225,9 +245,33 @@ export function useNotificationReceivers() {
     setIsUpdating(true);
     try {
       const payload: NotificationReceiverUpdate = {
-        receiver_name: updateForm.receiver_name,
-        email_subject_template: updateForm.email_subject_template,
-        email_body_template: updateForm.email_body_template,
+        ...(updateForm.rule_name !== undefined
+          ? { rule_name: updateForm.rule_name }
+          : {}),
+        ...(updateForm.description !== undefined
+          ? { description: updateForm.description }
+          : {}),
+        ...(updateForm.category !== undefined
+          ? { category: updateForm.category }
+          : {}),
+        ...(updateForm.severity !== undefined
+          ? { severity: updateForm.severity }
+          : {}),
+        ...(updateForm.alert_type !== undefined
+          ? { alert_type: updateForm.alert_type }
+          : {}),
+        ...(updateForm.alert_names !== undefined
+          ? { alert_names: updateForm.alert_names }
+          : {}),
+        ...(updateForm.tenant !== undefined
+          ? { tenant: updateForm.tenant }
+          : {}),
+        ...(updateForm.email_subject_template !== undefined
+          ? { email_subject_template: updateForm.email_subject_template }
+          : {}),
+        ...(updateForm.email_body_template !== undefined
+          ? { email_body_template: updateForm.email_body_template }
+          : {}),
         enabled: updateForm.enabled,
       };
       if (updateRecipientMode === "email") {

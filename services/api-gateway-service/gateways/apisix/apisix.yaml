@@ -1,0 +1,1607 @@
+# APISIX Routes Configuration (environment-agnostic)
+# Generated from apisix.yaml.template via substitute-env.sh at container start.
+# Configure: APISIX_PUBLIC_ORIGIN, APISIX_UPSTREAM_SUFFIX (see README).
+#
+routes:
+- uri: /
+  name: root-route
+  priority: 1
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /*
+  name: root-static-files
+  priority: 8
+  methods:
+  - GET
+  - HEAD
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+  vars:
+  - - uri
+    - ~~
+    - \.(svg|png|jpg|jpeg|gif|ico|webp|woff|woff2|ttf|eot|css|js|json|xml|txt|pdf)$
+- uri: /_next/*
+  name: nextjs-static
+  priority: 10
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /api/v1/alerts/*
+  name: alerts-route
+
+  priority: 210
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - PATCH
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      alert-management-service${APISIX_UPSTREAM_SUFFIX}:8098: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,PATCH,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Request-ID
+      allow_credential: true
+    proxy-rewrite:
+      regex_uri:
+      - ^/api/v1/alerts/(.*)
+      - /alerts/$1
+      headers:
+        X-Correlation-ID: $request_id
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      body_base64: false
+      headers:
+        X-Served-By: APISIX-Gateway
+        X-Service: alert-management-service
+    limit-count:
+      policy: local
+      key_type: var
+      rejected_code: 429
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      allow_degradation: false
+      count: 200
+- uri: /api/v1/asr/*
+  name: asr-route
+  priority: 10
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      asr-service${APISIX_UPSTREAM_SUFFIX}:8087: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: asr-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /api/v1/audio-lang-detection/*
+  name: audio-lang-detection-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      audio-lang-detection-service${APISIX_UPSTREAM_SUFFIX}:8096: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: audio-lang-detection-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /api/v1/auth/*
+  name: auth-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - PATCH
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token
+      allow_credential: true
+- uri: /api/v1/config/*
+  name: config-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    type: roundrobin
+    pass_host: pass
+    nodes:
+      config-service${APISIX_UPSTREAM_SUFFIX}:8082: 1
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token
+      allow_credential: true
+    response-rewrite:
+      headers:
+        X-Service: config-service
+      body_base64: false
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+- uri: /api/v1/feature-flags/*
+  name: feature-flags-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      config-service${APISIX_UPSTREAM_SUFFIX}:8082: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token
+      allow_credential: true
+- uri: /api/v1/language-detection/*
+  name: language-detection-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      language-detection-service${APISIX_UPSTREAM_SUFFIX}:8090: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: language-detection-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /api/v1/language-diarization/*
+  name: language-diarization-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    timeout:
+      send: 120
+      connect: 60
+      read: 120
+    nodes:
+      language-diarization-service${APISIX_UPSTREAM_SUFFIX}:8090: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: language-diarization-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 60
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /api/v1/llm/*
+  name: llm-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      llm-service${APISIX_UPSTREAM_SUFFIX}:8090: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: llm-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 60
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /api/v1/model-management/*
+  name: model-management-route
+  priority: 100
+  methods:
+  - GET
+  - POST
+  - PUT
+  - PATCH
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    timeout:
+      send: 60
+      connect: 60
+      read: 60
+    nodes:
+      model-management-service${APISIX_UPSTREAM_SUFFIX}:8091: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-Anonymous-Session-Id,X-Try-It,sec-ch-ua,sec-ch-ua-mobile,sec-ch-ua-platform,Referer
+      expose_headers: X-Auth-Token
+      allow_credential: true
+    response-rewrite:
+      body_base64: false
+      headers:
+        set:
+          X-Served-By: APISIX-Gateway
+          X-Service: model-management
+    limit-count:
+      policy: local
+      key_type: var
+      rejected_code: 429
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      allow_degradation: false
+      count: 120
+- uri: /api/v1/multi-tenant/*
+  name: multi-tenant-catch-all-route
+
+  priority: 200
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - PATCH
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    type: roundrobin
+    pass_host: pass
+    nodes:
+      multi-tenant-service${APISIX_UPSTREAM_SUFFIX}:8001: 1
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,PATCH,OPTIONS
+      max_age: 3600
+      allow_credential: true
+      expose_headers: X-Auth-Token
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+    proxy-rewrite:
+      regex_uri:
+      - ^/api/v1/multi-tenant/(.*)
+      - /$1
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: multi-tenant-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 200
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /api/v1/ner/*
+  name: ner-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      ner-service${APISIX_UPSTREAM_SUFFIX}:9001: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: ner-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /api/v1/nmt/*
+  name: nmt-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      nmt-service${APISIX_UPSTREAM_SUFFIX}:8089: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    # Use headers.add so client Authorization is preserved (required for tenant_id in observability metrics)
+    proxy-rewrite:
+      headers:
+        add:
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: nmt-service
+      body_base64: false
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Service,X-Gateway
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /api/v1/observability/*
+  name: telemetry-observability-route
+
+  priority: 10
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      telemetry-service${APISIX_UPSTREAM_SUFFIX}:8084: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token
+      allow_credential: true
+- uri: /api/v1/ocr/*
+  name: ocr-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      ocr-service${APISIX_UPSTREAM_SUFFIX}:8099: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: ocr-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 60
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /api/v1/pipeline/*
+  name: pipeline-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      pipeline-service${APISIX_UPSTREAM_SUFFIX}:8090: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: pipeline-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 60
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /api/v1/registry/*
+  name: config-registry-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    type: roundrobin
+    pass_host: pass
+    nodes:
+      config-service${APISIX_UPSTREAM_SUFFIX}:8082: 1
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token
+      allow_credential: true
+    response-rewrite:
+      headers:
+        X-Service: config-service
+      body_base64: false
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+- uri: /api/v1/speaker-diarization/*
+  name: speaker-diarization-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      speaker-diarization-service${APISIX_UPSTREAM_SUFFIX}:8095: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: speaker-diarization-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 60
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /api/v1/telemetry/*
+  name: telemetry-ingestion-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      telemetry-service${APISIX_UPSTREAM_SUFFIX}:8084: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token
+      allow_credential: true
+- uri: /api/v1/transliteration/*
+  name: transliteration-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      transliteration-service${APISIX_UPSTREAM_SUFFIX}:8090: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: transliteration-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /api/v1/try-it*
+  name: api-gateway-try-it-route
+
+  priority: 80
+  methods:
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      nmt-service${APISIX_UPSTREAM_SUFFIX}:8089: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    response-rewrite:
+      body_base64: false
+      headers:
+        X-Service: nmt-service
+    serverless-pre-function:
+      functions:
+      - 'return function(conf, ctx) local sid = ngx.var.http_x_anonymous_session_id;
+        if sid and sid ~= '''' then ngx.req.set_header(''X-Try-It-RateLimit-Key'',
+        sid) else ngx.req.set_header(''X-Try-It-RateLimit-Key'', ngx.var.remote_addr
+        or ''unknown'') end; ngx.req.read_body(); local b = ngx.req.get_body_data();
+        if b and #b > 0 then local cjson = require(''cjson.safe''); local ok, t =
+        pcall(cjson.decode, b); if ok and t then if t.payload then ngx.req.set_body_data(cjson.encode(t.payload));
+        elseif t.input and t.config then ngx.req.set_body_data(cjson.encode(t)); end;
+        end; end; end'
+      phase: rewrite
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: POST,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-Anonymous-Session-Id,X-Try-It,sec-ch-ua,sec-ch-ua-mobile,sec-ch-ua-platform,Referer
+      expose_headers: X-Auth-Token,X-Service,X-RateLimit-Limit,X-RateLimit-Remaining,X-RateLimit-Reset,RateLimit-Limit,RateLimit-Remaining,RateLimit-Reset
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Try-It: 'true'
+        X-Gateway: apisix
+      uri: /api/v1/nmt/inference
+      use_real_request_uri_unsafe: false
+    limit-count:
+      count: 5
+      key: http_x_try_it_ratelimit_key
+      rejected_msg: Please login to access other services.
+      policy: local
+      key_type: var
+      rejected_code: 403
+      show_limit_quota_header: true
+      allow_degradation: false
+      time_window: 3600
+- uri: /api/v1/tts/*
+  name: tts-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      tts-service${APISIX_UPSTREAM_SUFFIX}:8088: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: tts-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /alerts-management
+  name: frontend-alerts-management
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /alerts-management/*
+  name: frontend-alerts-management-prefix
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /asr
+  name: frontend-asr
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /audio-lang-detection
+  name: frontend-audio-lang-detection
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /audio-language-detection
+  name: frontend-audio-language-detection
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /audio-language-detection/*
+  name: frontend-audio-language-detection-prefix
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /auth
+  name: frontend-auth
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /auth/callback
+  name: auth-callback-route
+
+  priority: 10
+  methods:
+  - GET
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,Cookie,Set-Cookie
+      expose_headers: X-Auth-Token,Set-Cookie
+      allow_credential: true
+- uri: /dashboard/*
+  name: dashboard-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      apisix-dashboard${APISIX_UPSTREAM_SUFFIX}:9000: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,Cookie,Set-Cookie
+      expose_headers: Set-Cookie
+      allow_credential: true
+    proxy-rewrite:
+      regex_uri:
+      - ^/dashboard/(.*)
+      - /$1
+      use_real_request_uri_unsafe: false
+- uri: /docs*
+  name: docs-manager-docs-route
+
+  priority: 90
+  methods:
+  - GET
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      docs-manager-service${APISIX_UPSTREAM_SUFFIX}:8103: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token
+      allow_credential: true
+- uris:
+  - /favicon.ico
+  - /manifest.json
+  - /og-image.png
+  - /twitter-image.png
+  name: ui-static-files
+  priority: 10
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /feature-flags*
+  name: unleash-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - PATCH
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      unleash-service${APISIX_UPSTREAM_SUFFIX}:4242: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,PATCH,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Service
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: unleash-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 200
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /grafana/*
+  name: grafana-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      grafana${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token
+      allow_credential: true
+    limit-count:
+      policy: local
+      key_type: var
+      count: 200
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /health
+  name: health-check-route
+  priority: 1
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      asr-service${APISIX_UPSTREAM_SUFFIX}:8087: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /jaeger*
+  name: jaeger-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      jaeger${APISIX_UPSTREAM_SUFFIX}:16686: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: jaeger
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 100
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /language-detection
+  name: frontend-language-detection
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /language-diarization
+  name: frontend-language-diarization
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /llm
+  name: frontend-llm
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /logs
+  name: frontend-logs
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /model-management
+  name: frontend-model-management
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /ner
+  name: frontend-ner
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /nmt
+  name: frontend-nmt
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /ocr
+  name: frontend-ocr
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /openapi.json
+  name: docs-manager-openapi-route
+
+  priority: 100
+  methods:
+  - GET
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      docs-manager-service${APISIX_UPSTREAM_SUFFIX}:8103: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token
+      allow_credential: true
+- uri: /opensearch*
+  name: opensearch-dashboards-route
+
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      opensearch-dashboards${APISIX_UPSTREAM_SUFFIX}:5601: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,kbn-version,kbn-xsrf
+      expose_headers: X-Auth-Token,kbn-version
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: opensearch-dashboards
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 100
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
+- uri: /pipeline
+  name: frontend-pipeline
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /profile
+  name: frontend-profile
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /prometheus
+  name: prometheus-redirect
+
+  priority: 100
+  methods:
+  - GET
+  plugins:
+    redirect:
+      encode_uri: false
+      ret_code: 302
+      uri: /prometheus/query
+      append_query_string: false
+- uri: /prometheus/
+  name: prometheus-redirect-slash
+
+  priority: 100
+  methods:
+  - GET
+  plugins:
+    redirect:
+      encode_uri: false
+      ret_code: 302
+      uri: /prometheus/query
+      append_query_string: false
+- uri: /prometheus/*
+  name: prometheus-proxy
+
+  priority: 10
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    type: roundrobin
+    pass_host: pass
+    nodes:
+      prometheus${APISIX_UPSTREAM_SUFFIX}:9090: 1
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token
+      allow_credential: true
+    proxy-rewrite:
+      regex_uri:
+      - ^/prometheus/(.*)
+      - /prometheus/$1
+      use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
+      time_window: 60
+      key: remote_addr
+      count: 200
+- uri: /prometheus/query
+  name: prometheus-query-page
+
+  priority: 50
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    type: roundrobin
+    pass_host: pass
+    nodes:
+      prometheus${APISIX_UPSTREAM_SUFFIX}:9090: 1
+  plugins:
+    proxy-rewrite:
+      uri: /prometheus/query
+      use_real_request_uri_unsafe: false
+- uri: /prometheus/query/*
+  name: prometheus-query-assets
+
+  priority: 45
+  methods:
+  - GET
+  - HEAD
+  upstream:
+    hash_on: vars
+    scheme: http
+    type: roundrobin
+    pass_host: pass
+    nodes:
+      prometheus${APISIX_UPSTREAM_SUFFIX}:9090: 1
+  plugins:
+    proxy-rewrite:
+      regex_uri:
+      - ^/prometheus/query/(.*)
+      - /prometheus/query/$1
+      use_real_request_uri_unsafe: false
+- uri: /services-management
+  name: frontend-services-management
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /speaker-diarization
+  name: frontend-speaker-diarization
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /traces
+  name: frontend-traces
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /transliteration
+  name: frontend-transliteration
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /tts
+  name: frontend-tts
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: ~*\.(svg|png|jpg|jpeg|gif|ico|webp|woff|woff2|ttf|eot|css|js|json|xml|txt|pdf)$
+  name: static-assets
+  priority: 15
+  methods:
+  - GET
+  - HEAD
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    proxy-rewrite:
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+#END

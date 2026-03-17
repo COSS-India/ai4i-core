@@ -48,24 +48,20 @@ import {
   ModalFooter,
   ModalBody,
   ModalCloseButton,
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogContent,
-  AlertDialogOverlay,
   Menu,
   MenuButton,
   MenuList,
   MenuItem,
   IconButton,
   Tooltip,
+  useDisclosure,
 } from "@chakra-ui/react";
 import { FiBriefcase, FiUsers, FiMoreVertical, FiEye, FiEdit2, FiUserPlus, FiPlayCircle, FiRefreshCw, FiPlus, FiSettings, FiArrowLeft, FiMail, FiPause, FiPower, FiTrash2 } from "react-icons/fi";
 import { ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import { TENANT_USER_ROLE_OPTIONS } from "./types";
+import ConfirmDialog from "../common/ConfirmDialog";
 import type { TenantUserView } from "../../types/multiTenant";
 
 /** Users table for tenant detail view: filters by tenant and shows search/filters + actions. */
@@ -208,8 +204,31 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
   const cancelRef = useRef<HTMLButtonElement>(null);
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
+  const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
 
   const tm = useTenantManagement({ user: user ?? null });
+
+  const {
+    isOpen: isEditTenantConfirmOpen,
+    onOpen: onEditTenantConfirmOpen,
+    onClose: onEditTenantConfirmClose,
+  } = useDisclosure();
+
+  const {
+    isOpen: isEditUserConfirmOpen,
+    onOpen: onEditUserConfirmOpen,
+    onClose: onEditUserConfirmClose,
+  } = useDisclosure();
+
+  const handleConfirmEditTenant = async () => {
+    await tm.handleSaveEditTenant();
+    onEditTenantConfirmClose();
+  };
+
+  const handleConfirmEditUser = async () => {
+    await tm.handleSaveEditUser();
+    onEditUserConfirmClose();
+  };
 
   // When user switches to this tab or subview (Adopter vs Tenant Admin), fetch the right list.
   // In User Management also fetch tenants so "Manage User Services" can resolve tenant subscriptions without calling view/tenant.
@@ -504,7 +523,12 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   </Thead>
                   <Tbody>
                     {tm.filteredTenants.map((t) => (
-                      <Tr key={t.id}>
+                      <Tr
+                        key={t.id}
+                        cursor="pointer"
+                        _hover={{ bg: tableRowHoverBg }}
+                        onClick={() => tm.handleViewTenant(t)}
+                      >
                         <Td fontWeight="medium">{t.organization_name || "—"}</Td>
                         <Td>{t.tenant_id || "—"}</Td>
                         <Td><Text fontSize="sm">{t.email}</Text></Td>
@@ -600,7 +624,12 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 </Thead>
                 <Tbody>
                   {tm.filteredTenantUsers.map((u) => (
-                    <Tr key={u.id}>
+                    <Tr
+                      key={u.id}
+                      cursor="pointer"
+                      _hover={{ bg: tableRowHoverBg }}
+                      onClick={() => tm.handleViewUser(u)}
+                    >
                       <Td fontWeight="medium">{u.username || "—"}</Td>
                       <Td>{u.email}</Td>
                       <Td fontSize="sm">{u.tenant_id}</Td>
@@ -699,8 +728,9 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     placeholder="contact@organization.com"
                     value={tm.tenantForm.contact_email}
                     onChange={(e) => {
-                      tm.setTenantForm((f) => ({ ...f, contact_email: e.target.value }));
-                      if (tm.tenantFormErrors.contact_email) tm.setTenantFormErrors((prev) => ({ ...prev, contact_email: "" }));
+                      const value = e.target.value;
+                      tm.setTenantForm((f) => ({ ...f, contact_email: value }));
+                      tm.checkTenantContactEmailUnique(value);
                     }}
                     bg="white"
                   />
@@ -716,39 +746,72 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 </FormControl>
                 <FormControl isRequired>
                   <FormLabel>Requested subscriptions</FormLabel>
-                  {tm.availableServicesForCreate && tm.availableServicesForCreate.length > 0 ? (
+                  {tm.isLoadingServicesForCreate ? (
+                    <Box borderWidth="1px" borderRadius="md" p={4} bg="white">
+                      <Spinner size="sm" mr={2} />
+                      <Text as="span" fontSize="sm" color="gray.600">Loading services…</Text>
+                    </Box>
+                  ) : tm.availableServicesForCreate && tm.availableServicesForCreate.length > 0 ? (
                     <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="200px" overflowY="auto">
-                      <Text fontSize="xs" color="gray.500" mb={2}>Select from loaded services:</Text>
-                      <CheckboxGroup value={tm.tenantForm.requested_subscriptions || []} onChange={(values) => tm.setTenantForm((f) => ({ ...f, requested_subscriptions: values as string[] }))}>
-                        <VStack align="stretch" spacing={2}>
-                          {tm.availableServicesForCreate.map((svc) => (
-                            <Checkbox key={svc.id} value={svc.service_name} colorScheme="blue" size="sm">
-                              <Text fontSize="sm">{(svc.service_name ?? "").toUpperCase()}</Text>
-                            </Checkbox>
-                          ))}
-                        </VStack>
-                      </CheckboxGroup>
+                      {(() => {
+                        const allServiceNames = tm.availableServicesForCreate.map((svc) => svc.service_name);
+                        const allSelected =
+                          allServiceNames.length > 0 &&
+                          allServiceNames.every((name) => tm.tenantForm.requested_subscriptions?.includes(name));
+                        return (
+                          <>
+                            <HStack justify="space-between" mb={2}>
+                              <Checkbox
+                                isChecked={allSelected}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    tm.setTenantForm((f) => ({
+                                      ...f,
+                                      requested_subscriptions: allServiceNames.filter(Boolean) as string[],
+                                    }));
+                                  } else {
+                                    tm.setTenantForm((f) => ({ ...f, requested_subscriptions: [] }));
+                                  }
+                                }}
+                                colorScheme="blue"
+                                size="sm"
+                              >
+                                <Text fontSize="sm" fontWeight="semibold">
+                                  Select All
+                                </Text>
+                              </Checkbox>
+                            </HStack>
+                            <CheckboxGroup
+                              value={tm.tenantForm.requested_subscriptions || []}
+                              onChange={(values) =>
+                                tm.setTenantForm((f) => ({ ...f, requested_subscriptions: values as string[] }))
+                              }
+                            >
+                              <VStack align="stretch" spacing={2}>
+                                {tm.availableServicesForCreate.map((svc) => (
+                                  <Checkbox key={svc.id} value={svc.service_name} colorScheme="blue" size="sm">
+                                    <Text fontSize="sm">{(svc.service_name ?? "").toUpperCase()}</Text>
+                                  </Checkbox>
+                                ))}
+                              </VStack>
+                            </CheckboxGroup>
+                          </>
+                        );
+                      })()}
                     </Box>
                   ) : (
-                    <>
-                      {/* <Button size="sm" colorScheme="blue" variant="outline" mb={2} onClick={tm.loadServicesForCreateTenant} isLoading={tm.isLoadingServicesForCreate} loadingText="Loading...">
-                        Load Services
+                    <Box borderWidth="1px" borderRadius="md" p={3} bg="white">
+                      <Text fontSize="sm" color="gray.600" mb={2}>
+                        {tm.availableServicesForCreate && tm.availableServicesForCreate.length === 0
+                          ? "No services available from the server."
+                          : "Could not load services."}
+                      </Text>
+                      <Button size="sm" colorScheme="blue" variant="outline" onClick={tm.loadServicesForCreateTenant} isLoading={tm.isLoadingServicesForCreate} loadingText="Loading...">
+                        Load services
                       </Button>
-                      <Text fontSize="xs" color="gray.500" mb={2}>Load available services from the server, or use the list below.</Text>
-                       */}
-                      <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="140px" overflowY="auto">
-                        <CheckboxGroup value={tm.tenantForm.requested_subscriptions || []} onChange={(values) => tm.setTenantForm((f) => ({ ...f, requested_subscriptions: values as string[] }))}>
-                          <SimpleGrid columns={2} spacing={2}>
-                            {tm.TENANT_SUBSCRIPTION_OPTIONS.map((opt) => (
-                              <Checkbox key={opt.value} value={opt.value} colorScheme="blue" size="sm">{opt.label}</Checkbox>
-                            ))}
-                          </SimpleGrid>
-                        </CheckboxGroup>
-                      </Box>
-                    </>
+                    </Box>
                   )}
-                  <Text fontSize="xs" color="gray.500">e.g. pipeline, language_detection, tts, asr</Text>
-                </FormControl>
+                  </FormControl>
                 <Text fontSize="sm" color="gray.500">Tenant ID will be auto-generated (e.g. TNT_xxxx).</Text>
               </VStack>
             )}
@@ -843,7 +906,37 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   </Box>
                 ) : (
                   <VStack spacing={3} align="stretch">
-                    <Text fontSize="sm" color="gray.600">Check to add or uncheck to remove a service for this tenant. Changes are applied immediately.</Text>
+                    <Text fontSize="sm" color="gray.600">
+                      Check to add or uncheck to remove a service for this tenant. Changes are applied immediately.
+                    </Text>
+                    <HStack justify="space-between">
+                      <Checkbox
+                        isChecked={
+                          tm.availableServices.length > 0 &&
+                          tm.availableServices.every((svc) =>
+                            tm.manageServicesSelected.includes(svc.service_name)
+                          )
+                        }
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          tm.availableServices.forEach((svc) => {
+                            const isCurrentlySelected = tm.manageServicesSelected.includes(svc.service_name);
+                            if (checked && !isCurrentlySelected) {
+                              tm.handleTenantServiceCheckChange(svc.service_name, true);
+                            } else if (!checked && isCurrentlySelected) {
+                              tm.handleTenantServiceCheckChange(svc.service_name, false);
+                            }
+                          });
+                        }}
+                        isDisabled={tm.isSavingManageServices}
+                        colorScheme="blue"
+                        size="sm"
+                      >
+                        <Text fontSize="sm" fontWeight="semibold">
+                          Select All
+                        </Text>
+                      </Checkbox>
+                    </HStack>
                     <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="280px" overflowY="auto">
                       <VStack align="stretch" spacing={2}>
                         {tm.availableServices.map((svc) => (
@@ -860,7 +953,17 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                         ))}
                       </VStack>
                     </Box>
-                    <Text fontSize="sm" color="gray.500">{tm.manageServicesSelected.length} service(s) selected</Text>
+                    <Text fontSize="sm" color="gray.500">
+                      {tm.manageServicesSelected.length} service(s) selected
+                    </Text>
+                    {tm.manageServicesTenant?.status === "ACTIVE" && tm.manageServicesSelected.length === 0 && (
+                      <Alert status="error" borderRadius="md" mt={2}>
+                        <AlertIcon />
+                        <AlertDescription>
+                          Active tenants must have at least one service assigned. Select at least one service before saving.
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </VStack>
                 )}
               </>
@@ -870,7 +973,11 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             {tm.availableServices.length > 0 && (
               <>
                 <Button variant="ghost" mr={3} onClick={tm.closeManageServices}>Cancel</Button>
-                <Button colorScheme="blue" onClick={tm.saveManageServices}>
+                <Button
+                  colorScheme="blue"
+                  onClick={tm.saveManageServices}
+                  isDisabled={tm.manageServicesTenant?.status === "ACTIVE" && tm.manageServicesSelected.length === 0}
+                >
                   Done
                 </Button>
               </>
@@ -923,7 +1030,37 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   </Box>
                 ) : (
                   <VStack spacing={3} align="stretch">
-                    <Text fontSize="sm" color="gray.600">Check to add or uncheck to remove a service for this user. Changes are applied immediately.</Text>
+                    <Text fontSize="sm" color="gray.600">
+                      Check to add or uncheck to remove a service for this user. Changes are applied immediately.
+                    </Text>
+                    <HStack justify="space-between">
+                      <Checkbox
+                        isChecked={
+                          tm.availableServicesForUser.length > 0 &&
+                          tm.availableServicesForUser.every((svc) =>
+                            tm.manageUserServicesSelected.includes(svc.service_name)
+                          )
+                        }
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          tm.availableServicesForUser.forEach((svc) => {
+                            const isCurrentlySelected = tm.manageUserServicesSelected.includes(svc.service_name);
+                            if (checked && !isCurrentlySelected) {
+                              tm.handleUserServiceCheckChange(svc.service_name, true);
+                            } else if (!checked && isCurrentlySelected) {
+                              tm.handleUserServiceCheckChange(svc.service_name, false);
+                            }
+                          });
+                        }}
+                        isDisabled={tm.isSavingManageUserServices}
+                        colorScheme="blue"
+                        size="sm"
+                      >
+                        <Text fontSize="sm" fontWeight="semibold">
+                          Select All
+                        </Text>
+                      </Checkbox>
+                    </HStack>
                     <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="280px" overflowY="auto">
                       <SimpleGrid columns={{ base: 2, sm: 3, md: 4 }} spacing={2}>
                         {tm.availableServicesForUser.map((svc) => (
@@ -940,7 +1077,17 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                         ))}
                       </SimpleGrid>
                     </Box>
-                    <Text fontSize="sm" color="gray.500">{tm.manageUserServicesSelected.length} service(s) selected</Text>
+                    <Text fontSize="sm" color="gray.500">
+                      {tm.manageUserServicesSelected.length} service(s) selected
+                    </Text>
+                    {tm.manageUserServicesUser?.status === "ACTIVE" && tm.manageUserServicesSelected.length === 0 && (
+                      <Alert status="error" borderRadius="md" mt={2}>
+                        <AlertIcon />
+                        <AlertDescription>
+                          Active users must have at least one service assigned. Select at least one service before saving.
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </VStack>
                 )}
               </>
@@ -950,7 +1097,11 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             {tm.availableServicesForUser.length > 0 && (
               <>
                 <Button variant="ghost" mr={3} onClick={tm.closeManageUserServices}>Cancel</Button>
-                <Button colorScheme="blue" onClick={tm.saveManageUserServices}>
+                <Button
+                  colorScheme="blue"
+                  onClick={tm.saveManageUserServices}
+                  isDisabled={tm.manageUserServicesUser?.status === "ACTIVE" && tm.manageUserServicesSelected.length === 0}
+                >
                   Done
                 </Button>
               </>
@@ -985,9 +1136,20 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <FormLabel>Full Name</FormLabel>
                 <Input placeholder="Enter user's full name" value={tm.userForm.full_name} onChange={(e) => tm.setUserForm((f) => ({ ...f, full_name: e.target.value }))} bg="white" />
               </FormControl>
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={!!tm.userFormErrors?.email}>
                 <FormLabel>Email Address</FormLabel>
-                <Input type="email" placeholder="user@organization.com" value={tm.userForm.email} onChange={(e) => tm.setUserForm((f) => ({ ...f, email: e.target.value }))} bg="white" />
+                <Input
+                  type="email"
+                  placeholder="user@organization.com"
+                  value={tm.userForm.email}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    tm.setUserForm((f) => ({ ...f, email: value }));
+                    tm.checkUserEmailUnique(value);
+                  }}
+                  bg="white"
+                />
+                {tm.userFormErrors?.email && <FormErrorMessage>{tm.userFormErrors.email}</FormErrorMessage>}
               </FormControl>
               <FormControl isRequired>
                 <FormLabel>Username</FormLabel>
@@ -1001,7 +1163,13 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   ))}
                 </Select>
               </FormControl>
-              <FormControl>
+              <FormControl
+                isInvalid={(() => {
+                  const selectedTenant = tm.tenants.find((t) => t.tenant_id === tm.userForm.tenant_id);
+                  const tenantServices = selectedTenant?.subscriptions ?? [];
+                  return tenantServices.length > 0 && (tm.userForm.services?.length ?? 0) === 0;
+                })()}
+              >
                 <FormLabel>Services</FormLabel>
                 {(() => {
                   const selectedTenant = tm.tenants.find((t) => t.tenant_id === tm.userForm.tenant_id);
@@ -1016,32 +1184,75 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                       </Text>
                     );
                   }
+                  const allSelected =
+                    tenantServices.length > 0 &&
+                    tenantServices.every((svc) => tm.userForm.services.includes(svc));
+                  const noServicesSelected = (tm.userForm.services?.length ?? 0) === 0;
                   return (
-                    <CheckboxGroup
-                      value={tm.userForm.services}
-                      onChange={(values) => tm.setUserForm((f) => ({ ...f, services: values as string[] }))}
-                    >
-                      <SimpleGrid columns={2} spacing={3} minChildWidth="140px">
-                        {tenantServices.map((svc) => (
-                          <Checkbox key={svc} value={svc} colorScheme="blue" size="sm" whiteSpace="normal">
-                            <Text fontSize="sm" fontWeight="medium" whiteSpace="normal" wordBreak="break-word">{String(svc).toUpperCase()}</Text>
-                          </Checkbox>
-                        ))}
-                      </SimpleGrid>
-                    </CheckboxGroup>
+                    <>
+                      <HStack justify="space-between" mb={2}>
+                        <Checkbox
+                          isChecked={allSelected}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              tm.setUserForm((f) => ({ ...f, services: [...tenantServices] }));
+                            } else {
+                              tm.setUserForm((f) => ({ ...f, services: [] }));
+                            }
+                          }}
+                          colorScheme="blue"
+                          size="sm"
+                        >
+                          <Text fontSize="sm" fontWeight="semibold">
+                            Select All
+                          </Text>
+                        </Checkbox>
+                      </HStack>
+                      <CheckboxGroup
+                        value={tm.userForm.services}
+                        onChange={(values) => tm.setUserForm((f) => ({ ...f, services: values as string[] }))}
+                      >
+                        <SimpleGrid columns={2} spacing={3} minChildWidth="140px">
+                          {tenantServices.map((svc) => (
+                            <Checkbox key={svc} value={svc} colorScheme="blue" size="sm" whiteSpace="normal">
+                              <Text fontSize="sm" fontWeight="medium" whiteSpace="normal" wordBreak="break-word">
+                                {String(svc).toUpperCase()}
+                              </Text>
+                            </Checkbox>
+                          ))}
+                        </SimpleGrid>
+                      </CheckboxGroup>
+                      {noServicesSelected && (
+                        <FormErrorMessage mt={2}>
+                          At least one service must be assigned to the new user.
+                        </FormErrorMessage>
+                      )}
+                    </>
                   );
                 })()}
-              </FormControl>
-              <FormControl>
-                <Checkbox isChecked={tm.userForm.is_approved} onChange={(e) => tm.setUserForm((f) => ({ ...f, is_approved: e.target.checked }))}>
-                  Approved (user can access immediately)
-                </Checkbox>
               </FormControl>
             </VStack>
           </ModalBody>
           <ModalFooter>
             <Button variant="ghost" mr={3} onClick={tm.closeUserModal} isDisabled={tm.isSubmittingUser}>Cancel</Button>
-            <Button colorScheme="blue" onClick={tm.handleRegisterUser} isLoading={tm.isSubmittingUser} loadingText="Adding..." isDisabled={!tm.userForm.tenant_id || !tm.userForm.full_name?.trim() || !tm.userForm.email.trim() || !tm.userForm.username.trim() || tm.userForm.username.trim().length < 3}>
+            <Button
+              colorScheme="blue"
+              onClick={tm.handleRegisterUser}
+              isLoading={tm.isSubmittingUser}
+              loadingText="Adding..."
+              isDisabled={
+                !tm.userForm.tenant_id ||
+                !tm.userForm.full_name?.trim() ||
+                !tm.userForm.email.trim() ||
+                !tm.userForm.username.trim() ||
+                tm.userForm.username.trim().length < 3 ||
+                (() => {
+                  const selectedTenant = tm.tenants.find((t) => t.tenant_id === tm.userForm.tenant_id);
+                  const tenantServices = selectedTenant?.subscriptions ?? [];
+                  return tenantServices.length > 0 && (tm.userForm.services?.length ?? 0) === 0;
+                })()
+              }
+            >
               + Add User
             </Button>
           </ModalFooter>
@@ -1126,9 +1337,14 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   <FormLabel>Organization Name</FormLabel>
                   <Input value={tm.editTenantForm.organization_name ?? ""} onChange={(e) => tm.setEditTenantForm((f) => ({ ...f, organization_name: e.target.value }))} placeholder="Organization name" />
                 </FormControl>
-                <FormControl isRequired>
+                <FormControl isRequired isDisabled={tm.editTenantRow.status === "PENDING"}>
                   <FormLabel>Contact Email</FormLabel>
-                  <Input type="email" value={tm.editTenantForm.contact_email ?? ""} onChange={(e) => tm.setEditTenantForm((f) => ({ ...f, contact_email: e.target.value }))} placeholder="contact@example.com" />
+                  <Input
+                    type="email"
+                    value={tm.editTenantForm.contact_email ?? ""}
+                    onChange={(e) => tm.setEditTenantForm((f) => ({ ...f, contact_email: e.target.value }))}
+                    placeholder="contact@example.com"
+                  />
                 </FormControl>
                 <FormControl isRequired>
                   <FormLabel>Domain</FormLabel>
@@ -1160,7 +1376,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             <Button variant="ghost" mr={3} onClick={tm.closeEditTenantModal} isDisabled={tm.isSubmittingEditTenant}>Cancel</Button>
             <Button
               colorScheme="blue"
-              onClick={tm.handleSaveEditTenant}
+              onClick={onEditTenantConfirmOpen}
               isLoading={tm.isSubmittingEditTenant}
               isDisabled={!tm.editTenantForm.organization_name?.trim() || !tm.editTenantForm.contact_email?.trim() || !tm.editTenantForm.domain?.trim()}
             >
@@ -1203,12 +1419,6 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     ))}
                   </Select>
                 </FormControl>
-                <FormControl>
-                  <FormLabel>Approved (optional)</FormLabel>
-                  <Checkbox isChecked={tm.editUserForm.is_approved ?? false} onChange={(e) => tm.setEditUserForm((f) => ({ ...f, is_approved: e.target.checked }))}>
-                    User can access immediately
-                  </Checkbox>
-                </FormControl>
               </VStack>
             )}
           </ModalBody>
@@ -1216,7 +1426,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             <Button variant="ghost" mr={3} onClick={tm.closeEditUserModal} isDisabled={tm.isSubmittingEditUser}>Cancel</Button>
             <Button
               colorScheme="blue"
-              onClick={tm.handleSaveEditUser}
+              onClick={onEditUserConfirmOpen}
               isLoading={tm.isSubmittingEditUser}
               isDisabled={!tm.editUserForm.username?.trim() || tm.editUserForm.username.trim().length < 3 || !tm.editUserForm.email?.trim()}
             >
@@ -1227,47 +1437,95 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
       </Modal>
 
       {/* Delete User Confirmation */}
-      <AlertDialog isOpen={tm.isDeleteUserDialogOpen} leastDestructiveRef={cancelRef} onClose={tm.closeDeleteUserDialog}>
-        <AlertDialogOverlay>
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize="lg" fontWeight="bold">
-              Delete user?
-            </AlertDialogHeader>
-            <AlertDialogBody>
-              {tm.deleteUserTarget && (
-                <>This will permanently delete the user {tm.deleteUserTarget.username ? `"${tm.deleteUserTarget.username}"` : `(ID ${tm.deleteUserTarget.user_id})`} from the tenant. This action cannot be undone.</>
-              )}
-            </AlertDialogBody>
-            <AlertDialogFooter>
-              <Button ref={cancelRef} onClick={tm.closeDeleteUserDialog} isDisabled={tm.isDeletingUser}>Cancel</Button>
-              <Button colorScheme="red" onClick={tm.handleConfirmDeleteUser} ml={3} isLoading={tm.isDeletingUser}>Delete</Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
+      <ConfirmDialog
+        isOpen={tm.isDeleteUserDialogOpen}
+        onClose={tm.closeDeleteUserDialog}
+        onConfirm={tm.handleConfirmDeleteUser}
+        title="Delete user?"
+        body={
+          tm.deleteUserTarget && (
+            <>
+              This will permanently delete the user{" "}
+              {tm.deleteUserTarget.username
+                ? `"${tm.deleteUserTarget.username}"`
+                : `(ID ${tm.deleteUserTarget.user_id})`}{" "}
+              from the tenant. This action cannot be undone.
+            </>
+          )
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        confirmColorScheme="red"
+        isConfirmLoading={tm.isDeletingUser}
+        leastDestructiveRef={cancelRef}
+      />
 
       {/* Status Update Confirmation */}
-      <AlertDialog isOpen={tm.isStatusDialogOpen} leastDestructiveRef={cancelRef} onClose={tm.closeStatusDialog}>
-        <AlertDialogOverlay>
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize="lg" fontWeight="bold">
-              Update status to {tm.statusUpdateNewStatus}?
-            </AlertDialogHeader>
-            <AlertDialogBody>
-              {tm.statusUpdateTarget?.type === "tenant" && (
-                <>Tenant <strong>{tm.statusUpdateTarget.tenant_id}</strong> will be set to <strong>{tm.statusUpdateNewStatus}</strong>. Current status: {tm.statusUpdateTarget.currentStatus}.</>
-              )}
-              {tm.statusUpdateTarget?.type === "user" && (
-                <>User ID <strong>{tm.statusUpdateTarget.user_id}</strong> (tenant {tm.statusUpdateTarget.tenant_id}) will be set to <strong>{tm.statusUpdateNewStatus}</strong>. Current status: {tm.statusUpdateTarget.currentStatus}.</>
-              )}
-            </AlertDialogBody>
-            <AlertDialogFooter>
-              <Button ref={cancelRef} onClick={tm.closeStatusDialog} isDisabled={tm.isSubmittingStatus}>Cancel</Button>
-              <Button colorScheme="orange" onClick={tm.handleConfirmStatusUpdate} ml={3} isLoading={tm.isSubmittingStatus}>Confirm</Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
+      <ConfirmDialog
+        isOpen={tm.isStatusDialogOpen}
+        onClose={tm.closeStatusDialog}
+        onConfirm={tm.handleConfirmStatusUpdate}
+        title={`Update status to ${tm.statusUpdateNewStatus}?`}
+        body={
+          tm.statusUpdateTarget?.type === "tenant" ? (
+            <>
+              Tenant <strong>{tm.statusUpdateTarget.tenant_id}</strong> will be
+              set to <strong>{tm.statusUpdateNewStatus}</strong>. Current
+              status: {tm.statusUpdateTarget.currentStatus}.
+            </>
+          ) : tm.statusUpdateTarget?.type === "user" ? (
+            <>
+              User ID <strong>{tm.statusUpdateTarget.user_id}</strong> (tenant{" "}
+              {tm.statusUpdateTarget.tenant_id}) will be set to{" "}
+              <strong>{tm.statusUpdateNewStatus}</strong>. Current status:{" "}
+              {tm.statusUpdateTarget.currentStatus}.
+            </>
+          ) : null
+        }
+        confirmLabel="Confirm"
+        cancelLabel="Cancel"
+        confirmColorScheme="orange"
+        isConfirmLoading={tm.isSubmittingStatus}
+        leastDestructiveRef={cancelRef}
+      />
+
+      {/* Edit Tenant Confirmation */}
+      <ConfirmDialog
+        isOpen={isEditTenantConfirmOpen}
+        onClose={onEditTenantConfirmClose}
+        onConfirm={handleConfirmEditTenant}
+        title="Save tenant changes?"
+        body={
+          <>
+            Are you sure you want to update the details for tenant{" "}
+            <strong>{tm.editTenantForm.tenant_id}</strong>?
+          </>
+        }
+        confirmLabel="Confirm"
+        cancelLabel="Cancel"
+        confirmColorScheme="blue"
+        isConfirmLoading={tm.isSubmittingEditTenant}
+        leastDestructiveRef={cancelRef}
+      />
+
+      {/* Edit User Confirmation */}
+      <ConfirmDialog
+        isOpen={isEditUserConfirmOpen}
+        onClose={onEditUserConfirmClose}
+        onConfirm={handleConfirmEditUser}
+        title="Save user changes?"
+        body={
+          <>
+            Are you sure you want to update the details for user{" "}
+            <strong>{tm.editUserForm.username || tm.editUserForm.email}</strong>?
+          </>
+        }
+        confirmLabel="Confirm"
+        cancelLabel="Cancel"
+        confirmColorScheme="blue"
+        isConfirmLoading={tm.isSubmittingEditUser}
+        leastDestructiveRef={cancelRef}
+      />
     </>
   );
 }
