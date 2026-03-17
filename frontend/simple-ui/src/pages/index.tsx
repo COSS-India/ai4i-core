@@ -197,7 +197,7 @@ const HomePage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <VStack spacing={10} w="full" h="full" justify="center" align="center">
+        <VStack spacing={10} w="full" align="center" alignSelf="stretch">
           {/* Hero Section */}
           <Box textAlign="center" w="full">
             <Heading size="lg" fontWeight="bold" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
