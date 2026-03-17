@@ -16,7 +16,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     setIsSidebarBlurred(isHovered);
   };
 
-  // Always show sidebar; use small viewport height (100svh) so at 1312×848 / scaled Mac nothing trims
   return (
     <Grid
       templateAreas="'nav main'"

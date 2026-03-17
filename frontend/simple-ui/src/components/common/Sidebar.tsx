@@ -377,6 +377,7 @@ const Sidebar: React.FC = () => {
   const { checkSessionExpiry } = useSessionExpiry();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
+
   // Check if user is GUEST or USER
   const isGuest = user?.roles?.includes('GUEST') || false;
   const isUser = user?.roles?.includes('USER') || false;
