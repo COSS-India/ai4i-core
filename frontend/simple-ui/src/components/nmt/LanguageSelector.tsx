@@ -82,7 +82,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
           <Select
             value={JSON.stringify(languagePair)}
             onChange={handleLanguagePairChange}
-            placeholder="Choose language pair"
+            placeholder="Select"
           >
             {availableLanguagePairs.map((pair, index) => (
               <option key={index} value={JSON.stringify(pair)}>
