@@ -2195,8 +2195,8 @@ def determine_service_and_action(request: Request) -> Tuple[str, str]:
     path = request.url.path.lower()
     method = request.method.upper()
     service = "unknown"
-    # Check for all services including NER
-    for svc in ["asr", "nmt", "tts", "pipeline", "model-management", "llm", "ner", "ocr", "transliteration", "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection"]:
+    # Check for all services including multi-tenant and NER (multi-tenant before single-word prefixes to avoid false matches)
+    for svc in ["multi-tenant", "asr", "nmt", "tts", "pipeline", "model-management", "llm", "ner", "ocr", "transliteration", "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection"]:
         if f"/api/v1/{svc}" in path:
             service = svc
             break
