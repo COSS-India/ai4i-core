@@ -83,7 +83,7 @@ const ProfilePage: React.FC = () => {
   // Fetch all users (Admin only)
   useEffect(() => {
     if (!isAuthenticated || authLoading || !user) return;
-    const isAdmin = user?.roles?.includes("ADMIN") || user?.is_superuser;
+    const isAdmin = user?.roles?.includes("ADMIN") || user?.is_superuser ||  user?.roles?.includes("TENANT ADMIN");
     if (!isAdmin) return;
 
     setIsLoadingUsers(true);
