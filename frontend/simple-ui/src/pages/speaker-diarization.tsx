@@ -20,6 +20,7 @@ import Head from "next/head";
 import React, { useState } from "react";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
+import AudioInputPreview from "../components/common/AudioInputPreview";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performSpeakerDiarizationInference, listSpeakerDiarizationServices } from "../services/speakerDiarizationService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
@@ -255,19 +256,25 @@ const SpeakerDiarizationPage: React.FC = () => {
                 />
               </Box>
 
-              {/* Audio Status */}
+              {/* Audio Status + Review/play */}
               {audioData && (
-                <Box
-                  p={3}
-                  bg="green.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="green.200"
-                >
-                  <Text fontSize="sm" color="green.700" fontWeight="semibold">
-                    ✓ Audio ready for processing
-                  </Text>
-                </Box>
+                <>
+                  <Box
+                    p={3}
+                    bg="green.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="green.200"
+                  >
+                    <Text fontSize="sm" color="green.700" fontWeight="semibold">
+                      ✓ Audio ready for processing
+                    </Text>
+                  </Box>
+                  <AudioInputPreview
+                    audioBase64OrDataUrl={audioData}
+                    label="Review your audio"
+                  />
+                </>
               )}
 
               {/* Instruction above Submit (consistent with other services) */}
