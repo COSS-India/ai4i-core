@@ -250,9 +250,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         method = request.method
         path = request.url.path
         client_ip = request.client.host if request.client else "unknown"
-        raw_ua = request.headers.get("user-agent", "unknown")
-        # Sanitize: strip non-printable/control characters and cap length to prevent log injection
-        user_agent = "".join(ch for ch in raw_ua if ch.isprintable())[:256]
+        user_agent = request.headers.get("user-agent", "unknown")
         
         # Extract auth context from request.state if available
         user_id = getattr(request.state, "user_id", None)
@@ -329,17 +327,14 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         if jaeger_trace_url:
             log_context["jaeger_trace_url"] = jaeger_trace_url
         
-        # Add input/output details if available (capped to prevent log flooding)
-        _MAX_DETAILS_LEN = 4096
+        # Add input/output details if available
         input_details = getattr(request.state, "input_details", None)
         if input_details:
-            detail_str = str(input_details)
-            log_context["input_details"] = detail_str[:_MAX_DETAILS_LEN] if len(detail_str) > _MAX_DETAILS_LEN else input_details
-
+            log_context["input_details"] = input_details
+        
         output_details = getattr(request.state, "output_details", None)
         if output_details:
-            detail_str = str(output_details)
-            log_context["output_details"] = detail_str[:_MAX_DETAILS_LEN] if len(detail_str) > _MAX_DETAILS_LEN else output_details
+            log_context["output_details"] = output_details
         
         # Log with appropriate level using structured logging
         # Skip logging 400-series errors - these are logged at gateway level only
