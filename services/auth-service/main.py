@@ -1967,13 +1967,30 @@ async def assign_role(
     db: AsyncSession = Depends(get_db)
 ):
     """Assign a role to a user (Admin only)"""
-    # Check if current user is admin
+    # Check if current user can manage roles
     user_roles = await AuthUtils.get_user_roles(db, current_user.id)
-    if "ADMIN" not in user_roles and not current_user.is_superuser:
+    is_platform_admin = ("ADMIN" in user_roles) or bool(current_user.is_superuser)
+    is_tenant_admin = ("TENANT ADMIN" in user_roles)
+    if not (is_platform_admin or is_tenant_admin):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"code": UNAUTHORIZED, "message": "Only administrators can assign roles"}
         )
+
+    # Normalize requested role (collapse whitespace, uppercase)
+    requested_role = " ".join(role_data.role_name.split()).upper()
+
+    # Tenant Admins can only assign tenant-scoped roles (no platform ADMIN)
+    if is_tenant_admin and not is_platform_admin:
+        allowed_for_tenant_admin = {"TENANT ADMIN", "MODERATOR", "GUEST", "USER"}
+        if requested_role not in allowed_for_tenant_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": UNAUTHORIZED,
+                    "message": f"Tenant Admin can only assign roles: {', '.join(sorted(allowed_for_tenant_admin))}",
+                },
+            )
     
     # Get target user
     target_user = await AuthUtils.get_user_by_id(db, role_data.user_id)
@@ -1984,12 +2001,12 @@ async def assign_role(
         )
     
     # Get role
-    result = await db.execute(select(Role).where(Role.name == role_data.role_name))
+    result = await db.execute(select(Role).where(Role.name == requested_role))
     role = result.scalar_one_or_none()
     if not role:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Role '{role_data.role_name}' not found"
+            detail=f"Role '{requested_role}' not found"
         )
     
     # Check if user already has this exact role
@@ -2040,13 +2057,13 @@ async def assign_role(
     db.add(user_role)
     await db.commit()
     
-    logger.info(f"Role '{role_data.role_name}' assigned to user {target_user.email} by {current_user.email}")
+    logger.info(f"Role '{requested_role}' assigned to user {target_user.email} by {current_user.email}")
     
     # Prepare response message
     if existing_roles:
-        response_message = f"Role '{role_data.role_name}' assigned successfully. Previous role(s) were replaced."
+        response_message = f"Role '{requested_role}' assigned successfully. Previous role(s) were replaced."
     else:
-        response_message = f"Role '{role_data.role_name}' assigned successfully."
+        response_message = f"Role '{requested_role}' assigned successfully."
     
     return {
         "message": response_message,
