@@ -5,6 +5,7 @@ FastAPI middleware for automatic serviceId → endpoint + model_name resolution
 
 import json
 import logging
+import re
 import time
 import uuid
 from typing import Optional, Dict, Tuple, Any
@@ -17,6 +18,9 @@ from .client import ModelManagementClient, ServiceInfo
 from .triton_client import TritonClient
 
 logger = logging.getLogger(__name__)
+
+# Allowlist pattern for service_id coming from client requests
+_SERVICE_ID_PATTERN = re.compile(r"^[a-zA-Z0-9/_\\-]{1,255}$")
 
 # Error raised when a service is unpublished (inference not allowed)
 SERVICE_UNPUBLISHED_CODE = "SERVICE_UNPUBLISHED"
@@ -171,11 +175,22 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 if service_info.endpoint:
                     endpoint, model_name = self._extract_triton_metadata(service_info, service_id)
                     self._service_registry_cache[service_id] = (endpoint, model_name, expires_at)
+                else:
+                    logger.warning(
+                        f"Model management returned service for service_id={service_id!r} but endpoint is empty; "
+                        "inference will fail until the service row has a non-empty endpoint."
+                    )
+            else:
+                logger.warning(
+                    f"Model management returned no service for service_id={service_id!r} (404 or no data). "
+                    "Check that the id exists in model_management_db.services.service_id or that model-management-service is reachable."
+                )
             return service_info
         except Exception as e:
             logger.error(
                 f"Failed to fetch service info for {service_id} from model management service: {e}. "
-                "Service resolution failed - some services require Model Management database entries."
+                "Service resolution failed - some services require Model Management database entries.",
+                exc_info=True,
             )
             return None
     
@@ -317,7 +332,16 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
 
         # No fallback: if Model Management cannot resolve the serviceId, return no endpoint/model/client.
         # Routers are responsible for returning clear HTTP 4xx/5xx errors in this case.
-        logger.error(f"Model Management did not resolve serviceId: {service_id} and no default endpoint is allowed")
+        if service_info is None:
+            logger.error(
+                f"Model Management did not resolve serviceId: {service_id!r} (no service returned - check 404/connectivity and that service_id exists in model_management_db.services). "
+                "No default endpoint is allowed."
+            )
+        else:
+            logger.error(
+                f"Model Management did not resolve serviceId: {service_id!r} (service found but endpoint is missing or empty in DB). "
+                "No default endpoint is allowed."
+            )
         return None, None, None
         
     async def dispatch(self, request: Request, call_next):
@@ -344,8 +368,22 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                     body = await request.body()
                 
                 service_id = extract_service_id_from_body(body)
-                
                 if service_id:
+                    # Validate serviceId format and length using allowlist pattern
+                    if not _SERVICE_ID_PATTERN.match(str(service_id)):
+                        logger.warning(
+                            "Invalid serviceId format received from request body: %r for path %s",
+                            service_id,
+                            request.url.path,
+                        )
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "code": "INVALID_SERVICE_ID",
+                                "message": "Invalid serviceId format.",
+                                "serviceId": service_id,
+                            },
+                        )
                     # Log removed - middleware handles request/response logging
                     logger.debug(f"Extracted serviceId from request: {service_id}")
                 else:
@@ -450,6 +488,18 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                         "code": SERVICE_UNPUBLISHED_CODE,
                         "message": SERVICE_UNPUBLISHED_MESSAGE,
                         "serviceId": e.service_id,
+                    }
+                },
+            )
+        except ValueError as e:
+            # Fail-closed on suspicious/invalid header values (e.g., CR/LF injection, oversize values)
+            logger.warning("Rejecting request due to invalid header value: %s", e)
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "detail": {
+                        "code": "INVALID_HEADER_VALUE",
+                        "message": "Invalid header value detected.",
                     }
                 },
             )

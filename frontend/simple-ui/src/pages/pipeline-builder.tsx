@@ -1,6 +1,6 @@
 // Custom Pipeline Builder Page - Configure and test custom pipelines
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Head from 'next/head';
 import {
   Grid,
@@ -29,13 +29,15 @@ import { ArrowBackIcon } from '@chakra-ui/icons';
 import ContentLayout from '../components/common/ContentLayout';
 import { PipelineInferenceRequest } from '../types/pipeline';
 import { runPipelineInference } from '../services/pipelineService';
+import { base64ToAudioObjectUrl } from '../utils/helpers';
 import { ASR_SUPPORTED_LANGUAGES, TTS_SUPPORTED_LANGUAGES } from '../config/constants';
 import { useToastWithDeduplication } from '../hooks/useToastWithDeduplication';
 
 const PipelineBuilderPage: React.FC = () => {
   const toast = useToastWithDeduplication();
   const router = useRouter();
-  
+  const builderAudioUrlRef = useRef<string | null>(null);
+
   // Pipeline configuration
   const [sourceLanguage, setSourceLanguage] = useState('hi');
   const [targetLanguage, setTargetLanguage] = useState('hi'); // Start with 'hi' (Hindi) which is TTS-supported
@@ -51,8 +53,19 @@ const PipelineBuilderPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [rawResponse, setRawResponse] = useState<string>('');
 
+  useEffect(() => () => {
+    if (builderAudioUrlRef.current) {
+      URL.revokeObjectURL(builderAudioUrlRef.current);
+      builderAudioUrlRef.current = null;
+    }
+  }, []);
+
   const handleRunPipeline = async () => {
     setIsLoading(true);
+    if (builderAudioUrlRef.current) {
+      URL.revokeObjectURL(builderAudioUrlRef.current);
+      builderAudioUrlRef.current = null;
+    }
     setResult(null);
     setRawResponse('');
 
@@ -117,20 +130,22 @@ const PipelineBuilderPage: React.FC = () => {
         const translationOutput = response.pipelineResponse?.[0]?.output?.[0];
         const ttsOutput = response.pipelineResponse?.[1];
         
-        // Handle audio from TTS response
+        // Handle audio from TTS response (use blob URL so CSP media-src allows playback)
         let audioContent = '';
         if (ttsOutput?.output && ttsOutput.output.length > 0) {
-          // Audio is in output array
           audioContent = ttsOutput.output[0]?.audioContent || '';
         } else if (ttsOutput?.audio && ttsOutput.audio.length > 0) {
-          // Audio is in audio array
           audioContent = ttsOutput.audio[0]?.audioContent || '';
         }
-        
+        let audioUrl = '';
+        if (audioContent) {
+          audioUrl = base64ToAudioObjectUrl(audioContent, 'wav');
+          builderAudioUrlRef.current = audioUrl;
+        }
         displayResult = {
           sourceText: translationOutput?.source || inputText,
           targetText: translationOutput?.target || '',
-          audio: audioContent ? `data:audio/wav;base64,${audioContent}` : '',
+          audio: audioUrl,
         };
       }
       

@@ -45,14 +45,14 @@ class MetricsCollector:
         self.enterprise_requests_total = Counter(
             "telemetry_obsv_requests_total",
             "Total enterprise requests",
-            ["organization", "app", "method", "endpoint", "status_code"],
+            ["organization", "app", "method", "endpoint", "status_code", "tenant"],
             registry=self.registry,
         )
 
         self.enterprise_request_duration = Histogram(
             "telemetry_obsv_request_duration_seconds",
             "Enterprise request duration",
-            ["organization", "app", "method", "endpoint"],
+            ["organization", "app", "method", "endpoint", "tenant"],
             registry=self.registry,
         )
 
@@ -60,7 +60,7 @@ class MetricsCollector:
         self.enterprise_service_requests = Counter(
             "telemetry_obsv_service_requests_total",
             "Service requests by type",
-            ["organization", "app", "service_type"],
+            ["organization", "app", "service_type", "tenant"],
             registry=self.registry,
         )
 
@@ -103,14 +103,14 @@ class MetricsCollector:
         self.enterprise_sla_availability = Gauge(
             "telemetry_obsv_sla_availability_percent",
             "Service availability percentage",
-            ["organization", "app"],
+            ["organization", "app", "tenant"],
             registry=self.registry,
         )
 
         self.enterprise_sla_response_time = Gauge(
             "telemetry_obsv_sla_response_time_seconds",
             "Average response time",
-            ["organization", "app"],
+            ["organization", "app", "tenant"],
             registry=self.registry,
         )
 
@@ -118,7 +118,7 @@ class MetricsCollector:
         self.enterprise_errors_total = Counter(
             "telemetry_obsv_errors_total",
             "Total errors by status code",
-            ["organization", "app", "endpoint", "status_code", "error_type"],
+            ["organization", "app", "endpoint", "status_code", "error_type", "tenant"],
             registry=self.registry,
         )
 
@@ -126,7 +126,7 @@ class MetricsCollector:
         self.enterprise_data_processed_total = Counter(
             "telemetry_obsv_data_processed_total",
             "Total data processed",
-            ["organization", "app", "data_type"],
+            ["organization", "app", "data_type", "tenant"],
             registry=self.registry,
         )
 
@@ -134,7 +134,7 @@ class MetricsCollector:
         self.enterprise_llm_tokens_processed = Counter(
             "telemetry_obsv_llm_tokens_processed_total",
             "Total LLM tokens processed",
-            ["organization", "app", "model"],
+            ["organization", "app", "model", "tenant"],
             registry=self.registry,
         )
 
@@ -142,7 +142,7 @@ class MetricsCollector:
         self.enterprise_tts_characters_synthesized = Histogram(
             "telemetry_obsv_tts_characters_synthesized",
             "TTS characters synthesized per request",
-            ["organization", "app", "language"],
+            ["organization", "app", "language", "tenant"],
             buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float("inf")),
             registry=self.registry,
         )
@@ -151,7 +151,7 @@ class MetricsCollector:
         self.enterprise_nmt_characters_translated = Histogram(
             "telemetry_obsv_nmt_characters_translated",
             "NMT characters translated per request",
-            ["organization", "app", "source_language", "target_language"],
+            ["organization", "app", "source_language", "target_language", "tenant"],
             buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float("inf")),
             registry=self.registry,
         )
@@ -160,7 +160,7 @@ class MetricsCollector:
         self.enterprise_asr_audio_seconds_processed = Histogram(
             "telemetry_obsv_asr_audio_seconds_processed",
             "ASR audio seconds processed per request",
-            ["organization", "app", "language"],
+            ["organization", "app", "language", "tenant"],
             buckets=(1, 5, 10, 30, 50, 60, 120, 300, 600, 1800, 3600, float("inf")),
             registry=self.registry,
         )
@@ -169,7 +169,7 @@ class MetricsCollector:
         self.enterprise_ocr_characters_processed = Histogram(
             "telemetry_obsv_ocr_characters_processed",
             "OCR characters processed per request",
-            ["organization", "app"],
+            ["organization", "app", "tenant"],
             buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float("inf")),
             registry=self.registry,
         )
@@ -177,7 +177,7 @@ class MetricsCollector:
         self.enterprise_ocr_image_size_kb = Histogram(
             "telemetry_obsv_ocr_image_size_kb",
             "OCR image payload size in kilobytes per request",
-            ["organization", "app"],
+            ["organization", "app", "tenant"],
             buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float("inf")),
             registry=self.registry,
         )
@@ -186,7 +186,7 @@ class MetricsCollector:
         self.enterprise_transliteration_characters_processed = Histogram(
             "telemetry_obsv_transliteration_characters_processed",
             "Transliteration characters processed per request",
-            ["organization", "app", "source_language", "target_language"],
+            ["organization", "app", "source_language", "target_language", "tenant"],
             buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float("inf")),
             registry=self.registry,
         )
@@ -195,7 +195,7 @@ class MetricsCollector:
         self.enterprise_language_detection_characters_processed = Histogram(
             "telemetry_obsv_language_detection_characters_processed",
             "Language detection characters processed per request",
-            ["organization", "app"],
+            ["organization", "app", "tenant"],
             buckets=(10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, float("inf")),
             registry=self.registry,
         )
@@ -204,7 +204,7 @@ class MetricsCollector:
         self.enterprise_audio_lang_detection_seconds_processed = Histogram(
             "telemetry_obsv_audio_lang_detection_seconds_processed",
             "Audio language detection audio seconds processed per request",
-            ["organization", "app"],
+            ["organization", "app", "tenant"],
             buckets=(1, 5, 10, 30, 50, 60, 120, 300, 600, 1800, 3600, float("inf")),
             registry=self.registry,
         )
@@ -213,7 +213,7 @@ class MetricsCollector:
         self.enterprise_ner_tokens_processed = Histogram(
             "telemetry_obsv_ner_tokens_processed",
             "NER tokens (words) processed per request",
-            ["organization", "app"],
+            ["organization", "app", "tenant"],
             buckets=(1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, float("inf")),
             registry=self.registry,
         )
@@ -222,7 +222,7 @@ class MetricsCollector:
         self.enterprise_speaker_diarization_seconds_processed = Histogram(
             "telemetry_obsv_speaker_diarization_seconds_processed",
             "Speaker diarization audio seconds processed per request",
-            ["organization", "app"],
+            ["organization", "app", "tenant"],
             buckets=(1, 5, 10, 30, 50, 60, 120, 300, 600, 1800, 3600, float("inf")),
             registry=self.registry,
         )
@@ -231,7 +231,7 @@ class MetricsCollector:
         self.enterprise_language_diarization_seconds_processed = Histogram(
             "telemetry_obsv_language_diarization_seconds_processed",
             "Language diarization audio seconds processed per request",
-            ["organization", "app"],
+            ["organization", "app", "tenant"],
             buckets=(1, 5, 10, 30, 50, 60, 120, 300, 600, 1800, 3600, float("inf")),
             registry=self.registry,
         )
@@ -240,7 +240,7 @@ class MetricsCollector:
         self.enterprise_speaker_verification_seconds_processed = Histogram(
             "telemetry_obsv_speaker_verification_seconds_processed",
             "Speaker verification audio seconds processed per request",
-            ["organization", "app"],
+            ["organization", "app", "tenant"],
             buckets=(1, 5, 10, 30, 50, 60, 120, 300, 600, 1800, 3600, float("inf")),
             registry=self.registry,
         )
@@ -249,7 +249,7 @@ class MetricsCollector:
         self.enterprise_sla_compliance = Gauge(
             "telemetry_obsv_sla_compliance_percent",
             "SLA compliance percentage",
-            ["organization", "app", "sla_type"],
+            ["organization", "app", "sla_type", "tenant"],
             registry=self.registry,
         )
 
@@ -257,7 +257,7 @@ class MetricsCollector:
         self.enterprise_component_latency = Histogram(
             "telemetry_obsv_component_latency_seconds",
             "Component latency",
-            ["organization", "app", "component"],
+            ["organization", "app", "component", "tenant"],
             registry=self.registry,
         )
 
@@ -330,13 +330,13 @@ class MetricsCollector:
             for organization in organizations:
                 for app in apps:
                     self.enterprise_sla_availability.labels(
-                        organization=organization, app=app
+                        organization=organization, app=app, tenant="unknown"
                     ).set(
                         99.9
                     )  # Mock availability
 
                     self.enterprise_sla_response_time.labels(
-                        organization=organization, app=app
+                        organization=organization, app=app, tenant="unknown"
                     ).set(
                         0.5
                     )  # Mock response time
@@ -565,6 +565,7 @@ class MetricsCollector:
         status_code: int,
         duration: float,
         service_type: str = "unknown",
+        tenant: str = "unknown",
     ):
         """Track a request."""
         self.enterprise_requests_total.labels(
@@ -573,14 +574,15 @@ class MetricsCollector:
             method=method,
             endpoint=endpoint,
             status_code=str(status_code),
+            tenant=tenant,
         ).inc()
 
         self.enterprise_request_duration.labels(
-            organization=organization, app=app, method=method, endpoint=endpoint
+            organization=organization, app=app, method=method, endpoint=endpoint, tenant=tenant
         ).observe(duration)
 
         self.enterprise_service_requests.labels(
-            organization=organization, app=app, service_type=service_type
+            organization=organization, app=app, service_type=service_type, tenant=tenant
         ).inc()
 
         # Track running totals for organization-level system metrics
@@ -599,14 +601,15 @@ class MetricsCollector:
                 endpoint=endpoint,
                 status_code=str(status_code),
                 error_type=error_type,
+                tenant=tenant,
             ).inc()
 
     def track_data_processing(
-        self, organization: str, app: str, data_type: str, amount: int
+        self, organization: str, app: str, data_type: str, amount: int, tenant: str = "unknown"
     ):
         """Track data processing."""
         self.enterprise_data_processed_total.labels(
-            organization=organization, app=app, data_type=data_type
+            organization=organization, app=app, data_type=data_type, tenant=tenant
         ).inc(amount)
         
         # Track running totals for organization-level disk usage
@@ -614,25 +617,25 @@ class MetricsCollector:
             self._org_data_totals[organization] = self._org_data_totals.get(organization, 0) + amount
             self._total_data += amount
 
-    def track_llm_tokens(self, organization: str, app: str, model: str, tokens: int):
+    def track_llm_tokens(self, organization: str, app: str, model: str, tokens: int, tenant: str = "unknown"):
         """Track LLM token processing."""
         self.enterprise_llm_tokens_processed.labels(
-            organization=organization, app=app, model=model
+            organization=organization, app=app, model=model, tenant=tenant
         ).inc(tokens)
 
         # Also track as data processing
-        self.track_data_processing(organization, app, "llm_tokens", tokens)
+        self.track_data_processing(organization, app, "llm_tokens", tokens, tenant=tenant)
 
     def track_tts_characters(
-        self, organization: str, app: str, language: str, characters: int
+        self, organization: str, app: str, language: str, characters: int, tenant: str = "unknown"
     ):
         """Track TTS character synthesis."""
         self.enterprise_tts_characters_synthesized.labels(
-            organization=organization, app=app, language=language
+            organization=organization, app=app, language=language, tenant=tenant
         ).observe(characters)
 
         # Also track as data processing
-        self.track_data_processing(organization, app, "tts_characters", characters)
+        self.track_data_processing(organization, app, "tts_characters", characters, tenant=tenant)
 
     def track_nmt_characters(
         self,
@@ -641,6 +644,7 @@ class MetricsCollector:
         source_lang: str,
         target_lang: str,
         characters: int,
+        tenant: str = "unknown",
     ):
         """Track NMT character translation."""
         self.enterprise_nmt_characters_translated.labels(
@@ -648,43 +652,44 @@ class MetricsCollector:
             app=app,
             source_language=source_lang,
             target_language=target_lang,
+            tenant=tenant,
         ).observe(characters)
 
         # Also track as data processing
-        self.track_data_processing(organization, app, "nmt_characters", characters)
+        self.track_data_processing(organization, app, "nmt_characters", characters, tenant=tenant)
 
     def track_asr_audio_length(
-        self, organization: str, app: str, language: str, audio_seconds: float
+        self, organization: str, app: str, language: str, audio_seconds: float, tenant: str = "unknown"
     ):
         """Track ASR audio length processing."""
         self.enterprise_asr_audio_seconds_processed.labels(
-            organization=organization, app=app, language=language
+            organization=organization, app=app, language=language, tenant=tenant
         ).observe(audio_seconds)
 
         # Also track as data processing
-        self.track_data_processing(organization, app, "asr_audio_seconds", int(audio_seconds))
+        self.track_data_processing(organization, app, "asr_audio_seconds", int(audio_seconds), tenant=tenant)
 
     def track_ocr_characters(
-        self, organization: str, app: str, characters: int
+        self, organization: str, app: str, characters: int, tenant: str = "unknown"
     ):
         """Track OCR character processing."""
         self.enterprise_ocr_characters_processed.labels(
-            organization=organization, app=app
+            organization=organization, app=app, tenant=tenant
         ).observe(characters)
 
         # Also track as data processing
-        self.track_data_processing(organization, app, "ocr_characters", characters)
+        self.track_data_processing(organization, app, "ocr_characters", characters, tenant=tenant)
     
     def track_ocr_image_size(
-        self, organization: str, app: str, image_size_kb: float
+        self, organization: str, app: str, image_size_kb: float, tenant: str = "unknown"
     ):
         """Track OCR image payload size in KB."""
         self.enterprise_ocr_image_size_kb.labels(
-            organization=organization, app=app
+            organization=organization, app=app, tenant=tenant
         ).observe(image_size_kb)
 
         # Also track as data processing
-        self.track_data_processing(organization, app, "ocr_image_kb", int(image_size_kb))
+        self.track_data_processing(organization, app, "ocr_image_kb", int(image_size_kb), tenant=tenant)
 
     def track_transliteration_characters(
         self,
@@ -693,6 +698,7 @@ class MetricsCollector:
         source_lang: str,
         target_lang: str,
         characters: int,
+        tenant: str = "unknown",
     ):
         """Track Transliteration character processing."""
         self.enterprise_transliteration_characters_processed.labels(
@@ -700,91 +706,92 @@ class MetricsCollector:
             app=app,
             source_language=source_lang,
             target_language=target_lang,
+            tenant=tenant,
         ).observe(characters)
 
         # Also track as data processing
-        self.track_data_processing(organization, app, "transliteration_characters", characters)
+        self.track_data_processing(organization, app, "transliteration_characters", characters, tenant=tenant)
 
     def track_language_detection_characters(
-        self, organization: str, app: str, characters: int
+        self, organization: str, app: str, characters: int, tenant: str = "unknown"
     ):
         """Track Language Detection character processing."""
         self.enterprise_language_detection_characters_processed.labels(
-            organization=organization, app=app
+            organization=organization, app=app, tenant=tenant
         ).observe(characters)
 
         # Also track as data processing
-        self.track_data_processing(organization, app, "language_detection_characters", characters)
+        self.track_data_processing(organization, app, "language_detection_characters", characters, tenant=tenant)
 
     def track_audio_lang_detection_length(
-        self, organization: str, app: str, audio_seconds: float
+        self, organization: str, app: str, audio_seconds: float, tenant: str = "unknown"
     ):
         """Track Audio Language Detection audio length processing."""
         self.enterprise_audio_lang_detection_seconds_processed.labels(
-            organization=organization, app=app
+            organization=organization, app=app, tenant=tenant
         ).observe(audio_seconds)
 
         # Also track as data processing
-        self.track_data_processing(organization, app, "audio_lang_detection_seconds", int(audio_seconds))
+        self.track_data_processing(organization, app, "audio_lang_detection_seconds", int(audio_seconds), tenant=tenant)
 
     def track_ner_tokens(
-        self, organization: str, app: str, tokens: int
+        self, organization: str, app: str, tokens: int, tenant: str = "unknown"
     ):
         """Track NER token (word) processing."""
         self.enterprise_ner_tokens_processed.labels(
-            organization=organization, app=app
+            organization=organization, app=app, tenant=tenant
         ).observe(tokens)
 
         # Also track as data processing
-        self.track_data_processing(organization, app, "ner_tokens", tokens)
+        self.track_data_processing(organization, app, "ner_tokens", tokens, tenant=tenant)
 
     def track_speaker_diarization_length(
-        self, organization: str, app: str, audio_seconds: float
+        self, organization: str, app: str, audio_seconds: float, tenant: str = "unknown"
     ):
         """Track Speaker Diarization audio length processing."""
         self.enterprise_speaker_diarization_seconds_processed.labels(
-            organization=organization, app=app
+            organization=organization, app=app, tenant=tenant
         ).observe(audio_seconds)
 
         # Also track as data processing
-        self.track_data_processing(organization, app, "speaker_diarization_seconds", int(audio_seconds))
+        self.track_data_processing(organization, app, "speaker_diarization_seconds", int(audio_seconds), tenant=tenant)
 
     def track_language_diarization_length(
-        self, organization: str, app: str, audio_seconds: float
+        self, organization: str, app: str, audio_seconds: float, tenant: str = "unknown"
     ):
         """Track Language Diarization audio length processing."""
         self.enterprise_language_diarization_seconds_processed.labels(
-            organization=organization, app=app
+            organization=organization, app=app, tenant=tenant
         ).observe(audio_seconds)
 
         # Also track as data processing
-        self.track_data_processing(organization, app, "language_diarization_seconds", int(audio_seconds))
+        self.track_data_processing(organization, app, "language_diarization_seconds", int(audio_seconds), tenant=tenant)
 
     def track_speaker_verification_length(
-        self, organization: str, app: str, audio_seconds: float
+        self, organization: str, app: str, audio_seconds: float, tenant: str = "unknown"
     ):
         """Track Speaker Verification audio length processing."""
         self.enterprise_speaker_verification_seconds_processed.labels(
-            organization=organization, app=app
+            organization=organization, app=app, tenant=tenant
         ).observe(audio_seconds)
 
         # Also track as data processing
-        self.track_data_processing(organization, app, "speaker_verification_seconds", int(audio_seconds))
+        self.track_data_processing(organization, app, "speaker_verification_seconds", int(audio_seconds), tenant=tenant)
 
     def track_component_latency(
-        self, organization: str, app: str, component: str, duration: float
+        self, organization: str, app: str, component: str, duration: float, tenant: str = "unknown"
     ):
         """Track component latency."""
         self.enterprise_component_latency.labels(
-            organization=organization, app=app, component=component
+            organization=organization, app=app, component=component, tenant=tenant
         ).observe(duration)
 
     def update_sla_compliance(
-        self, organization: str, app: str, sla_type: str, compliance_percent: float
+        self, organization: str, app: str, sla_type: str, compliance_percent: float, tenant: str = "unknown"
     ):
         """Update SLA compliance."""
         self.enterprise_sla_compliance.labels(
-            organization=organization, app=app, sla_type=sla_type
+            organization=organization, app=app, sla_type=sla_type, tenant=tenant
         ).set(compliance_percent)
 
     def update_organization_quotas(

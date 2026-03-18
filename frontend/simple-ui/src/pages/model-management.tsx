@@ -1,12 +1,6 @@
 // Model Management page with list and create functionality
 
 import {
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogOverlay,
   Box,
   Button,
   Card,
@@ -58,6 +52,7 @@ import { useAuth } from "../hooks/useAuth";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import ConfirmDialog from "../components/common/ConfirmDialog";
 
 // TypeScript interfaces for model data
 interface OAuthId {
@@ -146,7 +141,8 @@ const ModelManagementPage: React.FC = () => {
   const [isValidating, setIsValidating] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [updatingModelId, setUpdatingModelId] = useState<string | null>(null);
-  const [modelIdsWithService, setModelIdsWithService] = useState<Set<string>>(new Set());
+  /** Model IDs that have at least one published service; deprecate is disabled for these until all are unpublished */
+  const [modelIdsWithPublishedService, setModelIdsWithPublishedService] = useState<Set<string>>(new Set());
   const [modelToConfirm, setModelToConfirm] = useState<Model | null>(null);
   const [confirmAction, setConfirmAction] = useState<"deprecate" | "activate" | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -213,7 +209,7 @@ const ModelManagementPage: React.FC = () => {
     fetchModels();
   }, [toast]);
 
-  // Fetch services to know which models have a service associated (no deprecate for those)
+  // Fetch services: deprecate is only disabled when the model has at least one published service
   useEffect(() => {
     const fetchServices = async () => {
       try {
@@ -221,11 +217,12 @@ const ModelManagementPage: React.FC = () => {
         const ids = new Set<string>();
         (svcs || []).forEach((s: any) => {
           const id = s.modelId ?? s.model_id;
-          if (id) ids.add(String(id));
+          const published = s.isPublished === true || s.is_published === true;
+          if (id && published) ids.add(String(id));
         });
-        setModelIdsWithService(ids);
+        setModelIdsWithPublishedService(ids);
       } catch {
-        setModelIdsWithService(new Set());
+        setModelIdsWithPublishedService(new Set());
       }
     };
     fetchServices();
@@ -1076,7 +1073,7 @@ const ModelManagementPage: React.FC = () => {
                                     >
                                       View
                                     </Button>
-                                    {(model.versionStatus?.toLowerCase() === "active" || !model.versionStatus) && !modelIdsWithService.has(model.modelId) ? (
+                                    {(model.versionStatus?.toLowerCase() === "active" || !model.versionStatus) && !modelIdsWithPublishedService.has(model.modelId) ? (
                                       <Button
                                         size="sm"
                                         colorScheme="orange"
@@ -1434,7 +1431,7 @@ const ModelManagementPage: React.FC = () => {
                                 Create Service
                               </Button>
                             )}
-                            {(selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithService.has(selectedModel.modelId) ? (
+                            {(selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithPublishedService.has(selectedModel.modelId) ? (
                               <Button
                                 size="sm"
                                 colorScheme="orange"
@@ -1561,40 +1558,33 @@ const ModelManagementPage: React.FC = () => {
      </VStack>
       </ContentLayout>
 
-      <AlertDialog
+      <ConfirmDialog
         isOpen={isConfirmOpen}
-        leastDestructiveRef={cancelConfirmRef}
         onClose={closeConfirmDialog}
-      >
-        <AlertDialogOverlay>
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize="lg" fontWeight="bold">
-              {confirmAction === "deprecate" ? "Deprecate model" : "Activate model"}
-            </AlertDialogHeader>
-            <AlertDialogBody>
-              {confirmAction === "deprecate" ? (
-                <>Are you sure you want to deprecate <strong>{modelToConfirm?.name || modelToConfirm?.modelId}</strong>? Deprecated models cannot be used for new services.</>
-              ) : (
-                <>Are you sure you want to activate <strong>{modelToConfirm?.name || modelToConfirm?.modelId}</strong>? The model will be available for services again.</>
-              )}
-            </AlertDialogBody>
-            <AlertDialogFooter>
-              <Button ref={cancelConfirmRef} onClick={closeConfirmDialog}>
-                Cancel
-              </Button>
-              <Button
-                colorScheme={confirmAction === "deprecate" ? "orange" : "green"}
-                onClick={handleConfirmAction}
-                ml={3}
-                isLoading={updatingModelId === modelToConfirm?.modelId}
-                loadingText={confirmAction === "deprecate" ? "Deprecating..." : "Activating..."}
-              >
-                Confirm
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
+        onConfirm={handleConfirmAction}
+        title={confirmAction === "deprecate" ? "Deprecate model" : "Activate model"}
+        body={
+          confirmAction === "deprecate" ? (
+            <>
+              Are you sure you want to deprecate{" "}
+              <strong>{modelToConfirm?.name || modelToConfirm?.modelId}</strong>?
+              Deprecated models cannot be used for new services.
+            </>
+          ) : (
+            <>
+              Are you sure you want to activate{" "}
+              <strong>{modelToConfirm?.name || modelToConfirm?.modelId}</strong>?
+              The model will be available for services again.
+            </>
+          )
+        }
+        confirmLabel="Confirm"
+        cancelLabel="Cancel"
+        confirmColorScheme={confirmAction === "deprecate" ? "orange" : "green"}
+        isConfirmLoading={updatingModelId === modelToConfirm?.modelId}
+        confirmLoadingText={confirmAction === "deprecate" ? "Deprecating..." : "Activating..."}
+        leastDestructiveRef={cancelConfirmRef}
+      />
     </>
   );
 };

@@ -20,6 +20,7 @@ import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
+import AudioInputPreview from "../components/common/AudioInputPreview";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performAudioLanguageDetectionInference, listAudioLanguageDetectionServices } from "../services/audioLanguageDetectionService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
@@ -181,8 +182,8 @@ const AudioLanguageDetectionPage: React.FC = () => {
           mx="auto"
         >
             {/* Configuration Panel */}
-          <GridItem>
-            <VStack spacing={6} align="stretch">
+          <GridItem pt={0} mt={0} alignSelf="flex-start">
+            <VStack spacing={6} align="stretch" pt={0} mt={0}>
 
               {/* Service Selection */}
               <FormControl>
@@ -224,19 +225,27 @@ const AudioLanguageDetectionPage: React.FC = () => {
                   </Select>
                 )}
                 {selectedServiceId && services.length > 0 && (
-                  <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                  <Box
+                    mt={2}
+                    p={3}
+                    bg="orange.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="orange.200"
+                  >
                     {(() => {
-                      const selectedService = services.find((s) => s.service_id === selectedServiceId);
+                      const selectedService = services.find(
+                        (s) => s.service_id === selectedServiceId
+                      );
                       return selectedService ? (
                         <>
                           <Text fontSize="sm" color="gray.700" mb={1}>
-                            <strong>Service ID:</strong> {selectedService.service_id}
+                            <strong>Service Name:</strong>{" "}
+                            {selectedService.name || selectedService.service_id}
                           </Text>
                           <Text fontSize="sm" color="gray.700" mb={1}>
-                            <strong>Name:</strong> {selectedService.name || selectedService.service_id}
-                          </Text>
-                          <Text fontSize="sm" color="gray.700" mb={1}>
-                            <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                            <strong>Service Description:</strong>{" "}
+                            {selectedService.serviceDescription || "No description available"}
                           </Text>
                         </>
                       ) : null;
@@ -260,19 +269,25 @@ const AudioLanguageDetectionPage: React.FC = () => {
                 />
               </Box>
 
-              {/* Audio Status */}
+              {/* Audio Status + Review/play */}
               {audioData && (
-                <Box
-                  p={3}
-                  bg="green.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="green.200"
-                >
-                  <Text fontSize="sm" color="green.700" fontWeight="semibold">
-                    ✓ Audio ready for processing
-                  </Text>
-                </Box>
+                <>
+                  <Box
+                    p={3}
+                    bg="green.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="green.200"
+                  >
+                    <Text fontSize="sm" color="green.700" fontWeight="semibold">
+                      ✓ Audio ready for processing
+                    </Text>
+                  </Box>
+                  <AudioInputPreview
+                    audioBase64OrDataUrl={audioData}
+                    label="Review your audio"
+                  />
+                </>
               )}
 
               {/* Instruction above Submit (consistent with other services) */}
@@ -296,8 +311,8 @@ const AudioLanguageDetectionPage: React.FC = () => {
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Progress Indicator */}
                 {fetching && (
                   <Box>

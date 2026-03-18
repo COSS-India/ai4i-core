@@ -49,7 +49,7 @@ const Header: React.FC = () => {
 
   const [isApiKeyViewerOpen, setIsApiKeyViewerOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [title, setTitle] = useState("Dashboard");
+  const [title, setTitle] = useState("");
 
   // Determine if we should show user menu or sign in button
   const showUserMenu =

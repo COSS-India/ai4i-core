@@ -502,6 +502,11 @@ export default function ApiKeyManagementTab({
               onClick={mgmt.handleUpdateApiKey}
               isLoading={mgmt.isUpdating}
               loadingText="Updating..."
+              isDisabled={
+                mgmt.isUpdating ||
+                !(mgmt.updateFormData.key_name ?? "").trim() ||
+                !(mgmt.updateFormData.permissions?.length ?? 0)
+              }
             >
               Update
             </Button>
