@@ -16,10 +16,10 @@ class TenantUserStatus(str, Enum):
 
 class TenantUserRole(str, Enum):
     """Roles assignable to tenant users. Must exist in auth service."""
-    ADMIN = "ADMIN"
     USER = "USER"
     GUEST = "GUEST"
     MODERATOR = "MODERATOR"
+    TENANTADMIN = "TENANT ADMIN"
 
 
 class SubscriptionType(str, Enum):
