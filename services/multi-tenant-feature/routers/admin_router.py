@@ -93,10 +93,10 @@ async def require_admin(request: Request):
     if not is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required to register tenants",
+            detail="Admin privileges required to perform the action",
         )
 
-    return {"user_id": user_id, "roles": roles}
+    return
 
 @router.post(
     "/register/tenant",
@@ -162,7 +162,11 @@ async def register_user_request(
 
 
 
-@router.patch("/update/tenants/status" , response_model=TenantStatusUpdateResponse , status_code=status.HTTP_200_OK)
+@router.patch("/update/tenants/status" , 
+              response_model=TenantStatusUpdateResponse , 
+              status_code=status.HTTP_200_OK,
+              dependencies=[Depends(require_admin)]
+              )
 async def change_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSession = Depends(get_tenant_db_session),):
     try:
         return await update_tenant_status(payload, db)
@@ -195,6 +199,35 @@ async def change_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
         raise HTTPException(status_code=400, detail=str(ve),)
     except Exception as exc:
         logger.exception(f"Unexpected error while updating tenant user status | tenant={payload.tenant_id} user_id={payload.user_id}: {exc}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    
+
+@router.patch("/update/tenant", 
+              response_model=TenantUpdateResponse, 
+              status_code=status.HTTP_200_OK,
+              )
+async def update_tenant_info(
+    request: Request,
+    payload: TenantUpdateRequest,
+    db: AsyncSession = Depends(get_tenant_db_session),
+):
+    """
+    Update tenant information including organization_name, contact_email, domain,
+    requested_quotas, usage_quota, and tenant admin role. Supports partial updates.
+    """
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+    try:
+        return await update_tenant(payload, db, auth_header=auth_header)
+    except HTTPException:
+        raise
+    except IntegrityError as ie:
+        logger.error(f"Integrity error while updating tenant | tenant_id={payload.tenant_id}: {ie}")
+        raise HTTPException(status_code=409, detail="Tenant update conflict (e.g., domain already exists)")
+    except ValueError as ve:
+        logger.error(f"Validation error while updating tenant | tenant_id={payload.tenant_id}: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception(f"Unexpected error while updating tenant | tenant_id={payload.tenant_id}: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -260,30 +293,6 @@ async def delete_tenant_user_endpoint(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.patch("/update/tenant", response_model=TenantUpdateResponse, status_code=status.HTTP_200_OK)
-async def update_tenant_info(
-    request: Request,
-    payload: TenantUpdateRequest,
-    db: AsyncSession = Depends(get_tenant_db_session),
-):
-    """
-    Update tenant information including organization_name, contact_email, domain,
-    requested_quotas, usage_quota, and tenant admin role. Supports partial updates.
-    """
-    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
-    try:
-        return await update_tenant(payload, db, auth_header=auth_header)
-    except HTTPException:
-        raise
-    except IntegrityError as ie:
-        logger.error(f"Integrity error while updating tenant | tenant_id={payload.tenant_id}: {ie}")
-        raise HTTPException(status_code=409, detail="Tenant update conflict (e.g., domain already exists)")
-    except ValueError as ve:
-        logger.error(f"Validation error while updating tenant | tenant_id={payload.tenant_id}: {ve}")
-        raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as exc:
-        logger.exception(f"Unexpected error while updating tenant | tenant_id={payload.tenant_id}: {exc}")
-        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/view/tenant", status_code=status.HTTP_200_OK)

@@ -12,6 +12,7 @@ from services.tenant_service import add_subscriptions, remove_subscriptions
 from utils.tenant_resolver import resolve_tenant_from_user_id
 from logger import logger
 from middleware.auth_provider import AuthProvider
+from .admin_router import require_admin
 
 
 router = APIRouter(
@@ -24,10 +25,15 @@ router = APIRouter(
 tenant_resolve_router = APIRouter(
     prefix="/resolve/tenant",
     tags=["Tenant Resolution"],
+    dependencies=[Depends(AuthProvider)]
 )
 
 
-@router.post("/subscriptions/add",response_model=TenantSubscriptionResponse,status_code=status.HTTP_201_CREATED)
+@router.post("/subscriptions/add",
+             response_model=TenantSubscriptionResponse,
+             status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_admin)]
+             )
 async def add_tenant_subscriptions(
     payload: TenantSubscriptionAddRequest,
     db: AsyncSession = Depends(get_tenant_db_session),
@@ -52,7 +58,11 @@ async def add_tenant_subscriptions(
         raise HTTPException(status_code=500,detail="Internal server error")
 
 
-@router.post("/subscriptions/remove",response_model=TenantSubscriptionResponse,status_code=status.HTTP_200_OK)
+@router.post("/subscriptions/remove",
+             response_model=TenantSubscriptionResponse,
+             status_code=status.HTTP_200_OK,
+             dependencies=[Depends(require_admin)]
+             )
 async def remove_tenant_subscriptions(
     payload: TenantSubscriptionRemoveRequest,
     db: AsyncSession = Depends(get_tenant_db_session),
