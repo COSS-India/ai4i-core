@@ -1,6 +1,9 @@
 // ASR service testing page with recording, file upload, and results display
 
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
   Box,
   Button,
   FormControl,
@@ -21,6 +24,7 @@ import ASRResults from "../components/asr/ASRResults";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
 import LoadingSpinner from "../components/common/LoadingSpinner";
+import AudioInputPreview from "../components/common/AudioInputPreview";
 import { ASR_SUPPORTED_LANGUAGES } from "../config/constants";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { useASR } from "../hooks/useASR";
@@ -116,8 +120,9 @@ const ASRPage: React.FC = () => {
                   <Select
                     value={inferenceMode}
                     onChange={(e) =>
-                      setInferenceMode(e.target.value as "rest" | "streaming")
+                      setInferenceMode(e.target.value as "" | "rest" | "streaming")
                     }
+                    placeholder="Select"
                   >
                     <option value="rest">REST API</option>
                     <option value="streaming">WebSocket Streaming</option>
@@ -149,19 +154,25 @@ const ASRPage: React.FC = () => {
                     })}
                   </Select>
                   {serviceId && asrServices && (
-                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                    <Box
+                      mt={2}
+                      p={3}
+                      bg="orange.50"
+                      borderRadius="md"
+                      border="1px"
+                      borderColor="orange.200"
+                    >
                       {(() => {
                         const selectedService = asrServices.find((s) => s.service_id === serviceId);
                         return selectedService ? (
                           <>
                             <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service ID:</strong> {selectedService.service_id}
+                              <strong>Service Name:</strong>{" "}
+                              {selectedService.name || selectedService.service_id}
                             </Text>
                             <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
-                            </Text>
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Description:</strong> {selectedService.description || "No description available"}
+                              <strong>Service Description:</strong>{" "}
+                              {selectedService.description || "No description available"}
                             </Text>
                           </>
                         ) : null;
@@ -207,9 +218,24 @@ const ASRPage: React.FC = () => {
                     disabled={fetching || !serviceId || !language}
                     timer={timer}
                   />
+                  {/* Upload / recording confirmation - show when audio is ready */}
+                  {!recording && pendingAudio && (
+                    <>
+                      <Alert status="success" borderRadius="md" mt={4}>
+                        <AlertIcon />
+                        <AlertDescription>
+                          Audio ready (recording or upload). Click Transcribe to generate the transcript.
+                        </AlertDescription>
+                      </Alert>
+                      <AudioInputPreview
+                        audioBase64OrDataUrl={pendingAudio}
+                        label="Review your audio"
+                      />
+                    </>
+                  )}
                 </Box>
 
-                {/* Instruction above Transcribe (same order as TTS: instruction then button) */}
+                {/* Helper text above action button only (record/upload are separate blocks in AudioRecorder above) */}
                 <Text fontSize="sm" color="gray.600">
                   Record or upload audio above, then click Transcribe to generate the transcript.
                 </Text>

@@ -83,7 +83,7 @@ const ProfilePage: React.FC = () => {
   // Fetch all users (Admin only)
   useEffect(() => {
     if (!isAuthenticated || authLoading || !user) return;
-    const isAdmin = user?.roles?.includes("ADMIN") || user?.is_superuser;
+    const isAdmin = user?.roles?.includes("ADMIN") || user?.is_superuser ||  user?.roles?.includes("TENANT ADMIN");
     if (!isAdmin) return;
 
     setIsLoadingUsers(true);
@@ -116,20 +116,22 @@ const ProfilePage: React.FC = () => {
   const cardBorder = useColorModeValue("gray.200", "gray.700");
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN") || user?.is_superuser);
+  const isTenantAdmin = Boolean(user?.roles?.includes("TENANT ADMIN"));
   const isModerator = Boolean(user?.roles?.includes("MODERATOR"));
-  const showMultiTenant = Boolean( user?.is_superuser || user?.is_tenant);
+  const showMultiTenant = Boolean(user?.is_superuser || user?.is_tenant);
   // Single source of truth: tab order must match TabPanels 1:1
   const tabConfig = React.useMemo(() => {
     const tabs: { id: string; label: string; show: boolean }[] = [
       { id: "user-details", label: "User Details", show: true },
       { id: "api-key", label: "API Key", show: true },
       { id: "roles", label: "Roles", show: isAdmin },
-      { id: "create-api-key", label: "Create API Key", show: isAdmin },
+      // Create API Key is available to full ADMIN and TENANT ADMIN roles
+      { id: "create-api-key", label: "Create API Key", show: isAdmin || isTenantAdmin },
       { id: "api-key-management", label: "API Key Management", show: isAdmin },
       { id: "multi-tenant", label: "Multi Tenant Management", show: showMultiTenant },
     ];
     return tabs.filter((t) => t.show);
-  }, [isAdmin, isModerator, showMultiTenant]);
+  }, [isAdmin, isTenantAdmin, isModerator, showMultiTenant]);
 
   const apiKeyTabIndex = 1;
   const permissionsTabIndex = isAdmin ? 3 : -1;

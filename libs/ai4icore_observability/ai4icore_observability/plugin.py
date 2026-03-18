@@ -59,8 +59,6 @@ class ObservabilityPlugin:
                 "plugin": "ai4icore-enterprise",
                 "version": "1.0.9",
                 "enabled": self.config.enabled,
-                "customers": self.config.customers,
-                "apps": self.config.apps
             })
         
         # Configuration endpoint

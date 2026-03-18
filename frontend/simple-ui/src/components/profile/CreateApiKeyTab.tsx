@@ -21,6 +21,13 @@ import {
   CheckboxGroup,
   SimpleGrid,
   Badge,
+  Table,
+  Thead,
+  Tbody,
+  Tr,
+  Th,
+  Td,
+  TableContainer,
 } from "@chakra-ui/react";
 import { useCreateApiKeyTab } from "./hooks/useCreateApiKeyTab";
 import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
@@ -90,7 +97,16 @@ export default function CreateApiKeyTab({
                 bg="white"
                 isDisabled={isLoadingUsers}
               >
-                {users.map((u) => (
+                {users
+                  .slice()
+                  .sort((a, b) => {
+                    const nameA = (a.username || a.email || "").toLowerCase();
+                    const nameB = (b.username || b.email || "").toLowerCase();
+                    if (nameA < nameB) return -1;
+                    if (nameA > nameB) return 1;
+                    return 0;
+                  })
+                  .map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.username} ({u.email})
                   </option>
@@ -282,6 +298,34 @@ export default function CreateApiKeyTab({
             </Box>
           )}
 
+          {perm.permissions.length > 0 && (
+            <Box>
+              <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
+                Available Permissions
+              </Heading>
+              <TableContainer>
+                <Table variant="simple" size="sm">
+                  <Thead>
+                    <Tr>
+                      <Th>Permission</Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {perm.permissions.map((p) => (
+                      <Tr key={p}>
+                        <Td>
+                          <Badge colorScheme="purple" fontSize="sm" p={1}>
+                            {p}
+                          </Badge>
+                        </Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+              </TableContainer>
+            </Box>
+          )}
+
           {perm.permissions.length === 0 && !perm.isLoadingPermissions && (
             <Alert status="info" borderRadius="md">
               <AlertIcon />
@@ -291,13 +335,7 @@ export default function CreateApiKeyTab({
             </Alert>
           )}
 
-          <Alert status="info" borderRadius="md">
-            <AlertIcon />
-            <AlertDescription>
-              Permissions are typically assigned through roles. Direct permission assignment may
-              require backend support.
-            </AlertDescription>
-          </Alert>
+          
         </VStack>
       </CardBody>
     </Card>

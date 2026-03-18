@@ -10,7 +10,6 @@ import {
   Image,
   Text,
   useColorModeValue,
-  useMediaQuery,
   VStack,
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
@@ -378,8 +377,7 @@ const Sidebar: React.FC = () => {
   const { checkSessionExpiry } = useSessionExpiry();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
-  const [isMobile] = useMediaQuery("(max-width: 1080px)");
-  
+
   // Check if user is GUEST or USER
   const isGuest = user?.roles?.includes('GUEST') || false;
   const isUser = user?.roles?.includes('USER') || false;
@@ -455,17 +453,13 @@ const Sidebar: React.FC = () => {
   const borderColor = useColorModeValue("gray.200", "gray.700");
   const hoverBgColor = useColorModeValue("gray.50", "gray.900");
 
-  // Hide sidebar on mobile
-  if (isMobile) {
-    return null;
-  }
-
   return (
     <Box
       position="fixed"
       left={0}
       top={0}
-      h="100vh"
+      minH="100vh"
+      h="100%"
       w={isExpanded ? "350px" : "4.5rem"}
       bg={bgColor}
       boxShadow="md"
@@ -481,8 +475,13 @@ const Sidebar: React.FC = () => {
       }}
       borderRight="1px"
       borderColor={borderColor}
+      sx={{
+        /* Small viewport height so sidebar never extends past visible area (1312×848, scaled Mac) */
+        minHeight: '100svh',
+        height: '100svh',
+      }}
     >
-      <VStack spacing={3} p={3} h="calc(100vh - 3.5rem)" overflowY="auto">
+      <VStack spacing={3} p={3} overflowY="auto" overflowX="hidden" sx={{ height: 'calc(100svh - 3.5rem)', minHeight: 0 }}>
         {/* Logo Section */}
         <VStack spacing={2} w="full">
           <Box

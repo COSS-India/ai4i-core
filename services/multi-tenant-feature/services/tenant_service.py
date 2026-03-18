@@ -928,8 +928,27 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     if not verification:
         raise ValueError("Invalid or expired token")
 
+    # Ensure this token is still within its validity window
     if verification.expires_at < now_utc():
         raise ValueError("Token expired")
+
+    # Enforce that only the latest unverified token for this tenant is valid.
+    # If a newer unverified token exists, this (older) token should be rejected.
+    latest_stmt = (
+        select(TenantEmailVerification)
+        .where(
+            TenantEmailVerification.tenant_id == verification.tenant_id,
+            TenantEmailVerification.verified_at.is_(None),
+            TenantEmailVerification.expires_at >= now_utc(),
+        )
+        .order_by(TenantEmailVerification.created_at.desc())
+        .limit(1)
+    )
+    latest_verification = (await tenant_db.execute(latest_stmt)).scalar_one_or_none()
+
+    if latest_verification and latest_verification.id != verification.id:
+        # A newer verification link has been issued; this older link must not be used.
+        raise ValueError("A newer verification email has been sent. Please use the latest verification link.")
 
     tenant = await tenant_db.get(Tenant, verification.tenant_id)
     if not tenant:
@@ -949,7 +968,6 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     # Decrypt the password that was stored during tenant registration
     admin_username = f"admin@{tenant.tenant_id}"
     plain_password = generate_random_password(length = 8)
-    
 
     hashed_password = hash_password(plain_password)
 
@@ -1138,6 +1156,18 @@ async def resend_verification_email(
     
     # if tenant.status == TenantStatus.ARCHIVED:
     #     raise ValueError("Tenant is archived. Contact support.")
+
+    # Invalidate all existing, unverified, non-expired tokens for this tenant
+    # so that only the newest token generated below remains usable.
+    await db.execute(
+        update(TenantEmailVerification)
+        .where(
+            TenantEmailVerification.tenant_id == tenant.id,
+            TenantEmailVerification.verified_at.is_(None),
+            TenantEmailVerification.expires_at > now_utc(),
+        )
+        .values(expires_at=now_utc())
+    )
 
     token = generate_email_verification_token()
     expiry = now_utc() + timedelta(minutes=15)  # Match the expiry time from initial verification
@@ -2108,7 +2138,6 @@ async def update_tenant_user(
             tenant_user.username = new_value
             updated_fields.append("username")
 
-    # Handle email update (store encrypted)
     if "email" in update_data:
         old_value = decrypt_sensitive_data(tenant_user.email)
         new_value = update_data["email"]
@@ -2339,7 +2368,12 @@ async def update_tenant(
     
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    
+
+    if tenant.status == TenantStatus.PENDING:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot update tenant while status is PENDING",
+        )
     # Get update data excluding unset fields
     update_data = payload.model_dump(exclude_unset=True, exclude={"tenant_id"})
     
@@ -2370,17 +2404,6 @@ async def update_tenant(
             tenant.organization_name = new_value
             updated_fields.append("organization_name")
     
-    # Handle contact_email update (store encrypted)
-    if "contact_email" in update_data:
-        old_value = decrypt_sensitive_data(tenant.contact_email)
-        new_value = update_data["contact_email"]
-        if old_value != new_value:
-            changes["contact_email"] = FieldChange(old=old_value, new=new_value)
-            tenant.contact_email = encrypt_sensitive_data(new_value) if new_value else None
-            # Keep email_hash in sync with the (decrypted) contact_email
-            tenant.email_hash = hash_email(new_value) if new_value else None
-            updated_fields.append("contact_email")
-
     # Handle phone_number update (store encrypted)
     if "phone_number" in update_data:
         old_value = decrypt_sensitive_data(tenant.phone_number)

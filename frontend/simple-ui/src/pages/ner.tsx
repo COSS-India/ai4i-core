@@ -201,8 +201,8 @@ const NERPage: React.FC = () => {
           mx="auto"
         >
             {/* Configuration Panel */}
-          <GridItem>
-            <VStack spacing={6} align="stretch">
+          <GridItem pt={0} mt={0} alignSelf="flex-start">
+            <VStack spacing={6} align="stretch" pt={0} mt={0}>
 
               {/* Service Selection */}
               <FormControl>
@@ -244,19 +244,27 @@ const NERPage: React.FC = () => {
                   </Select>
                 )}
                 {selectedServiceId && services.length > 0 && (
-                  <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                  <Box
+                    mt={2}
+                    p={3}
+                    bg="orange.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="orange.200"
+                  >
                     {(() => {
-                      const selectedService = services.find((s) => s.service_id === selectedServiceId);
+                      const selectedService = services.find(
+                        (s) => s.service_id === selectedServiceId
+                      );
                       return selectedService ? (
                         <>
                           <Text fontSize="sm" color="gray.700" mb={1}>
-                            <strong>Service ID:</strong> {selectedService.service_id}
+                            <strong>Service Name:</strong>{" "}
+                            {selectedService.name || selectedService.service_id}
                           </Text>
                           <Text fontSize="sm" color="gray.700" mb={1}>
-                            <strong>Name:</strong> {selectedService.name || selectedService.service_id}
-                          </Text>
-                          <Text fontSize="sm" color="gray.700" mb={1}>
-                            <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                            <strong>Service Description:</strong>{" "}
+                            {selectedService.serviceDescription || "No description available"}
                           </Text>
                         </>
                       ) : null;
@@ -348,8 +356,8 @@ const NERPage: React.FC = () => {
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Progress Indicator */}
               {fetching && (
                 <Box>

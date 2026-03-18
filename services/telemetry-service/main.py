@@ -69,7 +69,7 @@ async def startup_event():
         logger.info("Connected to Redis")
         
         # Initialize PostgreSQL connection
-        database_url = app_env.get_database_url("telemetry_db")
+        database_url = app_env.get_database_url()  # Uses DATABASE_URL directly from .env
         db_engine = create_async_engine(
             database_url,
             pool_size=10,
@@ -193,6 +193,10 @@ async def startup_event():
             # ADMIN role permissions
             rbac_enforcer.add_policy("role:ADMIN", tenant, "logs", "read")
             rbac_enforcer.add_policy("role:ADMIN", tenant, "traces", "read")
+            
+            # TENANT ADMIN role permissions (scoped to their own tenant by router logic)
+            rbac_enforcer.add_policy("role:TENANT ADMIN", tenant, "logs", "read")
+            rbac_enforcer.add_policy("role:TENANT ADMIN", tenant, "traces", "read")
             
             # MODERATOR role permissions
             rbac_enforcer.add_policy("role:MODERATOR", tenant, "logs", "read")

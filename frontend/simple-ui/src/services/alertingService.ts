@@ -117,14 +117,23 @@ class AlertingService {
   async createDefinition(
     data: AlertDefinitionCreate
   ): Promise<AlertDefinition> {
-    const raw = data as unknown as Record<string, unknown>;
-    const thresholdUnit =
-      typeof raw.threshold_unit === 'string' && raw.threshold_unit.trim() !== ''
-        ? raw.threshold_unit.trim()
-        : 'seconds';
-    const body = {
-      ...raw,
-      threshold_unit: thresholdUnit,
+    const body: Record<string, unknown> = {
+      name: data.name,
+      description: data.description ?? null,
+      category: data.category ?? 'application',
+      severity: data.severity,
+      urgency: data.urgency ?? 'medium',
+      sub_category: data.sub_category ?? null,
+      signal: data.signal ?? null,
+      signal_metric: data.signal_metric ?? null,
+      condition_operator: data.condition_operator ?? null,
+      threshold_value: data.threshold_value,
+      threshold_unit: (data.threshold_unit ?? 's').trim(),
+      service: data.service && data.service.length > 0 ? data.service : undefined,
+      evaluation_interval: data.evaluation_interval ?? '30s',
+      for_duration: data.for_duration ?? '1m',
+      enabled: data.enabled !== false,
+      annotations: data.annotations,
     };
     return this.request<AlertDefinition>('/definitions', {
       method: 'POST',
