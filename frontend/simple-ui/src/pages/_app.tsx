@@ -26,6 +26,7 @@ const layoutRoutes = [
   '/profile', 
   '/model-management',
   '/services-management',
+  '/tenant-management',
   '/ocr',
   '/transliteration',
   '/language-detection',

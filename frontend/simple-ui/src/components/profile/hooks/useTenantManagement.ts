@@ -594,13 +594,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const openAddUserForTenant = (tenant_id: string) => {
-    const tenant = tenants.find((t) => t.tenant_id === tenant_id);
-    const tenantSubs = tenant?.subscriptions ?? [];
     setUserForm((prev) => ({
       ...prev,
       tenant_id,
-      services: tenantSubs.length > 0 ? tenantSubs.slice(0, 2) : [],
+      services: [],
     }));
+    setUserFormErrors({});
     setIsUserModalOpen(true);
   };
 

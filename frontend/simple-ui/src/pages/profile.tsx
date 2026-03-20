@@ -30,7 +30,6 @@ import ApiKeyTab from "../components/profile/ApiKeyTab";
 import RolesTab from "../components/profile/RolesTab";
 import CreateApiKeyTab from "../components/profile/CreateApiKeyTab";
 import ApiKeyManagementTab from "../components/profile/ApiKeyManagementTab";
-import TenantManagementTab from "../components/profile/TenantManagementTab";
 
 const ProfilePage: React.FC = () => {
   const router = useRouter();
@@ -118,7 +117,6 @@ const ProfilePage: React.FC = () => {
   const isAdmin = Boolean(user?.roles?.includes("ADMIN") || user?.is_superuser);
   const isTenantAdmin = Boolean(user?.roles?.includes("TENANT ADMIN"));
   const isModerator = Boolean(user?.roles?.includes("MODERATOR"));
-  const showMultiTenant = Boolean(user?.is_superuser || user?.is_tenant);
   // Single source of truth: tab order must match TabPanels 1:1
   const tabConfig = React.useMemo(() => {
     const tabs: { id: string; label: string; show: boolean }[] = [
@@ -128,15 +126,13 @@ const ProfilePage: React.FC = () => {
       // Create API Key is available to full ADMIN and TENANT ADMIN roles
       { id: "create-api-key", label: "Create API Key", show: isAdmin || isTenantAdmin },
       { id: "api-key-management", label: "API Key Management", show: isAdmin },
-      { id: "multi-tenant", label: "Multi Tenant Management", show: showMultiTenant },
     ];
     return tabs.filter((t) => t.show);
-  }, [isAdmin, isTenantAdmin, isModerator, showMultiTenant]);
+  }, [isAdmin, isTenantAdmin, isModerator]);
 
   const apiKeyTabIndex = 1;
   const permissionsTabIndex = isAdmin ? 3 : -1;
   const apiKeyManagementTabIndex = tabConfig.findIndex((t) => t.id === "api-key-management");
-  const multiTenantTabIndex = tabConfig.findIndex((t) => t.id === "multi-tenant");
 
   const handleTabChange = (index: number) => {
     setActiveTabIndex(index);
@@ -243,9 +239,6 @@ const ProfilePage: React.FC = () => {
                         users={users}
                         isActive={activeTabIndex === apiKeyManagementTabIndex}
                       />
-                    )}
-                    {t.id === "multi-tenant" && (
-                      <TenantManagementTab isActive={activeTabIndex === multiTenantTabIndex} />
                     )}
                   </TabPanel>
                 ))}

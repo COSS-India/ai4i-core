@@ -96,6 +96,9 @@ const Header: React.FC = () => {
       case "/services-management":
         setTitle("Services Management");
         break;
+      case "/tenant-management":
+        setTitle("Tenant Management");
+        break;
       case "/auth":
         setTitle("Sign In");
         break;
@@ -114,6 +117,10 @@ const Header: React.FC = () => {
   const handleBack = () => {
     if (router.pathname === "/services-management" && router.query.tab === "2") {
       router.push("/services-management");
+      return;
+    }
+    if (router.pathname === "/tenant-management") {
+      router.push("/");
       return;
     }
     if (router.pathname === "/model-management" && router.query.tab === "2") {
