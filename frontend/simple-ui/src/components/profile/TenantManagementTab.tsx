@@ -267,43 +267,18 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             {!tm.tenantDetailView && (
               <>
                 {showAdopter && (
-                  <Button
-                    size="sm"
-                    variant={tm.multiTenantSubView === "adopter" ? "solid" : "outline"}
-                    colorScheme="blue"
-                    leftIcon={<FiBriefcase />}
-                    onClick={() => {
-                      tm.setMultiTenantSubView("adopter");
-                      tm.handleFetchTenants();
-                    }}
-                  >
-                    Adopter Admin
-                  </Button>
+                  <HStack spacing={2} px={3} py={1.5} borderRadius="md" bg="blue.50" borderWidth="1px" borderColor="blue.200">
+                    <FiBriefcase color="var(--chakra-colors-blue-600)" />
+                    <Text fontSize="sm" fontWeight="medium" color="gray.700">Adopter Admin</Text>
+                  </HStack>
                 )}
                 {showTenant && (
-                  <Button
-                    size="sm"
-                    variant={tm.multiTenantSubView === "tenant" ? "solid" : "outline"}
-                    colorScheme="blue"
-                    leftIcon={<FiUsers />}
-                    onClick={() => {
-                      tm.setMultiTenantSubView("tenant");
-                      tm.handleFetchTenantUsers();
-                    }}
-                  >
-                    Tenant Admin
-                  </Button>
+                  <HStack spacing={2} px={3} py={1.5} borderRadius="md" bg="blue.50" borderWidth="1px" borderColor="blue.200">
+                    <FiUsers color="var(--chakra-colors-blue-600)" />
+                    <Text fontSize="sm" fontWeight="medium" color="gray.700">Tenant Admin</Text>
+                  </HStack>
                 )}
                 <HStack flex={1} justify="flex-end">
-                  <Button
-                    size="sm"
-                    leftIcon={<FiRefreshCw />}
-                    onClick={tm.multiTenantSubView === "adopter" ? tm.handleFetchTenants : tm.handleFetchTenantUsers}
-                    isLoading={tm.multiTenantSubView === "adopter" ? tm.isLoadingTenants : tm.isLoadingTenantUsers}
-                    loadingText="Loading..."
-                  >
-                    Refresh
-                  </Button>
                   {tm.multiTenantSubView === "adopter" ? (
                     <Button size="sm" colorScheme="blue" leftIcon={<FiPlus />} onClick={tm.openTenantModal}>
                       New Tenant
@@ -319,9 +294,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           </HStack>
           {!tm.tenantDetailView && (
           <Box>
-            <Text fontWeight="semibold" color="gray.700" mb={2} fontSize="sm">
-              Filters
-            </Text>
+           
             <HStack spacing={4} flexWrap="wrap" align="flex-end">
               {tm.multiTenantSubView === "adopter" ? (
                 <>
