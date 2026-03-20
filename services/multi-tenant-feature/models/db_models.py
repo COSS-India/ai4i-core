@@ -49,7 +49,7 @@ class Tenant(TenantDBBase):
     organization_name = Column(String(255), nullable=False)
     contact_email = Column(String(500), nullable=False, index=True)  # encrypted email can be longer
     # Indexed hash of normalized contact_email for fast duplicate checks
-    email_hash = Column(String(500), nullable=True, index=True, unique=True)
+    email_hash = Column(String(128), nullable=True, index=True, unique=True)
     phone_number = Column(String(500), nullable=True)  # encrypted phone number can be longer
     domain = Column(String(255), unique=True, nullable=False)  # user-provided domain e.g. acme.com
     # subdomain = Column(String(255), unique=True, nullable=False)  # generated: acme.ai4i.com
