@@ -52,6 +52,8 @@ class AuthSettings(BaseSettings):
     redis_password: Optional[str] = None
     redis_db: int = 0
     redis_timeout: int = 10
+    role_cache_ttl_seconds: int = 3600
+    api_perms_cache_ttl_seconds: int = 3600
 
     # ── RS256 JWT ──
     rs256_key_directory: str = "keys"

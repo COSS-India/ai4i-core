@@ -22,6 +22,8 @@ from app.core.security import key_manager
 from app.dependencies.auth import get_jwt_verifier, init_jwt_verifier
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.routes import api_router
+from app.services.cache_service import CacheService
+
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +146,9 @@ async def _load_api_permissions() -> None:
                 logger.warning("Permission '%s' not found in DB, skipping.", perm_name)
 
         checker = PermissionChecker(redis_client=redis_client)
-        await checker.cache_api_permission_map(endpoint_to_id)
+        cache_service = CacheService(redis_client=redis_client)
+        await cache_service.cache_api_permission_map(endpoint_to_id)
+        checker._api_permission_map = endpoint_to_id
         _permission_checker = checker
 
         logger.info("API permission mapping loaded: %d endpoints → DB IDs.", len(endpoint_to_id))
