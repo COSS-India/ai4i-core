@@ -102,6 +102,8 @@ export const formatFileSize = (bytes: number): string => {
  */
 export const audioFormatToMime = (format: string): string => {
   const f = (format || 'wav').toLowerCase();
+  // If the format is already a valid MIME type (like audio/webm), just return it
+  if (f.startsWith('audio/')) return f;
   if (f === 'mp3') return 'audio/mpeg';
   return 'audio/wav';
 };

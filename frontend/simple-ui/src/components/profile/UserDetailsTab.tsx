@@ -93,18 +93,44 @@ export default function UserDetailsTab() {
 
           <FormControl>
             <FormLabel fontWeight="semibold">Username</FormLabel>
-            <Input value={user.username || "N/A"} isReadOnly bg={inputReadOnlyBg} />
-            <Text fontSize="xs" color="gray.500" mt={1}>
-              Username cannot be changed
-            </Text>
+            {ud.isEditingUser ? (
+              <>
+                <Text fontSize="md" color="gray.700" py={1}>
+                  {user.username || "N/A"}
+                </Text>
+                <Text fontSize="xs" color="gray.500" mt={1}>
+                  Username cannot be changed
+                </Text>
+              </>
+            ) : (
+              <>
+                <Input value={user.username || "N/A"} isReadOnly bg={inputReadOnlyBg} />
+                <Text fontSize="xs" color="gray.500" mt={1}>
+                  Username cannot be changed
+                </Text>
+              </>
+            )}
           </FormControl>
 
           <FormControl>
             <FormLabel fontWeight="semibold">Email</FormLabel>
-            <Input value={user.email || "N/A"} isReadOnly bg={inputReadOnlyBg} />
-            <Text fontSize="xs" color="gray.500" mt={1}>
-              Email cannot be changed
-            </Text>
+            {ud.isEditingUser ? (
+              <>
+                <Text fontSize="md" color="gray.700" py={1}>
+                  {user.email || "N/A"}
+                </Text>
+                <Text fontSize="xs" color="gray.500" mt={1}>
+                  Email cannot be changed
+                </Text>
+              </>
+            ) : (
+              <>
+                <Input value={user.email || "N/A"} isReadOnly bg={inputReadOnlyBg} />
+                <Text fontSize="xs" color="gray.500" mt={1}>
+                  Email cannot be changed
+                </Text>
+              </>
+            )}
           </FormControl>
 
           <FormControl isInvalid={!!ud.errors.phone_number}>
@@ -153,22 +179,40 @@ export default function UserDetailsTab() {
           <HStack spacing={4}>
             <FormControl flex={1}>
               <FormLabel fontWeight="semibold">Status</FormLabel>
-              <Input value={user.is_active ? "Active" : "Inactive"} isReadOnly bg={inputReadOnlyBg} />
+              {ud.isEditingUser ? (
+                <Text fontSize="md" color="gray.700" py={1}>
+                  {user.is_active ? "Active" : "Inactive"}
+                </Text>
+              ) : (
+                <Input value={user.is_active ? "Active" : "Inactive"} isReadOnly bg={inputReadOnlyBg} />
+              )}
             </FormControl>
             <FormControl flex={1}>
               <FormLabel fontWeight="semibold">Verified</FormLabel>
-              <Input value={user.is_verified ? "Yes" : "No"} isReadOnly bg={inputReadOnlyBg} />
+              {ud.isEditingUser ? (
+                <Text fontSize="md" color="gray.700" py={1}>
+                  {user.is_verified ? "Yes" : "No"}
+                </Text>
+              ) : (
+                <Input value={user.is_verified ? "Yes" : "No"} isReadOnly bg={inputReadOnlyBg} />
+              )}
             </FormControl>
           </HStack>
 
           {user.created_at && (
             <FormControl>
               <FormLabel fontWeight="semibold">Account Created On</FormLabel>
-              <Input
-                value={new Date(user.created_at).toLocaleDateString()}
-                isReadOnly
-                bg={inputReadOnlyBg}
-              />
+              {ud.isEditingUser ? (
+                <Text fontSize="md" color="gray.700" py={1}>
+                  {new Date(user.created_at).toLocaleDateString()}
+                </Text>
+              ) : (
+                <Input
+                  value={new Date(user.created_at).toLocaleDateString()}
+                  isReadOnly
+                  bg={inputReadOnlyBg}
+                />
+              )}
             </FormControl>
           )}
         </VStack>

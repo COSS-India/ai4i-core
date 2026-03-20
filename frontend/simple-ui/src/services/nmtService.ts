@@ -435,8 +435,8 @@ export const getSupportedLanguagePairs = async (modelId?: string): Promise<Langu
     const languagesResponse = await getNMTLanguages(modelId);
     const languagePairs: LanguagePair[] = [];
     
-    // Generate all possible language pairs from supported languages
-    const supportedLanguages = languagesResponse.supported_languages;
+    // Generate all possible language pairs from supported languages (guard against missing/undefined)
+    const supportedLanguages = languagesResponse?.supported_languages ?? [];
     
     for (let i = 0; i < supportedLanguages.length; i++) {
       for (let j = 0; j < supportedLanguages.length; j++) {
