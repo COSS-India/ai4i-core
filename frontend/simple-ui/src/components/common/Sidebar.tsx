@@ -19,6 +19,7 @@ import { FaMicrophone } from "react-icons/fa";
 import {
   IoGitNetworkOutline,
   IoHomeOutline,
+  IoKeyOutline,
   IoLanguageOutline,
   IoSparklesOutline,
   IoVolumeHighOutline,
@@ -234,6 +235,15 @@ const topNavItems: NavItem[] = [
     requiresAuth: true,
   },
   {
+    id: "api-key-management",
+    label: "API Key Management",
+    path: "/api-key-management",
+    icon: IoKeyOutline,
+    iconSize: 10,
+    iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
+  },
+  {
     id: "logs",
     label: "Logs Dashboard",
     path: "/logs",
@@ -400,6 +410,9 @@ const Sidebar: React.FC = () => {
   // Check if user is ADMIN
   const isAdmin = user?.roles?.includes('ADMIN') || false;
 
+  // Check if user is TENANT ADMIN
+  const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
+
   // Show Tenant Management only to superuser or tenant users
   const showTenantManagement = Boolean(user?.is_superuser || user?.is_tenant);
 
@@ -446,6 +459,11 @@ const Sidebar: React.FC = () => {
     }
     // Hide admin-only items for non-ADMIN users (only alerts-management is admin-only now)
     if (item.id === "alerts-management" && !isAdmin) {
+      return false;
+    }
+
+    // Hide API Key Management for users who are neither ADMIN nor TENANT ADMIN
+    if (item.id === "api-key-management" && !(isAdmin || isTenantAdmin)) {
       return false;
     }
     // Hide logs for users with USER role (regardless of tenant_id)
