@@ -12,7 +12,7 @@ from services.tenant_service import add_subscriptions, remove_subscriptions
 from utils.tenant_resolver import resolve_tenant_from_user_id
 from logger import logger
 from middleware.auth_provider import AuthProvider
-from .admin_router import require_admin
+from middleware.dependencies import require_admin
 
 
 router = APIRouter(

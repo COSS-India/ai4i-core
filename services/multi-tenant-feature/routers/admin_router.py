@@ -32,13 +32,8 @@ from services.tenant_service import (
 
 from logger import logger
 from middleware.auth_provider import AuthProvider
-from services.tenant_service import _get_roles_from_auth
-from jose import jwt, JWTError
-import os
+from middleware.dependencies import require_admin, require_tenant_admin
 
-
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 
 
 router = APIRouter(
@@ -47,56 +42,6 @@ router = APIRouter(
     dependencies=[Depends(AuthProvider)],
 )
 
-
-async def require_admin(request: Request):
-    """
-    Dependency that ensures the caller has ADMIN role in the auth service.
-    Uses the authenticated user_id from AuthProvider and resolves roles via auth.
-    """
-    user_id = getattr(request.state, "user_id", None)
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-        )
-
-    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
-    token = None
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.split(" ", 1)[1].strip()
-
-    roles = []
-
-    # 1) Try to read roles directly from JWT claims if we can decode locally
-    if token and JWT_SECRET_KEY:
-        try:
-            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-            token_roles = payload.get("roles") or []
-            if isinstance(token_roles, str):
-                roles = [token_roles]
-            elif isinstance(token_roles, list):
-                roles = [str(r).strip() for r in token_roles if str(r).strip()]
-        except JWTError:
-            # Fall back to auth-service lookup on any JWT decode error
-            roles = []
-
-    # 2) If roles still empty, fall back to auth service
-    if not roles:
-        roles = await _get_roles_from_auth(user_id=user_id, auth_header=auth_header)
-
-    # Expose roles on request.state for downstream handlers/services
-    request.state.roles = roles if roles else None
-
-    # Treat any role equal (case-insensitive) to ADMIN as admin
-    is_admin = any(str(r).upper() == "ADMIN" for r in roles)
-
-    if not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required to perform the action",
-        )
-
-    return
 
 @router.post(
     "/register/tenant",
@@ -134,7 +79,11 @@ async def register_tenant_request(
 
 
 
-@router.post("/register/users", response_model=UserRegisterResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register/users", 
+             response_model=UserRegisterResponse, 
+             status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_tenant_admin)]
+             )
 async def register_user_request(
     request: Request,
     payload: UserRegisterRequest,
@@ -184,7 +133,10 @@ async def change_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.patch("/update/users/status", response_model=TenantUserStatusUpdateResponse, status_code=status.HTTP_200_OK)
+@router.patch("/update/users/status", 
+              response_model=TenantUserStatusUpdateResponse, 
+              status_code=status.HTTP_200_OK,
+              dependencies=[Depends(require_tenant_admin)])
 async def change_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: AsyncSession = Depends(get_tenant_db_session)):
     try:
         return await update_tenant_user_status(payload, db)
@@ -205,6 +157,7 @@ async def change_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
 @router.patch("/update/tenant", 
               response_model=TenantUpdateResponse, 
               status_code=status.HTTP_200_OK,
+              dependencies=[Depends(require_admin)],
               )
 async def update_tenant_info(
     request: Request,
@@ -231,7 +184,11 @@ async def update_tenant_info(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.patch("/update/user", response_model=TenantUserUpdateResponse, status_code=status.HTTP_200_OK)
+@router.patch("/update/user", 
+              response_model=TenantUserUpdateResponse, 
+              status_code=status.HTTP_200_OK,
+              dependencies=[Depends(require_tenant_admin)]
+              )
 async def update_tenant_user_info(
     request: Request,
     payload: TenantUserUpdateRequest,
@@ -266,7 +223,11 @@ async def update_tenant_user_info(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.delete("/delete/user", response_model=TenantUserDeleteResponse, status_code=status.HTTP_200_OK)
+@router.delete("/delete/user", 
+               response_model=TenantUserDeleteResponse, 
+               status_code=status.HTTP_200_OK,
+               dependencies=[Depends(require_tenant_admin)]
+               )
 async def delete_tenant_user_endpoint(
     payload: TenantUserDeleteRequest,
     db: AsyncSession = Depends(get_tenant_db_session),
@@ -295,7 +256,10 @@ async def delete_tenant_user_endpoint(
 
 
 
-@router.get("/view/tenant", status_code=status.HTTP_200_OK)
+@router.get("/view/tenant", 
+            status_code=status.HTTP_200_OK,
+            dependencies=[Depends(require_tenant_admin)]
+            )
 async def view_tenant(
     request: Request,
     tenant_id: str,
@@ -321,7 +285,10 @@ async def view_tenant(
     
 
 
-@router.get("/view/user", status_code=status.HTTP_200_OK)
+@router.get("/view/user", 
+            status_code=status.HTTP_200_OK,
+            dependencies=[Depends(require_tenant_admin)]
+            )
 async def view_tenant_user(
     request: Request,
     user_id: int,
@@ -345,7 +312,11 @@ async def view_tenant_user(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/list/tenants", response_model=ListTenantsResponse, status_code=status.HTTP_200_OK)
+@router.get("/list/tenants", 
+            response_model=ListTenantsResponse, 
+            status_code=status.HTTP_200_OK,
+            dependencies=[Depends(require_admin)]
+            )
 async def list_tenants(
     request: Request,
     db: AsyncSession = Depends(get_tenant_db_session),
@@ -365,7 +336,11 @@ async def list_tenants(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/list/users", response_model=ListUsersResponse, status_code=status.HTTP_200_OK)
+@router.get("/list/users", 
+            response_model=ListUsersResponse, 
+            status_code=status.HTTP_200_OK,
+            dependencies=[Depends(require_tenant_admin)]
+            )
 async def list_users(
     request: Request,
     tenant_id: Optional[str] = Query(None, description="Filter users by tenant_id"),
@@ -385,7 +360,11 @@ async def list_users(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.post("/email/send/verification", response_model=TenantSendEmailVerificationResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/email/send/verification", 
+             response_model=TenantSendEmailVerificationResponse, 
+             status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_admin)]
+             )
 async def send_verification_email_admin(
     payload: TenantSendEmailVerificationRequest,
     background_tasks: BackgroundTasks,
