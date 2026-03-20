@@ -79,7 +79,7 @@ async def enforce_tenant_and_service_checks(
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(
-                    f"{_api_gateway_url}/api/v1/multi-tenant/admin/view/tenant",
+                    f"{_api_gateway_url}/api/v1/multi-tenant/internal/view/tenant",
                     params={"tenant_id": tenant_id},
                     headers=headers,
                 )
@@ -126,8 +126,8 @@ async def enforce_tenant_and_service_checks(
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             svc_resp = await client.get(
-                f"{_api_gateway_url}/api/v1/multi-tenant/list/services",
-                headers=service_check_headers if service_check_headers else None,
+                f"{_api_gateway_url}/api/v1/multi-tenant/internal/list/services",
+                headers=headers,
             )
             if svc_resp.status_code == 200:
                 services = svc_resp.json().get("services", [])
@@ -178,7 +178,7 @@ async def enforce_tenant_and_service_checks(
             if not tenant_data:
                 async with httpx.AsyncClient(timeout=5.0) as client:
                     resp = await client.get(
-                        f"{_api_gateway_url}/api/v1/multi-tenant/admin/view/tenant",
+                        f"{_api_gateway_url}/api/v1/multi-tenant/internal/view/tenant",
                         params={"tenant_id": tenant_id},
                         headers=headers,
                     )
