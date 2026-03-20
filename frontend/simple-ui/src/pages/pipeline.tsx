@@ -68,6 +68,7 @@ const PipelinePage: React.FC = () => {
     processUploadedAudio,
     setProcessRecordedAudioCallback,
     runPipeline,
+    clearInput,
   } = usePipeline();
 
   // Fetch available services
@@ -487,6 +488,10 @@ const PipelinePage: React.FC = () => {
                       <AudioInputPreview
                         audioBase64OrDataUrl={pendingAudio}
                         label="Review your audio"
+                    onClear={() => {
+                      setUploadedFileName(null);
+                      clearInput();
+                    }}
                       />
                     </>
                   )}
