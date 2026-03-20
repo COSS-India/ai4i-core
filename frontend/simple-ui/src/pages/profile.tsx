@@ -28,8 +28,7 @@ import type { APIKeyResponse } from "../types/auth";
 import UserDetailsTab from "../components/profile/UserDetailsTab";
 import ApiKeyTab from "../components/profile/ApiKeyTab";
 import RolesTab from "../components/profile/RolesTab";
-import CreateApiKeyTab from "../components/profile/CreateApiKeyTab";
-import ApiKeyManagementTab from "../components/profile/ApiKeyManagementTab";
+ 
 
 const ProfilePage: React.FC = () => {
   const router = useRouter();
@@ -115,31 +114,25 @@ const ProfilePage: React.FC = () => {
   const cardBorder = useColorModeValue("gray.200", "gray.700");
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN") || user?.is_superuser);
-  const isTenantAdmin = Boolean(user?.roles?.includes("TENANT ADMIN"));
-  const isModerator = Boolean(user?.roles?.includes("MODERATOR"));
   // Single source of truth: tab order must match TabPanels 1:1
   const tabConfig = React.useMemo(() => {
     const tabs: { id: string; label: string; show: boolean }[] = [
       { id: "user-details", label: "User Details", show: true },
       { id: "api-key", label: "API Key", show: true },
       { id: "roles", label: "Roles", show: isAdmin },
-      // Create API Key is available to full ADMIN and TENANT ADMIN roles
-      { id: "create-api-key", label: "Create API Key", show: isAdmin || isTenantAdmin },
-      { id: "api-key-management", label: "API Key Management", show: isAdmin },
     ];
     return tabs.filter((t) => t.show);
-  }, [isAdmin, isTenantAdmin, isModerator]);
+  }, [isAdmin]);
 
   const apiKeyTabIndex = 1;
-  const permissionsTabIndex = isAdmin ? 3 : -1;
-  const apiKeyManagementTabIndex = tabConfig.findIndex((t) => t.id === "api-key-management");
+  const rolesTabIndex = tabConfig.findIndex((t) => t.id === "roles");
 
   const handleTabChange = (index: number) => {
     setActiveTabIndex(index);
     if (index === apiKeyTabIndex) {
       handleFetchApiKeys();
     }
-    if (index === permissionsTabIndex && apiKeys.length === 0) {
+    if (index === rolesTabIndex && apiKeys.length === 0) {
       handleFetchApiKeys();
     }
   };
@@ -226,20 +219,6 @@ const ProfilePage: React.FC = () => {
                       />
                     )}
                     {t.id === "roles" && <RolesTab users={users} isLoadingUsers={isLoadingUsers} />}
-                    {t.id === "create-api-key" && (
-                      <CreateApiKeyTab
-                        users={users}
-                        isLoadingUsers={isLoadingUsers}
-                        setApiKeys={setApiKeys}
-                        setSelectedApiKeyId={setSelectedApiKeyId}
-                      />
-                    )}
-                    {t.id === "api-key-management" && (
-                      <ApiKeyManagementTab
-                        users={users}
-                        isActive={activeTabIndex === apiKeyManagementTabIndex}
-                      />
-                    )}
                   </TabPanel>
                 ))}
               </TabPanels>
