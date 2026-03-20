@@ -141,7 +141,6 @@ const ASRResults: React.FC<ASRResultsProps> = ({
           <StatNumber color="orange.600">
             {(responseTime / 1000).toFixed(2)}s
           </StatNumber>
-          <StatHelpText>seconds</StatHelpText>
         </Stat>
 
         {/* Confidence Stat (if available) */}

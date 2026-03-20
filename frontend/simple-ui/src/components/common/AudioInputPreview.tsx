@@ -1,7 +1,8 @@
 // Playback preview for recorded/uploaded audio input (CSP-safe blob URL)
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, Text } from '@chakra-ui/react';
+import { Box, HStack, IconButton, Text, Tooltip } from '@chakra-ui/react';
+import { DeleteIcon } from '@chakra-ui/icons';
 import { base64ToAudioObjectUrl } from '../../utils/helpers';
 
 /** Normalize base64 or data URL to [base64, format] for playback */
@@ -9,15 +10,15 @@ function normalizeAudioInput(value: string): { base64: string; format: string } 
   if (!value || !value.trim()) return { base64: '', format: 'wav' };
   const trimmed = value.trim();
   if (trimmed.startsWith('data:')) {
-    const match = trimmed.match(/^data:audio\/(\w+);base64,(.+)$/);
+    // Safely captures MIME types with parameters (e.g., audio/webm;codecs=opus)
+    const match = trimmed.match(/^data:(audio\/[^;]+)(?:;[^,]*)?,(.*)$/);
     if (match) {
-      const format = match[1].toLowerCase() === 'mpeg' ? 'mp3' : match[1];
-      return { base64: match[2], format };
+      return { base64: match[2], format: match[1] };
     }
     const fallback = trimmed.split(',')[1];
-    return { base64: fallback || trimmed, format: 'wav' };
+    return { base64: fallback || trimmed, format: 'audio/wav' };
   }
-  return { base64: trimmed, format: 'wav' };
+  return { base64: trimmed, format: 'audio/wav' };
 }
 
 export interface AudioInputPreviewProps {
@@ -27,6 +28,9 @@ export interface AudioInputPreviewProps {
   format?: string;
   /** Label above the player */
   label?: string;
+  /** Optional clear/delete action for the current input */
+  onClear?: () => void;
+  clearLabel?: string;
 }
 
 /**
@@ -37,6 +41,8 @@ const AudioInputPreview: React.FC<AudioInputPreviewProps> = ({
   audioBase64OrDataUrl,
   format: formatProp,
   label = 'Review your audio',
+  onClear,
+  clearLabel = 'Remove audio',
 }) => {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -80,9 +86,24 @@ const AudioInputPreview: React.FC<AudioInputPreviewProps> = ({
 
   return (
     <Box mt={3} p={3} bg="gray.50" borderRadius="md" borderWidth="1px" borderColor="gray.200">
-      <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={2}>
-        {label}
-      </Text>
+      <HStack justify="space-between" align="flex-start" mb={2}>
+        <Text fontSize="sm" fontWeight="semibold" color="gray.700">
+          {label}
+        </Text>
+        {onClear && (
+          <Tooltip label={clearLabel} placement="top" hasArrow>
+            <IconButton
+              aria-label={clearLabel}
+              icon={<DeleteIcon />}
+              size="sm"
+              variant="ghost"
+              colorScheme="red"
+              _hover={{ bg: "red.50" }}
+              onClick={onClear}
+            />
+          </Tooltip>
+        )}
+      </HStack>
       <audio
         controls
         src={blobUrl ?? undefined}

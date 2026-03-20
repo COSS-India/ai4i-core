@@ -90,7 +90,6 @@ const TTSResults: React.FC<TTSResultsProps> = ({
           <StatNumber color="orange.600">
             {(responseTime / 1000).toFixed(2)}s
           </StatNumber>
-          <StatHelpText>seconds</StatHelpText>
         </Stat>
 
         {/* Audio Duration Stat */}
