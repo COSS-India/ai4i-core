@@ -11,13 +11,29 @@ from typing import Optional
 import redis.asyncio as aioredis
 
 from ai4icore_bootstrap.cache import CacheService as _BaseCacheService
+from app.core.config import settings
 
 _API_KEY_PREFIX = "auth:apikey:"
 _REFRESH_PREFIX = "auth:refresh:"
+_ROLE_PERMS_PREFIX = "auth:role:"
+_API_PERMS_KEY = "auth:api_perms"
 
 
 class CacheService(_BaseCacheService):
     """Extends shared CacheService with auth-specific token caching."""
+
+    # ── Role/API permission caches (env-configurable TTL) ──
+
+    async def cache_role_permissions(self, role_id: int, permission_ids: list[int]) -> None:
+        key = f"{_ROLE_PERMS_PREFIX}{role_id}:perms"
+        await self._redis.setex(key, settings.role_cache_ttl_seconds, json.dumps(permission_ids))
+
+    async def cache_api_permission_map(self, mapping: dict[str, str]) -> None:
+        await self._redis.setex(
+            _API_PERMS_KEY,
+            settings.api_perms_cache_ttl_seconds,
+            json.dumps(mapping),
+        )
 
     # ── API Key token_id ──
 
