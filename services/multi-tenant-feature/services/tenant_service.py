@@ -1874,43 +1874,7 @@ async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
 
     tenant.status = new_status
 
-    # Cascade user status for this tenant
-    if new_status == TenantStatus.SUSPENDED:
-        await db.execute(
-            update(TenantUser)
-            .where(TenantUser.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.SUSPENDED)
-        )
-        # Mark all user billing records for this tenant as suspended
-        await db.execute(
-            update(UserBillingRecord)
-            .where(UserBillingRecord.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.SUSPENDED)
-        )
-    elif new_status == TenantStatus.ACTIVE:
-        await db.execute(
-            update(TenantUser)
-            .where(TenantUser.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.ACTIVE)
-        )
-        # Reactivate user billing records
-        await db.execute(
-            update(UserBillingRecord)
-            .where(UserBillingRecord.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.ACTIVE)
-        )
-    elif new_status == TenantStatus.DEACTIVATED:
-        await db.execute(
-            update(TenantUser)
-            .where(TenantUser.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.DEACTIVATED)
-        )
-        # Deactivate user billing records
-        await db.execute(
-            update(UserBillingRecord)
-            .where(UserBillingRecord.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.DEACTIVATED)
-        )
+    # Removing user status as tenant status and user status is independent of each other 
 
     # Update tenant-level billing record status if it exists
     billing_record = await db.scalar(select(BillingRecord).where(BillingRecord.tenant_id == tenant.id))
