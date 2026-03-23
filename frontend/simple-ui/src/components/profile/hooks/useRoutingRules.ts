@@ -177,10 +177,11 @@ export function useRoutingRules() {
     setUpdateItem(null);
     setUpdateForm({});
   };
-  const handleUpdate = async () => {
+  const handleUpdate = async (overrides?: UpdateForm) => {
     if (!updateItem) return;
-    const hasEmail = updateForm.email_to && updateForm.email_to.length > 0;
-    const hasRole = !!updateForm.rbac_role;
+    const form = { ...updateForm, ...overrides };
+    const hasEmail = form.email_to && form.email_to.length > 0;
+    const hasRole = !!form.rbac_role;
     // Validate raw form state: user must not submit both delivery modes.
     if (hasEmail && hasRole) {
       toast({ title: "Validation Error", description: "Provide either email_to or rbac_role, not both", status: "warning", duration: 3000, isClosable: true });
@@ -189,22 +190,22 @@ export function useRoutingRules() {
     setIsUpdating(true);
     try {
       const payload: NotificationReceiverUpdate = {};
-      if (updateForm.rule_name !== undefined) payload.rule_name = updateForm.rule_name ?? null;
-      if (updateForm.description !== undefined) payload.description = updateForm.description ?? null;
-      if (updateForm.category !== undefined) payload.category = updateForm.category ?? null;
-      if (updateForm.severity !== undefined) payload.severity = updateForm.severity ?? null;
-      if (updateForm.alert_type !== undefined) payload.alert_type = updateForm.alert_type ?? null;
-      if (updateForm.alert_names !== undefined) payload.alert_names = updateForm.alert_names ?? null;
-      if (updateForm.tenant !== undefined) payload.tenant = updateForm.tenant ?? null;
-      if (updateForm.email_subject_template !== undefined) payload.email_subject_template = updateForm.email_subject_template ?? null;
-      if (updateForm.email_body_template !== undefined) payload.email_body_template = updateForm.email_body_template ?? null;
-      if (updateForm.enabled !== undefined) payload.enabled = updateForm.enabled;
+      if (form.rule_name !== undefined) payload.rule_name = form.rule_name ?? null;
+      if (form.description !== undefined) payload.description = form.description ?? null;
+      if (form.category !== undefined) payload.category = form.category ?? null;
+      if (form.severity !== undefined) payload.severity = form.severity ?? null;
+      if (form.alert_type !== undefined) payload.alert_type = form.alert_type ?? null;
+      if (form.alert_names !== undefined) payload.alert_names = form.alert_names ?? null;
+      if (form.tenant !== undefined) payload.tenant = form.tenant ?? null;
+      if (form.email_subject_template !== undefined) payload.email_subject_template = form.email_subject_template ?? null;
+      if (form.email_body_template !== undefined) payload.email_body_template = form.email_body_template ?? null;
+      if (form.enabled !== undefined) payload.enabled = form.enabled;
       // Only include delivery fields when we have a single clear choice; otherwise omit so backend keeps existing (update by id with only changed fields).
       if (hasEmail && !hasRole) {
-        payload.email_to = updateForm.email_to;
+        payload.email_to = form.email_to;
         payload.rbac_role = null;
       } else if (hasRole && !hasEmail) {
-        payload.rbac_role = updateForm.rbac_role;
+        payload.rbac_role = form.rbac_role;
         payload.email_to = undefined;
       }
       await alertingService.updateReceiver(updateItem.id, payload);
