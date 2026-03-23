@@ -2,7 +2,7 @@ from fastapi import BackgroundTasks, HTTPException
 from datetime import datetime, timezone , timedelta , date
 
 from typing import Optional, List
-from sqlalchemy import insert , select , update , delete , text , MetaData
+from sqlalchemy import insert , select , update , delete , text , MetaData , func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError , NoResultFound
 
@@ -34,7 +34,7 @@ from models.db_models import (
     TenantUser,
     UserBillingRecord,
 )
-from models.auth_models import Role, UserRole
+from models.auth_models import Role, UserRole, UserDB
 
 from models.enum_tenant import  (
     SubscriptionType, 
@@ -2183,6 +2183,7 @@ async def update_tenant_user(
 async def delete_tenant_user(
     payload: TenantUserDeleteRequest,
     db: AsyncSession,
+    auth_db: AsyncSession,
 ) -> TenantUserDeleteResponse:
     """
     Delete a tenant user and cascade deletions to related records (e.g., billing).
@@ -2208,6 +2209,47 @@ async def delete_tenant_user(
 
     if not tenant_user:
         raise HTTPException(status_code=404, detail="Tenant user not found")
+
+    # If the user has no other tenant memberships, also delete from auth_db.
+    # This prevents deleted tenant users from still being able to login.
+    try:
+        tenant_memberships = await db.scalar(
+            select(func.count()).select_from(TenantUser).where(TenantUser.user_id == payload.user_id)
+        )
+    except Exception as e:
+        logger.exception(
+            f"Error counting tenant memberships for deletion | tenant_id={payload.tenant_id} user_id={payload.user_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to validate tenant user memberships")
+
+    if tenant_memberships == 1:
+        # Delete auth user first so login is blocked immediately (tenant DB update happens next).
+        try:
+            await auth_db.execute(delete(UserDB).where(UserDB.id == payload.user_id))
+            await auth_db.commit()
+        except IntegrityError as e:
+            await auth_db.rollback()
+            logger.error(
+                f"Integrity error while deleting auth user | user_id={payload.user_id}: {e}"
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="Auth user deletion failed due to integrity constraint violation",
+            )
+        except Exception as e:
+            await auth_db.rollback()
+            logger.exception(
+                f"Error committing auth user deletion | tenant_id={payload.tenant_id} user_id={payload.user_id}: {e}"
+            )
+            raise HTTPException(status_code=500, detail="Failed to delete auth user")
+    else:
+        logger.info(
+            f"Skipping auth user deletion because user has other tenant memberships | tenant_id={payload.tenant_id} user_id={payload.user_id} memberships={tenant_memberships}"
+        )
+
+    # If the deleted user was the tenant admin, clear the foreign reference in tenant DB.
+    if tenant.user_id == payload.user_id:
+        tenant.user_id = None
 
     # Delete the tenant user (will cascade to related records via FK constraints)
     await db.delete(tenant_user)
