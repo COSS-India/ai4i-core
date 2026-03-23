@@ -11,7 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as aioredis
 
 from app.core.database import get_db
-from app.core.redis import get_redis
+from app.core.redis import (
+    get_redis_api_keys,
+    get_redis_api_permissions,
+    get_redis_refresh_tokens,
+    get_redis_role_permissions,
+)
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.oauth_repository import OAuthRepository
 from app.repositories.role_repository import RoleRepository
@@ -29,9 +34,17 @@ from app.services.user_service import UserService
 
 
 async def get_cache_service(
-    redis_client: aioredis.Redis = Depends(get_redis),
+    redis_api_keys: aioredis.Redis = Depends(get_redis_api_keys),
+    redis_refresh_tokens: aioredis.Redis = Depends(get_redis_refresh_tokens),
+    redis_role_permissions: aioredis.Redis = Depends(get_redis_role_permissions),
+    redis_api_permissions: aioredis.Redis = Depends(get_redis_api_permissions),
 ) -> CacheService:
-    return CacheService(redis_client)
+    return CacheService(
+        redis_api_keys=redis_api_keys,
+        redis_refresh_tokens=redis_refresh_tokens,
+        redis_role_permissions=redis_role_permissions,
+        redis_api_permissions=redis_api_permissions,
+    )
 
 
 async def get_role_service(

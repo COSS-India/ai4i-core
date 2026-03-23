@@ -4,7 +4,7 @@ API key CRUD routes.
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core.exceptions import EntityNotFoundError, InsufficientPermissionsError
+from app.core.exceptions import EntityNotFoundError
 from app.core.responses import success_response
 from app.dependencies.auth import get_current_active_user
 from app.dependencies.permissions import require_any_role
@@ -30,25 +30,16 @@ async def create_api_key(
     body: APIKeyCreateRequest,
     current_user: User = Depends(get_current_active_user),
     svc: APIKeyService = Depends(get_api_key_service),
-    role_svc: RoleService = Depends(get_role_service),
 ):
-    target_user_id = current_user.id
-    if body.user_id and body.user_id != current_user.id:
-        if not current_user.is_superuser:
-            roles = await role_svc.get_user_roles(current_user.id)
-            if "ADMIN" not in roles and "MODERATOR" not in roles:
-                raise InsufficientPermissionsError("api-keys", "create-for-other")
-        target_user_id = body.user_id
-
     jwt_token, api_key = await svc.create_api_key(
-        user_id=target_user_id,
+        user_id=current_user.id,
         key_name=body.key_name,
         permissions=body.permissions,
         tenant_id=current_user.tenant_id_cached,
         expires_days=body.expires_days,
     )
     return success_response(data={
-        "id": api_key.id,
+        "key_id": api_key.id,
         "key_name": api_key.key_name,
         "api_key": jwt_token,
         "permissions": api_key.permissions,
@@ -90,8 +81,17 @@ async def revoke_api_key(
     key_id: int,
     current_user: User = Depends(get_current_active_user),
     svc: APIKeyService = Depends(get_api_key_service),
+    role_svc: RoleService = Depends(get_role_service),
 ):
-    await svc.revoke_api_key(key_id, user_id=current_user.id)
+    owner_scoped_user_id = current_user.id
+    if current_user.is_superuser:
+        owner_scoped_user_id = None
+    else:
+        roles = await role_svc.get_user_roles(current_user.id)
+        if "ADMIN" in roles:
+            owner_scoped_user_id = None
+
+    await svc.revoke_api_key(key_id, user_id=owner_scoped_user_id)
     return success_response(data={"message": "API key revoked."})
 
 
