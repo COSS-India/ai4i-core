@@ -375,6 +375,49 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  auth-service-v2:
+    build:
+      context: .
+      dockerfile: ./services/auth-service-v2/Dockerfile
+    container_name: ai4v-auth-service-v2
+    ports:
+      - "18082:8082"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/auth-service-v2/.env
+    volumes:
+      - ./services/auth-service-v2:/app
+      - ./libs/ai4icore_exceptions:/tmp/ai4icore_exceptions
+      - ./libs/ai4icore_constants:/tmp/ai4icore_constants
+      - ./libs/ai4icore_env:/tmp/ai4icore_env
+      - ./libs/ai4icore_logging:/tmp/ai4icore_logging
+      - ./libs/ai4icore_auth:/tmp/ai4icore_auth
+      - ./libs/ai4icore_bootstrap:/tmp/ai4icore_bootstrap
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8082", "--reload"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      microservices-network:
+        aliases:
+          - auth-service-v2
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
   config-service:
     build:
       context: .

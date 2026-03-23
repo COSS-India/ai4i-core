@@ -53,6 +53,10 @@ async def lifespan(app: FastAPI):
     await init_redis(
         url=settings.get_redis_url(),
         socket_timeout=settings.redis_timeout,
+        api_permissions_db=settings.redis_db_api_permissions,
+        role_permissions_db=settings.redis_db_role_permissions,
+        api_keys_db=settings.redis_db_api_keys,
+        refresh_tokens_db=settings.redis_db_refresh_tokens,
     )
     await key_manager.initialize()
     await init_jwt_verifier()
@@ -111,7 +115,12 @@ async def _load_api_permissions() -> None:
     import json
     import pathlib
     from ai4icore_auth.permission_checker import PermissionChecker
-    from app.core.redis import get_redis_client
+    from app.core.redis import (
+        get_redis_client_api_keys,
+        get_redis_client_api_permissions,
+        get_redis_client_refresh_tokens,
+        get_redis_client_role_permissions,
+    )
     from app.core.database import get_db
     from sqlalchemy import select
     from app.models.role import Permission
@@ -122,7 +131,7 @@ async def _load_api_permissions() -> None:
         return
 
     try:
-        redis_client = get_redis_client()
+        redis_api_permissions = get_redis_client_api_permissions()
         data = json.loads(json_path.read_text())
 
         # One DB query: permission name → DB ID
@@ -145,8 +154,13 @@ async def _load_api_permissions() -> None:
             else:
                 logger.warning("Permission '%s' not found in DB, skipping.", perm_name)
 
-        checker = PermissionChecker(redis_client=redis_client)
-        cache_service = CacheService(redis_client=redis_client)
+        checker = PermissionChecker(redis_client=redis_api_permissions)
+        cache_service = CacheService(
+            redis_api_keys=get_redis_client_api_keys(),
+            redis_refresh_tokens=get_redis_client_refresh_tokens(),
+            redis_role_permissions=get_redis_client_role_permissions(),
+            redis_api_permissions=redis_api_permissions,
+        )
         await cache_service.cache_api_permission_map(endpoint_to_id)
         checker._api_permission_map = endpoint_to_id
         _permission_checker = checker

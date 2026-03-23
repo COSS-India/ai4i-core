@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.api_key import APIKey
+from app.models.role import Permission
 from app.models.user import User
 
 
@@ -28,6 +29,14 @@ class APIKeyRepository:
     async def get_by_token_id(self, token_id: str) -> Optional[APIKey]:
         result = await self._db.execute(select(APIKey).where(APIKey.token_id == token_id))
         return result.scalar_one_or_none()
+
+    async def get_permission_names_by_ids(self, permission_ids: list[int]) -> dict[int, str]:
+        if not permission_ids:
+            return {}
+        result = await self._db.execute(
+            select(Permission.id, Permission.name).where(Permission.id.in_(permission_ids))
+        )
+        return {pid: name for pid, name in result.all()}
 
     async def list_by_user(self, user_id: int, active_only: bool = False) -> list[APIKey]:
         query = select(APIKey).where(APIKey.user_id == user_id)
