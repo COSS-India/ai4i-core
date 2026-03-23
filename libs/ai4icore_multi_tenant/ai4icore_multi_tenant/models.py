@@ -18,17 +18,15 @@ from sqlalchemy.sql import func, text
 
 class TenantStatus(enum.Enum):
     PENDING = "PENDING"          # waiting for email verification 
-    IN_PROGRESS = "IN_PROGRESS"  
     ACTIVE = "ACTIVE"            # once email verified
     SUSPENDED = "SUSPENDED"
     DEACTIVATED = "DEACTIVATED"
 
 
 class TenantUserStatus(str, enum.Enum):
-    PENDING ="PENDING" 
+    PENDING ="PENDING"           # used as default 
     ACTIVE = "ACTIVE"            # user created and approved by tenant admin
     SUSPENDED = "SUSPENDED"
-    DEACTIVATED = "DEACTIVATED"
 
 
 TenantDBBase = declarative_base()
