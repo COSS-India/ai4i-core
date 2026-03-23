@@ -231,12 +231,13 @@ async def update_tenant_user_info(
 async def delete_tenant_user_endpoint(
     payload: TenantUserDeleteRequest,
     db: AsyncSession = Depends(get_tenant_db_session),
+    auth_db: AsyncSession = Depends(get_auth_db_session),
 ):
     """
     Delete a tenant user and cascade deletions to related records.
     """
     try:
-        return await delete_tenant_user(payload, db)
+        return await delete_tenant_user(payload, db, auth_db)
     except HTTPException:
         raise
     except IntegrityError as ie:
