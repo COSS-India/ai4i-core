@@ -90,14 +90,12 @@ TENANT_STATUS_TRANSITIONS = {
     TenantStatus.PENDING: [TenantStatus.ACTIVE, TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED],
     TenantStatus.ACTIVE: [TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED],
     TenantStatus.SUSPENDED: [TenantStatus.ACTIVE, TenantStatus.DEACTIVATED],
-    TenantStatus.DEACTIVATED: [],  # No transitions allowed from DEACTIVATED
-    TenantStatus.IN_PROGRESS: [TenantStatus.ACTIVE, TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED],
+    TenantStatus.DEACTIVATED: [TenantStatus.ACTIVE],  # No transitions allowed from DEACTIVATED,
 }
 
 TENANT_USER_STATUS_TRANSITIONS = {
-    TenantUserStatus.ACTIVE: [TenantUserStatus.SUSPENDED, TenantUserStatus.DEACTIVATED],
-    TenantUserStatus.SUSPENDED: [TenantUserStatus.ACTIVE, TenantUserStatus.DEACTIVATED],
-    TenantUserStatus.DEACTIVATED: [],  # No transitions allowed from DEACTIVATED
+    TenantUserStatus.ACTIVE: [TenantUserStatus.SUSPENDED],
+    TenantUserStatus.SUSPENDED: [TenantUserStatus.ACTIVE],
 }
 
 def validate_status_transition(old_status, new_status, allowed_transitions: dict, entity_type: str = "Entity"):
