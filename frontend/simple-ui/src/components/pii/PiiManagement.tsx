@@ -54,12 +54,6 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const [auditLoading, setAuditLoading] = useState(false);
 
   useEffect(() => {
-    if (!isAdmin) return;
-    void fetchAllDomains();
-    void fetchTenantMappings();
-  }, [isAdmin]);
-
-  useEffect(() => {
     if (!isAdmin || activeTab !== "audit") return;
     void fetchAuditLogs();
   }, [isAdmin, activeTab]);

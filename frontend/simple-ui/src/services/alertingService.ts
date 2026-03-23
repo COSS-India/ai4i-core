@@ -1,5 +1,5 @@
 /**
- * Alerting service — handles Alert Definitions, Notification Receivers, and Routing Rules.
+ * Alerting service — Alert Definitions, Receivers, Routing Rules, and read-only Alert History.
  * Follows the same request pattern as authService (fetch + Bearer token).
  */
 import { API_BASE_URL } from './api';
@@ -8,6 +8,7 @@ import type {
   AlertDefinition,
   AlertDefinitionCreate,
   AlertDefinitionUpdate,
+  AlertHistoryListResponse,
   NotificationReceiver,
   NotificationReceiverCreate,
   NotificationReceiverUpdate,
@@ -244,6 +245,31 @@ class AlertingService {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
+  }
+
+  // ---- Alert history (read-only) ----
+
+  async listAlertHistory(params?: {
+    category?: string;
+    severity?: string;
+    date_from?: string;
+    date_to?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<AlertHistoryListResponse> {
+    const q = new URLSearchParams();
+    if (params?.category) q.set('category', params.category);
+    if (params?.severity) q.set('severity', params.severity);
+    if (params?.date_from) q.set('date_from', params.date_from);
+    if (params?.date_to) q.set('date_to', params.date_to);
+    if (params?.search) q.set('search', params.search);
+    if (params?.limit != null) q.set('limit', String(params.limit));
+    if (params?.offset != null) q.set('offset', String(params.offset));
+    const qs = q.toString();
+    return this.request<AlertHistoryListResponse>(
+      qs ? `/history?${qs}` : '/history'
+    );
   }
 }
 
