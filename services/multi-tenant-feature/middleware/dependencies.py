@@ -4,10 +4,11 @@ from logger import logger
 from services.tenant_service import _get_roles_from_auth
 from jose import jwt, JWTError
 import os
+from ai4icore_env import app_env
 
+JWT_SECRET_KEY = app_env.jwt_secret_key
+JWT_ALGORITHM = app_env.jwt_algorithm
 
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 
 async def require_admin(request: Request,_=Depends(AuthProvider)):
     """
