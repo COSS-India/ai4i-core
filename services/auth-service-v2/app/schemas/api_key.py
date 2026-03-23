@@ -14,7 +14,7 @@ from app.schemas.base import BaseSchema
 
 class APIKeyCreateRequest(BaseSchema):
     key_name: str = Field(..., min_length=1, max_length=100)
-    permissions: list[str] = Field(default_factory=list)
+    permissions: list[int] = Field(default_factory=list, description="Permission IDs")
     expires_days: Optional[int] = Field(None, ge=1, le=365)
     user_id: Optional[int] = Field(
         None,

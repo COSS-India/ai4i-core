@@ -5,6 +5,7 @@ Auth service configuration — extends ai4icore_env with auth-specific settings.
 from pathlib import Path
 from typing import Optional
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -51,6 +52,10 @@ class AuthSettings(BaseSettings):
     redis_port: int = 6379
     redis_password: Optional[str] = None
     redis_db: int = 0
+    redis_db_api_permissions: int = 0
+    redis_db_role_permissions: int = 1
+    redis_db_api_keys: int = 2
+    redis_db_refresh_tokens: int = 3
     redis_timeout: int = 10
     role_cache_ttl_seconds: int = 3600
     api_perms_cache_ttl_seconds: int = 3600
@@ -67,7 +72,10 @@ class AuthSettings(BaseSettings):
     # ── Token expiry ──
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 7
-    api_key_expire_days: int = 365
+    api_key_expire_days: int = Field(
+        default=365,
+        validation_alias=AliasChoices("API_KEY_EXPIRE_DAYS", "APIKEY_EXPIRY"),
+    )
 
     # ── Password hashing (argon2) ──
     argon2_time_cost: int = 3

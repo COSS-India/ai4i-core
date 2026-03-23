@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from app.core.config import settings
-from app.core.exceptions import EntityNotFoundError
+from app.core.exceptions import EntityNotFoundError, ValidationError
 from app.models.api_key import APIKey
 from app.repositories.api_key_repository import APIKeyRepository
 from app.services.cache_service import CacheService
@@ -32,7 +32,7 @@ class APIKeyService:
         self,
         user_id: int,
         key_name: str,
-        permissions: list[str],
+        permissions: list[int],
         tenant_id: Optional[str] = None,
         expires_days: Optional[int] = None,
     ) -> tuple[str, APIKey]:
@@ -44,13 +44,24 @@ class APIKeyService:
         token_id = str(uuid.uuid4())
         days = expires_days or settings.api_key_expire_days
         expires_delta = timedelta(days=days)
+        permission_ids = list(dict.fromkeys(permissions or []))
+
+        id_to_name = await self._repo.get_permission_names_by_ids(permission_ids)
+        missing_ids = [pid for pid in permission_ids if pid not in id_to_name]
+        if missing_ids:
+            raise ValidationError(
+                message="Invalid permission IDs in request.",
+                code="INVALID_PERMISSION_IDS",
+                errors=[f"Unknown permission_id={pid}" for pid in missing_ids],
+            )
+        permission_names = [id_to_name[pid] for pid in permission_ids]
 
         # Create the JWT
         jwt_token = self._tokens.create_api_key_token(
             user_id=user_id,
             token_id=token_id,
             tenant_id=tenant_id,
-            permission_ids=[],  # Permission IDs resolved at validation time
+            permission_ids=permission_ids,
             expires_delta=expires_delta,
         )
 
@@ -59,7 +70,7 @@ class APIKeyService:
             user_id=user_id,
             key_name=key_name,
             token_id=token_id,
-            permissions=permissions,
+            permissions=permission_names,
             is_active=True,
             is_revoked=False,
             status="active",
@@ -72,7 +83,8 @@ class APIKeyService:
         await self._cache.store_api_key_token(token_id, ttl, metadata={
             "user_id": user_id,
             "key_name": key_name,
-            "permissions": permissions,
+            "permissions": permission_names,
+            "permission_ids": permission_ids,
         })
 
         await self._repo.commit()

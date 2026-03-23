@@ -30,7 +30,12 @@ from app.core.exceptions import (
     UserInactiveError,
     UserNotFoundError,
 )
-from app.core.redis import get_redis
+from app.core.redis import (
+    get_redis_api_keys,
+    get_redis_api_permissions,
+    get_redis_refresh_tokens,
+    get_redis_role_permissions,
+)
 from app.models.user import User
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.session_repository import SessionRepository
@@ -87,9 +92,17 @@ def get_token_service() -> TokenService:
 
 
 async def get_cache_service(
-    redis_client: aioredis.Redis = Depends(get_redis),
+    redis_api_keys: aioredis.Redis = Depends(get_redis_api_keys),
+    redis_refresh_tokens: aioredis.Redis = Depends(get_redis_refresh_tokens),
+    redis_role_permissions: aioredis.Redis = Depends(get_redis_role_permissions),
+    redis_api_permissions: aioredis.Redis = Depends(get_redis_api_permissions),
 ) -> CacheService:
-    return CacheService(redis_client)
+    return CacheService(
+        redis_api_keys=redis_api_keys,
+        redis_refresh_tokens=redis_refresh_tokens,
+        redis_role_permissions=redis_role_permissions,
+        redis_api_permissions=redis_api_permissions,
+    )
 
 
 async def get_current_token(
