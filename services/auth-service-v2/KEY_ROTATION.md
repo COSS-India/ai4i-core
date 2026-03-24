@@ -70,7 +70,7 @@ the old key pair. For API keys with 1-year expiry, this means waiting
 The JWKS endpoint exposes all loaded public keys:
 
 ```bash
-curl http://auth-service:8082/api/v1/auth/.well-known/jwks.json
+curl http://auth-service:8081/api/v1/auth/.well-known/jwks.json
 ```
 
 Other services fetch this JWKS to verify tokens. After rotation, they
