@@ -720,9 +720,9 @@ async def create_new_tenant(
             elif existing.status == TenantStatus.ACTIVE:
                 raise ValueError("Tenant already active")
             elif existing.status == TenantStatus.SUSPENDED:
-                raise ValueError("Tenant is suspended. Contact support.")
+                raise ValueError("Tenant is suspended. Contact your platform administrator.")
             elif existing.status == TenantStatus.DEACTIVATED:
-                raise ValueError("Tenant is deactivated. Contact support")
+                raise ValueError("Tenant is deactivated. Contact your platform administrator.")
             
     from utils.utils import _normalize_domain , _domains_similar
 
