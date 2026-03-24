@@ -17,8 +17,6 @@ from .permission_checker import PermissionChecker
 from .middleware import AuthMiddleware
 from .dependencies import (
     create_require_auth,
-    create_require_permission,
-    create_require_permission_code,
     create_require_role,
 )
 from .endpoint_guard import create_endpoint_guard
@@ -33,8 +31,6 @@ __all__ = [
     "PermissionChecker",
     "AuthMiddleware",
     "create_require_auth",
-    "create_require_permission",
-    "create_require_permission_code",
     "create_require_role",
     "create_endpoint_guard",
     "create_auth_providers",
