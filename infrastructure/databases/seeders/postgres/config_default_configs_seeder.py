@@ -78,7 +78,7 @@ class ConfigDefaultConfigsSeeder(BaseSeeder):
         # Insert service registry entries
         services = [
             ('api-gateway-service', 'http://api-gateway-service:8080', 'http://api-gateway-service:8080/health', 'healthy'),
-            ('auth-service', 'http://auth-service:8081', 'http://auth-service:8081/health', 'healthy'),
+            ('auth-service-v2', 'http://auth-service-v2:8082', 'http://auth-service-v2:8082/health', 'healthy'),
             ('config-service', 'http://config-service:8082', 'http://config-service:8082/health', 'healthy'),
             ('metrics-service', 'http://metrics-service:8083', 'http://metrics-service:8083/health', 'healthy'),
             ('telemetry-service', 'http://telemetry-service:8084', 'http://telemetry-service:8084/health', 'healthy'),
