@@ -14,6 +14,7 @@ from services.tenant_service import (
 )
 from logger import logger
 from middleware.auth_provider import AuthProvider
+from middleware.dependencies import require_tenant_admin
 
 
 router = APIRouter(
@@ -23,7 +24,11 @@ router = APIRouter(
 )
 
 
-@router.post("/subscriptions/add",response_model=UserSubscriptionResponse,status_code=status.HTTP_201_CREATED,)
+@router.post("/subscriptions/add",
+             response_model=UserSubscriptionResponse,
+             status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_tenant_admin)]
+             )
 async def add_user_subscriptions_endpoint(
     payload: UserSubscriptionAddRequest,
     db: AsyncSession = Depends(get_tenant_db_session),
@@ -58,7 +63,11 @@ async def add_user_subscriptions_endpoint(
         raise HTTPException(status_code=500,detail="Internal server error")
 
 
-@router.post("/subscriptions/remove",response_model=UserSubscriptionResponse,status_code=status.HTTP_200_OK)
+@router.post("/subscriptions/remove",
+             response_model=UserSubscriptionResponse,
+             status_code=status.HTTP_200_OK,
+             dependencies=[Depends(require_tenant_admin)]
+             )
 async def remove_user_subscriptions_endpoint(
     payload: UserSubscriptionRemoveRequest,
     db: AsyncSession = Depends(get_tenant_db_session),

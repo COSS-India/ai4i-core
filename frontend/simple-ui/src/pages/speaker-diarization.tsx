@@ -32,6 +32,7 @@ const SpeakerDiarizationPage: React.FC = () => {
   const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const [audioData, setAudioData] = useState<string | null>(null);
+  const [audioClearToken, setAudioClearToken] = useState(0);
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -148,6 +149,11 @@ const SpeakerDiarizationPage: React.FC = () => {
     setError(null);
   };
 
+  const handleClearAudioInput = () => {
+    clearResults();
+    setAudioClearToken((t) => t + 1);
+  };
+
   return (
     <>
       <Head>
@@ -253,6 +259,8 @@ const SpeakerDiarizationPage: React.FC = () => {
                   sampleRate={16000}
                   disabled={fetching}
                   timer={timer}
+                  onClear={handleClearAudioInput}
+                  clearToken={audioClearToken}
                 />
               </Box>
 
@@ -273,6 +281,7 @@ const SpeakerDiarizationPage: React.FC = () => {
                   <AudioInputPreview
                     audioBase64OrDataUrl={audioData}
                     label="Review your audio"
+                    onClear={handleClearAudioInput}
                   />
                 </>
               )}
@@ -575,7 +584,7 @@ const SpeakerDiarizationPage: React.FC = () => {
                     {/* Clear Results Button */}
                     <Box textAlign="center">
                 <Button
-                  onClick={clearResults}
+                  onClick={handleClearAudioInput}
                   variant="outline"
                   size="sm"
                         colorScheme="gray"

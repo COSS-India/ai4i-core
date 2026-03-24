@@ -30,6 +30,7 @@ const LanguageDiarizationPage: React.FC = () => {
   const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const [audioData, setAudioData] = useState<string | null>(null);
+  const [audioClearToken, setAudioClearToken] = useState(0);
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -157,6 +158,11 @@ const LanguageDiarizationPage: React.FC = () => {
     setError(null);
   };
 
+  const handleClearAudioInput = () => {
+    clearResults();
+    setAudioClearToken((t) => t + 1);
+  };
+
   return (
     <>
       <Head>
@@ -262,6 +268,8 @@ const LanguageDiarizationPage: React.FC = () => {
                   sampleRate={16000}
                   disabled={fetching}
                   timer={timer}
+                  onClear={handleClearAudioInput}
+                  clearToken={audioClearToken}
                 />
               </Box>
 
@@ -282,6 +290,7 @@ const LanguageDiarizationPage: React.FC = () => {
                   <AudioInputPreview
                     audioBase64OrDataUrl={audioData}
                     label="Review your audio"
+                    onClear={handleClearAudioInput}
                   />
                 </>
               )}
@@ -759,7 +768,7 @@ const LanguageDiarizationPage: React.FC = () => {
                       {/* Clear Results Button */}
                       <Box textAlign="center">
                         <button
-                  onClick={clearResults}
+                  onClick={handleClearAudioInput}
                           style={{
                             padding: "8px 16px",
                             backgroundColor: "#f7fafc",
