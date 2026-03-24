@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from jose import jwt, JWTError
+from jose import jwt, JWTError, ExpiredSignatureError
 
 from ai4icore_exceptions import (
     TokenExpiredError,
@@ -67,12 +67,9 @@ class JWTVerifier:
 
     Usage in any microservice::
 
-        from ai4icore_auth import JWTVerifier
+        from ai4icore_auth.providers import build_jwt_verifier
 
-        verifier = JWTVerifier(
-            jwks_url="http://auth-service:8082/api/v1/auth/.well-known/jwks.json",
-            issuer="auth-service",
-        )
+        verifier = build_jwt_verifier()  # reads JWKS_URL, JWT_ISSUER from env
         await verifier.initialize()
 
         claims = await verifier.verify(token)
@@ -84,12 +81,10 @@ class JWTVerifier:
         jwks_url: Optional[str] = None,
         issuer: Optional[str] = None,
         audience: Optional[str] = None,
-        jwks_cache_ttl: int = 3600,
     ) -> None:
         self._jwks_url = jwks_url
         self._issuer = issuer
         self._audience = audience
-        self._jwks_cache_ttl = jwks_cache_ttl
         self._jwks: dict[str, Any] = {}
         self._public_keys: dict[str, bytes] = {}  # kid → PEM bytes
 
@@ -157,6 +152,8 @@ class JWTVerifier:
             padding = 4 - len(data) % 4
             return base64.urlsafe_b64decode(data + "=" * padding)
 
+        if "n" not in jwk or "e" not in jwk:
+            raise ValueError("JWK missing required 'n' or 'e' field.")
         n = int.from_bytes(_b64url_decode(jwk["n"]), byteorder="big")
         e = int.from_bytes(_b64url_decode(jwk["e"]), byteorder="big")
 
@@ -177,8 +174,8 @@ class JWTVerifier:
 
         try:
             header = jwt.get_unverified_header(token)
-        except JWTError as exc:
-            raise JWTVerificationError(f"Invalid token header: {exc}")
+        except JWTError:
+            raise JWTVerificationError("Invalid token header.")
 
         kid = header.get("kid")
         alg = header.get("alg")
@@ -203,10 +200,11 @@ class JWTVerifier:
 
         try:
             payload = jwt.decode(token, pem, **decode_kwargs)
+        except ExpiredSignatureError:
+            raise JWTExpiredError()
         except JWTError as exc:
-            if "expired" in str(exc).lower():
-                raise JWTExpiredError()
-            raise JWTVerificationError(f"RS256 verification failed: {exc}")
+            logger.debug("RS256 verification failed: %s", exc)
+            raise JWTVerificationError("Token verification failed.")
 
         return self._payload_to_claims(payload)
 
@@ -220,7 +218,7 @@ class JWTVerifier:
         try:
             user_id = int(sub)
         except (TypeError, ValueError):
-            raise JWTVerificationError(f"Invalid 'sub' value: {sub}")
+            raise JWTVerificationError("Invalid 'sub' claim.")
 
         return AuthClaims(
             user_id=user_id,

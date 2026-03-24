@@ -15,7 +15,6 @@ from app.models.user import User
 from app.repositories.oauth_repository import OAuthRepository
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
-from app.schemas.auth import LoginResponse
 from app.services.cache_service import CacheService
 from app.services.session_service import SessionService
 from app.services.token_service import TokenService
