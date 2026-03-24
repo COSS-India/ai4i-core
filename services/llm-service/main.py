@@ -35,6 +35,7 @@ from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from middleware.error_handler_middleware import add_error_handlers
+from ai4icore_exceptions import register_exception_handlers
 from ai4icore_constants.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 
 # Import models to ensure they are registered with SQLAlchemy
@@ -352,6 +353,7 @@ app.add_middleware(
 )
 
 # Register error handlers
+register_exception_handlers(app)
 add_error_handlers(app)
 
 # Include routers
