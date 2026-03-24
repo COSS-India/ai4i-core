@@ -27,7 +27,6 @@ from routers.alert_definitions import router as alert_definitions_router
 from routers.receivers import router as receivers_router
 from routers.routing_rules import router as routing_rules_router
 from routers.alert_history import router as alert_history_router
-from utils.auth_client import close_auth_client
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -51,10 +50,6 @@ async def lifespan(app: FastAPI):
         logger.info("Database connection pool closed", extra={"context": {"event": "db_pool_closed"}})
     except Exception as e:
         logger.warning(f"Error closing database pool: {e}", extra={"context": {"error": str(e)}})
-    try:
-        await close_auth_client()
-    except Exception as e:
-        logger.warning(f"Error closing auth client: {e}", extra={"context": {"error": str(e)}})
 
 
 app = FastAPI(
