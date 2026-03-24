@@ -2,14 +2,14 @@
 Endpoint-level permission guard using api_permissions.json mapping.
 
 Shared across ALL microservices. Checks if METHOD:PATH requires a
-permission code (P_XX) and verifies the authenticated user has it
-in their JWT claims — zero DB round-trip.
+permission_id and verifies the authenticated user has it
+in their JWT claims (permission_ids) — zero DB round-trip.
 
 Usage::
 
     from ai4icore_auth.endpoint_guard import create_endpoint_guard
 
-    guard = create_endpoint_guard(jwt_verifier, redis_client)
+    guard = create_endpoint_guard(jwt_verifier, permission_checker)
 
     @router.post("/inference")
     async def infer(claims = Depends(guard)):
@@ -37,9 +37,9 @@ def create_endpoint_guard(
 
     Flow:
     1. Verify JWT → get AuthClaims
-    2. Look up METHOD:PATH in Redis → get required permission code (P_XX)
+    2. Look up METHOD:PATH in Redis → get required permission_id
     3. If null → public endpoint, allow
-    4. If user's permission_codes include it → allow
+    4. If user's permission_ids include it → allow
     5. Otherwise → 403
     """
     from .dependencies import create_require_auth
@@ -60,16 +60,15 @@ def create_endpoint_guard(
         if PermissionChecker.check_endpoint_access(
             required=required_code,
             user_permission_ids=claims.permission_ids,
-            user_permission_codes=claims.permission_codes,
             user_roles=claims.roles,
         ):
             return claims
 
         from ai4icore_exceptions import InsufficientPermissionsError
         logger.warning(
-            "Endpoint denied: user=%s %s:%s requires=%s has=%s",
+            "Endpoint denied: user=%s %s:%s requires=%s has_ids=%s",
             claims.user_id, request.method, request.url.path,
-            required_code, claims.permission_codes,
+            required_code, claims.permission_ids,
         )
         raise InsufficientPermissionsError(request.url.path, request.method)
 

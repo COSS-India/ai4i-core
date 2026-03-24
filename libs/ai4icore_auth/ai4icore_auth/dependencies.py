@@ -1,21 +1,17 @@
 """
 Shared FastAPI dependencies for authentication and authorization.
 
-Permission checks use this priority:
-1. permission_codes (P_XX) from JWT — fastest, no DB
-2. permissions (names like asr.inference) from JWT — fallback
-3. ADMIN role bypass
+Permission checks use permission_ids (int) from JWT — zero DB round-trip.
+ADMIN role bypasses all checks.
 
 Usage::
 
-    from ai4icore_auth.dependencies import create_require_auth, create_require_permission
+    from ai4icore_auth.dependencies import create_require_auth, create_require_role
 
     require_auth = create_require_auth(jwt_verifier)
-    require_asr = create_require_permission(jwt_verifier, resource="asr", action="inference")
-    require_by_code = create_require_permission_code(jwt_verifier, "P_10")
 
     @router.post("/inference")
-    async def infer(claims: AuthClaims = Depends(require_asr)):
+    async def infer(claims: AuthClaims = Depends(require_auth)):
         ...
 """
 
@@ -56,7 +52,6 @@ def create_require_auth(jwt_verifier: JWTVerifier):
         request.state.user_id = claims.user_id
         request.state.tenant_id = claims.tenant_id
         request.state.permission_ids = claims.permission_ids
-        request.state.permissions = claims.permissions
         request.state.roles = claims.roles
         request.state.token_type = claims.token_type
         request.state.token_id = claims.token_id
@@ -68,74 +63,6 @@ def create_require_auth(jwt_verifier: JWTVerifier):
         return claims
 
     return _require_auth
-
-
-def create_require_permission(
-    jwt_verifier: JWTVerifier,
-    resource: str,
-    action: str,
-    permission_code: Optional[str] = None,
-):
-    """
-    Requires valid JWT + the specified permission.
-
-    Check order:
-    1. permission_code (P_XX) in claims.permission_codes — fastest, no DB
-    2. resource.action in claims.permissions — name-based check
-    3. ADMIN role bypass
-
-    Args:
-        permission_code: Optional P_XX code. If provided, checked first.
-                         If not provided, only name-based check is used.
-    """
-    require_auth = create_require_auth(jwt_verifier)
-
-    async def _require_permission(
-        claims: AuthClaims = Depends(require_auth),
-    ) -> AuthClaims:
-        from ai4icore_exceptions import InsufficientPermissionsError
-
-        # 1. Check by P_XX code (fastest — directly from JWT, no DB)
-        if permission_code and permission_code in claims.permission_codes:
-            return claims
-
-        # 2. Check by permission name (resource.action)
-        required_name = f"{resource}.{action}"
-        if PermissionChecker.has_permission(required_name, claims.permissions):
-            return claims
-
-        # 3. ADMIN bypass
-        if "ADMIN" in claims.roles:
-            return claims
-
-        raise InsufficientPermissionsError(resource, action)
-
-    return _require_permission
-
-
-def create_require_permission_code(
-    jwt_verifier: JWTVerifier,
-    permission_code: str,
-):
-    """
-    Requires valid JWT + the specified permission code (P_XX).
-    Checks permission_codes from JWT — no DB round-trip needed.
-    """
-    require_auth = create_require_auth(jwt_verifier)
-
-    async def _require_code(
-        claims: AuthClaims = Depends(require_auth),
-    ) -> AuthClaims:
-        from ai4icore_exceptions import InsufficientPermissionsError
-
-        if permission_code in claims.permission_codes:
-            return claims
-        if "ADMIN" in claims.roles:
-            return claims
-
-        raise InsufficientPermissionsError(permission_code, "access")
-
-    return _require_code
 
 
 def create_require_role(jwt_verifier: JWTVerifier, *role_names: str):

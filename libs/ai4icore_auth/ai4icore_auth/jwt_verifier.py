@@ -29,8 +29,6 @@ class AuthClaims:
     user_id: int
     tenant_id: Optional[str] = None
     permission_ids: list[int] = field(default_factory=list)
-    permission_codes: list[str] = field(default_factory=list)  # P_01, P_02, etc.
-    permissions: list[str] = field(default_factory=list)  # asr.inference, etc.
     roles: list[str] = field(default_factory=list)
     token_type: str = ""
     token_id: Optional[str] = None
@@ -230,8 +228,6 @@ class JWTVerifier:
             user_id=user_id,
             tenant_id=payload.get("tenant_id"),
             permission_ids=payload.get("permission_ids", []),
-            permission_codes=payload.get("permission_codes", []),
-            permissions=payload.get("permissions", []),
             roles=payload.get("roles", []),
             token_type=payload.get("type", ""),
             token_id=payload.get("token_id"),

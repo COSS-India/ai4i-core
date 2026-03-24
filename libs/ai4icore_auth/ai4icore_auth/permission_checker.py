@@ -100,32 +100,25 @@ class PermissionChecker:
 
     @staticmethod
     def check_endpoint_access(
-        required: str | int | None,
+        required: int | str | None,
         user_permission_ids: list[int] | None = None,
-        user_permission_codes: list[str] | None = None,
         user_roles: list[str] | None = None,
     ) -> bool:
         """
         Shared endpoint permission check. Single source of truth.
 
-        Supports checking by:
-        - permission_id (int) against user_permission_ids — primary, from JWT
-        - permission_code (str) against user_permission_codes — fallback
-        - ADMIN role bypass
+        Checks permission_id (int) from JWT against required endpoint permission.
+        ADMIN role bypasses all checks.
 
         Returns True if access should be granted, False if denied.
         """
         if required is None:
             return True
 
-        # Check by int ID (primary path)
+        # Check by permission ID
         if isinstance(required, int) or (isinstance(required, str) and required.isdigit()):
             req_id = int(required)
             if user_permission_ids and req_id in user_permission_ids:
-                return True
-        # Check by code string (fallback)
-        elif isinstance(required, str):
-            if user_permission_codes and required in user_permission_codes:
                 return True
 
         # ADMIN bypass

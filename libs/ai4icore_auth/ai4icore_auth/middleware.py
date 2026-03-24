@@ -123,7 +123,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.user_id = claims.user_id
         request.state.tenant_id = claims.tenant_id
         request.state.permission_ids = claims.permission_ids
-        request.state.permissions = claims.permissions
         request.state.roles = claims.roles
         request.state.token_type = claims.token_type
         request.state.token_id = claims.token_id
@@ -137,7 +136,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.user_id = None
         request.state.tenant_id = None
         request.state.permission_ids = []
-        request.state.permissions = []
         request.state.roles = []
         request.state.token_type = None
         request.state.token_id = None
