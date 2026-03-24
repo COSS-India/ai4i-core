@@ -91,7 +91,6 @@ async def try_get_tenant_context(
         tenant_context = await resolve_tenant_from_jwt(jwt_payload)
         if tenant_context:
             request.state.tenant_context = tenant_context
-            request.state.tenant_schema = tenant_context.get("schema_name")
             request.state.tenant_id = tenant_context.get("tenant_id")
             return tenant_context
 
@@ -105,7 +104,6 @@ async def try_get_tenant_context(
         return None
 
     request.state.tenant_context = tenant_context
-    request.state.tenant_schema = tenant_context.get("schema_name")
     request.state.tenant_id = tenant_context.get("tenant_id")
     return tenant_context
 
