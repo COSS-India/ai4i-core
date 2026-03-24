@@ -209,6 +209,8 @@ class AppEnv(BaseSettings):
     default_receiver_emails: str = ""
     login_url: str = ""
     email_verification_link: str = ""
+    # Multi-tenant email verification token expiry (used by multi-tenant-feature)
+    email_verification_token_expire_minutes: int = 15
 
     # ── OAuth ──
     google_client_id: Optional[str] = None        # credential

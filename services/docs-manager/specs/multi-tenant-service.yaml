@@ -371,7 +371,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ServiceDeleteResponse" }
-  /api/v1/multi-tenant/resolve/tenant/from/user/{user_id}:
+  /api/v1/multi-tenant/resolve/tenant/from/user:
     get:
       tags: [Multi-Tenant]
       summary: Resolve Tenant From User
@@ -379,9 +379,9 @@ paths:
       security: [{ BearerAuth: [] }]
       parameters:
         - name: user_id
-          in: path
+          in: query
           required: true
-          schema: { type: string }
+          schema: { type: integer }
       responses:
         "200":
           description: Tenant ID for user
