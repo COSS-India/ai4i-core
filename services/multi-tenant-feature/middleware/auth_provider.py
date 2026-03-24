@@ -1,26 +1,73 @@
-"""Thin auth wrapper -- delegates to the shared ai4icore_auth library.
+"""Thin auth wrapper built on existing ai4icore_auth primitives."""
 
-Multi-tenant defaults to AUTH_TOKEN (Bearer JWT) -- API key is not required
-by default.  The library's ``auth_enabled`` / ``allow_anonymous`` env
-overrides are respected.
-"""
+from typing import Optional
 
-from ai4icore_auth import (
-    create_auth_provider,
-    create_optional_auth_provider,
-)
+from fastapi import Header, Request
+
+from ai4icore_auth import JWTVerifier, PermissionChecker, create_require_auth
+from ai4icore_env import app_env
+from ai4icore_exceptions import InsufficientPermissionsError
 
 # Service-specific configuration
 SERVICE_NAME = "multi-tenant"
 
-AuthProvider = create_auth_provider(
-    service_name=SERVICE_NAME,
-    require_api_key=False,  # multi-tenant: auth token only by default
-    allow_anonymous=True,
-)
 
-OptionalAuthProvider = create_optional_auth_provider(
-    service_name=SERVICE_NAME,
-    require_api_key=False,
-    allow_anonymous=True,
-)
+def _determine_service_and_action(request: Request) -> tuple[str, str]:
+    path = request.url.path.lower()
+    method = request.method.upper()
+    if method == "GET" or "/services" in path or "/tenants" in path or "/users" in path:
+        return SERVICE_NAME, "read"
+    return SERVICE_NAME, "read"
+
+
+def _build_jwt_verifier() -> JWTVerifier:
+    auth_service_url = (app_env.auth_service_url or "").rstrip("/")
+    jwks_url = app_env.jwks_url or (
+        f"{auth_service_url}/api/v1/auth/.well-known/jwks.json" if auth_service_url else None
+    )
+    issuer = app_env.jwt_issuer or app_env.jwt_issuer_url
+    audience = app_env.jwt_audience
+    return JWTVerifier(jwks_url=jwks_url, issuer=issuer, audience=audience)
+
+
+_jwt_verifier = _build_jwt_verifier()
+_require_auth = create_require_auth(_jwt_verifier)
+
+
+async def AuthProvider(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    if app_env.auth_enabled is not None and str(app_env.auth_enabled).lower() not in ("true", "1", "yes"):
+        return None
+
+    # Preserve previous permissive behavior for multi-tenant when no token.
+    if not authorization:
+        return None
+
+    if _jwt_verifier.loaded_key_count == 0:
+        await _jwt_verifier.initialize()
+
+    claims = await _require_auth(request=request, authorization=authorization)
+    permission_checker = PermissionChecker(redis_client=getattr(request.app.state, "redis_client", None))
+    required = await permission_checker.get_required_permission(request.method, request.url.path)
+    if PermissionChecker.check_endpoint_access(
+        required=required,
+        user_permission_ids=claims.permission_ids,
+        user_permission_codes=claims.permission_codes,
+        user_roles=claims.roles,
+    ):
+        return claims
+    raise InsufficientPermissionsError(request.url.path, request.method)
+
+
+async def OptionalAuthProvider(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    if not authorization:
+        return None
+    try:
+        return await AuthProvider(request=request, authorization=authorization)
+    except Exception:
+        return None
