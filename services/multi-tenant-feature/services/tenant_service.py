@@ -2648,9 +2648,10 @@ async def list_all_users(
     List tenant users. If tenant_id is provided, only users for that tenant are returned.
     Roles are fetched from auth service when auth_header is provided.
     """
-    stmt = select(TenantUser)
-    if tenant_id:
-        stmt = stmt.where(TenantUser.tenant_id == tenant_id)
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id is required")
+
+    stmt = select(TenantUser).where(TenantUser.tenant_id == tenant_id)
     stmt = stmt.order_by(TenantUser.created_at.desc())
 
     result = await db.execute(stmt)
