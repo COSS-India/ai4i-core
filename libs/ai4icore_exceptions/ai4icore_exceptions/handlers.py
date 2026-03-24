@@ -17,6 +17,11 @@ from fastapi.responses import JSONResponse
 
 from .exceptions import (
     AppError,
+    AuthenticationError,
+    AuthenticationRequiredError,
+    TokenExpiredError,
+    TokenInvalidError,
+    TokenRevokedError,
     ValidationError,
     ServiceError,
     PipelineError,
@@ -60,6 +65,28 @@ def register_exception_handlers(app: FastAPI) -> None:
         if exc.service_error:
             details["service_error"] = exc.service_error
         return _error_json(exc.code, exc.message, exc.status_code, details or None)
+
+    @app.exception_handler(AuthenticationRequiredError)
+    async def auth_required_error(_req: Request, exc: AuthenticationRequiredError) -> JSONResponse:
+        """No token provided — clear, non-misleading message."""
+        return _error_json(exc.code, exc.message, 401)
+
+    @app.exception_handler(TokenExpiredError)
+    async def token_expired_error(_req: Request, exc: TokenExpiredError) -> JSONResponse:
+        return _error_json(exc.code, exc.message, 401)
+
+    @app.exception_handler(TokenInvalidError)
+    async def token_invalid_error(_req: Request, exc: TokenInvalidError) -> JSONResponse:
+        return _error_json(exc.code, exc.message, 401)
+
+    @app.exception_handler(TokenRevokedError)
+    async def token_revoked_error(_req: Request, exc: TokenRevokedError) -> JSONResponse:
+        return _error_json(exc.code, exc.message, 401)
+
+    @app.exception_handler(AuthenticationError)
+    async def auth_error(_req: Request, exc: AuthenticationError) -> JSONResponse:
+        """Catch-all for authentication errors not handled by specific handlers above."""
+        return _error_json(exc.code, exc.message, 401)
 
     @app.exception_handler(AppError)
     async def app_error(_req: Request, exc: AppError) -> JSONResponse:
