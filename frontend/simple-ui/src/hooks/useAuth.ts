@@ -24,12 +24,6 @@ function runAuthInitOnce(): Promise<void> {
       try {
         const currentUser = await authService.getCurrentUser();
         authService.setStoredUser(currentUser);
-        try {
-          const apiKeyList = await authService.listApiKeys();
-          authService.applyApiKeyListToStorage(apiKeyList);
-        } catch {
-          // Non-blocking; user can set key in profile
-        }
       } catch (error: any) {
         const errorMessage = error?.message || 'Token validation failed';
         if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
@@ -165,14 +159,6 @@ export const useAuth = () => {
             error: null,
           };
         });
-
-        // Fetch API keys and store selected key in localStorage for use in services
-        try {
-          const apiKeyList = await authService.listApiKeys();
-          authService.applyApiKeyListToStorage(apiKeyList);
-        } catch (apiKeyErr) {
-          console.warn('useAuth: Failed to fetch API keys after login:', apiKeyErr);
-        }
 
         // Notify other components/hooks to refresh their view immediately
         if (typeof window !== 'undefined') {

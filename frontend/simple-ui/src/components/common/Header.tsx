@@ -20,7 +20,6 @@ import { getServiceTitle, type ServiceId } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import AuthModal from "../auth/AuthModal";
-import ApiKeyViewerModal from "./ApiKeyViewerModal";
 
 const PATH_TO_SERVICE: Record<string, ServiceId> = {
   "/asr": "asr",
@@ -47,7 +46,6 @@ const Header: React.FC = () => {
   } = useAuth();
   const { checkSessionExpiry } = useSessionExpiry();
 
-  const [isApiKeyViewerOpen, setIsApiKeyViewerOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [title, setTitle] = useState("");
 
@@ -229,13 +227,6 @@ const Header: React.FC = () => {
                   }}>
                     Profile
                   </MenuItem>
-                  {/* <MenuItem onClick={() => {
-                    // Check session expiry before opening API Key viewer
-                    if (!checkSessionExpiry()) return;
-                    setIsApiKeyViewerOpen(true);
-                  }}>
-                    API Key
-                  </MenuItem> */}
                   <MenuItem onClick={async () => {
                     // Check session expiry before logout
                     if (!checkSessionExpiry()) return;
@@ -247,12 +238,6 @@ const Header: React.FC = () => {
           </HStack>
         </HStack>
       </Box>
-
-      {/* API Key Viewer Modal */}
-      <ApiKeyViewerModal
-        isOpen={isApiKeyViewerOpen}
-        onClose={() => setIsApiKeyViewerOpen(false)}
-      />
 
       {/* Auth Modal */}
       <AuthModal
