@@ -1,0 +1,765 @@
+{
+  "description": "Single source of truth for permissions, roles, and endpoint-permission mappings. permissionRequired uses permission names (resolved to DB IDs at startup).",
+  "permissions": [
+    {
+      "code": "P_01",
+      "name": "users.create",
+      "resource": "users",
+      "action": "create",
+      "description": "Create users"
+    },
+    {
+      "code": "P_02",
+      "name": "users.read",
+      "resource": "users",
+      "action": "read",
+      "description": "View users"
+    },
+    {
+      "code": "P_03",
+      "name": "users.update",
+      "resource": "users",
+      "action": "update",
+      "description": "Update users"
+    },
+    {
+      "code": "P_04",
+      "name": "users.delete",
+      "resource": "users",
+      "action": "delete",
+      "description": "Delete users"
+    },
+    {
+      "code": "P_05",
+      "name": "configs.create",
+      "resource": "configs",
+      "action": "create",
+      "description": "Create configurations"
+    },
+    {
+      "code": "P_06",
+      "name": "configs.read",
+      "resource": "configs",
+      "action": "read",
+      "description": "Read configurations"
+    },
+    {
+      "code": "P_07",
+      "name": "configs.update",
+      "resource": "configs",
+      "action": "update",
+      "description": "Update configurations"
+    },
+    {
+      "code": "P_08",
+      "name": "configs.delete",
+      "resource": "configs",
+      "action": "delete",
+      "description": "Delete configurations"
+    },
+    {
+      "code": "P_09",
+      "name": "metrics.read",
+      "resource": "metrics",
+      "action": "read",
+      "description": "Read metrics"
+    },
+    {
+      "code": "P_10",
+      "name": "metrics.export",
+      "resource": "metrics",
+      "action": "export",
+      "description": "Export metrics"
+    },
+    {
+      "code": "P_11",
+      "name": "alerts.create",
+      "resource": "alerts",
+      "action": "create",
+      "description": "Create alerts"
+    },
+    {
+      "code": "P_12",
+      "name": "alerts.read",
+      "resource": "alerts",
+      "action": "read",
+      "description": "Read alerts"
+    },
+    {
+      "code": "P_13",
+      "name": "alerts.update",
+      "resource": "alerts",
+      "action": "update",
+      "description": "Update alerts"
+    },
+    {
+      "code": "P_14",
+      "name": "alerts.delete",
+      "resource": "alerts",
+      "action": "delete",
+      "description": "Delete alerts"
+    },
+    {
+      "code": "P_15",
+      "name": "dashboards.create",
+      "resource": "dashboards",
+      "action": "create",
+      "description": "Create dashboards"
+    },
+    {
+      "code": "P_16",
+      "name": "dashboards.read",
+      "resource": "dashboards",
+      "action": "read",
+      "description": "Read dashboards"
+    },
+    {
+      "code": "P_17",
+      "name": "dashboards.update",
+      "resource": "dashboards",
+      "action": "update",
+      "description": "Update dashboards"
+    },
+    {
+      "code": "P_18",
+      "name": "dashboards.delete",
+      "resource": "dashboards",
+      "action": "delete",
+      "description": "Delete dashboards"
+    },
+    {
+      "code": "P_19",
+      "name": "apiKey.create",
+      "resource": "apiKey",
+      "action": "create",
+      "description": "Create API keys"
+    },
+    {
+      "code": "P_20",
+      "name": "apiKey.read",
+      "resource": "apiKey",
+      "action": "read",
+      "description": "Read API keys"
+    },
+    {
+      "code": "P_21",
+      "name": "apiKey.delete",
+      "resource": "apiKey",
+      "action": "delete",
+      "description": "Delete/revoke API keys"
+    },
+    {
+      "code": "P_22",
+      "name": "apiKey.update",
+      "resource": "apiKey",
+      "action": "update",
+      "description": "Update API keys"
+    },
+    {
+      "code": "P_23",
+      "name": "service.create",
+      "resource": "service",
+      "action": "create",
+      "description": "Create services"
+    },
+    {
+      "code": "P_24",
+      "name": "service.delete",
+      "resource": "service",
+      "action": "delete",
+      "description": "Delete services"
+    },
+    {
+      "code": "P_25",
+      "name": "service.update",
+      "resource": "service",
+      "action": "update",
+      "description": "Update services"
+    },
+    {
+      "code": "P_26",
+      "name": "service.read",
+      "resource": "service",
+      "action": "read",
+      "description": "Read services"
+    },
+    {
+      "code": "P_27",
+      "name": "model.create",
+      "resource": "model",
+      "action": "create",
+      "description": "Create models"
+    },
+    {
+      "code": "P_28",
+      "name": "model.read",
+      "resource": "model",
+      "action": "read",
+      "description": "Read models"
+    },
+    {
+      "code": "P_29",
+      "name": "model.update",
+      "resource": "model",
+      "action": "update",
+      "description": "Update models"
+    },
+    {
+      "code": "P_30",
+      "name": "model.delete",
+      "resource": "model",
+      "action": "delete",
+      "description": "Delete models"
+    },
+    {
+      "code": "P_31",
+      "name": "model.publish",
+      "resource": "model",
+      "action": "publish",
+      "description": "Publish models"
+    },
+    {
+      "code": "P_32",
+      "name": "model.unpublish",
+      "resource": "model",
+      "action": "unpublish",
+      "description": "Unpublish models"
+    },
+    {
+      "code": "P_33",
+      "name": "roles.assign",
+      "resource": "roles",
+      "action": "assign",
+      "description": "Assign roles to users"
+    },
+    {
+      "code": "P_34",
+      "name": "roles.remove",
+      "resource": "roles",
+      "action": "remove",
+      "description": "Remove roles from users"
+    },
+    {
+      "code": "P_35",
+      "name": "roles.read",
+      "resource": "roles",
+      "action": "read",
+      "description": "Read roles"
+    },
+    {
+      "code": "P_36",
+      "name": "asr.inference",
+      "resource": "asr",
+      "action": "inference",
+      "description": "ASR inference"
+    },
+    {
+      "code": "P_37",
+      "name": "asr.read",
+      "resource": "asr",
+      "action": "read",
+      "description": "ASR read"
+    },
+    {
+      "code": "P_38",
+      "name": "tts.inference",
+      "resource": "tts",
+      "action": "inference",
+      "description": "TTS inference"
+    },
+    {
+      "code": "P_39",
+      "name": "tts.read",
+      "resource": "tts",
+      "action": "read",
+      "description": "TTS read"
+    },
+    {
+      "code": "P_40",
+      "name": "nmt.inference",
+      "resource": "nmt",
+      "action": "inference",
+      "description": "NMT inference"
+    },
+    {
+      "code": "P_41",
+      "name": "nmt.read",
+      "resource": "nmt",
+      "action": "read",
+      "description": "NMT read"
+    },
+    {
+      "code": "P_42",
+      "name": "audio-lang-detection.read",
+      "resource": "audio-lang-detection",
+      "action": "read",
+      "description": "Audio language detection read"
+    },
+    {
+      "code": "P_43",
+      "name": "audio-lang-detection.inference",
+      "resource": "audio-lang-detection",
+      "action": "inference",
+      "description": "Audio language detection inference"
+    },
+    {
+      "code": "P_44",
+      "name": "language-detection.read",
+      "resource": "language-detection",
+      "action": "read",
+      "description": "Language detection read"
+    },
+    {
+      "code": "P_45",
+      "name": "language-detection.inference",
+      "resource": "language-detection",
+      "action": "inference",
+      "description": "Language detection inference"
+    },
+    {
+      "code": "P_46",
+      "name": "language-diarization.read",
+      "resource": "language-diarization",
+      "action": "read",
+      "description": "Language diarization read"
+    },
+    {
+      "code": "P_47",
+      "name": "language-diarization.inference",
+      "resource": "language-diarization",
+      "action": "inference",
+      "description": "Language diarization inference"
+    },
+    {
+      "code": "P_48",
+      "name": "ner.inference",
+      "resource": "ner",
+      "action": "inference",
+      "description": "NER inference"
+    },
+    {
+      "code": "P_49",
+      "name": "ocr.read",
+      "resource": "ocr",
+      "action": "read",
+      "description": "OCR read"
+    },
+    {
+      "code": "P_50",
+      "name": "ocr.inference",
+      "resource": "ocr",
+      "action": "inference",
+      "description": "OCR inference"
+    },
+    {
+      "code": "P_51",
+      "name": "speaker-diarization.read",
+      "resource": "speaker-diarization",
+      "action": "read",
+      "description": "Speaker diarization read"
+    },
+    {
+      "code": "P_52",
+      "name": "speaker-diarization.inference",
+      "resource": "speaker-diarization",
+      "action": "inference",
+      "description": "Speaker diarization inference"
+    },
+    {
+      "code": "P_53",
+      "name": "transliteration.read",
+      "resource": "transliteration",
+      "action": "read",
+      "description": "Transliteration read"
+    },
+    {
+      "code": "P_54",
+      "name": "transliteration.inference",
+      "resource": "transliteration",
+      "action": "inference",
+      "description": "Transliteration inference"
+    },
+    {
+      "code": "P_55",
+      "name": "pipeline.read",
+      "resource": "pipeline",
+      "action": "read",
+      "description": "Pipeline read"
+    },
+    {
+      "code": "P_56",
+      "name": "pipeline.inference",
+      "resource": "pipeline",
+      "action": "inference",
+      "description": "Pipeline inference"
+    },
+    {
+      "code": "P_57",
+      "name": "llm.read",
+      "resource": "llm",
+      "action": "read",
+      "description": "LLM read"
+    },
+    {
+      "code": "P_58",
+      "name": "llm.inference",
+      "resource": "llm",
+      "action": "inference",
+      "description": "LLM inference"
+    },
+    {
+      "code": "P_59",
+      "name": "model-management.read",
+      "resource": "model-management",
+      "action": "read",
+      "description": "Model management read"
+    },
+    {
+      "code": "P_60",
+      "name": "model-management.inference",
+      "resource": "model-management",
+      "action": "inference",
+      "description": "Model management inference"
+    },
+    {
+      "code": "P_61",
+      "name": "logs.read",
+      "resource": "logs",
+      "action": "read",
+      "description": "Read logs"
+    },
+    {
+      "code": "P_62",
+      "name": "traces.read",
+      "resource": "traces",
+      "action": "read",
+      "description": "Read traces"
+    },
+    {
+      "code": "P_63",
+      "name": "multi-tenant.read",
+      "resource": "multi_tenant",
+      "action": "read",
+      "description": "Multi-tenant read"
+    },
+    {
+      "code": "P_64",
+      "name": "multi-tenant.inference",
+      "resource": "multi_tenant",
+      "action": "inference",
+      "description": "Multi-tenant inference"
+    }
+  ],
+  "roles": [
+    {
+      "name": "ADMIN",
+      "description": "Administrator with full system access",
+      "permissions": [
+        "P_01",
+        "P_02",
+        "P_03",
+        "P_04",
+        "P_05",
+        "P_06",
+        "P_07",
+        "P_08",
+        "P_09",
+        "P_10",
+        "P_11",
+        "P_12",
+        "P_13",
+        "P_14",
+        "P_15",
+        "P_16",
+        "P_17",
+        "P_18",
+        "P_19",
+        "P_20",
+        "P_21",
+        "P_22",
+        "P_23",
+        "P_24",
+        "P_25",
+        "P_26",
+        "P_27",
+        "P_28",
+        "P_29",
+        "P_30",
+        "P_31",
+        "P_32",
+        "P_33",
+        "P_34",
+        "P_35",
+        "P_36",
+        "P_37",
+        "P_38",
+        "P_39",
+        "P_40",
+        "P_41",
+        "P_42",
+        "P_43",
+        "P_44",
+        "P_45",
+        "P_46",
+        "P_47",
+        "P_48",
+        "P_49",
+        "P_50",
+        "P_51",
+        "P_52",
+        "P_53",
+        "P_54",
+        "P_55",
+        "P_56",
+        "P_57",
+        "P_58",
+        "P_59",
+        "P_60",
+        "P_61",
+        "P_62",
+        "P_63",
+        "P_64"
+      ]
+    },
+    {
+      "name": "MODERATOR",
+      "description": "Moderator with elevated permissions",
+      "permissions": [
+        "P_01",
+        "P_02",
+        "P_03",
+        "P_04",
+        "P_05",
+        "P_06",
+        "P_07",
+        "P_08",
+        "P_09",
+        "P_10",
+        "P_11",
+        "P_12",
+        "P_13",
+        "P_14",
+        "P_15",
+        "P_16",
+        "P_17",
+        "P_18",
+        "P_23",
+        "P_24",
+        "P_25",
+        "P_26",
+        "P_27",
+        "P_28",
+        "P_29",
+        "P_30",
+        "P_31",
+        "P_32"
+      ]
+    },
+    {
+      "name": "USER",
+      "description": "Regular user with standard permissions",
+      "permissions": [
+        "P_02",
+        "P_03",
+        "P_26"
+      ]
+    },
+    {
+      "name": "GUEST",
+      "description": "Guest user with read-only access",
+      "permissions": [
+        "P_02",
+        "P_03",
+        "P_26"
+      ]
+    },
+    {
+      "name": "TENANT ADMIN",
+      "description": "Tenant administrator with tenant-scoped management permissions",
+      "permissions": [
+        "P_02",
+        "P_03",
+        "P_26",
+        "P_28",
+        "P_19",
+        "P_20",
+        "P_21",
+        "P_22",
+        "P_33",
+        "P_35"
+      ]
+    }
+  ],
+  "apiMappings": [
+    {
+      "endpoint": "POST:/api/v1/auth/login",
+      "permissionRequired": null,
+      "description": "Login (public)"
+    },
+    {
+      "endpoint": "POST:/api/v1/auth/register",
+      "permissionRequired": null,
+      "description": "Register (public)"
+    },
+    {
+      "endpoint": "POST:/api/v1/auth/refresh",
+      "permissionRequired": null,
+      "description": "Refresh token (public)"
+    },
+    {
+      "endpoint": "GET:/api/v1/auth/validate",
+      "permissionRequired": null,
+      "description": "APISIX validation (internal)"
+    },
+    {
+      "endpoint": "POST:/api/v1/auth/validate",
+      "permissionRequired": null,
+      "description": "APISIX validation (internal)"
+    },
+    {
+      "endpoint": "POST:/api/v1/auth/validate-api-key",
+      "permissionRequired": null,
+      "description": "API key validation (internal)"
+    },
+    {
+      "endpoint": "POST:/api/v1/auth/change-password",
+      "permissionRequired": "users.update",
+      "description": "Change password (requires users.update)"
+    },
+    {
+      "endpoint": "GET:/api/v1/auth/me",
+      "permissionRequired": "users.read",
+      "description": "Get own profile"
+    },
+    {
+      "endpoint": "PUT:/api/v1/auth/me",
+      "permissionRequired": "users.update",
+      "description": "Update own profile"
+    },
+    {
+      "endpoint": "GET:/api/v1/auth/users",
+      "permissionRequired": "users.read",
+      "description": "List users"
+    },
+    {
+      "endpoint": "POST:/api/v1/users/create",
+      "permissionRequired": "users.create",
+      "description": "Create user (admin)"
+    },
+    {
+      "endpoint": "DELETE:/api/v1/users/delete",
+      "permissionRequired": "users.delete",
+      "description": "Delete user (admin)"
+    },
+    {
+      "endpoint": "POST:/api/v1/auth/roles/assign",
+      "permissionRequired": "roles.assign",
+      "description": "Assign role"
+    },
+    {
+      "endpoint": "POST:/api/v1/auth/roles/remove",
+      "permissionRequired": "roles.remove",
+      "description": "Remove role"
+    },
+    {
+      "endpoint": "GET:/api/v1/auth/roles/list",
+      "permissionRequired": "roles.read",
+      "description": "List roles"
+    },
+    {
+      "endpoint": "POST:/api/v1/auth/api-keys",
+      "permissionRequired": "apiKey.create",
+      "description": "Create API key"
+    },
+    {
+      "endpoint": "GET:/api/v1/auth/api-keys",
+      "permissionRequired": "apiKey.read",
+      "description": "List own API keys"
+    },
+    {
+      "endpoint": "DELETE:/api/v1/auth/api-keys/{key_id}",
+      "permissionRequired": "apiKey.delete",
+      "description": "Revoke API key"
+    },
+    {
+      "endpoint": "PATCH:/api/v1/auth/api-keys/{key_id}",
+      "permissionRequired": "apiKey.update",
+      "description": "Update API key"
+    },
+    {
+      "endpoint": "POST:/api/v1/asr/inference",
+      "permissionRequired": "asr.inference",
+      "description": "ASR inference"
+    },
+    {
+      "endpoint": "POST:/api/v1/tts/inference",
+      "permissionRequired": "tts.inference",
+      "description": "TTS inference"
+    },
+    {
+      "endpoint": "POST:/api/v1/nmt/inference",
+      "permissionRequired": "nmt.inference",
+      "description": "NMT inference"
+    },
+    {
+      "endpoint": "POST:/api/v1/pipeline/inference",
+      "permissionRequired": "pipeline.inference",
+      "description": "Pipeline inference"
+    },
+    {
+      "endpoint": "POST:/api/v1/llm/inference",
+      "permissionRequired": "llm.inference",
+      "description": "LLM inference"
+    },
+    {
+      "endpoint": "POST:/api/v1/ocr/inference",
+      "permissionRequired": "ocr.inference",
+      "description": "OCR inference"
+    },
+    {
+      "endpoint": "POST:/api/v1/ner/inference",
+      "permissionRequired": "ner.inference",
+      "description": "NER inference"
+    },
+    {
+      "endpoint": "POST:/api/v1/transliteration/inference",
+      "permissionRequired": "transliteration.inference",
+      "description": "Transliteration inference"
+    },
+    {
+      "endpoint": "POST:/api/v1/audio-lang-detection/inference",
+      "permissionRequired": "audio-lang-detection.inference",
+      "description": "Audio lang detection inference"
+    },
+    {
+      "endpoint": "POST:/api/v1/language-detection/inference",
+      "permissionRequired": "language-detection.inference",
+      "description": "Language detection inference"
+    },
+    {
+      "endpoint": "POST:/api/v1/language-diarization/inference",
+      "permissionRequired": "language-diarization.inference",
+      "description": "Language diarization inference"
+    },
+    {
+      "endpoint": "POST:/api/v1/speaker-diarization/inference",
+      "permissionRequired": "speaker-diarization.inference",
+      "description": "Speaker diarization inference"
+    },
+    {
+      "endpoint": "GET:/api/v1/models",
+      "permissionRequired": "model.read",
+      "description": "List models"
+    },
+    {
+      "endpoint": "POST:/api/v1/models",
+      "permissionRequired": "model.create",
+      "description": "Create model"
+    },
+    {
+      "endpoint": "GET:/api/v1/services",
+      "permissionRequired": "service.read",
+      "description": "List services"
+    }
+  ]
+}

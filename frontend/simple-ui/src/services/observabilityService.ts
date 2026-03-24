@@ -21,8 +21,6 @@ observabilityClient.interceptors.request.use(
     const jwtToken = getJwtToken();
     if (jwtToken) {
       config.headers['Authorization'] = `Bearer ${jwtToken}`;
-      config.headers['x-auth-source'] = 'BOTH';
-      config.headers['X-Auth-Source'] = 'BOTH';
     }
     return config;
   },

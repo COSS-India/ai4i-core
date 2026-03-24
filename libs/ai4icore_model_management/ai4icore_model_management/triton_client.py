@@ -14,9 +14,7 @@ from tritonclient.http import InferInput, InferRequestedOutput
 logger = logging.getLogger(__name__)
 
 
-class TritonInferenceError(Exception):
-    """Triton inference error"""
-    pass
+from ai4icore_exceptions import TritonInferenceError  # noqa: F401 — shared platform exception
 
 
 class TritonClient:
