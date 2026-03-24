@@ -21,7 +21,6 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
-import { useApiKey } from "../hooks/useApiKey";
 import authService from "../services/authService";
 import type { User } from "../types/auth";
 import type { APIKeyResponse } from "../types/auth";
@@ -33,43 +32,14 @@ import RolesTab from "../components/profile/RolesTab";
 const ProfilePage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
-  const { setApiKey } = useApiKey();
 
-  // State owned by profile: tab index, API keys list (shared by API Key tab and Create API Key tab), users (shared by Roles, Create API Key, API Key Management)
+  // State owned by profile: tab index, API keys list, users
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [apiKeys, setApiKeys] = useState<APIKeyResponse[]>([]);
-  const [selectedApiKeyId, setSelectedApiKeyId] = useState<number | null>(() => {
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("selected_api_key_id");
-      return stored ? parseInt(stored, 10) : null;
-    }
-    return null;
-  });
   const [users, setUsers] = useState<User[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [isFetchingApiKey, setIsFetchingApiKey] = useState(false);
   const [isLoadingApiKeys, setIsLoadingApiKeys] = useState(false);
-
-  // Persist selected API key ID to localStorage
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      if (selectedApiKeyId !== null) {
-        localStorage.setItem("selected_api_key_id", selectedApiKeyId.toString());
-      } else {
-        localStorage.removeItem("selected_api_key_id");
-      }
-    }
-  }, [selectedApiKeyId]);
-
-  // Restore API key value when selection or list changes
-  useEffect(() => {
-    if (selectedApiKeyId !== null && apiKeys.length > 0) {
-      const selectedKey = apiKeys.find((key) => key.id === selectedApiKeyId);
-      if (selectedKey?.key_value) {
-        setApiKey(selectedKey.key_value);
-      }
-    }
-  }, [selectedApiKeyId, apiKeys, setApiKey]);
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -101,7 +71,6 @@ const ProfilePage: React.FC = () => {
       const response = await authService.listApiKeys();
       const keys = Array.isArray(response.api_keys) ? response.api_keys : [];
       setApiKeys(keys);
-      setSelectedApiKeyId(response.selected_api_key_id ?? null);
     } catch (error) {
       console.error("Failed to fetch API keys:", error);
     } finally {
@@ -211,8 +180,6 @@ const ProfilePage: React.FC = () => {
                     {t.id === "api-key" && (
                       <ApiKeyTab
                         apiKeys={apiKeys}
-                        selectedApiKeyId={selectedApiKeyId}
-                        setSelectedApiKeyId={setSelectedApiKeyId}
                         isFetchingApiKey={isFetchingApiKey}
                         isLoadingApiKeys={isLoadingApiKeys}
                         onFetchApiKeys={handleFetchApiKeys}
