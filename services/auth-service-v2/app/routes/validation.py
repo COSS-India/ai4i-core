@@ -56,12 +56,10 @@ async def validate_token(
             return TokenValidationResponse(valid=False)
 
     username = None
-    permissions: list[str] = []
     if claims.user_id:
         user = await user_svc.get_user_by_id(claims.user_id)
         if user:
             username = user.username
-            permissions = await user_svc.get_user_permission_names(claims.user_id)
 
     return TokenValidationResponse(
         valid=True,
@@ -69,7 +67,6 @@ async def validate_token(
         username=username,
         tenant_id=claims.tenant_id,
         permission_ids=claims.permission_ids,
-        permissions=permissions,
         roles=claims.roles,
         token_type=claims.token_type,
     )
