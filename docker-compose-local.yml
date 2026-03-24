@@ -300,13 +300,13 @@ services:
     dns_search: []
     restart: unless-stopped
 
-  auth-service-v2:
+  auth-service:
     build:
       context: .
       dockerfile: ./services/auth-service-v2/Dockerfile
-    container_name: ai4v-auth-service-v2
+    container_name: ai4v-auth-service
     ports:
-      - "18082:8082"
+      - "8081:8081"
     environment:
       - ENV_FILE=.env
     env_file:
@@ -319,7 +319,7 @@ services:
       - ./libs/ai4icore_logging:/tmp/ai4icore_logging
       - ./libs/ai4icore_auth:/tmp/ai4icore_auth
       - ./libs/ai4icore_bootstrap:/tmp/ai4icore_bootstrap
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8082", "--reload"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -328,14 +328,14 @@ services:
     networks:
       microservices-network:
         aliases:
-          - auth-service-v2
+          - auth-service
     healthcheck:
       test:
         [
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=3)",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=3)",
         ]
       interval: 10s
       timeout: 10s
@@ -1394,7 +1394,7 @@ services:
       - "8104:8098"
     environment:
       - SERVICE_NAME=alert-management-service
-      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service-v2:8082}
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER}

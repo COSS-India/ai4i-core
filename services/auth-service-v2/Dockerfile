@@ -34,6 +34,6 @@ COPY services/auth-service-v2/ .
 # Create keys directory (mount production keys via volume)
 RUN mkdir -p /app/keys
 
-EXPOSE 8082
+EXPOSE 8081
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8082", "--workers", "4"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--workers", "4"]
