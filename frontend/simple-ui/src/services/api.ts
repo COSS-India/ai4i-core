@@ -301,7 +301,12 @@ apiClient.interceptors.request.use(
       if (jwtToken) {
         config.headers['Authorization'] = `Bearer ${jwtToken}`;
       } else {
+        // No token available — reject request before sending to avoid
+        // confusing "API key missing" errors from backend
         console.warn('No JWT token available for service endpoint:', config.url);
+        return Promise.reject(new axios.Cancel(
+          'Authentication required. Please sign in to continue.'
+        ));
       }
     }
     
