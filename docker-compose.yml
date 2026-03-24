@@ -320,34 +320,6 @@ services:
     dns_search: []
     restart: unless-stopped
 
-  auth-service:
-    build:
-      context: .
-      dockerfile: ./services/auth-service/Dockerfile
-    container_name: ai4v-auth-service
-    ports:
-      - "8081:8081"
-    environment:
-      - ENV_FILE=.env
-    env_file:
-      - ./services/auth-service/.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      microservices-network:
-        aliases:
-          - auth-service
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
-    restart: unless-stopped
-
   config-service:
     build:
       context: .
@@ -1032,7 +1004,7 @@ services:
       - "8104:8098"
     environment:
       - SERVICE_NAME=alert-management-service
-      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service-v2:8082}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER}
