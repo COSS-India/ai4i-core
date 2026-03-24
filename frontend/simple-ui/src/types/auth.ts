@@ -47,11 +47,15 @@ export interface LoginResponse {
 }
 
 export interface RegisterRequest {
-  full_name: string;
   email: string;
   username: string;
   password: string;
   confirm_password: string;
+  full_name?: string;
+  phone_number?: string;
+  timezone?: string;
+  language?: string;
+  is_tenant?: boolean;
 }
 
 export interface TokenRefreshRequest {
@@ -68,7 +72,11 @@ export interface TokenValidationResponse {
   valid: boolean;
   user_id?: number;
   username?: string;
+  tenant_id?: string;
+  permission_ids: number[];
   permissions: string[];
+  roles: string[];
+  token_type?: string;
 }
 
 export interface PasswordChangeRequest {
@@ -98,15 +106,16 @@ export interface LogoutResponse {
 
 export interface APIKeyCreate {
   key_name: string;
-  permissions: string[];
+  permissions: number[]; // Permission IDs
   expires_days?: number;
   user_id?: number; // Optional: for admin creating keys for other users
 }
 
 export interface APIKeyResponse {
   id: number;
+  key_id?: number;  // Alias for id, returned by create endpoint
   key_name: string;
-  key_value?: string; // Only returned on creation
+  api_key?: string; // JWT token, only returned on creation
   permissions: string[];
   is_active: boolean;
   is_revoked: boolean;
@@ -125,7 +134,6 @@ export interface APIKeyUpdate {
   key_name?: string;
   permissions?: string[];
   is_active?: boolean;
-  expires_days?: number;
 }
 
 /** Response from GET /api/v1/auth/api-keys */

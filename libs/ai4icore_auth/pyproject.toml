@@ -4,13 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai4icore-auth"
-version = "1.0.0"
-description = "Shared authentication middleware for AI4I-Core services"
+version = "2.0.0"
+description = "Shared authentication & authorization library for AI4I-Core microservices"
 requires-python = ">=3.10"
 dependencies = [
+    "ai4icore-exceptions>=1.0.0",
     "fastapi",
     "httpx",
     "python-jose[cryptography]",
+    "cryptography>=41.0.0",
+    "redis",
 ]
 
 [project.optional-dependencies]

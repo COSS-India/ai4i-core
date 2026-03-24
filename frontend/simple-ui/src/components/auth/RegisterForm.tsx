@@ -109,7 +109,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
     try {
       await register({
         ...formData,
-        full_name: formData.full_name.trim(),
+        full_name: (formData.full_name ?? '').trim(),
       });
       
       // Clear form data after successful registration
