@@ -27,10 +27,9 @@ from models.streaming_models import (
 )
 from services.audio_service import AudioService
 from utils.triton_client import TritonClient
-from repositories.asr_repository import ASRRepository, get_db_session
+from repositories.asr_repository import ASRRepository
 from ai4icore_env import app_env
-from middleware.auth_provider import validate_api_key, hash_api_key
-from ai4icore_constants.exceptions import AuthenticationError, InvalidAPIKeyError
+from middleware.auth_provider import validate_api_key_jwt
 
 logger = logging.getLogger(__name__)
 
@@ -140,10 +139,8 @@ class StreamingASRService:
                 api_key_id = None
                 if auth_enabled and require_api_key and api_key:
                     try:
-                        async with get_db_session() as session:
-                            api_key_db, user_db = await validate_api_key(api_key, session, self.redis_client)
-                            user_id = user_db.id
-                            api_key_id = api_key_db.id
+                        result = await validate_api_key_jwt(api_key)
+                        user_id = result.user_id
                     except Exception as e:
                         logger.error(f"Authentication failed for streaming connection: {e}")
                         await self.sio.emit('error', {'error': 'Authentication failed', 'code': 'AUTH_ERROR'}, room=sid)
