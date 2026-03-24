@@ -6,7 +6,8 @@ IMPORTANT: After first login, change the default admin password immediately.
 The default password is set via ADMIN_DEFAULT_PASSWORD env var (falls back to 'Admin@123').
 """
 import os
-import bcrypt
+import secrets
+from passlib.context import CryptContext
 from infrastructure.databases.core.base_seeder import BaseSeeder
 
 
@@ -17,17 +18,27 @@ class AuthDefaultAdminSeeder(BaseSeeder):
 
     def run(self, adapter):
         """Run seeder"""
-        default_password = "ADMIN_PASSWORD" # CAN CHANGE THIS TO ANY PASSWORD
-        password_hash = bcrypt.hashpw(default_password.encode(), bcrypt.gensalt()).decode()
+        default_password = os.getenv("ADMIN_DEFAULT_PASSWORD", "ADMIN_PASSWORD")
+        salt = secrets.token_hex(16)  # matches auth-service-v2 default argon2_salt_length
+        password_hash = CryptContext(schemes=["argon2"], default="argon2").hash(default_password + salt)
+        hash_rounds = 12
 
         adapter.execute(
             """
-            INSERT INTO users (email, username, password_hash, is_active, is_verified, is_superuser, timezone, language)
-            VALUES (:email, :username, :password_hash, :is_active, :is_verified, :is_superuser, :timezone, :language)
+            INSERT INTO users (
+                email, username, password_hash, password_salt, hash_rounds,
+                is_active, is_verified, is_superuser, timezone, language
+            )
+            VALUES (
+                :email, :username, :password_hash, :password_salt, :hash_rounds,
+                :is_active, :is_verified, :is_superuser, :timezone, :language
+            )
             ON CONFLICT (email) DO UPDATE
             SET
                 username = EXCLUDED.username,
                 password_hash = EXCLUDED.password_hash,
+                password_salt = EXCLUDED.password_salt,
+                hash_rounds = EXCLUDED.hash_rounds,
                 is_active = EXCLUDED.is_active,
                 is_verified = EXCLUDED.is_verified,
                 is_superuser = EXCLUDED.is_superuser,
@@ -38,6 +49,8 @@ class AuthDefaultAdminSeeder(BaseSeeder):
                 'email': 'admin@ai4inclusion.org',
                 'username': 'admin',
                 'password_hash': password_hash,
+                'password_salt': salt,
+                'hash_rounds': hash_rounds,
                 'is_active': True,
                 'is_verified': True,
                 'is_superuser': True,

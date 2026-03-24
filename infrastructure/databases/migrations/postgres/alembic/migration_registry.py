@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import os
 import sys
@@ -51,7 +52,7 @@ class DatabaseSpec:
 
 DATABASE_ORDER = [
     "alerting_db",
-    "auth_db",
+    "auth_service_v2_db",
     "config_db",
     "dashboard_db",
     "ai4i_platform_db",
@@ -118,12 +119,10 @@ def _ensure_package(name: str) -> None:
 
 
 def _load_auth_metadata():
-    module = _load_module(
-        "ai4i_alembic_dynamic.auth_models",
-        PROJECT_ROOT / "services" / "auth-service" / "models.py",
-    )
+    # Start from auth-service-v2 core metadata (users/sessions/roles/api keys/oauth)
+    module_metadata = _load_auth_service_v2_metadata()
     combined_metadata = MetaData()
-    for table in module.Base.metadata.tables.values():
+    for table in module_metadata.tables.values():
         table.to_metadata(combined_metadata)
 
     service_model_files = [
@@ -166,6 +165,21 @@ def _load_auth_metadata():
             table.to_metadata(combined_metadata)
 
     return combined_metadata
+
+
+def _load_auth_service_v2_metadata():
+    """Load auth-service-v2 ORM metadata (users/sessions/roles/api keys/oauth)."""
+    auth_v2_root = PROJECT_ROOT / "services" / "auth-service-v2"
+    v2_path = str(auth_v2_root)
+    if v2_path not in sys.path:
+        sys.path.insert(0, v2_path)
+    # Ensure we import auth-service-v2's `app.models` package, not another service's `app`.
+    for module_name in list(sys.modules.keys()):
+        if module_name == "app" or module_name.startswith("app."):
+            sys.modules.pop(module_name, None)
+
+    module = importlib.import_module("app.models")
+    return module.Base.metadata
 
 
 def _load_config_metadata():
@@ -249,8 +263,8 @@ DATABASE_SPECS = {
         database_name_key="ALERTING_DB_NAME",
         metadata_loader=_load_alerting_metadata,
     ),
-    "auth_db": DatabaseSpec(
-        name="auth_db",
+    "auth_service_v2_db": DatabaseSpec(
+        name="auth_service_v2_db",
         user_key="AUTH_DB_USER",
         password_key="AUTH_DB_PASSWORD",
         host_key="AUTH_DB_HOST",
@@ -361,6 +375,9 @@ def get_sync_url(name: str) -> str:
 
 
 def get_version_path(name: str) -> Path:
+    # Same migration files as auth_db (shared AUTH_DB_NAME); distinct target for v2-only autogenerate.
+    if name == "auth_service_v2_db":
+        return ALEMBIC_DIR / "versions" / "auth_db"
     return ALEMBIC_DIR / "versions" / name
 
 

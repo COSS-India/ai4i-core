@@ -1,21 +1,20 @@
-"""Thin auth wrapper -- delegates to the shared ai4icore_auth library.
+"""Thin auth wrapper built on existing ai4icore_auth primitives.
 
 Re-exports ``validate_api_key`` and ``hash_api_key`` for
 ``services/streaming_service.py`` which imports them from here.
 """
 
+import hashlib
 import json
 import logging
-from typing import Tuple
+from typing import Optional, Tuple
 
-from fastapi import Request
+from fastapi import Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_auth import (
-    create_auth_provider,
-    create_optional_auth_provider,
-    hash_api_key,
-)
+from ai4icore_auth import JWTVerifier, PermissionChecker, create_require_auth
+from ai4icore_exceptions import InsufficientPermissionsError
+from ai4icore_env import app_env
 from ai4icore_constants.exceptions import (
     AuthenticationError,
     InvalidAPIKeyError,
@@ -23,6 +22,10 @@ from ai4icore_constants.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def hash_api_key(api_key: str) -> str:
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -33,13 +36,18 @@ def determine_service_and_action(request: Request) -> Tuple[str, str]:
     path = request.url.path.lower()
     method = request.method.upper()
 
+    # Resolve service from URL path when present: /api/v1/<service>/...
     service = None
-    for svc in ["asr", "nmt", "tts", "pipeline", "model-management", "llm"]:
-        if f"/api/v1/{svc}/" in path or path.endswith(f"/api/v1/{svc}"):
-            service = svc
-            break
+    path_parts = [segment for segment in path.split("/") if segment]
+    if len(path_parts) >= 3 and path_parts[0] == "api" and path_parts[1] == "v1":
+        service = path_parts[2]
+
+    # Fallback to configured service identity.
     if not service:
-        service = "asr"
+        configured_service = (app_env.service_name or "").lower()
+        if configured_service.endswith("-service"):
+            configured_service = configured_service[:-8]
+        service = configured_service or "unknown"
 
     if "/inference" in path and method == "POST":
         action = "inference"
@@ -97,7 +105,7 @@ async def validate_api_key(api_key: str, db: AsyncSession, redis_client):
             "user_id": api_key_db.user_id,
             "is_active": api_key_db.is_active,
         }
-        await redis_client.setex(cache_key, 300, json.dumps(cache_data))
+        await redis_client.setex(cache_key, app_env.api_key_cache_ttl, json.dumps(cache_data))
         await api_key_repo.update_last_used(api_key_db.id)
         return api_key_db, api_key_db.user
 
@@ -108,16 +116,50 @@ async def validate_api_key(api_key: str, db: AsyncSession, redis_client):
         raise AuthenticationError("Failed to validate API key")
 
 
-# ---------------------------------------------------------------------------
-# Auth providers (created via library factory)
-# ---------------------------------------------------------------------------
+def _build_jwt_verifier() -> JWTVerifier:
+    auth_service_url = (app_env.auth_service_url or "").rstrip("/")
+    jwks_url = app_env.jwks_url or (
+        f"{auth_service_url}/api/v1/auth/.well-known/jwks.json" if auth_service_url else None
+    )
+    issuer = app_env.jwt_issuer or app_env.jwt_issuer_url
+    audience = app_env.jwt_audience
+    return JWTVerifier(jwks_url=jwks_url, issuer=issuer, audience=audience)
 
-AuthProvider = create_auth_provider(
-    service_name="asr",
-    determine_service_and_action=determine_service_and_action,
-)
 
-OptionalAuthProvider = create_optional_auth_provider(
-    service_name="asr",
-    determine_service_and_action=determine_service_and_action,
-)
+_jwt_verifier = _build_jwt_verifier()
+_require_auth = create_require_auth(_jwt_verifier)
+
+
+async def AuthProvider(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    if app_env.auth_enabled is not None and str(app_env.auth_enabled).lower() not in ("true", "1", "yes"):
+        return None
+
+    if _jwt_verifier.loaded_key_count == 0:
+        await _jwt_verifier.initialize()
+
+    claims = await _require_auth(request=request, authorization=authorization)
+    permission_checker = PermissionChecker(redis_client=getattr(request.app.state, "redis_client", None))
+    required = await permission_checker.get_required_permission(request.method, request.url.path)
+    if PermissionChecker.check_endpoint_access(
+        required=required,
+        user_permission_ids=claims.permission_ids,
+        user_permission_codes=claims.permission_codes,
+        user_roles=claims.roles,
+    ):
+        return claims
+    raise InsufficientPermissionsError(request.url.path, request.method)
+
+
+async def OptionalAuthProvider(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+):
+    if not authorization:
+        return None
+    try:
+        return await AuthProvider(request=request, authorization=authorization)
+    except Exception:
+        return None

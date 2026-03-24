@@ -1,8 +1,8 @@
-"""initial_schema
+"""auto_20260324_110858
 
-Revision ID: 8d5eddc014c0
+Revision ID: 5420a5259ea1
 Revises: 
-Create Date: 2026-03-09 12:18:18.347669
+Create Date: 2026-03-24 11:08:59.332336
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '8d5eddc014c0'
+revision: str = '5420a5259ea1'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -23,7 +23,7 @@ def upgrade() -> None:
     op.create_table('service_config',
     sa.Column('id', sa.BigInteger(), nullable=False),
     sa.Column('service_name', sa.String(length=50), nullable=False),
-    sa.Column('unit_type', sa.String(length=50), nullable=False),
+    sa.Column('unit_type', sa.Enum('character', 'second', 'minute', 'hour', 'request', name='serviceunittype', native_enum=False, length=50), nullable=False),
     sa.Column('price_per_unit', sa.Numeric(precision=10, scale=6), nullable=False),
     sa.Column('currency', sa.String(length=10), nullable=True),
     sa.Column('is_active', sa.Boolean(), nullable=True),
@@ -37,6 +37,7 @@ def upgrade() -> None:
     sa.Column('tenant_id', sa.String(length=255), nullable=False),
     sa.Column('organization_name', sa.String(length=255), nullable=False),
     sa.Column('contact_email', sa.String(length=500), nullable=False),
+    sa.Column('email_hash', sa.String(length=128), nullable=True),
     sa.Column('phone_number', sa.String(length=500), nullable=True),
     sa.Column('domain', sa.String(length=255), nullable=False),
     sa.Column('schema_name', sa.String(length=255), nullable=False),
@@ -56,6 +57,7 @@ def upgrade() -> None:
     sa.UniqueConstraint('tenant_id')
     )
     op.create_index(op.f('ix_tenants_contact_email'), 'tenants', ['contact_email'], unique=False)
+    op.create_index(op.f('ix_tenants_email_hash'), 'tenants', ['email_hash'], unique=True)
     op.create_index(op.f('ix_tenants_user_id'), 'tenants', ['user_id'], unique=False)
     op.create_table('tenant_audit_logs',
     sa.Column('id', sa.UUID(), nullable=False),
@@ -144,6 +146,7 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_tenant_audit_logs_tenant_id'), table_name='tenant_audit_logs')
     op.drop_table('tenant_audit_logs')
     op.drop_index(op.f('ix_tenants_user_id'), table_name='tenants')
+    op.drop_index(op.f('ix_tenants_email_hash'), table_name='tenants')
     op.drop_index(op.f('ix_tenants_contact_email'), table_name='tenants')
     op.drop_table('tenants')
     op.drop_table('service_config')
