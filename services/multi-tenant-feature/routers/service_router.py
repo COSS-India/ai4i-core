@@ -10,6 +10,7 @@ from services.tenant_service import create_service , update_service , list_servi
 
 from logger import logger
 from middleware.auth_provider import AuthProvider
+from middleware.dependencies import require_admin
 
 
 router = APIRouter(
@@ -21,7 +22,11 @@ router = APIRouter(
 
 
 
-@router.post("/register/services", response_model=ServiceResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register/services", 
+             response_model=ServiceResponse, 
+             status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_admin)]
+             )
 async def register_service_request(
     payload: ServiceCreateRequest,
     db: AsyncSession = Depends(get_tenant_db_session),
@@ -45,7 +50,11 @@ async def register_service_request(
 
 
 
-@router.post("/update/services", response_model=ServiceUpdateResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/update/services", 
+             response_model=ServiceUpdateResponse, 
+             status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_admin)]
+             )
 async def update_service_request(
     payload: ServiceUpdateRequest,
     db: AsyncSession = Depends(get_tenant_db_session),
@@ -60,7 +69,11 @@ async def update_service_request(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/list/services", response_model=ListServicesResponse, status_code=status.HTTP_200_OK)
+@router.get("/list/services", 
+            response_model=ListServicesResponse, 
+            status_code=status.HTTP_200_OK,
+            dependencies=[Depends(require_admin)]
+            )
 async def list_services_request(db: AsyncSession = Depends(get_tenant_db_session)):
     try:
         result = await list_service(db)
@@ -72,7 +85,10 @@ async def list_services_request(db: AsyncSession = Depends(get_tenant_db_session
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.delete("/delete/services", response_model=ServiceDeleteResponse, status_code=status.HTTP_200_OK)
+@router.delete("/delete/services", 
+               response_model=ServiceDeleteResponse, 
+               status_code=status.HTTP_200_OK,
+               )
 async def delete_service_request(
     payload: ServiceDeleteRequest,
     db: AsyncSession = Depends(get_tenant_db_session),

@@ -167,9 +167,9 @@ const HomePage: React.FC = () => {
   });
 
   const services = [
+    { id: "nmt" as ServiceId, icon: IoLanguageOutline, path: "/nmt", color: "green", enabled: flags["nmt-enabled"] ?? true },
     { id: "asr" as ServiceId, icon: FaMicrophone, path: "/asr", color: "orange", enabled: flags["asr-enabled"] ?? true },
     { id: "tts" as ServiceId, icon: IoVolumeHighOutline, path: "/tts", color: "blue", enabled: flags["tts-enabled"] ?? true },
-    { id: "nmt" as ServiceId, icon: IoLanguageOutline, path: "/nmt", color: "green", enabled: flags["nmt-enabled"] ?? true },
     { id: "llm" as ServiceId, icon: IoSparklesOutline, path: "/llm", color: "pink", enabled: flags["llm-enabled"] ?? true },
     { id: "pipeline" as ServiceId, icon: DoubleMicrophoneIcon, path: "/pipeline", color: "purple", enabled: flags["pipeline-enabled"] ?? true },
     { id: "ocr" as ServiceId, icon: IoDocumentTextOutline, path: "/ocr", color: "indigo", enabled: flags["ocr-enabled"] ?? true },

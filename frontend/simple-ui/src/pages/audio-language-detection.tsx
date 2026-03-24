@@ -31,6 +31,7 @@ import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 const AudioLanguageDetectionPage: React.FC = () => {
   const toast = useToastWithDeduplication();
   const [audioData, setAudioData] = useState<string | null>(null);
+  const [audioClearToken, setAudioClearToken] = useState(0);
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -152,6 +153,11 @@ const AudioLanguageDetectionPage: React.FC = () => {
     setError(null);
   };
 
+  const handleClearAudioInput = () => {
+    clearResults();
+    setAudioClearToken((t) => t + 1);
+  };
+
   return (
     <>
       <Head>
@@ -266,6 +272,8 @@ const AudioLanguageDetectionPage: React.FC = () => {
                   sampleRate={16000}
                   disabled={fetching}
                   timer={timer}
+                  onClear={handleClearAudioInput}
+                  clearToken={audioClearToken}
                 />
               </Box>
 
@@ -286,6 +294,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
                   <AudioInputPreview
                     audioBase64OrDataUrl={audioData}
                     label="Review your audio"
+                    onClear={handleClearAudioInput}
                   />
                 </>
               )}
@@ -360,100 +369,8 @@ const AudioLanguageDetectionPage: React.FC = () => {
                 </Box>
               )}
 
-              {fetched && result && (() => {
-                console.log("res",result,result.output[0],result.output[0].all_scores.predicted_language);
-                
-                // Extract data - handle both result.output[0] and direct result structure
-                const data = result.output && result.output[0] ? result.output[0] : result;
-                
-                // If we have multiple outputs, use the first one
-                const outputItem = result.output && result.output.length > 0 
-                  ? result.output[0] 
-                  : data;
-
-                // Extract language - handle predicted_language format "ml: Malayalam"
-                let language = "Unknown";
-                const predictedLanguage = outputItem.all_scores?.predicted_language || data?.all_scores?.predicted_language;
-                
-                if (predictedLanguage) {
-                  // Parse format like "ml: Malayalam" to extract "Malayalam"
-                  const parts = predictedLanguage.split(":");
-                  if (parts.length > 1) {
-                    language = parts.slice(1).join(":").trim(); // Join in case language name contains ":"
-                  } else {
-                    language = predictedLanguage.trim();
-                  }
-                } else {
-                  // Fallback to other possible fields
-                  language = outputItem.detectedLanguage || outputItem.language || data.detectedLanguage || data.language || "Unknown";
-                }
-                
-                const conf = outputItem.confidence !== undefined ? outputItem.confidence : (data.confidence !== undefined ? data.confidence : null);
-
-                return (
-                  <Box
-                    p={4}
-                    bg="gray.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="gray.200"
-                  >
-                    <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
-                      Audio Language Detection Results:
-                    </Text>
-                    
-                    <Box
-                      p={4}
-                      bg="white"
-                      borderRadius="md"
-                      border="2px solid"
-                      borderColor="orange.300"
-                    >
-                      <VStack align="start" spacing={3}>
-                        <Box>
-                          <Text fontSize="xs" color="gray.600" mb={1}>
-                            Detected Language
-                          </Text>
-                          <Text fontSize="2xl" fontWeight="bold" color="orange.700">
-                            {language}
-                          </Text>
-                        </Box>
-                        {conf !== null && (
-                          <Box>
-                            <Text fontSize="xs" color="gray.600" mb={1}>
-                              Confidence Score
-                            </Text>
-                            <HStack spacing={2} align="center">
-                              <Text fontSize="lg" fontWeight="semibold" color="gray.800">
-                                {(conf * 100).toFixed(2)}%
-                              </Text>
-                              <Box
-                                flex={1}
-                                h="8px"
-                                bg="gray.200"
-                                borderRadius="full"
-                                overflow="hidden"
-                              >
-                                <Box
-                                  h="100%"
-                                  bg="orange.500"
-                                  w={`${conf * 100}%`}
-                                  transition="width 0.3s"
-                                />
-                              </Box>
-                            </HStack>
-                          </Box>
-                        )}
-                      </VStack>
-                    </Box>
-                  </Box>
-                );
-              })()}
-
                 {/* Audio Language Detection Results */}
                 {fetched && result && (() => {
-                  console.log("res",result,result.output[0],result.output[0].all_scores.predicted_language);
-                  
                   // Extract data - handle both result.output[0] and direct result structure
                   const data = result.output && result.output[0] ? result.output[0] : result;
                   
@@ -543,7 +460,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
                       {/* Clear Results Button */}
                       <Box textAlign="center">
                         <button
-                  onClick={clearResults}
+                  onClick={handleClearAudioInput}
                           style={{
                             padding: "8px 16px",
                             backgroundColor: "#f7fafc",

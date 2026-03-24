@@ -8,7 +8,7 @@ ALLOWED_ROLES = {r.value for r in TenantUserRole}
 
 
 def _validate_role(v: Optional[str]) -> Optional[str]:
-    """Validate role is one of ADMIN, USER, GUEST, MODERATOR."""
+    """Validate role is one of tenant-assignable roles."""
     if v is None or (isinstance(v, str) and not v.strip()):
         return None
     val = v.strip().upper()
@@ -26,7 +26,7 @@ class UserRegisterRequest(BaseModel):
     services: List[str] = Field(..., example=["tts", "asr"])
     role: Optional[str] = Field(
         None,
-        description="Role for the user. Key-value: {'role': 'USER'}. Allowed: ADMIN, USER, GUEST, MODERATOR.",
+        description="Role for the user. Key-value: {'role': 'USER'}. Allowed roles are tenant-scoped (see enum).",
         example="USER",
     )
 
@@ -46,5 +46,5 @@ class UserRegisterResponse(BaseModel):
     created_at: datetime
     role: str = Field(
         ...,
-        description="Role for the user (key-value: {'role': 'USER'}). One of: ADMIN, USER, GUEST, MODERATOR.",
+        description="Role for the user (key-value: {'role': 'USER'}). One of the tenant-scoped allowed roles.",
     )
