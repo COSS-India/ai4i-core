@@ -1,21 +1,17 @@
-"""Thin auth wrapper -- delegates to the shared ai4icore_auth library.
+"""Thin auth wrapper — delegates to the shared ai4icore_auth library.
 
 Re-exports ``validate_api_key`` and ``hash_api_key`` for
 ``services/streaming_service.py`` which imports them from here.
 """
 
+import hashlib
 import json
 import logging
-from typing import Tuple
 
-from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_auth import (
-    create_auth_provider,
-    create_optional_auth_provider,
-    hash_api_key,
-)
+from ai4icore_auth.providers import create_auth_providers
+from ai4icore_env import app_env
 from ai4icore_constants.exceptions import (
     AuthenticationError,
     InvalidAPIKeyError,
@@ -24,31 +20,11 @@ from ai4icore_constants.exceptions import (
 
 logger = logging.getLogger(__name__)
 
+AuthProvider, OptionalAuthProvider = create_auth_providers()
 
-# ---------------------------------------------------------------------------
-# Service / action resolution (ASR-specific, multi-service path matching)
-# ---------------------------------------------------------------------------
 
-def determine_service_and_action(request: Request) -> Tuple[str, str]:
-    path = request.url.path.lower()
-    method = request.method.upper()
-
-    service = None
-    for svc in ["asr", "nmt", "tts", "pipeline", "model-management", "llm"]:
-        if f"/api/v1/{svc}/" in path or path.endswith(f"/api/v1/{svc}"):
-            service = svc
-            break
-    if not service:
-        service = "asr"
-
-    if "/inference" in path and method == "POST":
-        action = "inference"
-    elif method == "GET" or "/services" in path or "/models" in path or "/languages" in path:
-        action = "read"
-    else:
-        action = "read"
-
-    return service, action
+def hash_api_key(api_key: str) -> str:
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +73,7 @@ async def validate_api_key(api_key: str, db: AsyncSession, redis_client):
             "user_id": api_key_db.user_id,
             "is_active": api_key_db.is_active,
         }
-        await redis_client.setex(cache_key, 300, json.dumps(cache_data))
+        await redis_client.setex(cache_key, app_env.api_key_cache_ttl, json.dumps(cache_data))
         await api_key_repo.update_last_used(api_key_db.id)
         return api_key_db, api_key_db.user
 
@@ -106,18 +82,3 @@ async def validate_api_key(api_key: str, db: AsyncSession, redis_client):
     except Exception as exc:
         logger.error("Error validating API key: %s", exc)
         raise AuthenticationError("Failed to validate API key")
-
-
-# ---------------------------------------------------------------------------
-# Auth providers (created via library factory)
-# ---------------------------------------------------------------------------
-
-AuthProvider = create_auth_provider(
-    service_name="asr",
-    determine_service_and_action=determine_service_and_action,
-)
-
-OptionalAuthProvider = create_optional_auth_provider(
-    service_name="asr",
-    determine_service_and_action=determine_service_and_action,
-)

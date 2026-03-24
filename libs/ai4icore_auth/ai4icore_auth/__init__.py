@@ -22,6 +22,7 @@ from .dependencies import (
     create_require_role,
 )
 from .endpoint_guard import create_endpoint_guard
+from .providers import create_auth_providers, build_jwt_verifier
 
 __all__ = [
     "AuthClaims",
@@ -36,4 +37,6 @@ __all__ = [
     "create_require_permission_code",
     "create_require_role",
     "create_endpoint_guard",
+    "create_auth_providers",
+    "build_jwt_verifier",
 ]
