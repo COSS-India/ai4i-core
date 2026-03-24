@@ -2,7 +2,7 @@ from fastapi import BackgroundTasks, HTTPException
 from datetime import datetime, timezone , timedelta , date
 
 from typing import Optional, List
-from sqlalchemy import insert , select , update , delete , text , MetaData
+from sqlalchemy import insert , select , update , delete , text , MetaData , func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError , NoResultFound
 
@@ -34,7 +34,7 @@ from models.db_models import (
     TenantUser,
     UserBillingRecord,
 )
-from models.auth_models import Role, UserRole
+from models.auth_models import Role, UserRole, UserDB
 
 from models.enum_tenant import  (
     SubscriptionType, 
@@ -80,6 +80,7 @@ DEFAULT_QUOTAS = {
 
 
 EMAIL_VERIFICATION_LINK = app_env.email_verification_link
+EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES = app_env.email_verification_token_expire_minutes
 DB_NAME                 = str(app_env.app_db_name)
 API_GATEWAY_URL        = app_env.api_gateway_url
 API_GATEWAY_TIMEOUT       = app_env.api_gateway_timeout
@@ -89,14 +90,12 @@ TENANT_STATUS_TRANSITIONS = {
     TenantStatus.PENDING: [TenantStatus.ACTIVE, TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED],
     TenantStatus.ACTIVE: [TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED],
     TenantStatus.SUSPENDED: [TenantStatus.ACTIVE, TenantStatus.DEACTIVATED],
-    TenantStatus.DEACTIVATED: [],  # No transitions allowed from DEACTIVATED
-    TenantStatus.IN_PROGRESS: [TenantStatus.ACTIVE, TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED],
+    TenantStatus.DEACTIVATED: [TenantStatus.ACTIVE],  # No transitions allowed from DEACTIVATED,
 }
 
 TENANT_USER_STATUS_TRANSITIONS = {
-    TenantUserStatus.ACTIVE: [TenantUserStatus.SUSPENDED, TenantUserStatus.DEACTIVATED],
-    TenantUserStatus.SUSPENDED: [TenantUserStatus.ACTIVE, TenantUserStatus.DEACTIVATED],
-    TenantUserStatus.DEACTIVATED: [],  # No transitions allowed from DEACTIVATED
+    TenantUserStatus.ACTIVE: [TenantUserStatus.SUSPENDED],
+    TenantUserStatus.SUSPENDED: [TenantUserStatus.ACTIVE],
 }
 
 def validate_status_transition(old_status, new_status, allowed_transitions: dict, entity_type: str = "Entity"):
@@ -653,7 +652,7 @@ async def send_verification_link(
     """
 
     token = generate_email_verification_token()
-    expiry = now_utc() + timedelta(minutes=15)
+    expiry = now_utc() + timedelta(minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES)
 
     verification = TenantEmailVerification(
         tenant_id=created.id,
@@ -682,6 +681,7 @@ async def send_verification_link(
         payload.contact_email,
         verification_link,
         tenant_id=created.tenant_id,  # Pass tenant_id for resend reference
+        expires_in_minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES,
     )
     return token
 
@@ -700,7 +700,7 @@ async def create_new_tenant(
         background_tasks: BackgroundTasks to send email asynchronously
     
     Returns:
-        TenantRegisterResponse with tenant details. Verification email is sent via a separate API.
+        TenantRegisterResponse with tenant details. Verification email is sent automatically after creation.
     """
 
     if payload.contact_email:
@@ -845,6 +845,14 @@ async def create_new_tenant(
         await db.rollback()
         raise HTTPException(status_code=500,detail="Failed to create tenant")
 
+    # Automatically send initial verification email to the tenant contact email.
+    # This creates the verification token and schedules the actual email via background tasks.
+    await send_initial_verification_email(
+        tenant_id=created.tenant_id,
+        db=db,
+        background_tasks=background_tasks,
+    )
+
     response = TenantRegisterResponse(
         id=created.id,
         tenant_id=created.tenant_id,
@@ -853,7 +861,7 @@ async def create_new_tenant(
         quotas=created.quotas or {},
         usage_quota=created.usage or {},
         status=created.status.value if hasattr(created.status, "value") else str(created.status),
-        message="Tenant successfully created.Tenant remains pending until verified.",
+        message="Tenant successfully created. A verification email has been sent.",
     )
 
     return response
@@ -873,12 +881,15 @@ async def send_initial_verification_email(
 
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-
-    if tenant.status != TenantStatus.PENDING:
-        raise HTTPException(
-            status_code=400,
-            detail="Verification link can only be sent when tenant status is PENDING",
-        )
+    
+    if tenant.status == TenantStatus.ACTIVE:
+        raise ValueError("Tenant already verified and active")
+    
+    if tenant.status == TenantStatus.SUSPENDED:
+        raise ValueError("Tenant is suspended. Contact support.")
+    
+    if tenant.status == TenantStatus.DEACTIVATED:
+        raise ValueError("Tenant is deactivated. Contact support.")
 
     # Decrypt email before using it
     decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
@@ -1154,9 +1165,6 @@ async def resend_verification_email(
     if tenant.status == TenantStatus.SUSPENDED:
         raise ValueError("Tenant is suspended. Contact support.")
     
-    # if tenant.status == TenantStatus.ARCHIVED:
-    #     raise ValueError("Tenant is archived. Contact support.")
-
     # Invalidate all existing, unverified, non-expired tokens for this tenant
     # so that only the newest token generated below remains usable.
     await db.execute(
@@ -1170,7 +1178,9 @@ async def resend_verification_email(
     )
 
     token = generate_email_verification_token()
-    expiry = now_utc() + timedelta(minutes=15)  # Match the expiry time from initial verification
+    expiry = now_utc() + timedelta(
+        minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES
+    )  # Match the expiry time from initial verification
 
     verification = TenantEmailVerification(
         tenant_id=tenant.id,
@@ -1190,7 +1200,7 @@ async def resend_verification_email(
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to resend verification email")
 
-    # verification_link = f"https://{tenant.subdomain}/verify-email?token={token}" # TODO : add subdomain if required
+    # verification_link = f"https://{tenant.subdomain}/verify-email?token={token}" # : add subdomain if required
 
     verification_link = f"{EMAIL_VERIFICATION_LINK}/api/v1/multi-tenant/email/verify?token={token}"
    
@@ -1216,6 +1226,7 @@ async def resend_verification_email(
         contact_email_str,
         verification_link,
         tenant_id=tenant_id_str,  # Pass tenant_id for resend reference
+        expires_in_minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES,
     )
 
     logger.info(f"Verification email resent for tenant {tenant.tenant_id} (status: {tenant.status.value})")
@@ -1874,43 +1885,7 @@ async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
 
     tenant.status = new_status
 
-    # Cascade user status for this tenant
-    if new_status == TenantStatus.SUSPENDED:
-        await db.execute(
-            update(TenantUser)
-            .where(TenantUser.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.SUSPENDED)
-        )
-        # Mark all user billing records for this tenant as suspended
-        await db.execute(
-            update(UserBillingRecord)
-            .where(UserBillingRecord.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.SUSPENDED)
-        )
-    elif new_status == TenantStatus.ACTIVE:
-        await db.execute(
-            update(TenantUser)
-            .where(TenantUser.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.ACTIVE)
-        )
-        # Reactivate user billing records
-        await db.execute(
-            update(UserBillingRecord)
-            .where(UserBillingRecord.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.ACTIVE)
-        )
-    elif new_status == TenantStatus.DEACTIVATED:
-        await db.execute(
-            update(TenantUser)
-            .where(TenantUser.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.DEACTIVATED)
-        )
-        # Deactivate user billing records
-        await db.execute(
-            update(UserBillingRecord)
-            .where(UserBillingRecord.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.DEACTIVATED)
-        )
+    # Removing user status as tenant status and user status is independent of each other 
 
     # Update tenant-level billing record status if it exists
     billing_record = await db.scalar(select(BillingRecord).where(BillingRecord.tenant_id == tenant.id))
@@ -2219,6 +2194,7 @@ async def update_tenant_user(
 async def delete_tenant_user(
     payload: TenantUserDeleteRequest,
     db: AsyncSession,
+    auth_db: AsyncSession,
 ) -> TenantUserDeleteResponse:
     """
     Delete a tenant user and cascade deletions to related records (e.g., billing).
@@ -2244,6 +2220,47 @@ async def delete_tenant_user(
 
     if not tenant_user:
         raise HTTPException(status_code=404, detail="Tenant user not found")
+
+    # If the user has no other tenant memberships, also delete from auth_db.
+    # This prevents deleted tenant users from still being able to login.
+    try:
+        tenant_memberships = await db.scalar(
+            select(func.count()).select_from(TenantUser).where(TenantUser.user_id == payload.user_id)
+        )
+    except Exception as e:
+        logger.exception(
+            f"Error counting tenant memberships for deletion | tenant_id={payload.tenant_id} user_id={payload.user_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to validate tenant user memberships")
+
+    if tenant_memberships == 1:
+        # Delete auth user first so login is blocked immediately (tenant DB update happens next).
+        try:
+            await auth_db.execute(delete(UserDB).where(UserDB.id == payload.user_id))
+            await auth_db.commit()
+        except IntegrityError as e:
+            await auth_db.rollback()
+            logger.error(
+                f"Integrity error while deleting auth user | user_id={payload.user_id}: {e}"
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="Auth user deletion failed due to integrity constraint violation",
+            )
+        except Exception as e:
+            await auth_db.rollback()
+            logger.exception(
+                f"Error committing auth user deletion | tenant_id={payload.tenant_id} user_id={payload.user_id}: {e}"
+            )
+            raise HTTPException(status_code=500, detail="Failed to delete auth user")
+    else:
+        logger.info(
+            f"Skipping auth user deletion because user has other tenant memberships | tenant_id={payload.tenant_id} user_id={payload.user_id} memberships={tenant_memberships}"
+        )
+
+    # If the deleted user was the tenant admin, clear the foreign reference in tenant DB.
+    if tenant.user_id == payload.user_id:
+        tenant.user_id = None
 
     # Delete the tenant user (will cascade to related records via FK constraints)
     await db.delete(tenant_user)

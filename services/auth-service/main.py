@@ -189,7 +189,8 @@ async def get_multi_tenant_db():
 # Dependency to get current user from token
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    multi_tenant_db: Optional[AsyncSession] = Depends(get_multi_tenant_db),
 ) -> User:
     """Get current user from JWT token"""
     token = credentials.credentials
@@ -224,7 +225,29 @@ async def get_current_user(
             detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
+    # Enforce multi-tenant activation status (tenant and/or tenant-user).
+    # If the user is not related to any tenant, allow normal access.
+    tenant_info = await get_tenant_info(user.id, multi_tenant_db, user.is_tenant)
+    if tenant_info:
+        tenant_status_active = _is_active_status(tenant_info.get("tenant_status"))
+        if not tenant_status_active:
+            logger.warning(
+                "Access denied - tenant inactive",
+                extra={"user_id": user.id, "tenant_id": tenant_info.get("tenant_id"), "tenant_status": tenant_info.get("tenant_status")},
+            )
+            _raise_tenant_inactive(tenant_info.get("tenant_status"))
+
+        # Only tenant users have tenant_user status.
+        if not user.is_tenant:
+            tenant_user_status_active = _is_active_status(tenant_info.get("tenant_user_status"))
+            if not tenant_user_status_active:
+                logger.warning(
+                    "Access denied - tenant user inactive",
+                    extra={"user_id": user.id, "tenant_id": tenant_info.get("tenant_id"), "tenant_user_status": tenant_info.get("tenant_user_status")},
+                )
+                _raise_tenant_user_inactive(tenant_info.get("tenant_user_status"))
+
     return user
 
 # Dependency to get current active user
@@ -276,6 +299,7 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
                     "schema_name": tenant.schema_name,
                     "subscriptions": tenant.subscriptions or [],
                     "user_subscriptions": [],  # tenant admin has no per-user subscriptions
+                    "tenant_status": tenant.status
                 }
         else:
             # Tenant user: join TenantUser with Tenant
@@ -300,6 +324,8 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
                     "schema_name": tenant.schema_name,
                     "subscriptions": tenant.subscriptions or [],
                     "user_subscriptions": tenant_user.subscriptions or [],
+                    "tenant_status": tenant.status,
+                    "tenant_user_status": tenant_user.status
                 }
         
         # User not found in either table (normal for non-tenant users)
@@ -311,6 +337,69 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
     except Exception as e:
         logger.warning(f"Error getting tenant info for user {user_id}: {e} - continuing without tenant info")
         return None
+
+def _normalize_status(status_val: Any) -> str:
+    """Normalize Enum/string DB values to a comparable uppercase string."""
+    if status_val is None:
+        return ""
+    # SQLAlchemy Enum often returns a python Enum instance.
+    if hasattr(status_val, "value"):
+        try:
+            return str(status_val.value).upper()
+        except Exception:
+            return str(status_val).upper()
+    return str(status_val).upper()
+
+
+def _is_active_status(status_val: Any) -> bool:
+    return _normalize_status(status_val) == "ACTIVE"
+
+
+def _raise_invalid_credentials(custom_message: Optional[str] = None) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={
+            "code": INVALID_CREDENTIALS,
+            "error": INVALID_CREDENTIALS.lower(),
+            "message": custom_message or INVALID_CREDENTIALS_MESSAGE,
+        },
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _status_phrase(status_val: Any) -> str:
+    """
+    Convert DB status to a human-friendly lowercase phrase.
+    Example: "SUSPENDED" -> "suspended", "DEACTIVATED" -> "deactivated".
+    """
+    normalized = _normalize_status(status_val)
+    if not normalized:
+        return "inactive"
+    return normalized.replace("_", " ").lower()
+
+
+def _raise_tenant_inactive(tenant_status: Any) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={
+            "code": "TENANT_INACTIVE",
+            "error": "tenant_inactive",
+            "message": f"Tenant is {_status_phrase(tenant_status)}. Access denied. Please contact platform administrator.",
+        },
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _raise_tenant_user_inactive(tenant_user_status: Any) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={
+            "code": "TENANT_USER_INACTIVE",
+            "error": "tenant_user_inactive",
+            "message": f"Tenant user is {_status_phrase(tenant_user_status)}. Access denied. Please contact your administrator.",
+        },
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 # Helper function to get all user IDs for a given tenant_id
@@ -799,6 +888,22 @@ async def login(
         logger.debug(f"Fetching tenant info for user_id={user.id}")
         tenant_info = await get_tenant_info(user.id, multi_tenant_db, user.is_tenant)
 
+        # Enforce multi-tenant activation status before issuing tokens.
+        if tenant_info:
+            if not _is_active_status(tenant_info.get("tenant_status")):
+                logger.warning(
+                    "Login blocked - tenant inactive",
+                    extra={"user_id": user.id, "tenant_id": tenant_info.get("tenant_id")},
+                )
+                _raise_tenant_inactive(tenant_info.get("tenant_status"))
+
+            if not user.is_tenant and not _is_active_status(tenant_info.get("tenant_user_status")):
+                logger.warning(
+                    "Login blocked - tenant user inactive",
+                    extra={"user_id": user.id, "tenant_id": tenant_info.get("tenant_id")},
+                )
+                _raise_tenant_user_inactive(tenant_info.get("tenant_user_status"))
+
         # Set tenant_id in logging context so it appears in all logs for this request
         if tenant_info:
             try:
@@ -1019,6 +1124,13 @@ async def refresh_token(
     
     # Get tenant information
     tenant_info = await get_tenant_info(user.id, multi_tenant_db, user.is_tenant)
+
+    # Enforce multi-tenant activation status before issuing a new access token.
+    if tenant_info:
+        if not _is_active_status(tenant_info.get("tenant_status")):
+            _raise_tenant_inactive(tenant_info.get("tenant_status"))
+        if not user.is_tenant and not _is_active_status(tenant_info.get("tenant_user_status")):
+            _raise_tenant_user_inactive(tenant_info.get("tenant_user_status"))
     
     # Build JWT payload with tenant info
     token_data = {
@@ -1850,12 +1962,31 @@ async def google_callback(
             provider_user_id=provider_user_id,
             oauth_tokens=oauth_tokens
         )
+
+        # Block inactive auth users (consistent with password login).
+        if not user.is_active:
+            _raise_invalid_credentials()
         
         # 6. Get user roles
         user_roles = await AuthUtils.get_user_roles(db, user.id)
         
         # 6.5. Get tenant information
         tenant_info = await get_tenant_info(user.id, multi_tenant_db, user.is_tenant)
+
+        # Enforce multi-tenant activation status before issuing tokens.
+        if tenant_info:
+            if not _is_active_status(tenant_info.get("tenant_status")):
+                logger.warning(
+                    "OAuth login blocked - tenant inactive",
+                    extra={"user_id": user.id, "tenant_id": tenant_info.get("tenant_id")},
+                )
+                _raise_tenant_inactive(tenant_info.get("tenant_status"))
+            if not user.is_tenant and not _is_active_status(tenant_info.get("tenant_user_status")):
+                logger.warning(
+                    "OAuth login blocked - tenant user inactive",
+                    extra={"user_id": user.id, "tenant_id": tenant_info.get("tenant_id")},
+                )
+                _raise_tenant_user_inactive(tenant_info.get("tenant_user_status"))
         
         # Build JWT payload with tenant info
         token_data = {
@@ -1967,13 +2098,30 @@ async def assign_role(
     db: AsyncSession = Depends(get_db)
 ):
     """Assign a role to a user (Admin only)"""
-    # Check if current user is admin
+    # Check if current user can manage roles
     user_roles = await AuthUtils.get_user_roles(db, current_user.id)
-    if "ADMIN" not in user_roles and not current_user.is_superuser:
+    is_platform_admin = ("ADMIN" in user_roles) or bool(current_user.is_superuser)
+    is_tenant_admin = ("TENANT ADMIN" in user_roles)
+    if not (is_platform_admin or is_tenant_admin):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"code": UNAUTHORIZED, "message": "Only administrators can assign roles"}
         )
+
+    # Normalize requested role (collapse whitespace, uppercase)
+    requested_role = " ".join(role_data.role_name.split()).upper()
+
+    # Tenant Admins can only assign tenant-scoped roles (no platform ADMIN)
+    if is_tenant_admin and not is_platform_admin:
+        allowed_for_tenant_admin = {"TENANT ADMIN", "MODERATOR", "GUEST", "USER"}
+        if requested_role not in allowed_for_tenant_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": UNAUTHORIZED,
+                    "message": f"Tenant Admin can only assign roles: {', '.join(sorted(allowed_for_tenant_admin))}",
+                },
+            )
     
     # Get target user
     target_user = await AuthUtils.get_user_by_id(db, role_data.user_id)
@@ -1984,12 +2132,12 @@ async def assign_role(
         )
     
     # Get role
-    result = await db.execute(select(Role).where(Role.name == role_data.role_name))
+    result = await db.execute(select(Role).where(Role.name == requested_role))
     role = result.scalar_one_or_none()
     if not role:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Role '{role_data.role_name}' not found"
+            detail=f"Role '{requested_role}' not found"
         )
     
     # Check if user already has this exact role
@@ -2040,13 +2188,13 @@ async def assign_role(
     db.add(user_role)
     await db.commit()
     
-    logger.info(f"Role '{role_data.role_name}' assigned to user {target_user.email} by {current_user.email}")
+    logger.info(f"Role '{requested_role}' assigned to user {target_user.email} by {current_user.email}")
     
     # Prepare response message
     if existing_roles:
-        response_message = f"Role '{role_data.role_name}' assigned successfully. Previous role(s) were replaced."
+        response_message = f"Role '{requested_role}' assigned successfully. Previous role(s) were replaced."
     else:
-        response_message = f"Role '{role_data.role_name}' assigned successfully."
+        response_message = f"Role '{requested_role}' assigned successfully."
     
     return {
         "message": response_message,

@@ -19,6 +19,7 @@ import { FaMicrophone } from "react-icons/fa";
 import {
   IoGitNetworkOutline,
   IoHomeOutline,
+  IoKeyOutline,
   IoLanguageOutline,
   IoSparklesOutline,
   IoVolumeHighOutline,
@@ -144,6 +145,12 @@ const safeColorMap = {
     400: "#4DD0E1",
     600: "#00ACC1",
   },
+  "tenant-management": { // Teal → Pastel Teal
+    50:  "#E0F2F1",
+    300: "#80CBC4",
+    400: "#4DB6AC",
+    600: "#00897B",
+  },
   "logs": { // Green → Pastel Green
     50:  "#E8F5E9",
     300: "#81C784",
@@ -217,6 +224,24 @@ const topNavItems: NavItem[] = [
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
     featureFlag: "services-management-enabled",
+  },
+  {
+    id: "tenant-management",
+    label: "Tenant Management",
+    path: "/tenant-management",
+    icon: IoPeopleOutline,
+    iconSize: 10,
+    iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
+  },
+  {
+    id: "api-key-management",
+    label: "API Key Management",
+    path: "/api-key-management",
+    icon: IoKeyOutline,
+    iconSize: 10,
+    iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
   },
   {
     id: "logs",
@@ -385,6 +410,12 @@ const Sidebar: React.FC = () => {
   // Check if user is ADMIN
   const isAdmin = user?.roles?.includes('ADMIN') || false;
 
+  // Check if user is TENANT ADMIN
+  const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
+
+  // Show Tenant Management only to superuser or tenant users
+  const showTenantManagement = Boolean(user?.is_superuser || user?.is_tenant);
+
   // Single bulk request shared with home page (same queryKey = one request for whole app)
   const { flags: sidebarFlags } = useBulkFlags({
     flagNames: SIDEBAR_FLAG_NAMES,
@@ -422,8 +453,17 @@ const Sidebar: React.FC = () => {
     if ((isGuest || isUser) && (item.id === "model-management" || item.id === "services-management")) {
       return false;
     }
+    // Hide Tenant Management for users who are not superuser or tenant
+    if (item.id === "tenant-management" && !showTenantManagement) {
+      return false;
+    }
     // Hide admin-only items for non-ADMIN users (only alerts-management is admin-only now)
     if (item.id === "alerts-management" && !isAdmin) {
+      return false;
+    }
+
+    // Hide API Key Management for users who are neither ADMIN nor TENANT ADMIN
+    if (item.id === "api-key-management" && !(isAdmin || isTenantAdmin)) {
       return false;
     }
     // Hide logs for users with USER role (regardless of tenant_id)
