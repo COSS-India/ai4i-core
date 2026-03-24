@@ -212,7 +212,7 @@ upstreams:
 # TARGETS - Backend service instances
 # ============================================
 targets:
-  - target: auth-service-v2:8082
+  - target: auth-service:8081
     upstream: auth-service-upstream
     weight: 100
 
@@ -322,7 +322,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               cors_allowed_origins:
                 - "http://localhost:3000"
                 - "http://localhost:8085"
@@ -345,7 +345,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               api_key: "${ASR_API_KEY}"
               cors_allowed_origins:
                 - "http://localhost:3000"
@@ -375,7 +375,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               api_key: "${TTS_API_KEY}"
               cors_allowed_origins:
                 - "http://localhost:3000"
@@ -405,7 +405,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               api_key: "${NMT_API_KEY}"
               cors_allowed_origins:
                 - "http://localhost:3000"
@@ -435,7 +435,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               api_key: "${PIPELINE_API_KEY}"
               cors_allowed_origins:
                 - "http://localhost:3000"
@@ -467,7 +467,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               api_key: "${MODEL_MANAGEMENT_API_KEY}"
               cors_allowed_origins:
                 - "http://localhost:3000"
@@ -497,7 +497,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               api_key: "${LLM_API_KEY}"
               cors_allowed_origins:
                 - "http://localhost:3000"
@@ -529,7 +529,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               cors_allowed_origins:
                 - "http://localhost:3000"
               enable_rate_limit: true
@@ -557,7 +557,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               cors_allowed_origins:
                 - "http://localhost:3000"
               enable_rate_limit: true
@@ -585,7 +585,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               cors_allowed_origins:
                 - "http://localhost:3000"
               enable_rate_limit: true
@@ -613,7 +613,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               cors_allowed_origins:
                 - "http://localhost:3000"
               enable_rate_limit: true
@@ -641,7 +641,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               cors_allowed_origins:
                 - "http://localhost:3000"
               enable_rate_limit: true
@@ -669,7 +669,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               cors_allowed_origins:
                 - "http://localhost:3000"
               enable_rate_limit: true
@@ -697,7 +697,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               cors_allowed_origins:
                 - "http://localhost:3000"
               enable_rate_limit: true
@@ -725,7 +725,7 @@ services:
         plugins:
           - name: token-validator
             config:
-              auth_service_url: "http://auth-service-v2:8082/api/v1/auth/validate"
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               cors_allowed_origins:
                 - "http://localhost:3000"
               enable_rate_limit: true

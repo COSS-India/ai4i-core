@@ -31,7 +31,7 @@ scrape_configs:
     static_configs:
       - targets:
           - "api-gateway-service:8080"
-          - "auth-service-v2:8082"
+          - "auth-service:8081"
           - "config-service:8082"
           - "metrics-service:8083"
           - "telemetry-service:8084"
@@ -66,7 +66,7 @@ scrape_configs:
     static_configs:
       - targets:
           - "api-gateway-service:8080"
-          - "auth-service-v2:8082"
+          - "auth-service:8081"
           - "config-service:8082"
           - "metrics-service:8083"
           - "telemetry-service:8084"
