@@ -68,18 +68,22 @@ class OAuthService:
     async def exchange_code_for_tokens(self, provider: str, code: str, redirect_uri: str) -> dict:
         """Exchange authorization code for OAuth tokens."""
         config = self.get_provider_config(provider)
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                config["token_url"],
-                data={
-                    "client_id": config["client_id"],
-                    "client_secret": config["client_secret"],
-                    "code": code,
-                    "redirect_uri": redirect_uri,
-                    "grant_type": "authorization_code",
-                },
-                headers={"Accept": "application/json"},
-            )
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    config["token_url"],
+                    data={
+                        "client_id": config["client_id"],
+                        "client_secret": config["client_secret"],
+                        "code": code,
+                        "redirect_uri": redirect_uri,
+                        "grant_type": "authorization_code",
+                    },
+                    headers={"Accept": "application/json"},
+                )
+        except httpx.RequestError as exc:
+            logger.error("OAuth token exchange request failed for %s: %s", provider, exc)
+            raise AuthenticationRequiredError("OAuth provider unreachable.")
         if resp.status_code != 200:
             logger.error("OAuth token exchange failed: %s %s", resp.status_code, resp.text)
             raise AuthenticationRequiredError("Failed to exchange authorization code.")
@@ -92,11 +96,15 @@ class OAuthService:
     async def fetch_user_info(self, provider: str, access_token: str) -> dict[str, Any]:
         """Fetch user profile from OAuth provider."""
         config = self.get_provider_config(provider)
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                config["userinfo_url"],
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    config["userinfo_url"],
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+        except httpx.RequestError as exc:
+            logger.error("OAuth user info request failed for %s: %s", provider, exc)
+            raise AuthenticationRequiredError("OAuth provider unreachable.")
         if resp.status_code != 200:
             raise AuthenticationRequiredError("Failed to fetch user info from provider.")
 
@@ -122,11 +130,14 @@ class OAuthService:
         raise EntityNotFoundError(f"OAuth provider '{provider}'")
 
     async def _fetch_github_primary_email(self, access_token: str) -> Optional[str]:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                "https://api.github.com/user/emails",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://api.github.com/user/emails",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+        except httpx.RequestError:
+            return None
         if resp.status_code == 200:
             for e in resp.json():
                 if e.get("primary") and e.get("verified"):
