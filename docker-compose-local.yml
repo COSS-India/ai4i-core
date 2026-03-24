@@ -641,6 +641,7 @@ services:
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./services/multi-tenant-feature:/app/services/multi-tenant-feature
       - ./infrastructure:/app/infrastructure
@@ -686,6 +687,7 @@ services:
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
@@ -733,6 +735,7 @@ services:
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
@@ -780,6 +783,7 @@ services:
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
@@ -826,6 +830,7 @@ services:
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
@@ -871,6 +876,7 @@ services:
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
@@ -915,6 +921,7 @@ services:
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
@@ -977,10 +984,12 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - JWT_REFRESH_SECRET_KEY=${JWT_REFRESH_SECRET_KEY}
       - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+      - PYTHONPATH=/app:/app/libs/ai4icore_env:/app/libs/ai4icore_constants:/app/libs/ai4icore_auth:/app/libs/ai4icore_exceptions
     volumes:
       - ./services/model-management-service:/app
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
     command: ["--reload"]
     depends_on:
@@ -1108,6 +1117,7 @@ services:
       - ./services/multi-tenant-feature:/app
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
     command: ["--reload"]
     depends_on:
@@ -1141,6 +1151,7 @@ services:
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
@@ -1182,6 +1193,7 @@ services:
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
@@ -1222,6 +1234,7 @@ services:
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
@@ -1264,6 +1277,7 @@ services:
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
@@ -1306,6 +1320,7 @@ services:
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared

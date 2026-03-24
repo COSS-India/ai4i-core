@@ -8,12 +8,13 @@ Every service uses this middleware to:
 
 Usage::
 
-    from ai4icore_auth import AuthMiddleware, JWTVerifier
+    from ai4icore_auth import AuthMiddleware
+    from ai4icore_auth.providers import build_jwt_verifier
 
-    verifier = JWTVerifier(jwks_url="http://auth-service:8082/api/v1/auth/.well-known/jwks.json")
+    verifier = build_jwt_verifier()  # reads JWKS_URL, JWT_ISSUER from env
     await verifier.initialize()
 
-    app.add_middleware(AuthMiddleware, jwt_verifier=verifier, service_name="asr")
+    app.add_middleware(AuthMiddleware, jwt_verifier=verifier)
 """
 
 import logging
@@ -55,7 +56,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._verifier = jwt_verifier
         self._verifier_factory = jwt_verifier_factory
-        self._service_name = service_name
         self._skip_paths = skip_paths or _DEFAULT_SKIP_PATHS
         self._require_auth = require_auth
         self._allow_anonymous = allow_anonymous_paths or set()

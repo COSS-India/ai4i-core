@@ -291,7 +291,21 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'users.read',
               'users.update',
               'service.read',
-              'apiKey.delete'
+              'apiKey.delete',
+              'asr.inference',
+              'audio-lang-detection.inference',
+              'language-detection.inference',
+              'language-diarization.inference',
+              'llm.inference',
+              'model-management.inference',
+              'multi-tenant.inference',
+              'ner.inference',
+              'nmt.inference',
+              'ocr.inference',
+              'pipeline.inference',
+              'speaker-diarization.inference',
+              'transliteration.inference',
+              'tts.inference'
             )
             WHERE r.name = 'USER'
             ON CONFLICT (role_id, permission_id) DO NOTHING;
@@ -364,7 +378,21 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'model.update',
               'model.delete',
               'model.publish',
-              'model.unpublish'
+              'model.unpublish',
+              'asr.inference',
+              'audio-lang-detection.inference',
+              'language-detection.inference',
+              'language-diarization.inference',
+              'llm.inference',
+              'model-management.inference',
+              'multi-tenant.inference',
+              'ner.inference',
+              'nmt.inference',
+              'ocr.inference',
+              'pipeline.inference',
+              'speaker-diarization.inference',
+              'transliteration.inference',
+              'tts.inference'
             )
             WHERE r.name = 'MODERATOR'
             ON CONFLICT (role_id, permission_id) DO NOTHING;

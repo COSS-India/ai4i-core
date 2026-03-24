@@ -2,7 +2,6 @@
 Session lifecycle management.
 """
 
-import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 

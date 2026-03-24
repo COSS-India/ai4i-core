@@ -55,6 +55,13 @@ def create_require_auth(jwt_verifier: JWTVerifier):
 
         request.state.user_id = claims.user_id
         request.state.tenant_id = claims.tenant_id
+        request.state.permission_ids = claims.permission_ids
+        request.state.permissions = claims.permissions
+        request.state.roles = claims.roles
+        request.state.token_type = claims.token_type
+        request.state.token_id = claims.token_id
+        request.state.username = claims.username
+        request.state.email = claims.email
         request.state.is_authenticated = True
         request.state.jwt_claims = claims
 
