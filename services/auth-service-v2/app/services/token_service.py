@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from jose import jwt, JWTError
+from jose import jwt, JWTError, ExpiredSignatureError
 from cryptography.hazmat.primitives import serialization
 
 from app.core.config import settings
@@ -175,9 +175,9 @@ class TokenService:
 
             return TokenPayload(payload)
 
+        except ExpiredSignatureError:
+            raise TokenExpiredError()
         except JWTError as exc:
-            if "expired" in str(exc).lower():
-                raise TokenExpiredError()
             raise TokenInvalidError(f"Invalid token: {exc}")
         except TokenExpiredError:
             raise

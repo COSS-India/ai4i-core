@@ -142,7 +142,7 @@ async def _load_api_permissions() -> None:
                 name_to_id[name] = pid
             break
 
-        # Resolve endpoint → permission_id (int)
+        # Resolve endpoint → permission_id (int stored as str for Redis compat)
         endpoint_to_id: dict[str, str] = {}
         for m in data.get("apiMappings", []):
             perm_name = m.get("permissionRequired")
@@ -206,7 +206,6 @@ def create_app() -> FastAPI:
     app.add_middleware(
         AuthMiddleware,
         jwt_verifier_factory=get_jwt_verifier,
-        service_name="auth-service",
         require_auth=False,  # Context extraction only — route deps enforce auth
     )
 
