@@ -313,10 +313,13 @@ services:
       # Prod: point Swagger to public API Gateway URL
       - TRY_IT_LIMIT=5
       - TRY_IT_TTL_SECONDS=3600
+      # Ensure repo libs are importable as Python packages (avoids namespace-package issues)
+      - PYTHONPATH=/app:/app/libs/ai4icore_env:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry:/home/app/.local/lib/python3.11/site-packages
     env_file:
       - ./services/api-gateway-service/.env
     volumes:
       - ./services/api-gateway-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./infrastructure:/app/infrastructure
