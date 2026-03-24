@@ -717,12 +717,12 @@ async def create_new_tenant(
                 # Tenant already exists and is pending verification.
                 # Do NOT automatically resend verification email here to avoid confusion.
                 raise ValueError("Tenant is already registered in pending state. Need email verification")
-            elif existing.status in [TenantStatus.IN_PROGRESS]:
-                raise ValueError("Email already verified")
             elif existing.status == TenantStatus.ACTIVE:
                 raise ValueError("Tenant already active")
             elif existing.status == TenantStatus.SUSPENDED:
                 raise ValueError("Tenant is suspended. Contact support.")
+            elif existing.status == TenantStatus.DEACTIVATED:
+                raise ValueError("Tenant is deactivated. Contact support")
             
     from utils.utils import _normalize_domain , _domains_similar
 
