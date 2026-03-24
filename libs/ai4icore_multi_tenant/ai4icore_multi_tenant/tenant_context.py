@@ -25,7 +25,8 @@ async def resolve_tenant_from_jwt(jwt_payload: Dict[str, Any]) -> Optional[Dict[
     return {
         "tenant_id": tenant_id,
         "tenant_uuid": jwt_payload.get("tenant_uuid"),
-        "schema_name": jwt_payload.get("schema_name"),
+        # resolve from tenant_id via DB/API.
+        "schema_name": None,
         "subscriptions": jwt_payload.get("subscriptions", []),
         "user_subscriptions": jwt_payload.get("user_subscriptions", []),
     }
