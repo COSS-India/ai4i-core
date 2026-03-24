@@ -61,6 +61,24 @@ class SessionService:
         """Invalidate all sessions for a user (except optionally one)."""
         return await self._repo.invalidate_all_for_user(user_id, except_token)
 
+    async def is_refresh_token_active(self, token_id: str) -> bool:
+        """Check if a refresh token is still active. Redis first, DB fallback."""
+        if await self._cache.is_refresh_token_valid(token_id):
+            return True
+
+        # Redis miss (eviction/expiry) — check DB before rejecting
+        session = await self._repo.get_by_token_id(token_id)
+        if not session or not session.is_active:
+            return False
+
+        # Re-cache if session is still valid (Redis eviction recovery)
+        if session.expires_at:
+            remaining = (session.expires_at - datetime.now(timezone.utc)).total_seconds()
+            if remaining > 0:
+                await self._cache.store_refresh_token(token_id, int(remaining))
+                return True
+        return False
+
     async def get_session_by_refresh_token(self, refresh_token: str) -> Optional[UserSession]:
         return await self._repo.get_by_refresh_token(refresh_token)
 

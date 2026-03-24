@@ -165,8 +165,8 @@ class AuthService:
             raise TokenInvalidError("Not a refresh token.")
 
         if payload.token_id:
-            is_valid = await self._cache.is_refresh_token_valid(payload.token_id)
-            if not is_valid:
+            is_active = await self._sessions.is_refresh_token_active(payload.token_id)
+            if not is_active:
                 raise TokenRevokedError()
 
         user = await self._users.get_by_id(int(payload.sub))
