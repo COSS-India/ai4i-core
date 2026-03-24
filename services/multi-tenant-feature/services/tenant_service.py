@@ -717,12 +717,12 @@ async def create_new_tenant(
                 # Tenant already exists and is pending verification.
                 # Do NOT automatically resend verification email here to avoid confusion.
                 raise ValueError("Tenant is already registered in pending state. Need email verification")
-            elif existing.status in [TenantStatus.IN_PROGRESS]:
-                raise ValueError("Email already verified")
             elif existing.status == TenantStatus.ACTIVE:
                 raise ValueError("Tenant already active")
             elif existing.status == TenantStatus.SUSPENDED:
-                raise ValueError("Tenant is suspended. Contact support.")
+                raise ValueError("Tenant is suspended. Contact your platform administrator.")
+            elif existing.status == TenantStatus.DEACTIVATED:
+                raise ValueError("Tenant is deactivated. Contact your platform administrator.")
             
     from utils.utils import _normalize_domain , _domains_similar
 
@@ -2648,9 +2648,10 @@ async def list_all_users(
     List tenant users. If tenant_id is provided, only users for that tenant are returned.
     Roles are fetched from auth service when auth_header is provided.
     """
-    stmt = select(TenantUser)
-    if tenant_id:
-        stmt = stmt.where(TenantUser.tenant_id == tenant_id)
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id is required")
+
+    stmt = select(TenantUser).where(TenantUser.tenant_id == tenant_id)
     stmt = stmt.order_by(TenantUser.created_at.desc())
 
     result = await db.execute(stmt)

@@ -88,6 +88,7 @@ async def list_services_request(db: AsyncSession = Depends(get_tenant_db_session
 @router.delete("/delete/services", 
                response_model=ServiceDeleteResponse, 
                status_code=status.HTTP_200_OK,
+               dependencies=[Depends(require_admin)],
                )
 async def delete_service_request(
     payload: ServiceDeleteRequest,
