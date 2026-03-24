@@ -20,6 +20,7 @@ Usage::
     )
 """
 
+import asyncio
 import logging
 from typing import Callable, Optional
 
@@ -30,6 +31,8 @@ from .permission_checker import PermissionChecker
 from .dependencies import create_require_auth
 
 logger = logging.getLogger(__name__)
+
+_init_lock = asyncio.Lock()
 
 
 def build_jwt_verifier() -> JWTVerifier:
@@ -72,11 +75,14 @@ def create_auth_providers(
     """
     jwt_verifier = build_jwt_verifier()
     require_auth = create_require_auth(jwt_verifier)
+    _permission_checker: Optional[PermissionChecker] = None
 
     async def AuthProvider(
         request: Request,
         authorization: Optional[str] = Header(None),
     ) -> Optional[AuthClaims]:
+        nonlocal _permission_checker
+
         if _is_auth_disabled():
             return None
 
@@ -84,13 +90,17 @@ def create_auth_providers(
             return None
 
         if jwt_verifier.loaded_key_count == 0:
-            await jwt_verifier.initialize()
+            async with _init_lock:
+                if jwt_verifier.loaded_key_count == 0:
+                    await jwt_verifier.initialize()
 
         claims = await require_auth(request=request, authorization=authorization)
-        permission_checker = PermissionChecker(
-            redis_client=getattr(request.app.state, "redis_client", None),
-        )
-        required = await permission_checker.get_required_permission(
+
+        if _permission_checker is None:
+            redis_client = getattr(request.app.state, "redis_client", None)
+            _permission_checker = PermissionChecker(redis_client=redis_client)
+
+        required = await _permission_checker.get_required_permission(
             request.method, request.url.path,
         )
         if PermissionChecker.check_endpoint_access(

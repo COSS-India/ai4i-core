@@ -50,7 +50,8 @@ def create_endpoint_guard(
         claims: AuthClaims = Depends(require_auth),
     ) -> AuthClaims:
         if permission_checker is None:
-            return claims  # No permission map loaded, allow all
+            logger.warning("Endpoint guard: no permission_checker configured — allowing all authenticated requests.")
+            return claims
 
         required_code = await permission_checker.get_required_permission(
             request.method, request.url.path,

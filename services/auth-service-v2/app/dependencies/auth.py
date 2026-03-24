@@ -13,8 +13,6 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import redis.asyncio as aioredis
-
 from ai4icore_auth.jwt_verifier import (
     AuthClaims,
     JWTExpiredError,
@@ -30,12 +28,7 @@ from app.core.exceptions import (
     UserInactiveError,
     UserNotFoundError,
 )
-from app.core.redis import (
-    get_redis_api_keys,
-    get_redis_api_permissions,
-    get_redis_refresh_tokens,
-    get_redis_role_permissions,
-)
+from app.dependencies.services import get_cache_service
 from app.models.user import User
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.session_repository import SessionRepository
@@ -89,20 +82,6 @@ async def init_jwt_verifier() -> None:
 def get_token_service() -> TokenService:
     """Token creation service — auth-service specific (not shared)."""
     return TokenService()
-
-
-async def get_cache_service(
-    redis_api_keys: aioredis.Redis = Depends(get_redis_api_keys),
-    redis_refresh_tokens: aioredis.Redis = Depends(get_redis_refresh_tokens),
-    redis_role_permissions: aioredis.Redis = Depends(get_redis_role_permissions),
-    redis_api_permissions: aioredis.Redis = Depends(get_redis_api_permissions),
-) -> CacheService:
-    return CacheService(
-        redis_api_keys=redis_api_keys,
-        redis_refresh_tokens=redis_refresh_tokens,
-        redis_role_permissions=redis_role_permissions,
-        redis_api_permissions=redis_api_permissions,
-    )
 
 
 async def get_current_token(

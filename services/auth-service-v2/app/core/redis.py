@@ -39,19 +39,28 @@ def _strip_db_from_redis_url(url: str) -> str:
     )
 
 
-async def _connect_with_retry(client: aioredis.Redis, name: str) -> None:
+async def _connect_with_retry(client: aioredis.Redis, name: str, required: bool = True) -> bool:
+    """Try to connect to Redis. Returns True on success.
+
+    Args:
+        required: If True, raises on failure. If False, logs error and returns False.
+    """
     for attempt in range(1, MAX_CONNECT_RETRIES + 1):
         try:
             await client.ping()
             logger.info("Redis connection established for %s cache.", name)
-            return
-        except (aioredis.ConnectionError, aioredis.TimeoutError) as exc:
+            return True
+        except (aioredis.ConnectionError, aioredis.TimeoutError, OSError) as exc:
             logger.warning(
                 "Redis %s attempt %d/%d failed: %s",
                 name, attempt, MAX_CONNECT_RETRIES, exc,
             )
             if attempt == MAX_CONNECT_RETRIES:
-                raise
+                if required:
+                    raise
+                logger.error("Redis %s unavailable after %d retries — service will operate in degraded mode.", name, MAX_CONNECT_RETRIES)
+                return False
+    return False
 
 
 async def init_redis(

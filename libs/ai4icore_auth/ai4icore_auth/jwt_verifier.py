@@ -136,9 +136,13 @@ class JWTVerifier:
             logger.info("JWKS refreshed: %d public key(s) loaded from %s", len(self._public_keys), self._jwks_url)
 
         except httpx.HTTPError as exc:
-            logger.error("Failed to fetch JWKS from %s: %s", self._jwks_url, exc)
             if not self._public_keys:
                 raise RuntimeError(f"Cannot load JWKS from {self._jwks_url}: {exc}")
+            logger.error(
+                "JWKS refresh failed — using %d stale key(s). "
+                "Token verification may accept revoked keys. Error: %s",
+                len(self._public_keys), exc,
+            )
 
     @staticmethod
     def _jwk_to_pem(jwk: dict) -> bytes:
@@ -182,7 +186,7 @@ class JWTVerifier:
 
         if not kid:
             raise JWTVerificationError("Token header missing 'kid'.")
-        if alg and alg != "RS256":
+        if alg is not None and alg != "RS256":
             raise JWTVerificationError(f"Unsupported algorithm '{alg}'. Expected RS256.")
 
         pem = self._public_keys.get(kid)
@@ -211,8 +215,10 @@ class JWTVerifier:
     @staticmethod
     def _payload_to_claims(payload: dict[str, Any]) -> AuthClaims:
         """Convert raw JWT payload to AuthClaims."""
-        sub = payload.get("sub") or payload.get("user_id")
-        if not sub:
+        sub = payload.get("sub")
+        if sub is None:
+            sub = payload.get("user_id")
+        if sub is None:
             raise JWTVerificationError("Token missing 'sub' claim.")
 
         try:
