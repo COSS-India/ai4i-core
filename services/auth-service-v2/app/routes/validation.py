@@ -6,6 +6,7 @@ Uses the shared ai4icore_auth JWTVerifier.
 import logging
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,16 +45,16 @@ async def validate_token(
     try:
         claims: AuthClaims = await verifier.verify(credentials.credentials)
     except JWTExpiredError:
-        return TokenValidationResponse(valid=False)
+        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_EXPIRED"})
     except JWTVerificationError:
-        return TokenValidationResponse(valid=False)
+        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_INVALID"})
 
     if claims.token_id:
         revoked = await _check_token_revocation(
             claims.token_id, claims.token_type, cache_svc, db,
         )
         if revoked:
-            return TokenValidationResponse(valid=False)
+            return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_REVOKED"})
 
     username = None
     if claims.user_id:
