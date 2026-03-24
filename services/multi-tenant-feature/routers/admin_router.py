@@ -344,12 +344,12 @@ async def list_tenants(
             )
 async def list_users(
     request: Request,
-    tenant_id: Optional[str] = Query(None, description="Filter users by tenant_id"),
+    tenant_id: str = Query(..., description="Tenant ID is required to list users"),
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
-    List tenant users. Includes roles from auth service when authorized.
-    If tenant_id is provided, only users for that tenant are returned.
+    List tenant users for a specific tenant only.
+    Includes roles from auth service when authorized.
     """
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
