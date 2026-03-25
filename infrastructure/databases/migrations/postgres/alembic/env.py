@@ -96,7 +96,19 @@ def include_object(object_, name, type_, reflected, compare_to) -> bool:
 def render_item(type_, obj, autogen_context):
     """Render custom type decorators as their underlying SQLAlchemy impl."""
     if type_ == "type" and isinstance(obj, TypeDecorator):
-        return autogen_context.impl.render_type(obj.impl, autogen_context)
+        impl = getattr(obj, "impl", None)
+        if impl is None:
+            return False
+        # Alembic compatibility: some versions expose renderer on
+        # autogen_context.migration_context.impl, not autogen_context.impl.
+        migration_context = getattr(autogen_context, "migration_context", None)
+        context_impl = getattr(migration_context, "impl", None)
+        if context_impl is not None and hasattr(context_impl, "render_type"):
+            try:
+                return context_impl.render_type(impl, autogen_context)
+            except Exception:
+                return False
+        return False
     return False
 
 

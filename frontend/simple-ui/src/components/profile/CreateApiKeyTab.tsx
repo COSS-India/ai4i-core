@@ -8,6 +8,9 @@ import {
   FormLabel,
   Heading,
   Input,
+  InputGroup,
+  InputRightElement,
+  IconButton,
   HStack,
   Text,
   VStack,
@@ -29,6 +32,7 @@ import {
   Td,
   TableContainer,
 } from "@chakra-ui/react";
+import { CopyIcon, CloseIcon } from "@chakra-ui/icons";
 import { useCreateApiKeyTab } from "./hooks/useCreateApiKeyTab";
 import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
 
@@ -207,7 +211,7 @@ export default function CreateApiKeyTab({
                             }
                             onChange={(e) => {
                               if (e.target.checked) {
-                                perm.setSelectedPermissionsForUser([...perm.permissions]);
+                                perm.setSelectedPermissionsForUser(perm.permissions.map((p) => p.name));
                               } else {
                                 perm.setSelectedPermissionsForUser([]);
                               }
@@ -226,8 +230,8 @@ export default function CreateApiKeyTab({
                       </Box>
                       <SimpleGrid columns={2} spacing={3}>
                         {perm.permissions.map((p) => (
-                          <Checkbox key={p} value={p} colorScheme="purple">
-                            <Text fontSize="sm">{p}</Text>
+                          <Checkbox key={p.name} value={p.name} colorScheme="purple">
+                            <Text fontSize="sm">{p.name}</Text>
                           </Checkbox>
                         ))}
                       </SimpleGrid>
@@ -294,6 +298,55 @@ export default function CreateApiKeyTab({
                 >
                   Add Permission (Create API Key)
                 </Button>
+
+                {perm.createdApiKeyToken && (
+                  <Alert status="warning" borderRadius="md" variant="left-accent">
+                    <AlertIcon />
+                    <Box flex="1">
+                      <Text fontWeight="bold" mb={2}>
+                        API Key Created — Copy it now!
+                      </Text>
+                      <Text fontSize="xs" color="gray.600" mb={2}>
+                        This token will not be shown again. Store it securely.
+                      </Text>
+                      <InputGroup size="sm">
+                        <Input
+                          value={perm.createdApiKeyToken}
+                          isReadOnly
+                          fontFamily="mono"
+                          fontSize="xs"
+                          pr="4rem"
+                        />
+                        <InputRightElement width="4rem">
+                          <HStack spacing={0}>
+                            <IconButton
+                              aria-label="Copy API key"
+                              icon={<CopyIcon />}
+                              size="xs"
+                              onClick={() => {
+                                navigator.clipboard.writeText(perm.createdApiKeyToken!);
+                                toast({
+                                  title: "Copied",
+                                  description: "API key copied to clipboard",
+                                  status: "success",
+                                  duration: 2000,
+                                  isClosable: true,
+                                });
+                              }}
+                            />
+                            <IconButton
+                              aria-label="Dismiss"
+                              icon={<CloseIcon />}
+                              size="xs"
+                              variant="ghost"
+                              onClick={perm.clearCreatedApiKeyToken}
+                            />
+                          </HStack>
+                        </InputRightElement>
+                      </InputGroup>
+                    </Box>
+                  </Alert>
+                )}
               </VStack>
             </Box>
           )}
@@ -312,10 +365,10 @@ export default function CreateApiKeyTab({
                   </Thead>
                   <Tbody>
                     {perm.permissions.map((p) => (
-                      <Tr key={p}>
+                      <Tr key={p.name}>
                         <Td>
                           <Badge colorScheme="purple" fontSize="sm" p={1}>
-                            {p}
+                            {p.name}
                           </Badge>
                         </Td>
                       </Tr>

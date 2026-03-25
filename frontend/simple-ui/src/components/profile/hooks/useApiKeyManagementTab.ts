@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import authService from "../../../services/authService";
-import type { User } from "../../../types/auth";
+import type { User, Permission } from "../../../types/auth";
 import type { AdminAPIKeyWithUserResponse, APIKeyUpdate } from "../../../types/auth";
 
 export interface UseApiKeyManagementTabOptions {
@@ -17,7 +17,7 @@ export function useApiKeyManagementTab({
   const toast = useToastWithDeduplication();
   const [allApiKeys, setAllApiKeys] = useState<AdminAPIKeyWithUserResponse[]>([]);
   const [isLoadingAllApiKeys, setIsLoadingAllApiKeys] = useState(false);
-  const [permissions, setPermissions] = useState<string[]>([]);
+  const [permissions, setPermissions] = useState<Permission[]>([]);
   const [filterUser, setFilterUser] = useState("all");
   const [filterPermission, setFilterPermission] = useState("all");
   const [filterActive, setFilterActive] = useState("all");

@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
+from ai4icore_exceptions import register_exception_handlers
 from cache.app_cache import get_async_cache_connection
 
 from ai4icore_env import app_env
@@ -126,6 +127,7 @@ else:
     logger.warning("Rate limiting middleware skipped - Redis not available")
 
 # Register error handlers
+register_exception_handlers(app)
 add_error_handlers(app)
 
 # Register routers
