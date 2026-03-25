@@ -426,45 +426,6 @@ DEFAULT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{ if eq .GroupLabels.severit
 <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
 """
 
-def _resolve_ses_configuration_set() -> Optional[str]:
-    """
-    Resolve SES configuration set from env.
-    Priority:
-    1) SES_CONFIGURATION_SET explicit override
-    2) ENVIRONMENT/ENV mapping:
-       local/dev/development -> ses-config-dev
-       staging -> ses-config-staging
-       sandbox -> ses-config-sandbox
-    """
-    explicit = (os.getenv("SES_CONFIGURATION_SET") or "").strip()
-    if explicit:
-        return explicit
-
-    env_name = (os.getenv("ENVIRONMENT") or os.getenv("ENV") or app_env.environment or "").strip().lower()
-    if env_name in {"local", "dev", "development"}:
-        return "ses-config-dev"
-    if env_name == "staging":
-        return "ses-config-staging"
-    if env_name == "sandbox":
-        return "ses-config-sandbox"
-    return None
-
-def _build_ses_headers() -> Dict[str, str]:
-    """Build optional raw SMTP headers (excluding Subject).
-
-    Currently we keep the SES configuration-set resolution logic, but we
-    intentionally do NOT set `X-SES-CONFIGURATION-SET`.
-    """
-    headers: Dict[str, str] = {}
-
-    ses_config_set = _resolve_ses_configuration_set()
-    if ses_config_set:
-        # Intentionally disabled: was causing issues with SES email formatting.
-        # headers["X-SES-CONFIGURATION-SET"] = ses_config_set
-        pass
-
-    return headers
-
 def get_global_config_from_env() -> Dict[str, Any]:
     """
     Build global SMTP config from environment variables.
@@ -558,7 +519,6 @@ def generate_alertmanager_yaml(
 
     # Build receivers: add the default receiver (not tied to any organization, ADMIN role)
     default_email_configs = []
-    ses_headers = _build_ses_headers()
     for email in default_admin_emails:
         if email and str(email).strip():
             cfg = {
@@ -568,8 +528,6 @@ def generate_alertmanager_yaml(
             }
             # Alertmanager email subject (kept in headers to allow templating).
             cfg['headers'] = {'Subject': DEFAULT_EMAIL_SUBJECT_TEMPLATE}
-            if ses_headers:
-                cfg['headers'].update(dict(ses_headers))
             default_email_configs.append(cfg)
     receivers_config.append({
         'name': default_receiver_name,
@@ -617,8 +575,6 @@ def generate_alertmanager_yaml(
                 }
                 # Alertmanager email subject (kept in headers to allow templating).
                 cfg['headers'] = {'Subject': email_subject_template}
-                if ses_headers:
-                    cfg['headers'].update(dict(ses_headers))
                 email_configs.append(cfg)
         
         if not email_configs:
