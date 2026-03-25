@@ -32,7 +32,7 @@ from services.tenant_service import (
 
 from logger import logger
 from middleware.auth_provider import AuthProvider
-from middleware.dependencies import require_admin, require_tenant_admin
+from middleware.dependencies import require_admin, require_tenant_admin, enforce_tenant_scope
 
 
 
@@ -91,6 +91,7 @@ async def register_user_request(
     tenant_db: AsyncSession = Depends(get_tenant_db_session),
     auth_db: AsyncSession = Depends(get_auth_db_session),
 ):
+    enforce_tenant_scope(request, payload.tenant_id)
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
         return await register_user(payload, tenant_db, auth_db, background_tasks, auth_header=auth_header)
@@ -137,7 +138,8 @@ async def change_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
               response_model=TenantUserStatusUpdateResponse, 
               status_code=status.HTTP_200_OK,
               dependencies=[Depends(require_tenant_admin)])
-async def change_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: AsyncSession = Depends(get_tenant_db_session)):
+async def change_tenant_user_status(request: Request, payload: TenantUserStatusUpdateRequest, db: AsyncSession = Depends(get_tenant_db_session)):
+    enforce_tenant_scope(request, payload.tenant_id)
     try:
         return await update_tenant_user_status(payload, db)
 
@@ -198,6 +200,7 @@ async def update_tenant_user_info(
     Update tenant user information (username, email, is_approved, roles).
     Supports partial updates - only provided fields will be updated.
     """
+    enforce_tenant_scope(request, payload.tenant_id)
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
         return await update_tenant_user(payload, db, auth_header=auth_header)
@@ -229,13 +232,16 @@ async def update_tenant_user_info(
                dependencies=[Depends(require_tenant_admin)]
                )
 async def delete_tenant_user_endpoint(
+    request: Request,
     payload: TenantUserDeleteRequest,
     db: AsyncSession = Depends(get_tenant_db_session),
     auth_db: AsyncSession = Depends(get_auth_db_session),
 ):
     """
     Delete a tenant user and cascade deletions to related records.
+    TENANT ADMIN can only delete users from their own tenant.
     """
+    enforce_tenant_scope(request, payload.tenant_id)
     try:
         return await delete_tenant_user(payload, db, auth_db)
     except HTTPException:
@@ -268,8 +274,9 @@ async def view_tenant(
 ):
     """
     View tenant details by tenant_id (human-readable tenant identifier).
-    Includes tenant admin role from auth when Authorization header is provided.
+    TENANT ADMIN can only view their own tenant.
     """
+    enforce_tenant_scope(request, tenant_id)
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
         result = await view_tenant_details(tenant_id, db, auth_header=auth_header)
@@ -297,7 +304,17 @@ async def view_tenant_user(
 ):
     """
     View tenant user details by auth user_id. Includes roles from auth service when authorized.
+    TENANT ADMIN can only view users from their own tenant.
     """
+    # For TENANT ADMIN, verify the target user belongs to their tenant
+    if not getattr(request.state, "is_platform_admin", False):
+        from sqlalchemy import select
+        from models.db_models import TenantUser
+        tenant_user = await db.scalar(select(TenantUser).where(TenantUser.user_id == user_id))
+        if not tenant_user:
+            raise HTTPException(status_code=404, detail="Tenant user not found")
+        enforce_tenant_scope(request, tenant_user.tenant_id)
+
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
         result = await view_tenant_user_details(user_id, db, auth_header=auth_header)
@@ -350,7 +367,9 @@ async def list_users(
     """
     List tenant users for a specific tenant only.
     Includes roles from auth service when authorized.
+    TENANT ADMIN can only list their own tenant's users.
     """
+    enforce_tenant_scope(request, tenant_id)
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
         return await list_all_users(db, tenant_id=tenant_id, auth_header=auth_header)
