@@ -35,7 +35,7 @@ COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
 COPY services/alert-management-service/ /app/
 
 # Parent of the ai4icore_* packages (package dir is libs/<name>/<name>/)
-ENV PYTHONPATH="/app:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry:/app/libs/ai4icore_env"
+ENV PYTHONPATH="/app:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry:/app/libs/ai4icore_env:/app/libs/ai4icore_auth:/app/libs/ai4icore_exceptions"
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8098
