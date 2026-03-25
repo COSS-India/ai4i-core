@@ -37,7 +37,7 @@ Copy the environment template for each service and the frontend:
 
 **Core Services**
 ```bash
-cp services/auth-service/env.template services/auth-service/.env
+cp services/auth-service-v2/env.template services/auth-service-v2/.env
 cp services/config-service/env.template services/config-service/.env
 cp services/model-management-service/env.template services/model-management-service/.env
 cp services/multi-tenant-feature/env.template services/multi-tenant-feature/.env
