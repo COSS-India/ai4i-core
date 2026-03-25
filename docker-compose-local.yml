@@ -1361,7 +1361,7 @@ services:
   # Observability: Alertmanager (POC)
   # Mount directory; bootstrap copies alertmanager.default.yml to alertmanager.yml if missing
   alertmanager:
-    image: prom/alertmanager:v0.26.0
+    image: prom/alertmanager:v0.27.0
     container_name: ai4v-alertmanager
     ports:
       - "9095:9093"
@@ -1409,6 +1409,8 @@ services:
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./infrastructure:/app/infrastructure

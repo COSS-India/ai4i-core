@@ -449,11 +449,19 @@ def _resolve_ses_configuration_set() -> Optional[str]:
     return None
 
 def _build_ses_headers() -> Dict[str, str]:
-    """Build optional raw SMTP headers (excluding Subject)."""
+    """Build optional raw SMTP headers (excluding Subject).
+
+    Currently we keep the SES configuration-set resolution logic, but we
+    intentionally do NOT set `X-SES-CONFIGURATION-SET`.
+    """
     headers: Dict[str, str] = {}
+
     ses_config_set = _resolve_ses_configuration_set()
     if ses_config_set:
-        headers["X-SES-CONFIGURATION-SET"] = ses_config_set
+        # Intentionally disabled: was causing issues with SES email formatting.
+        # headers["X-SES-CONFIGURATION-SET"] = ses_config_set
+        pass
+
     return headers
 
 def get_global_config_from_env() -> Dict[str, Any]:
@@ -555,11 +563,12 @@ def generate_alertmanager_yaml(
             cfg = {
                 'to': str(email).strip(),
                 'send_resolved': True,
-                'subject': DEFAULT_EMAIL_SUBJECT_TEMPLATE,
-                'html': DEFAULT_EMAIL_BODY_TEMPLATE
+                'html': DEFAULT_EMAIL_BODY_TEMPLATE,
             }
+            # Alertmanager email subject (kept in headers to allow templating).
+            cfg['headers'] = {'Subject': DEFAULT_EMAIL_SUBJECT_TEMPLATE}
             if ses_headers:
-                cfg['headers'] = dict(ses_headers)
+                cfg['headers'].update(dict(ses_headers))
             default_email_configs.append(cfg)
     receivers_config.append({
         'name': default_receiver_name,
@@ -603,11 +612,12 @@ def generate_alertmanager_yaml(
                 cfg = {
                     'to': str(email).strip(),
                     'send_resolved': True,
-                    'subject': email_subject_template,
-                    'html': email_body_template
+                    'html': email_body_template,
                 }
+                # Alertmanager email subject (kept in headers to allow templating).
+                cfg['headers'] = {'Subject': email_subject_template}
                 if ses_headers:
-                    cfg['headers'] = dict(ses_headers)
+                    cfg['headers'].update(dict(ses_headers))
                 email_configs.append(cfg)
         
         if not email_configs:
