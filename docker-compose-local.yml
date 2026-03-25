@@ -1365,7 +1365,7 @@ services:
   # Observability: Alertmanager (POC)
   # Mount directory; bootstrap copies alertmanager.default.yml to alertmanager.yml if missing
   alertmanager:
-    image: prom/alertmanager:v0.27.0
+    image: prom/alertmanager:v0.26.0
     container_name: ai4v-alertmanager
     ports:
       - "9095:9093"
