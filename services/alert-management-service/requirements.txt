@@ -14,4 +14,9 @@ asyncpg>=0.28.0
 
 # Required by ai4icore_telemetry / opentelemetry-instrumentation-fastapi
 packaging>=21.0
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+opentelemetry-instrumentation-fastapi>=0.41b0
+opentelemetry-exporter-otlp-proto-grpc>=1.20.0
+grpcio>=1.63.2,<2.0.0
 

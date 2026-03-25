@@ -77,7 +77,7 @@ class AppEnv(BaseSettings):
     jwt_audience: Optional[str] = None
     jwks_url: Optional[str] = None
     jwks_path: Optional[str] = None
-    jwt_algorithm: str = "HS256"
+    jwt_algorithm: str = "RS256"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
     refresh_token_expire_hours: int = 24
