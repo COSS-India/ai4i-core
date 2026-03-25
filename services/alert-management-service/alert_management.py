@@ -1650,8 +1650,9 @@ async def toggle_alert_definition(alert_id: int, organization: Optional[str], en
 # Default email templates for notification receivers (Alertmanager Go template syntax)
 # Include inference endpoint when present (e.g. application latency alerts); .Alerts[0].Labels.endpoint
 DEFAULT_EMAIL_SUBJECT_TEMPLATE = "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }}{{ with (index .Alerts 0).Labels.endpoint }} - {{ . }}{{ end }}"
+# Plain-text severity labels only (no emoji) for consistent rendering in email clients.
 DEFAULT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{ if eq .GroupLabels.severity \"critical\" }}#d32f2f{{ else if eq .GroupLabels.severity \"warning\" }}#f57c00{{ else }}#1976d2{{ end }};">
-  {{ if eq .GroupLabels.severity "critical" }}🚨 CRITICAL{{ else if eq .GroupLabels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
+  {{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
 </h2>
 <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
 <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
