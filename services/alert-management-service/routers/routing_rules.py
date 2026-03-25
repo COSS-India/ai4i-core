@@ -35,18 +35,8 @@ def get_username_from_request(request: Request) -> str:
 
 
 def is_admin_user(request: Request) -> bool:
-    """Check if user is admin from request.state (set by auth) or headers (when behind gateway)."""
-    if getattr(request.state, "is_admin", None) is True:
-        return True
-    if request.headers.get("X-Admin", "").lower() == "true":
-        return True
-    roles = request.headers.get("X-User-Roles", "")
-    if "ADMIN" in roles.upper():
-        return True
-    permissions = request.headers.get("X-User-Permissions", "")
-    if "alerts.admin" in permissions:
-        return True
-    return False
+    """Check if user is admin from request.state (set by AuthProvider)."""
+    return getattr(request.state, "is_admin", False) is True
 
 
 @router.post("", response_model=RoutingRuleResponse, status_code=201)
