@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from elasticsearch import AsyncElasticsearch
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from ai4icore_env import app_env
+from ai4icore_exceptions import register_exception_handlers
 
 # Import observability clients and router
 from ai4icore_telemetry import OpenSearchQueryClient, JaegerQueryClient
@@ -38,6 +39,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Shared exception handlers
+register_exception_handlers(app)
 
 # Instrument FastAPI with OpenTelemetry
 FastAPIInstrumentor.instrument_app(app)

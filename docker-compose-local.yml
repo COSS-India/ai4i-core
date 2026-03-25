@@ -452,6 +452,8 @@ services:
       - ./services/telemetry-service:/app
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8084", "--reload"]
@@ -1316,7 +1318,9 @@ services:
       - /app/node_modules
       - /app/.next
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - simple-ui
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 10s
@@ -1409,8 +1413,8 @@ services:
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
       - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./infrastructure:/app/infrastructure

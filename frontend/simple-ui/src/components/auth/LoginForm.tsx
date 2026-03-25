@@ -247,7 +247,12 @@ const LoginForm: React.FC<LoginFormProps> = ({
                 API_BASE_URL || (typeof window !== "undefined"
                   ? window.location.origin
                   : "");
-              window.location.href = `${apiBaseUrl}/api/v1/auth/oauth2/google/authorize`;
+              const frontendCallback =
+                typeof window !== "undefined"
+                  ? `${window.location.origin}/auth/callback`
+                  : "http://localhost:3000/auth/callback";
+              const redirect = encodeURIComponent(frontendCallback);
+              window.location.href = `${apiBaseUrl}/api/v1/auth/oauth2/google/authorize?redirect_uri=${redirect}`;
             }}
             leftIcon={
               <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">

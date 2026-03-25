@@ -16,17 +16,15 @@ from ai4icore_telemetry import (
 )
 from sqlalchemy import text
 from ai4icore_env import app_env
+from ai4icore_auth.providers import build_jwt_verifier
+from ai4icore_auth.jwt_verifier import AuthClaims, JWTVerificationError
 
 logger = logging.getLogger(__name__)
 
-try:
-    from jose import jwt, JWTError
-    JWT_AVAILABLE = True
-except ImportError:
-    JWT_AVAILABLE = False
-    logger.warning("python-jose not available, JWT decoding will fail")
-
 router = APIRouter()
+
+# Shared JWT verifier — initialized lazily on first request
+_jwt_verifier = build_jwt_verifier()
 
 # Global clients (will be initialized in main.py)
 opensearch_client: Optional[OpenSearchQueryClient] = None
@@ -151,129 +149,44 @@ def map_subscription_to_service_name(subscription: str) -> str:
     return service_name_mapping.get(subscription.lower(), f"{subscription}-service")
 
 
-async def extract_tenant_id_from_jwt(request: Request) -> Optional[str]:
-    """
-    Extract tenant_id from JWT token.
-    
-    Args:
-        request: FastAPI request object
-        
-    Returns:
-        tenant_id if present in JWT, None otherwise
-    """
-    if not JWT_AVAILABLE:
+async def _get_claims(request: Request) -> Optional[AuthClaims]:
+    """Verify JWT and return AuthClaims, or None if no/invalid token."""
+    global _jwt_verifier
+    authorization = request.headers.get("Authorization") or request.headers.get("authorization")
+    if not authorization or not authorization.startswith("Bearer "):
         return None
-    
+
+    token = authorization.split(" ", 1)[1]
+
     try:
-        # Get JWT secret key
-        secret_key = app_env.jwt_secret_key
-        
-        # Extract JWT token from Authorization header
-        authorization = request.headers.get("Authorization") or request.headers.get("authorization")
-        if not authorization or not authorization.startswith("Bearer "):
-            return None
-        
-        token = authorization.split(" ", 1)[1]
-        
-        # Decode JWT token
-        payload = jwt.decode(
-            token,
-            secret_key,
-            algorithms=["HS256"],
-            options={"verify_signature": True, "verify_exp": True}
-        )
-        
-        # Extract tenant_id
-        tenant_id = payload.get("tenant_id")
-        return tenant_id
-        
-    except (JWTError, Exception) as e:
-        logger.warning(f"Error extracting tenant_id from JWT: {e}")
+        if _jwt_verifier.loaded_key_count == 0:
+            await _jwt_verifier.initialize()
+        return await _jwt_verifier.verify(token)
+    except (JWTVerificationError, Exception) as e:
+        logger.warning("JWT verification failed: %s", e)
         return None
+
+
+async def extract_tenant_id_from_jwt(request: Request) -> Optional[str]:
+    """Extract tenant_id from verified JWT token."""
+    claims = await _get_claims(request)
+    return claims.tenant_id if claims else None
 
 
 async def is_user_admin(request: Request) -> bool:
-    """
-    Check if the authenticated user is an admin by extracting roles from JWT token.
-    
-    Args:
-        request: FastAPI request object
-        
-    Returns:
-        True if user is admin, False otherwise
-    """
-    if not JWT_AVAILABLE:
+    """Check if the authenticated user has ADMIN role."""
+    claims = await _get_claims(request)
+    if not claims:
         return False
-    
-    try:
-        # Get JWT secret key
-        secret_key = app_env.jwt_secret_key
-        
-        # Extract JWT token from Authorization header
-        authorization = request.headers.get("Authorization") or request.headers.get("authorization")
-        if not authorization or not authorization.startswith("Bearer "):
-            return False
-        
-        token = authorization.split(" ", 1)[1]
-        
-        # Decode JWT token
-        payload = jwt.decode(
-            token,
-            secret_key,
-            algorithms=["HS256"],
-            options={"verify_signature": True, "verify_exp": True}
-        )
-        
-        # Extract roles
-        roles = payload.get("roles", [])
-        
-        # Check if user has ADMIN role
-        is_admin = "ADMIN" in roles or any(role.upper() == "ADMIN" for role in roles)
-        return is_admin
-        
-    except (JWTError, Exception) as e:
-        logger.warning(f"Error checking admin status: {e}")
-        return False
+    return "ADMIN" in claims.roles
 
 
 async def is_user_tenant_admin(request: Request) -> bool:
-    """
-    Check if the authenticated user has the 'TENANT ADMIN' role.
-
-    TENANT ADMIN users are scoped to a single tenant (tenant_id is embedded in
-    their JWT) and may only view logs for that tenant.
-
-    Args:
-        request: FastAPI request object
-
-    Returns:
-        True if the user holds the 'TENANT ADMIN' role, False otherwise.
-    """
-    if not JWT_AVAILABLE:
+    """Check if the authenticated user has TENANT ADMIN role."""
+    claims = await _get_claims(request)
+    if not claims:
         return False
-
-    try:
-        secret_key = app_env.jwt_secret_key
-
-        authorization = request.headers.get("Authorization") or request.headers.get("authorization")
-        if not authorization or not authorization.startswith("Bearer "):
-            return False
-
-        token = authorization.split(" ", 1)[1]
-
-        payload = jwt.decode(
-            token,
-            secret_key,
-            algorithms=["HS256"],
-            options={"verify_signature": True, "verify_exp": True}
-        )
-
-        roles = payload.get("roles", [])
-        return "TENANT ADMIN" in roles or any(r.upper() == "TENANT ADMIN" for r in roles)
-
-    except (JWTError, Exception) as e:
-        logger.warning(f"Error checking tenant-admin status: {e}")
-        return False
+    return "TENANT ADMIN" in claims.roles
 
 
 async def get_tenant_subscriptions(tenant_id: str) -> Optional[List[str]]:

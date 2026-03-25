@@ -3,6 +3,7 @@ Alert Management Service
 Provides CRUD operations for alert definitions, notification receivers, and routing rules.
 """
 from ai4icore_env import app_env
+from ai4icore_exceptions import register_exception_handlers
 from ai4icore_logging import get_logger, LoggingConfig, register_logging_plugin
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -67,6 +68,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Shared exception handlers
+register_exception_handlers(app)
 
 # Initialize AI4ICore Logging Plugin
 logging_config = LoggingConfig.from_env()
