@@ -8,12 +8,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc curl && rm 
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_env /app/libs/ai4icore_env
+COPY libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
+COPY libs/ai4icore_auth /app/libs/ai4icore_auth
 COPY services/alert-management-service/requirements.txt /app/requirements.txt
 
 RUN pip install --no-cache-dir -r /app/requirements.txt
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_env
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_exceptions
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_auth
 
 # Runtime stage
 FROM python:3.11-slim
@@ -25,6 +29,8 @@ COPY --from=builder /usr/local /usr/local
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
+COPY --from=builder /app/libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
+COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
 
 COPY services/alert-management-service/ /app/
 

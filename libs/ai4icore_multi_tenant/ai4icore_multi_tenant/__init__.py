@@ -8,7 +8,6 @@ from .plugin import MultiTenantPlugin
 from .tenant_context import (
     try_get_tenant_context,
     get_tenant_context,
-    resolve_tenant_from_jwt,
     resolve_tenant_from_user_id,
 )
 from .models import Tenant, TenantUser, TenantDBBase
@@ -22,7 +21,6 @@ __all__ = [
     "MultiTenantPlugin",
     "try_get_tenant_context",
     "get_tenant_context",
-    "resolve_tenant_from_jwt",
     "resolve_tenant_from_user_id",
     "enforce_tenant_and_service_checks",
     "TenantSchemaRouter",
