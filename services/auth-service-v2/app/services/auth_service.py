@@ -35,6 +35,7 @@ class AuthService:
         password_service: PasswordService,
         session_service: SessionService,
         cache_service: CacheService,
+        tenant_service=None,
     ) -> None:
         self._users = user_repo
         self._roles = role_service
@@ -42,6 +43,7 @@ class AuthService:
         self._passwords = password_service
         self._sessions = session_service
         self._cache = cache_service
+        self._tenants = tenant_service
 
     # ── Register ──
 
@@ -114,18 +116,28 @@ class AuthService:
         if not self._passwords.verify_password(password, user.password_hash, user.password_salt):
             raise InvalidCredentialsError()
 
+        # Resolve tenant_id if not cached on user row
+        tenant_id = user.tenant_id_cached
+        if not tenant_id and self._tenants:
+            tenant_id = await self._tenants.resolve_and_cache_tenant_id(
+                user.id, bool(user.is_tenant),
+            )
+            if tenant_id:
+                user.tenant_id_cached = tenant_id
+                logger.info("Cached tenant_id=%s for user %d", tenant_id, user.id)
+
         roles = await self._roles.get_user_roles(user.id)
         permission_ids = await self._roles.get_user_permission_ids_cached(user.id)
 
         access_token = self._tokens.create_access_token(
             user_id=user.id,
-            tenant_id=user.tenant_id_cached,
+            tenant_id=tenant_id,
             permission_ids=permission_ids,
             roles=roles,
         )
         refresh_token, token_id = self._tokens.create_refresh_token(
             user_id=user.id,
-            tenant_id=user.tenant_id_cached,
+            tenant_id=tenant_id,
             roles=roles,
         )
 
@@ -173,12 +185,22 @@ class AuthService:
         if not user or not user.is_active:
             raise UserInactiveError()
 
+        # Resolve tenant_id if not cached
+        tenant_id = user.tenant_id_cached
+        if not tenant_id and self._tenants:
+            tenant_id = await self._tenants.resolve_and_cache_tenant_id(
+                user.id, bool(user.is_tenant),
+            )
+            if tenant_id:
+                user.tenant_id_cached = tenant_id
+                await self._users.commit()
+
         roles = await self._roles.get_user_roles(user.id)
         permission_ids = await self._roles.get_user_permission_ids_cached(user.id)
 
         access_token = self._tokens.create_access_token(
             user_id=user.id,
-            tenant_id=user.tenant_id_cached,
+            tenant_id=tenant_id,
             permission_ids=permission_ids,
             roles=roles,
         )
