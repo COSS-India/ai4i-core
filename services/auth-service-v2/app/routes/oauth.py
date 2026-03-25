@@ -75,6 +75,7 @@ async def list_providers(svc: OAuthService = Depends(get_oauth_service)):
 
 @router.get("/{provider}/authorize")
 async def authorize(
+    request: Request,
     provider: str,
     redirect_uri: str = Query(None),
     svc: OAuthService = Depends(get_oauth_service),
@@ -110,6 +111,13 @@ async def authorize(
         params["prompt"] = "consent"
 
     auth_url = f"{config['authorization_url']}?{urlencode(params)}"
+
+    # Browser navigation should go straight to provider consent screen.
+    # API clients can still consume JSON as before.
+    accept_header = (request.headers.get("accept") or "").lower()
+    if "text/html" in accept_header and "application/json" not in accept_header:
+        return RedirectResponse(url=auth_url, status_code=307)
+
     return success_response(data={"authorization_url": auth_url, "state": state})
 
 
