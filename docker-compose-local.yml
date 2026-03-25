@@ -452,6 +452,8 @@ services:
       - ./services/telemetry-service:/app
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8084", "--reload"]
