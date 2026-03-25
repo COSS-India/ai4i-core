@@ -28,7 +28,7 @@ cd ai4i-core
 cp env.template .env
 ```
 
-Open `.env` and fill in the **Database Configuration** section. Replace the `<YOUR_...>` placeholders with your values:
+Open `.env` and fill in the **Database Configuration** section (around **line 95**). Replace the `<YOUR_...>` placeholders with your values:
 
 ```bash
 POSTGRES_USER=postgres
