@@ -556,6 +556,13 @@ class AuthService {
     return this.request<OAuth2Provider[]>('/oauth2/providers');
   }
 
+  async exchangeOAuthCode(code: string): Promise<LoginResponse> {
+    return this.requestWithoutAuth<LoginResponse>('/oauth2/exchange', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+  }
+
   // User management (Admin only)
   async getAllUsers(): Promise<User[]> {
     return this.request<User[]>('/users');
