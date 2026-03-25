@@ -21,6 +21,7 @@ COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
 COPY libs/ai4icore_env /app/libs/ai4icore_env
+COPY libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
 COPY libs/ai4icore_auth /app/libs/ai4icore_auth
 
 # Copy service requirements
@@ -37,6 +38,7 @@ RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_constants
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_exceptions
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
 # Install packaging explicitly with --user --force-reinstall to ensure it's in user site-packages
 RUN pip install --no-cache-dir --user --force-reinstall packaging
@@ -69,6 +71,7 @@ COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
 COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
+COPY --from=builder /app/libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
 COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
 
 # Copy application code and shared constants

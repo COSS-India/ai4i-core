@@ -29,11 +29,7 @@ SERVICE_UNPUBLISHED_MESSAGE = (
 )
 
 
-class UnpublishedServiceError(Exception):
-    """Raised when the requested service is unpublished and inference is not allowed."""
-    def __init__(self, service_id: str):
-        self.service_id = service_id
-        super().__init__(f"Service {service_id} is unpublished")
+from ai4icore_exceptions import UnpublishedServiceError  # noqa: F401
 
 
 def extract_auth_headers(request: Request) -> Dict[str, str]:

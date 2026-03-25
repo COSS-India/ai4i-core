@@ -26,21 +26,6 @@ const getAuthToken = (): string | null => {
   return null;
 };
 
-// Get API key from localStorage only (user-provided via "manage API key")
-// Do not use env - API key must be set by the user
-const getApiKey = (): string | null => {
-  if (typeof window !== 'undefined') {
-    const storedApiKey = localStorage.getItem('api_key');
-    if (storedApiKey && storedApiKey.trim() !== '') {
-      return storedApiKey.trim();
-    }
-  }
-  return null;
-};
-
-// Note: X-API-Key is now injected by Kong automatically based on route
-// Frontend only needs to send Authorization: Bearer <token>
-
 // API Endpoints
 export const apiEndpoints = {
   asr: {
@@ -149,25 +134,9 @@ llmApiClient.interceptors.request.use(
     }
     
     if (isLLMEndpoint && !isAuthEndpoint) {
-      // LLM requires BOTH JWT token AND API key
       const jwtToken = getJwtToken();
       if (jwtToken) {
         config.headers['Authorization'] = `Bearer ${jwtToken}`;
-    }
-      
-      const apiKey = getApiKey();
-      if (apiKey) {
-        config.headers['X-API-Key'] = apiKey;
-        // Set X-Auth-Source to BOTH when both JWT and API key are present
-        if (jwtToken) {
-          config.headers['X-Auth-Source'] = 'BOTH';
-        }
-      }
-    } else if (!isAuthEndpoint) {
-      // For other endpoints (legacy), use API key if available
-      const apiKey = getApiKey();
-      if (apiKey) {
-        config.headers['Authorization'] = `Bearer ${apiKey}`;
       }
     }
     
@@ -190,12 +159,12 @@ llmApiClient.interceptors.response.use(
   (error: AxiosError) => {
     // Don't automatically logout on 401 for service endpoints
     // Let the UI handle the error and show appropriate messages
-    // This prevents users from being logged out when API key is missing/invalid
+    // This prevents users from being logged out on transient auth errors
     if (error.response) {
       const { status } = error.response;
       if (status === 401) {
         // Log the error but don't logout - let UI handle it
-        console.warn('LLM service returned 401 - check API key and authentication');
+        console.warn('LLM service returned 401 - check authentication');
       }
     }
     return Promise.reject(error);
@@ -215,20 +184,9 @@ asrApiClient.interceptors.request.use(
       console.debug('Proactive token refresh check failed:', error);
     }
     
-    // ASR requires BOTH JWT token AND API key
     const authToken = getAuthToken();
     if (authToken) {
       config.headers['Authorization'] = `Bearer ${authToken}`;
-    }
-    // Also send API key for ASR service
-    const apiKey = getApiKey();
-    if (apiKey) {
-      config.headers['X-API-Key'] = apiKey;
-      // Set x-auth-source to BOTH when both JWT token and API key are present
-      if (authToken) {
-        config.headers['x-auth-source'] = 'BOTH';
-        config.headers['X-Auth-Source'] = 'BOTH'; // Also set uppercase for consistency
-      }
     }
     
     return config;
@@ -250,12 +208,12 @@ asrApiClient.interceptors.response.use(
   (error: AxiosError) => {
     // Don't automatically logout on 401 for service endpoints
     // Let the UI handle the error and show appropriate messages
-    // This prevents users from being logged out when API key is missing/invalid
+    // This prevents users from being logged out on transient auth errors
     if (error.response) {
       const { status } = error.response;
       if (status === 401) {
         // Log the error but don't logout - let UI handle it
-        console.warn('ASR service returned 401 - check API key and authentication');
+        console.warn('ASR service returned 401 - check authentication');
       }
     }
     return Promise.reject(error);
@@ -338,89 +296,17 @@ apiClient.interceptors.request.use(
     }
     
     if (requiresJWT && !isAuthEndpoint) {
-      // For services that require JWT tokens, use JWT token
+      // All service endpoints use JWT Bearer token for authentication
       const jwtToken = getJwtToken();
-      const apiKey = getApiKey();
-      
-      // Model management endpoints support both JWT and API key authentication
-      if (isModelManagementEndpoint) {
-        if (jwtToken && apiKey) {
-          // Both JWT and API key present - use BOTH
-          config.headers['Authorization'] = `Bearer ${jwtToken}`;
-          config.headers['X-API-Key'] = apiKey;
-          config.headers['x-auth-source'] = 'BOTH';
-          config.headers['X-Auth-Source'] = 'BOTH';
-        } else if (jwtToken) {
-          // Only JWT token present - use AUTH_TOKEN
-          config.headers['Authorization'] = `Bearer ${jwtToken}`;
-          config.headers['x-auth-source'] = 'AUTH_TOKEN';
-          config.headers['X-Auth-Source'] = 'AUTH_TOKEN';
-        } else {
-          console.error('❌ Model-management: No JWT token available!', {
-            url: config.url,
-          });
-        }
-      } 
-      
-      // Observability endpoints use JWT token with x-auth-source: BOTH
-      if (isObservabilityEndpoint) {
-        if (jwtToken) {
-          config.headers['Authorization'] = `Bearer ${jwtToken}`;
-          config.headers['x-auth-source'] = 'BOTH';
-          config.headers['X-Auth-Source'] = 'BOTH';
-        }
-      }
-
-      // Multi-tenant admin endpoints require JWT token (Authorization: Bearer)
-      if (isMultiTenantEndpoint) {
-        if (jwtToken) {
-          config.headers['Authorization'] = `Bearer ${jwtToken}`;
-          config.headers['x-auth-source'] = 'AUTH_TOKEN';
-          config.headers['X-Auth-Source'] = 'AUTH_TOKEN';
-        } else {
-          console.warn('Multi-tenant: No JWT token available', { url: config.url });
-        }
-      }
-
-      // Feature-flags endpoints require JWT (gateway returns 401 without Bearer token)
-      if (isFeatureFlagsEndpoint && jwtToken) {
+      if (jwtToken) {
         config.headers['Authorization'] = `Bearer ${jwtToken}`;
-        config.headers['x-auth-source'] = 'AUTH_TOKEN';
-        config.headers['X-Auth-Source'] = 'AUTH_TOKEN';
-      }
-      
-      // All services require BOTH JWT token AND API key
-      if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint || isNEREndpoint ||
-          isOCREndpoint || isTransliterationEndpoint || isLanguageDetectionEndpoint || 
-          isSpeakerDiarizationEndpoint || isLanguageDiarizationEndpoint || isAudioLangDetectionEndpoint) {
-        if (jwtToken) {
-          config.headers['Authorization'] = `Bearer ${jwtToken}`;
-        }
-        const apiKey = getApiKey();
-        if (apiKey) {
-          config.headers['X-API-Key'] = apiKey;
-          // Set X-Auth-Source to BOTH when both JWT and API key are present
-          // Use lowercase to match the model-management endpoint format
-          if (jwtToken) {
-            config.headers['x-auth-source'] = 'BOTH';
-            // Also set uppercase version for consistency
-            config.headers['X-Auth-Source'] = 'BOTH';
-          } else {
-            // If only API key is present (shouldn't happen for these endpoints, but handle it)
-            console.warn('API key present but JWT token missing for service endpoint:', config.url);
-          }
-        } else {
-          // Log warning if API key is missing
-          console.warn('API key is missing for service endpoint:', config.url);
-        }
-        
-      }
-    } else if (!isAuthEndpoint) {
-      // For other endpoints (legacy), use API key if available
-      const apiKey = getApiKey();
-      if (apiKey) {
-        // Send API key in X-API-Key header (not as Bearer token)
-        config.headers['X-API-Key'] = apiKey;
+      } else {
+        // No token available — reject request before sending to avoid
+        // confusing "API key missing" errors from backend
+        console.warn('No JWT token available for service endpoint:', config.url);
+        return Promise.reject(new axios.Cancel(
+          'Authentication required. Please sign in to continue.'
+        ));
       }
     }
     
@@ -506,7 +392,6 @@ apiClient.interceptors.response.use(
               
               // Log detailed error information
               const jwtToken = getJwtToken();
-              const apiKey = getApiKey();
               const endpointType = isModelManagementEndpoint ? 'model-management' : 'service';
               console.warn(`${endpointType} endpoint 401 error:`, {
                 url,
@@ -514,9 +399,7 @@ apiClient.interceptors.response.use(
                 isTokenExpired,
                 isInvalidAuthCredentials,
                 hasJWT: !!jwtToken,
-                hasAPIKey: !!apiKey,
                 jwtLength: jwtToken?.length || 0,
-                apiKeyLength: apiKey?.length || 0,
                 responseData: data,
               });
               
@@ -589,15 +472,12 @@ apiClient.interceptors.response.use(
                 return Promise.reject(new Error('Session expired. Please sign in again.'));
               }
               
-              // For non-expiration errors (API key issues, validation errors, etc.)
-              // Don't redirect - let the UI handle the error
+              // For non-expiration errors, don't redirect - let the UI handle the error
               let enhancedErrorMessage = errorMessage;
               if (isModelManagementEndpoint) {
                 enhancedErrorMessage = `Model management error: ${errorMessage}. Please check your authentication and try again.`;
-              } else if (!apiKey) {
-                enhancedErrorMessage = `API key is required. Please set an API key in your profile or header.`;
               } else {
-                enhancedErrorMessage = `Authentication failed: ${errorMessage}. Please check your API key and login status.`;
+                enhancedErrorMessage = `Authentication failed: ${errorMessage}. Please check your login status.`;
               }
               
               const enhancedError = new Error(enhancedErrorMessage);

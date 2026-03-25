@@ -28,6 +28,7 @@ from routers.health_router import health_router
 from routers.inference_router import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.error_handler_middleware import add_error_handlers
+from ai4icore_exceptions import register_exception_handlers
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 
@@ -302,6 +303,7 @@ app.add_middleware(
 )
 
 # Register error handlers
+register_exception_handlers(app)
 add_error_handlers(app)
 
 # Routers
