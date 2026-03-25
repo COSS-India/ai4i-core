@@ -22,10 +22,21 @@ class TenantService:
     """
     Resolves tenant information from the multi-tenant database.
     Gracefully degrades if multi-tenant DB is not available.
+
+    Accepts either an AsyncSession or an async_sessionmaker (factory).
+    When a factory is provided, sessions are created and closed per query.
     """
 
-    def __init__(self, multi_tenant_db: Optional[AsyncSession] = None) -> None:
-        self._db = multi_tenant_db
+    def __init__(self, session_or_factory=None) -> None:
+        self._session_or_factory = session_or_factory
+
+    async def _get_session(self):
+        """Get a DB session — creates one from factory if needed."""
+        if self._session_or_factory is None:
+            return None
+        if callable(self._session_or_factory):
+            return self._session_or_factory()
+        return self._session_or_factory
 
     async def get_tenant_info(
         self, user_id: int, is_tenant: bool
@@ -41,7 +52,8 @@ class TenantService:
             Dict with tenant_id, tenant_uuid, schema_name, subscriptions
             or None if not found / DB unavailable.
         """
-        if self._db is None:
+        db = await self._get_session()
+        if db is None:
             return None
 
         try:
@@ -56,7 +68,7 @@ class TenantService:
                 # Tenant admin: look up by auth user_id
                 stmt = select(Tenant).where(Tenant.user_id == user_id)
                 result = await asyncio.wait_for(
-                    self._db.execute(stmt),
+                    db.execute(stmt),
                     timeout=_TENANT_QUERY_TIMEOUT,
                 )
                 tenant = result.scalars().first()
@@ -76,7 +88,7 @@ class TenantService:
                     .where(TenantUser.user_id == user_id)
                 )
                 result = await asyncio.wait_for(
-                    self._db.execute(stmt),
+                    db.execute(stmt),
                     timeout=_TENANT_QUERY_TIMEOUT,
                 )
                 row = result.first()
@@ -98,13 +110,17 @@ class TenantService:
         except (ImportError, OSError) as exc:
             logger.warning("Error getting tenant info for user %d: %s", user_id, exc)
             return None
+        finally:
+            if callable(self._session_or_factory):
+                await db.close()
 
     async def get_tenant_user_ids(self, tenant_id: str) -> Optional[list[int]]:
         """
         Get all user IDs belonging to a tenant (admin + tenant users).
         Returns None if multi-tenant DB is unavailable.
         """
-        if self._db is None:
+        db = await self._get_session()
+        if db is None:
             return None
 
         try:
@@ -130,7 +146,7 @@ class TenantService:
             stmt = select(all_users_subq.c.user_id.distinct())
 
             result = await asyncio.wait_for(
-                self._db.execute(stmt),
+                db.execute(stmt),
                 timeout=_TENANT_QUERY_TIMEOUT,
             )
             rows = result.fetchall()
@@ -142,6 +158,9 @@ class TenantService:
         except (ImportError, OSError) as exc:
             logger.warning("Error getting tenant user IDs for %s: %s", tenant_id, exc)
             return None
+        finally:
+            if callable(self._session_or_factory):
+                await db.close()
 
     async def resolve_and_cache_tenant_id(
         self, user_id: int, is_tenant: bool
