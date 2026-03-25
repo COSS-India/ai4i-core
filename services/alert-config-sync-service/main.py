@@ -417,8 +417,9 @@ def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], cat
 
 # Default email templates (no organization; route by severity/category only)
 DEFAULT_EMAIL_SUBJECT_TEMPLATE = "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }}{{ with (index .Alerts 0).Labels.endpoint }} - {{ . }}{{ end }}"
+# Plain-text severity labels only (no emoji) for consistent rendering in email clients.
 DEFAULT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{ if eq .GroupLabels.severity \"critical\" }}#d32f2f{{ else if eq .GroupLabels.severity \"warning\" }}#f57c00{{ else }}#1976d2{{ end }};">
-  {{ if eq .GroupLabels.severity "critical" }}🚨 CRITICAL{{ else if eq .GroupLabels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
+  {{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
 </h2>
 <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
 <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
@@ -520,12 +521,14 @@ def generate_alertmanager_yaml(
     default_email_configs = []
     for email in default_admin_emails:
         if email and str(email).strip():
-            default_email_configs.append({
+            cfg = {
                 'to': str(email).strip(),
                 'send_resolved': True,
-                'headers': {'Subject': DEFAULT_EMAIL_SUBJECT_TEMPLATE},
-                'html': DEFAULT_EMAIL_BODY_TEMPLATE
-            })
+                'html': DEFAULT_EMAIL_BODY_TEMPLATE,
+            }
+            # Alertmanager email subject (kept in headers to allow templating).
+            cfg['headers'] = {'Subject': DEFAULT_EMAIL_SUBJECT_TEMPLATE}
+            default_email_configs.append(cfg)
     receivers_config.append({
         'name': default_receiver_name,
         'email_configs': default_email_configs,
@@ -565,12 +568,14 @@ def generate_alertmanager_yaml(
         email_body_template = receiver.get('email_body_template') or DEFAULT_EMAIL_BODY_TEMPLATE
         for email in email_list:
             if email and str(email).strip():
-                email_configs.append({
+                cfg = {
                     'to': str(email).strip(),
                     'send_resolved': True,
-                    'headers': {'Subject': email_subject_template},
-                    'html': email_body_template
-                })
+                    'html': email_body_template,
+                }
+                # Alertmanager email subject (kept in headers to allow templating).
+                cfg['headers'] = {'Subject': email_subject_template}
+                email_configs.append(cfg)
         
         if not email_configs:
             logger.warning(f"No valid email addresses for receiver '{receiver_name}' (org: {receiver.get('organization')})")
