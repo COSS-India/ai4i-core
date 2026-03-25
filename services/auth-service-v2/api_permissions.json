@@ -667,6 +667,11 @@
       "description": "List roles"
     },
     {
+      "endpoint": "GET:/api/v1/auth/roles/user/{user_id}",
+      "permissionRequired": "roles.read",
+      "description": "Get roles for a user"
+    },
+    {
       "endpoint": "POST:/api/v1/auth/api-keys",
       "permissionRequired": "apiKey.create",
       "description": "Create API key"
