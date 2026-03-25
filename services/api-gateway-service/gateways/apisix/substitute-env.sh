@@ -9,7 +9,7 @@ TEMPLATE="${APISIX_CONFIG_TEMPLATE:-$CONF_DIR/apisix.yaml.template}"
 OUTPUT="$CONF_DIR/apisix.yaml"
 
 APISIX_PUBLIC_ORIGIN="${APISIX_PUBLIC_ORIGIN:-http://localhost:3000}"
-APISIX_UPSTREAM_SUFFIX="${APISIX_UPSTREAM_SUFFIX:-}"
+APISIX_UPSTREAM_SUFFIX="${APISIX_UPSTREAM_SUFFIX:-.}"
 
 if [ ! -f "$TEMPLATE" ]; then
     echo "Error: APISIX template not found at $TEMPLATE" >&2
