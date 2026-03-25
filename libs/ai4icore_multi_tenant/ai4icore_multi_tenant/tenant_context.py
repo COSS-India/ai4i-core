@@ -14,24 +14,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_API_GATEWAY_URL = app_env.api_gateway_url
 
 
-async def resolve_tenant_from_jwt(jwt_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Extract tenant context from JWT payload.
-    """
-    tenant_id = jwt_payload.get("tenant_id")
-    if not tenant_id:
-        return None
-
-    return {
-        "tenant_id": tenant_id,
-        "tenant_uuid": jwt_payload.get("tenant_uuid"),
-        # resolve from tenant_id via DB/API.
-        "schema_name": None,
-        "subscriptions": jwt_payload.get("subscriptions", []),
-        "user_subscriptions": jwt_payload.get("user_subscriptions", []),
-    }
-
-
 async def resolve_tenant_from_user_id(
     user_id: int,
     request: Request,
