@@ -13,11 +13,11 @@ COPY libs/ai4icore_auth /app/libs/ai4icore_auth
 COPY services/alert-management-service/requirements.txt /app/requirements.txt
 
 RUN pip install --no-cache-dir -r /app/requirements.txt
-RUN pip install --no-cache-dir -e /app/libs/ai4icore_logging
-RUN pip install --no-cache-dir -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_env
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_exceptions
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_auth
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_telemetry
 
 # Runtime stage
 FROM python:3.11-slim
