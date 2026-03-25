@@ -5,9 +5,13 @@ Core authentication business logic: register, login, refresh, logout.
 import logging
 from typing import Optional
 
+import httpx
+from ai4icore_env import app_env
+
 from app.core.config import settings
 from app.core.exceptions import (
     DuplicateEntityError,
+    AuthorizationError,
     InvalidCredentialsError,
     TokenExpiredError,
     TokenInvalidError,
@@ -23,6 +27,8 @@ from app.services.role_service import RoleService
 from app.services.session_service import SessionService
 from app.services.token_service import TokenService
 
+from app.services.tenant_service import TenantService
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,6 +41,7 @@ class AuthService:
         password_service: PasswordService,
         session_service: SessionService,
         cache_service: CacheService,
+        tenant_service=TenantService,
     ) -> None:
         self._users = user_repo
         self._roles = role_service
@@ -42,6 +49,137 @@ class AuthService:
         self._passwords = password_service
         self._sessions = session_service
         self._cache = cache_service
+        self._tenants = tenant_service
+
+    def _is_suspended_or_deactivated(self, status_val: str | None) -> bool:
+        if not status_val:
+            return False
+        # Normalize for inconsistent storage formats (Enum string, whitespace, casing).
+        status = str(status_val).strip().upper()
+        # Handle cases like "TenantStatus.SUSPENDED"
+        if "." in status:
+            status = status.split(".")[-1]
+        return status in {"SUSPENDED", "DEACTIVATED"}
+
+    def _format_tenant_inactive_message(self, tenant_status: str) -> str:
+        # Keep punctuation/spacing exactly as requested.
+        return f"tenant is {tenant_status.lower()} , please contact your platform admin"
+
+    def _format_user_inactive_message(self, user_status: str) -> str:
+        # Keep spelling exactly as requested (including "cotact").
+        return f"User is {user_status.lower()} , please contact your admin"
+
+    async def _enforce_login_tenant_status(self, user: User) -> None:
+        """
+        Block login when:
+        - tenant is SUSPENDED/DEACTIVATED (tenant admin + tenant users blocked)
+        - tenant is ACTIVE but tenant user is SUSPENDED/DEACTIVATED
+        """
+        tenant_id = user.tenant_id_cached
+        if not tenant_id:
+            # Only tenant users/admins should have a tenant_id; normal users are expected to bypass enforcement.
+            if getattr(user, "is_tenant", None) is not None:
+                logger.warning(
+                    "Tenant status enforcement skipped: tenant_id missing (tenant_service_enabled=%s) for user_id=%s is_tenant=%s",
+                    bool(self._tenants),
+                    user.id,
+                    bool(getattr(user, "is_tenant", None)),
+                )
+            return
+
+        if not self._tenants:
+            logger.warning(
+                "Tenant status enforcement skipped: tenant service not configured for user_id=%s tenant_id=%s is_tenant=%s",
+                user.id,
+                tenant_id,
+                bool(getattr(user, "is_tenant", None)),
+            )
+            return
+
+        logger.debug(
+            "Enforcing tenant status for login (tenant_id=%s user_id=%s is_tenant=%s)",
+            tenant_id,
+            user.id,
+            bool(getattr(user, "is_tenant", None)),
+        )
+        tenant_status = await self._tenants.get_tenant_status(tenant_id)
+        tenant_status_attempted_fallback = False
+        resolved_tenant_id = None
+
+        if tenant_status is None:
+            # tenant_id_cached can be stale across auth DB updates; attempt to re-resolve once.
+            tenant_status_attempted_fallback = True
+            is_tenant_flag = bool(getattr(user, "is_tenant", None))
+            resolved_tenant_id = await self._tenants.resolve_and_cache_tenant_id(user.id, is_tenant_flag)
+            if resolved_tenant_id and resolved_tenant_id != tenant_id:
+                logger.debug(
+                    "Tenant status retry: tenant_id_cached=%s resolved_tenant_id=%s (user_id=%s is_tenant=%s)",
+                    tenant_id,
+                    resolved_tenant_id,
+                    user.id,
+                    is_tenant_flag,
+                )
+                user.tenant_id_cached = resolved_tenant_id
+                tenant_id = resolved_tenant_id
+                tenant_status = await self._tenants.get_tenant_status(tenant_id)
+
+            # As a last resort, look up status directly by user_id + is_tenant.
+            if tenant_status is None:
+                tenant_status = await self._tenants.get_tenant_status_by_user_id(
+                    user.id, is_tenant_flag
+                )
+
+            if tenant_status is None:
+                debug_info = {}
+                try:
+                    debug_info = await self._tenants.debug_tenant_mappings(
+                        tenant_id, user.id, is_tenant_flag
+                    )
+                except Exception:
+                    debug_info = {"debug_error": "failed to fetch tenant mapping debug info"}
+                logger.warning(
+                    "Tenant status lookup returned None (tenant_id=%s tenant_id_resolved=%s user_id=%s is_tenant=%s fallback_attempted=%s debug=%s) — login will not be blocked by tenant status",
+                    tenant_id,
+                    resolved_tenant_id,
+                    user.id,
+                    is_tenant_flag,
+                    tenant_status_attempted_fallback,
+                    debug_info,
+                )
+        if self._is_suspended_or_deactivated(tenant_status):
+            logger.info(
+                "Blocking login: tenant suspended/deactivated (tenant_id=%s status=%s user_id=%s)",
+                tenant_id,
+                tenant_status,
+                user.id,
+            )
+            raise AuthorizationError(
+                message=self._format_tenant_inactive_message(str(tenant_status)),
+                code="TENANT_INACTIVE",
+            )
+
+        # Only tenant users have TenantUser.status; tenant admin only needs tenant.status.
+        if user.is_tenant:
+            return
+
+        tenant_user_status = await self._tenants.get_tenant_user_status(tenant_id, user.id)
+        if user.is_tenant is False and tenant_user_status is None:
+            logger.warning(
+                "Tenant-user status lookup returned None (tenant_id=%s user_id=%s) — login will not be blocked by tenant-user status",
+                tenant_id,
+                user.id,
+            )
+        if self._is_suspended_or_deactivated(tenant_user_status):
+            logger.info(
+                "Blocking login: tenant user suspended/deactivated (tenant_id=%s tenant_user_status=%s user_id=%s)",
+                tenant_id,
+                tenant_user_status,
+                user.id,
+            )
+            raise AuthorizationError(
+                message=self._format_user_inactive_message(str(tenant_user_status)),
+                code="TENANT_USER_INACTIVE",
+            )
 
     # ── Register ──
 
@@ -55,6 +193,7 @@ class AuthService:
         phone_number: Optional[str] = None,
         tz: str = "UTC",
         language: str = "en",
+        tenant_id: Optional[str] = None,
         is_tenant: Optional[bool] = None,
     ) -> User:
         """Register a new user."""
@@ -78,6 +217,7 @@ class AuthService:
             timezone=tz,
             language=language,
             is_tenant=is_tenant,
+            tenant_id_cached=tenant_id,
             is_active=True,
             is_verified=False,
         )
@@ -114,18 +254,39 @@ class AuthService:
         if not self._passwords.verify_password(password, user.password_hash, user.password_salt):
             raise InvalidCredentialsError()
 
+        # Resolve tenant_id if not cached on user row
+        tenant_id = user.tenant_id_cached
+        if not tenant_id and self._tenants:
+            tenant_id = await self._tenants.resolve_and_cache_tenant_id(
+                user.id, bool(user.is_tenant),
+            )
+            if tenant_id:
+                user.tenant_id_cached = tenant_id
+                logger.info("Cached tenant_id=%s for user %d", tenant_id, user.id)
+        logger.debug(
+            "AuthService.login tenant enforcement precheck (tenant_id=%s tenant_service_enabled=%s user_id=%s is_tenant=%s)",
+            tenant_id,
+            bool(self._tenants),
+            user.id,
+            bool(user.is_tenant),
+        )
+        
+        await self._enforce_login_tenant_status(user)
+        # tenant-status enforcement may have updated user.tenant_id_cached
+        tenant_id = user.tenant_id_cached
+
         roles = await self._roles.get_user_roles(user.id)
         permission_ids = await self._roles.get_user_permission_ids_cached(user.id)
 
         access_token = self._tokens.create_access_token(
             user_id=user.id,
-            tenant_id=user.tenant_id_cached,
+            tenant_id=tenant_id,
             permission_ids=permission_ids,
             roles=roles,
         )
         refresh_token, token_id = self._tokens.create_refresh_token(
             user_id=user.id,
-            tenant_id=user.tenant_id_cached,
+            tenant_id=tenant_id,
             roles=roles,
         )
 
@@ -173,12 +334,26 @@ class AuthService:
         if not user or not user.is_active:
             raise UserInactiveError()
 
+        # Resolve tenant_id if not cached
+        tenant_id = user.tenant_id_cached
+        if not tenant_id and self._tenants:
+            tenant_id = await self._tenants.resolve_and_cache_tenant_id(
+                user.id, bool(user.is_tenant),
+            )
+            if tenant_id:
+                user.tenant_id_cached = tenant_id
+                await self._users.commit()
+
+        await self._enforce_login_tenant_status(user)
+        # tenant-status enforcement may have updated user.tenant_id_cached
+        tenant_id = user.tenant_id_cached
+
         roles = await self._roles.get_user_roles(user.id)
         permission_ids = await self._roles.get_user_permission_ids_cached(user.id)
 
         access_token = self._tokens.create_access_token(
             user_id=user.id,
-            tenant_id=user.tenant_id_cached,
+            tenant_id=tenant_id,
             permission_ids=permission_ids,
             roles=roles,
         )

@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from ai4icore_auth.middleware import AuthMiddleware
 
@@ -61,6 +62,34 @@ async def lifespan(app: FastAPI):
     await key_manager.initialize()
     await init_jwt_verifier()
 
+    # Optional: multi-tenant DB for tenant_id resolution on login
+    if settings.multi_tenant_db_url:
+        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+        mt_engine = create_async_engine(
+            settings.multi_tenant_db_url,
+            pool_size=settings.multi_tenant_db_pool_size,
+            max_overflow=settings.multi_tenant_db_max_overflow,
+        )
+        app.state.multi_tenant_engine = mt_engine
+
+        # Verify DB connectivity at startup so we can clearly log status.
+        # We intentionally avoid multi-tenant ORM imports here; this is only a connectivity check.
+        try:
+            app.state.multi_tenant_session_factory = async_sessionmaker(mt_engine, expire_on_commit=False)
+            logger.info("Connected to multi-tenant DB for tenant_id resolution.")
+        except Exception as exc:
+            app.state.multi_tenant_session_factory = None
+            logger.warning(
+                "Failed to connect to multi-tenant DB for tenant_id resolution (disabled): %s",
+                exc,
+            )
+            await mt_engine.dispose()
+            app.state.multi_tenant_engine = None
+    else:
+        app.state.multi_tenant_session_factory = None
+        app.state.multi_tenant_engine = None
+        logger.info("MULTI_TENANT_DB_URL not set — tenant_id resolution disabled.")
+
     # Load API-to-permission mapping
     await _load_api_permissions()
 
@@ -90,6 +119,9 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     await close_redis()
+    mt_engine = getattr(app.state, "multi_tenant_engine", None)
+    if mt_engine:
+        await mt_engine.dispose()
     await close_database()
     logger.info("Shutdown complete.")
 

@@ -150,12 +150,19 @@ async def _get_roles_from_auth(user_id: int, auth_header: Optional[str]) -> List
                 headers={"Authorization": auth_header},
             )
             if r.status_code == 200:
-                data = r.json()
+                payload = r.json()
+                # auth-service currently returns: {"success": true, "data": {"user_id": ..., "roles": [...]}}
+                # but older/alternate versions may return {"role": "..."} / {"roles": [...]}
+                role_payload = payload.get("data") if isinstance(payload, dict) else None
+                if not isinstance(role_payload, dict):
+                    role_payload = payload if isinstance(payload, dict) else {}
+
                 # Prefer single role field if present
-                if isinstance(data.get("role"), str):
-                    role = data["role"].strip()
+                if isinstance(role_payload.get("role"), str):
+                    role = role_payload["role"].strip()
                     return [role] if role else []
-                roles = data.get("roles") or []
+
+                roles = role_payload.get("roles") or []
                 if isinstance(roles, list):
                     return [str(x).strip() for x in roles if str(x).strip()]
                 return []
@@ -1014,6 +1021,7 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
                     "phone_number": decrypted_phone,
                     "timezone": "UTC",
                     "language": "en",
+                    "tenant_id": tenant.tenant_id,
                     "is_tenant": True,
                 },
             )
@@ -1024,7 +1032,9 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
             detail="Authentication service unavailable while creating tenant admin user",
         )
 
-    if auth_response.status_code != 201:
+    # auth-service /auth/register returns HTTP 200 (not 201) on success.
+    # Treat both 200 and 201 as success to avoid surfacing the upstream payload.
+    if auth_response.status_code not in (200, 201):
         logger.error(
             f"Auth-service /api/v1/auth/register failed for tenant {tenant.tenant_id}: "
             f"status={auth_response.status_code}, body={auth_response.text}"
@@ -1035,10 +1045,14 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
             detail=auth_response.json() if auth_response.headers.get("content-type", "").startswith("application/json") else auth_response.text,
         )
 
-    auth_user = auth_response.json()
-    admin_user_id = auth_user.get("id")
+    auth_user_payload = auth_response.json()
+    # auth-service responses are wrapped like: {"success": true, "data": {...}}
+    auth_data = auth_user_payload.get("data") if isinstance(auth_user_payload, dict) else None
+    admin_user_id = auth_data.get("id") if isinstance(auth_data, dict) else None
     if not admin_user_id:
-        logger.error(f"Auth-service did not return user id for tenant admin {tenant.tenant_id}: {auth_user}")
+        logger.error(
+            f"Auth-service did not return user id for tenant admin {tenant.tenant_id}: {auth_user_payload}"
+        )
         raise HTTPException(
             status_code=500,
             detail="Authentication service response missing user id for tenant admin",
@@ -1721,6 +1735,7 @@ async def register_user(
                     "phone_number": payload.phone_number,
                     "timezone": "UTC",
                     "language": "en",
+                    "tenant_id": tenant.tenant_id,
                     "is_tenant": False,
                 },
             )
@@ -1731,7 +1746,9 @@ async def register_user(
             detail="Authentication service unavailable while creating tenant user",
         )
 
-    if auth_response.status_code != 201:
+    # auth-service /auth/register returns HTTP 200 (not 201) on success.
+    # Treat both 200 and 201 as success.
+    if auth_response.status_code not in (200, 201):
         logger.error(
             f"Auth-service /api/v1/auth/register failed for tenant user {payload.username} "
             f"under tenant {tenant.tenant_id}: status={auth_response.status_code}, body={auth_response.text}"
@@ -1741,10 +1758,14 @@ async def register_user(
             detail=auth_response.json() if auth_response.headers.get("content-type", "").startswith("application/json") else auth_response.text,
         )
 
-    auth_user = auth_response.json()
-    user_id = auth_user.get("id")
+    auth_user_payload = auth_response.json()
+    # auth-service responses are wrapped like: {"success": true, "data": {...}}
+    auth_data = auth_user_payload.get("data") if isinstance(auth_user_payload, dict) else None
+    user_id = auth_data.get("id") if isinstance(auth_data, dict) else None
     if not user_id:
-        logger.error(f"Auth-service did not return user id for tenant user {payload.username}: {auth_user}")
+        logger.error(
+            f"Auth-service did not return user id for tenant user {payload.username}: {auth_user_payload}"
+        )
         raise HTTPException(
             status_code=500,
             detail="Authentication service response missing user id for tenant user",

@@ -16,7 +16,7 @@ router = APIRouter(prefix="/auth/roles", tags=["Roles"])
 
 @router.get("/list")
 async def list_roles(
-    _admin: User = Depends(require_any_role("ADMIN", "MODERATOR")),
+    _admin: User = Depends(require_any_role("ADMIN", "MODERATOR", "TENANT ADMIN")),
     svc: RoleService = Depends(get_role_service),
 ):
     roles = await svc.list_roles()
@@ -27,7 +27,7 @@ async def list_roles(
 @router.post("/assign")
 async def assign_role(
     body: RoleAssignRequest,
-    _admin: User = Depends(require_any_role("ADMIN")),
+    _admin: User = Depends(require_any_role("ADMIN", "TENANT ADMIN")),
     svc: RoleService = Depends(get_role_service),
 ):
     await svc.assign_role(body.user_id, body.role_name)
@@ -37,7 +37,7 @@ async def assign_role(
 @router.post("/remove")
 async def remove_role(
     body: RoleAssignRequest,
-    _admin: User = Depends(require_any_role("ADMIN")),
+    _admin: User = Depends(require_any_role("ADMIN","TENANT ADMIN")),
     svc: RoleService = Depends(get_role_service),
 ):
     await svc.remove_role(body.user_id, body.role_name)
@@ -47,7 +47,7 @@ async def remove_role(
 @router.get("/user/{user_id}")
 async def get_user_roles(
     user_id: int,
-    _admin: User = Depends(require_any_role("ADMIN", "MODERATOR")),
+    _admin: User = Depends(require_any_role("ADMIN", "MODERATOR", "TENANT ADMIN")),
     svc: RoleService = Depends(get_role_service),
 ):
     roles = await svc.get_user_roles(user_id)
