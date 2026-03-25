@@ -37,6 +37,7 @@ async def register(
         phone_number=body.phone_number,
         tz=body.timezone,
         language=body.language,
+        tenant_id=body.tenant_id,
         is_tenant=body.is_tenant,
     )
     return success_response(data={
