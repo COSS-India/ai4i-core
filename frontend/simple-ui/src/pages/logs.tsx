@@ -315,6 +315,7 @@ const LogsPage: React.FC = () => {
   }, [isAuthenticated, isAdmin, user, tenantsData, activeTenants, tenantsError]);
 
   // Use static list of all services, filtered to tenant subscriptions for TENANT ADMIN
+  // and for ADMIN when a specific tenant is selected from the tenant dropdown.
   const filteredServices = useMemo(() => {
     let serviceList = [...services];
 
@@ -340,14 +341,38 @@ const LogsPage: React.FC = () => {
       });
     }
 
+    // For ADMIN: when a specific tenant is selected, restrict to that tenant's subscribed services.
+    // When "All Tenants" is selected (selectedTenantId === ""), show all services.
+    if (isAdmin && !isTenantAdmin && selectedTenantId) {
+      const selectedTenant = activeTenants.find((t: any) => t.tenant_id === selectedTenantId);
+      if (selectedTenant?.subscriptions?.length) {
+        const allowedServices = new Set<string>(
+          selectedTenant.subscriptions
+            .map((sub: string) => SUBSCRIPTION_TO_SERVICE_MAP[sub.toLowerCase().trim()] ?? null)
+            .filter(Boolean)
+        );
+
+        serviceList = serviceList.filter((svc) => allowedServices.has(svc));
+
+        console.log('Admin tenant-scoped service filter applied:', {
+          selectedTenantId,
+          rawSubscriptions: selectedTenant.subscriptions,
+          mappedAllowed: Array.from(allowedServices),
+          filteredCount: serviceList.length,
+          filteredServices: serviceList,
+        });
+      }
+    }
+
     const sorted = serviceList.sort();
     console.log('Filtered services for dropdown:', {
       total: sorted.length,
       services: sorted,
       isTenantAdmin,
+      selectedTenantId: selectedTenantId || 'All Tenants',
     });
     return sorted;
-  }, [services, isTenantAdmin, tenantAdminDetail]);
+  }, [services, isTenantAdmin, tenantAdminDetail, isAdmin, selectedTenantId, activeTenants]);
 
   // No longer needed - services are static, no error handling required
 
@@ -1115,6 +1140,9 @@ const LogsPage: React.FC = () => {
                       onChange={(e) => {
                         const value = e.target.value;
                         setSelectedTenantId(value === "" ? "" : value);
+                        // Reset service selection so a previously selected service
+                        // that no longer belongs to the newly selected tenant is cleared.
+                        setService("");
                         // Don't reset pagination here - wait for Search button
                       }}
                       bg="white"
