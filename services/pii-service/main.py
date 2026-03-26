@@ -468,16 +468,13 @@ async def redact_text(
 ):
     claims_tid = getattr(auth, "tenant_id", None) if auth is not None else None
     header_tid = (x_tenant_id or "").strip() or None
-    if not claims_tid:
-        raise HTTPException(
-            403,
-            "Authenticated token is missing tenant_id claim.",
-        )
     if header_tid and header_tid != claims_tid:
-        raise HTTPException(
-            403,
-            "X-Tenant-Id header does not match token tenant_id.",
-        )
+        # Prevent tenant spoofing when token already carries tenant_id.
+        if claims_tid:
+            raise HTTPException(
+                403,
+                "X-Tenant-Id header does not match token tenant_id.",
+            )
     tenant_id = claims_tid
     start = time.time()
     trace_id = str(uuid.uuid4())
@@ -490,6 +487,19 @@ async def redact_text(
         await policy_agent.refresh_policies()
     effective_domain = policy_agent.resolve_domain_for_tenant(tenant_id)
     fallback_message: Optional[str] = None
+    if not tenant_id:
+        effective_domain = "logistics"
+        fallback_message = (
+            "Token has no tenant_id claim. Using 'logistics' as fallback. "
+            "Map/authenticate with tenant context for tenant-specific redaction."
+        )
+        trace_log.append(
+            {
+                "step": "DomainResolution",
+                "status": "Fallback",
+                "details": "Token missing tenant_id. Using 'logistics'.",
+            }
+        )
     if not effective_domain:
         effective_domain = "logistics"
         fallback_message = (
@@ -543,7 +553,7 @@ async def redact_text(
             "processing_time_ms": ms,
             "language": x_language,
             "domain": effective_domain,
-            "tenant_id": tenant_id,
+            "tenant_id": tenant_id or "unknown",
             "message": fallback_message,
         },
     }
