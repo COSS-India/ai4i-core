@@ -81,6 +81,10 @@ ENV PYTHONUNBUFFERED=1
 # This ensures the library files are actually in site-packages, not just linked
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_env || \
     (echo "ERROR: Failed to install ai4icore_env!" && exit 1)
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_exceptions || \
+    (echo "ERROR: Failed to install ai4icore_exceptions!" && exit 1)
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_auth || \
+    (echo "ERROR: Failed to install ai4icore_auth!" && exit 1)
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_telemetry || \
     (echo "ERROR: Failed to install ai4icore_telemetry!" && exit 1)
 
