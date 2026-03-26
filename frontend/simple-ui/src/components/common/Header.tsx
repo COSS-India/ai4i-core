@@ -100,6 +100,9 @@ const Header: React.FC = () => {
       case "/api-key-management":
         setTitle("API Key Management");
         break;
+      case "/pii-management":
+        setTitle("PII Guardrail");
+        break;
       case "/auth":
         setTitle("Sign In");
         break;

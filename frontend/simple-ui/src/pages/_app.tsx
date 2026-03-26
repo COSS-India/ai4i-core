@@ -38,6 +38,7 @@ const layoutRoutes = [
   '/logs',
   '/traces',
   '/alerts-management',
+  '/pii-management',
 ];
 
 export default function App({ Component, pageProps }: AppProps) {

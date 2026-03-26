@@ -81,6 +81,11 @@ export const apiEndpoints = {
     inference: '/api/v1/ner/inference',
     health: '/api/v1/ner/health',
   },
+  pii: {
+    base: '/api/v1/pii',
+    redact: '/api/v1/pii/redact',
+    domains: '/api/v1/pii/domains',
+  },
 } as const;
 
 // Create Axios instance with standard timeout
