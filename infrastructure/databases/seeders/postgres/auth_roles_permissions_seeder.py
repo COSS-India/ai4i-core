@@ -408,7 +408,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
         )
         print("    ✓ Assigned permissions to MODERATOR role (from seed script)")
 
-        # TENANT ADMIN: tenant-scoped management permissions.
+        # TENANT ADMIN: tenant-scoped management permissions + inference access.
         # - Can read users, services, and models
         # - Can create/read/update/delete API keys
         # - Can assign roles (but not remove)
@@ -436,6 +436,20 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'roles.assign',
               'roles.read',
               'pii_guard.admin'
+              'asr.inference',
+              'audio-lang-detection.inference',
+              'language-detection.inference',
+              'language-diarization.inference',
+              'llm.inference',
+              'model-management.inference',
+              'multi-tenant.inference',
+              'ner.inference',
+              'nmt.inference',
+              'ocr.inference',
+              'pipeline.inference',
+              'speaker-diarization.inference',
+              'transliteration.inference',
+              'tts.inference'
             )
             WHERE r.name = 'TENANT ADMIN'
             ON CONFLICT (role_id, permission_id) DO NOTHING;

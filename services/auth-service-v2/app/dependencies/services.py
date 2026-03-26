@@ -5,7 +5,7 @@ Routes use these via Depends() — never construct repos or services directly.
 This is the ONLY place where repositories are imported and wired into services.
 """
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import redis.asyncio as aioredis
@@ -61,9 +61,17 @@ async def get_user_service(
 
 
 async def get_auth_service(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache_service),
 ) -> AuthService:
+    # Optional: TenantService for resolving tenant_id on login
+    tenant_service = None
+    mt_factory = getattr(request.app.state, "multi_tenant_session_factory", None)
+    if mt_factory:
+        from app.services.tenant_service import TenantService
+        tenant_service = TenantService(mt_factory)
+
     return AuthService(
         user_repo=UserRepository(db),
         role_service=RoleService(RoleRepository(db), cache),
@@ -71,6 +79,7 @@ async def get_auth_service(
         password_service=PasswordService(),
         session_service=SessionService(SessionRepository(db), cache),
         cache_service=cache,
+        tenant_service=tenant_service,
     )
 
 

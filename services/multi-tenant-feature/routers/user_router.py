@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
@@ -14,7 +14,7 @@ from services.tenant_service import (
 )
 from logger import logger
 from middleware.auth_provider import AuthProvider
-from middleware.dependencies import require_tenant_admin
+from middleware.dependencies import require_tenant_admin, enforce_tenant_scope
 
 
 router = APIRouter(
@@ -30,12 +30,15 @@ router = APIRouter(
              dependencies=[Depends(require_tenant_admin)]
              )
 async def add_user_subscriptions_endpoint(
+    request: Request,
     payload: UserSubscriptionAddRequest,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
     Add subscriptions to a tenant user.
+    TENANT ADMIN can only modify their own tenant's users.
     """
+    enforce_tenant_scope(request, payload.tenant_id)
     try:
         response = await add_user_subscriptions(
             tenant_id=payload.tenant_id,
@@ -69,12 +72,15 @@ async def add_user_subscriptions_endpoint(
              dependencies=[Depends(require_tenant_admin)]
              )
 async def remove_user_subscriptions_endpoint(
+    request: Request,
     payload: UserSubscriptionRemoveRequest,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
     Remove subscriptions from a tenant user.
+    TENANT ADMIN can only modify their own tenant's users.
     """
+    enforce_tenant_scope(request, payload.tenant_id)
     try:
         response = await remove_user_subscriptions(
             tenant_id=payload.tenant_id,

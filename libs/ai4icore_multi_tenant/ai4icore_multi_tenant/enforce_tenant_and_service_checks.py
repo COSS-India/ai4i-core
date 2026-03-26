@@ -55,11 +55,12 @@ async def enforce_tenant_and_service_checks(
 
     # Determine tenant context in a best-effort way.
     tenant_context = getattr(http_request.state, "tenant_context", None)
-    jwt_payload = getattr(http_request.state, "jwt_payload", None)
-    tenant_id_from_jwt = jwt_payload.get("tenant_id") if jwt_payload else None
 
     tenant_data: Optional[Dict[str, Any]] = tenant_context if tenant_context else None
-    tenant_id = tenant_context.get("tenant_id") if tenant_context else (tenant_id_from_jwt or None)
+    tenant_id = (
+        tenant_context.get("tenant_id") if tenant_context
+        else getattr(http_request.state, "tenant_id", None)
+    )
 
     # If still no tenant info, attempt best-effort resolution (returns None for normal users)
     if not tenant_id:
