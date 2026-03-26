@@ -463,6 +463,13 @@
     pass_host: pass
     type: roundrobin
   plugins:
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+      - |
+        return function(conf, ctx)
+          ngx.req.set_header("X-User-Id", nil)
+        end
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
