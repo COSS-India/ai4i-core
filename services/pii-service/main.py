@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Request, Header, Depends, BackgroundTasks, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 import re
 import hashlib
@@ -27,6 +27,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from ai4icore_exceptions import register_exception_handlers
 
 DB_HOST = os.getenv("DB_HOST", "postgres")
 DB_NAME = os.getenv("DB_NAME", "pii_guardrail")
@@ -52,6 +53,7 @@ trace.set_tracer_provider(provider)
 tracer = trace.get_tracer(__name__)
 
 app = FastAPI()
+register_exception_handlers(app)
 FastAPIInstrumentor.instrument_app(app)
 
 from middleware.auth_provider import AuthProvider
@@ -359,7 +361,7 @@ audit_logger = AuditLogger()
 
 
 class RedactionRequest(BaseModel):
-    text: str
+    text: str = Field(..., max_length=20000)
 
 
 class TenantDomainUpsertRequest(BaseModel):
@@ -438,13 +440,21 @@ async def health():
 
 
 @app.get("/domains")
-async def get_domains():
+async def get_domains(auth=Depends(AuthProvider)):
+    _ = auth
     return await policy_agent.list_domains()
 
 
 @app.get("/policy/{domain}")
-async def get_policy(domain: str):
+async def get_policy(domain: str, auth=Depends(AuthProvider)):
+    _ = auth
     return await policy_agent.get_policy(domain) or {}
+
+
+def require_pii_admin(auth_claims):
+    roles = [str(r).upper() for r in (getattr(auth_claims, "roles", []) or [])]
+    if "ADMIN" not in roles and "TENANT ADMIN" not in roles:
+        raise HTTPException(403, "Admin privileges required.")
 
 
 @app.post("/redact")
@@ -541,7 +551,7 @@ async def redact_text(
 
 @app.get("/admin/all-domains")
 async def get_all_domains(auth=Depends(AuthProvider)):
-    _ = auth
+    require_pii_admin(auth)
     global db_pool
     async with db_pool.acquire() as conn:
         rows = await conn.fetch(
@@ -552,7 +562,7 @@ async def get_all_domains(auth=Depends(AuthProvider)):
 
 @app.post("/admin/deploy")
 async def deploy(req: DeployRequest, auth=Depends(AuthProvider)):
-    _ = auth
+    require_pii_admin(auth)
     global db_pool, redis_client
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow("SELECT policy_json FROM domain_policies WHERE domain_id = $1", req.domain_id)
@@ -568,7 +578,7 @@ async def deploy(req: DeployRequest, auth=Depends(AuthProvider)):
 
 @app.post("/admin/activate-domains")
 async def activate(req: BulkActivateRequest, auth=Depends(AuthProvider)):
-    _ = auth
+    require_pii_admin(auth)
     global db_pool, redis_client
     async with db_pool.acquire() as conn:
         await conn.execute("UPDATE domain_policies SET is_active = FALSE")
@@ -581,7 +591,7 @@ async def activate(req: BulkActivateRequest, auth=Depends(AuthProvider)):
 
 @app.post("/admin/generate-regex")
 async def gen_regex(req: GenerateRegexRequest, auth=Depends(AuthProvider)):
-    _ = auth
+    require_pii_admin(auth)
     base_ip = NER_SERVICE_URL.split(":")[1].replace("//", "")
     llm_url = f"http://{base_ip}:8000/api/query"
     prompt = (
@@ -601,7 +611,7 @@ async def gen_regex(req: GenerateRegexRequest, auth=Depends(AuthProvider)):
 
 @app.post("/admin/domain")
 async def create_domain(req: NewDomainRequest, auth=Depends(AuthProvider)):
-    _ = auth
+    require_pii_admin(auth)
     global db_pool
     async with db_pool.acquire() as conn:
         await conn.execute(
@@ -614,7 +624,7 @@ async def create_domain(req: NewDomainRequest, auth=Depends(AuthProvider)):
 
 @app.get("/admin/tenant-domains")
 async def list_tenant_domain_mappings(auth=Depends(AuthProvider)):
-    _ = auth
+    require_pii_admin(auth)
     global db_pool
     async with db_pool.acquire() as conn:
         rows = await conn.fetch(
@@ -625,7 +635,7 @@ async def list_tenant_domain_mappings(auth=Depends(AuthProvider)):
 
 @app.post("/admin/tenant-domain")
 async def upsert_tenant_domain_mapping(req: TenantDomainUpsertRequest, auth=Depends(AuthProvider)):
-    _ = auth
+    require_pii_admin(auth)
     global db_pool, redis_client
     tid, did = req.tenant_id.strip(), req.domain_id.strip()
     if not tid or not did:
@@ -654,7 +664,7 @@ async def upsert_tenant_domain_mapping(req: TenantDomainUpsertRequest, auth=Depe
 
 @app.post("/admin/tenant-domain/delete")
 async def delete_tenant_domain_mapping(req: TenantDomainDeleteRequest, auth=Depends(AuthProvider)):
-    _ = auth
+    require_pii_admin(auth)
     global db_pool, redis_client
     tid = req.tenant_id.strip()
     if not tid:
@@ -672,7 +682,7 @@ async def list_audit_logs(
     auth=Depends(AuthProvider),
     limit: int = Query(default=50, ge=1, le=500),
 ):
-    _ = auth
+    require_pii_admin(auth)
     global db_pool
     async with db_pool.acquire() as conn:
         rows = await conn.fetch(

@@ -676,6 +676,7 @@ services:
       - path: ./services/pii-service/.env
         required: false
     environment:
+      - AUTH_ENABLED=true
       - DEV_MODE=false
       - DB_HOST=postgres
       - DB_NAME=${POSTGRES_DB}
