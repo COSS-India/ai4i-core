@@ -13,7 +13,21 @@ from typing import Callable, Optional
 from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
-from sqlalchemy import MetaData, create_engine, text
+from sqlalchemy import (
+    MetaData,
+    create_engine,
+    text,
+    Table,
+    Column,
+    Integer,
+    String,
+    Text,
+    Float,
+    Boolean,
+    DateTime,
+    UniqueConstraint,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import declarative_base
 
 # NOTE: app_env must be imported AFTER load_dotenv() below so the singleton
@@ -250,7 +264,86 @@ def _load_ai4i_platform_metadata():
         "ai4i_alembic_dynamic.policy_engine.db_models",
         PROJECT_ROOT / "services" / "policy-engine" / "app" / "db_models.py",
     )
-    return module.Base.metadata
+    # Alembic autogenerate for `ai4i_platform_db` uses the SQLAlchemy metadata
+    # returned here. The PII tables live in a separate Alembic revision
+    # (`create_pii_tables.py`) but were not represented in the policy-engine
+    # metadata, so autogenerate could incorrectly generate a migration that
+    # drops them.
+    #
+    # We include lightweight definitions for PII tables here so autogenerate
+    # sees them as expected and preserves them during fresh runs.
+    metadata: MetaData = module.Base.metadata
+
+    if "pattern_library" not in metadata.tables:
+        Table(
+            "pattern_library",
+            metadata,
+            Column("id", Integer(), primary_key=True, nullable=False),
+            Column("entity_label", String(length=50), nullable=False),
+            Column("lang_code", String(length=10), nullable=False),
+            Column("regex_pattern", Text(), nullable=False),
+            Column("risk_score", Float(), server_default=text("1.0"), nullable=True),
+            Column("is_active", Boolean(), server_default=text("true"), nullable=True),
+            UniqueConstraint("entity_label", "lang_code", name="uq_pattern_entity_lang"),
+        )
+
+    if "geo_library" not in metadata.tables:
+        Table(
+            "geo_library",
+            metadata,
+            Column("id", Integer(), primary_key=True, nullable=False),
+            Column("term_text", String(length=100), nullable=False),
+            Column("lang_code", String(length=10), nullable=False),
+            Column("term_type", String(length=20), nullable=False),
+            Column("is_active", Boolean(), server_default=text("true"), nullable=True),
+        )
+
+    if "keyword_library" not in metadata.tables:
+        Table(
+            "keyword_library",
+            metadata,
+            Column("id", Integer(), primary_key=True, nullable=False),
+            Column("word_text", String(length=100), nullable=False),
+            Column("category", String(length=20), nullable=False),
+            Column("lang_code", String(length=10), nullable=False),
+        )
+
+    if "domain_policies" not in metadata.tables:
+        Table(
+            "domain_policies",
+            metadata,
+            Column("domain_id", String(length=50), primary_key=True, nullable=False),
+            Column("is_active", Boolean(), server_default=text("false"), nullable=True),
+            Column("policy_json", JSONB, nullable=False),
+            Column("created_at", DateTime(), server_default=text("CURRENT_TIMESTAMP"), nullable=True),
+        )
+
+    if "audit_logs" not in metadata.tables:
+        Table(
+            "audit_logs",
+            metadata,
+            Column("id", Integer(), primary_key=True, nullable=False),
+            Column("trace_id", UUID(as_uuid=True), nullable=True),
+            Column("tenant_id", String(length=50), nullable=True),
+            Column("domain_id", String(length=50), nullable=True),
+            Column("target_context", String(length=20), nullable=True),
+            Column("pii_count", Integer(), nullable=True),
+            Column("processing_ms", Integer(), nullable=True),
+            Column("trace_json", JSONB, nullable=True),
+            Column("created_at", DateTime(), server_default=text("CURRENT_TIMESTAMP"), nullable=True),
+        )
+
+    if "tenant_pii_domain_map" not in metadata.tables:
+        Table(
+            "tenant_pii_domain_map",
+            metadata,
+            Column("tenant_id", String(length=255), primary_key=True, nullable=False),
+            Column("domain_id", String(length=50), nullable=False),
+            Column("created_at", DateTime(), server_default=text("CURRENT_TIMESTAMP"), nullable=True),
+            Column("updated_at", DateTime(), server_default=text("CURRENT_TIMESTAMP"), nullable=True),
+        )
+
+    return metadata
 
 
 DATABASE_SPECS = {
@@ -375,9 +468,9 @@ def get_sync_url(name: str) -> str:
 
 
 def get_version_path(name: str) -> Path:
-    # Same migration files as auth_db (shared AUTH_DB_NAME); distinct target for v2-only autogenerate.
+    # Use the dedicated auth-service-v2 migration folder.
     if name == "auth_service_v2_db":
-        return ALEMBIC_DIR / "versions" / "auth_db"
+        return ALEMBIC_DIR / "versions" / "auth_service_v2_db"
     return ALEMBIC_DIR / "versions" / name
 
 
@@ -401,7 +494,18 @@ def supports_autogenerate(name: str) -> bool:
 def ensure_database_exists(name: str) -> None:
     parts = get_connection_parts(name)
     target_database = parts["database"]
-    from ai4icore_env import app_env
+    try:
+        from ai4icore_env import app_env
+    except ModuleNotFoundError:
+        candidate_paths = [
+            PROJECT_ROOT / "libs" / "ai4icore_env",
+            PROJECT_ROOT / "libs",
+        ]
+        for candidate in candidate_paths:
+            candidate_str = str(candidate)
+            if candidate.exists() and candidate_str not in sys.path:
+                sys.path.insert(0, candidate_str)
+        from ai4icore_env import app_env
     ai4i_platform_db = app_env.ai4i_platform_db_name
     maintenance_databases = tuple(db for db in ("postgres", ai4i_platform_db, target_database) if db)
     last_error: Exception | None = None

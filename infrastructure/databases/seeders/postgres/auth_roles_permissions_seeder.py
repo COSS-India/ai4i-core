@@ -169,7 +169,11 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
 
             #Multi-tenant
             ('multi-tenant.read','multi_tenant','read'),
-            ('multi-tenant.inference','multi_tenant','inference')
+            ('multi-tenant.inference','multi_tenant','inference'),
+
+            # PII Guard
+            ('pii_guard.inference', 'pii_guard', 'inference'),
+            ('pii_guard.admin', 'pii_guard', 'admin')
 
         ]
         permission_names = [p[0] for p in permissions]
@@ -267,7 +271,9 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'model.unpublish',
               'roles.assign',
               'roles.remove',
-              'roles.read'
+              'roles.read',
+              'pii_guard.admin',
+              'pii_guard.inference'
             )
             WHERE r.name = 'ADMIN'
             ON CONFLICT (role_id, permission_id) DO NOTHING;
@@ -303,6 +309,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'nmt.inference',
               'ocr.inference',
               'pipeline.inference',
+              'pii_guard.inference',
               'speaker-diarization.inference',
               'transliteration.inference',
               'tts.inference'
@@ -390,6 +397,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'nmt.inference',
               'ocr.inference',
               'pipeline.inference',
+              'pii_guard.inference',
               'speaker-diarization.inference',
               'transliteration.inference',
               'tts.inference'
@@ -427,6 +435,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'apiKey.delete',
               'roles.assign',
               'roles.read',
+              'pii_guard.admin',
               'asr.inference',
               'audio-lang-detection.inference',
               'language-detection.inference',

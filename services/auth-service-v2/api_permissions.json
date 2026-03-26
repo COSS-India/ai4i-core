@@ -448,6 +448,20 @@
       "resource": "multi_tenant",
       "action": "inference",
       "description": "Multi-tenant inference"
+    },
+    {
+      "code": "P_65",
+      "name": "pii_guard.inference",
+      "resource": "pii_guard",
+      "action": "inference",
+      "description": "Redact PII from text"
+    },
+    {
+      "code": "P_66",
+      "name": "pii_guard.admin",
+      "resource": "pii_guard",
+      "action": "admin",
+      "description": "Manage PII policies"
     }
   ],
   "roles": [
@@ -518,7 +532,9 @@
         "P_61",
         "P_62",
         "P_63",
-        "P_64"
+        "P_64",
+        "P_65",
+        "P_66"
       ]
     },
     {
@@ -552,7 +568,8 @@
         "P_29",
         "P_30",
         "P_31",
-        "P_32"
+        "P_32",
+        "P_65"
       ]
     },
     {
@@ -561,7 +578,8 @@
       "permissions": [
         "P_02",
         "P_03",
-        "P_26"
+        "P_26",
+        "P_65"
       ]
     },
     {
@@ -570,7 +588,8 @@
       "permissions": [
         "P_02",
         "P_03",
-        "P_26"
+        "P_26",
+        "P_65"
       ]
     },
     {
@@ -586,7 +605,8 @@
         "P_21",
         "P_22",
         "P_33",
-        "P_35"
+        "P_35",
+        "P_66"
       ]
     }
   ],
@@ -765,6 +785,51 @@
       "endpoint": "GET:/api/v1/services",
       "permissionRequired": "service.read",
       "description": "List services"
+    },
+    {
+      "endpoint": "POST:/redact",
+      "permissionRequired": "pii_guard.inference",
+      "description": "PII redaction inference"
+    },
+    {
+      "endpoint": "GET:/admin/all-domains",
+      "permissionRequired": "pii_guard.admin",
+      "description": "List PII domains"
+    },
+    {
+      "endpoint": "POST:/admin/deploy",
+      "permissionRequired": "pii_guard.admin",
+      "description": "Deploy PII policy"
+    },
+    {
+      "endpoint": "POST:/admin/activate-domains",
+      "permissionRequired": "pii_guard.admin",
+      "description": "Activate PII domains"
+    },
+    {
+      "endpoint": "POST:/admin/domain",
+      "permissionRequired": "pii_guard.admin",
+      "description": "Create PII domain"
+    },
+    {
+      "endpoint": "POST:/admin/generate-regex",
+      "permissionRequired": "pii_guard.admin",
+      "description": "Generate regex for PII policy"
+    },
+    {
+      "endpoint": "GET:/admin/tenant-domains",
+      "permissionRequired": "pii_guard.admin",
+      "description": "List tenant_id to PII domain mappings"
+    },
+    {
+      "endpoint": "POST:/admin/tenant-domain",
+      "permissionRequired": "pii_guard.admin",
+      "description": "Upsert tenant_id to PII domain mapping"
+    },
+    {
+      "endpoint": "POST:/admin/tenant-domain/delete",
+      "permissionRequired": "pii_guard.admin",
+      "description": "Delete tenant_id PII domain mapping"
     }
   ]
 }
