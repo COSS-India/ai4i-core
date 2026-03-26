@@ -77,7 +77,7 @@ ENV PATH=/home/app/.local/bin:$PATH
 ENV PYTHONPATH=/app:/app/libs
 ENV PYTHONUNBUFFERED=1
 
-# Install the library as app user (non-editable, copies files to site-packages)
+# Install all AI4ICore libraries as app user (non-editable, copies files to site-packages)
 # This ensures the library files are actually in site-packages, not just linked
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_env || \
     (echo "ERROR: Failed to install ai4icore_env!" && exit 1)
