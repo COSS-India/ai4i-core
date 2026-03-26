@@ -16,3 +16,4 @@ def _allow_no_token(request: Request) -> bool:
 AuthProvider, OptionalAuthProvider = create_auth_providers(
     allow_anonymous=_allow_no_token,
 )
+

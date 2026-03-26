@@ -20,6 +20,11 @@ class RegisterRequest(BaseSchema):
     phone_number: Optional[str] = Field(None, max_length=20)
     timezone: str = Field(default="UTC", max_length=50)
     language: str = Field(default="en", max_length=10)
+    tenant_id: Optional[str] = Field(
+        None,
+        description="Tenant identifier to cache on user record (set by multi-tenant service).",
+        max_length=100,
+    )
     is_tenant: Optional[bool] = Field(
         None,
         description="True for tenant admin users, False for tenant users, None for non-tenant.",
