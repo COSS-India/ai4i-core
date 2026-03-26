@@ -9,6 +9,15 @@ same shared JWTVerifier that every other microservice uses.
 import logging
 from contextlib import asynccontextmanager
 
+# Disable uvicorn's built-in access logger at module load time.
+# RequestLoggingMiddleware handles request logging — without this,
+# every request produces two log lines (custom format + uvicorn format).
+_uvicorn_access = logging.getLogger("uvicorn.access")
+_uvicorn_access.handlers.clear()
+_uvicorn_access.propagate = False
+_uvicorn_access.disabled = True
+_uvicorn_access.setLevel(logging.CRITICAL + 1)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -32,6 +41,15 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
+    # Re-disable uvicorn.access in each worker process.
+    # Uvicorn re-initialises loggers per worker, so the module-level
+    # suppression above is not enough when running with --workers > 1.
+    _uv = logging.getLogger("uvicorn.access")
+    _uv.handlers.clear()
+    _uv.propagate = False
+    _uv.disabled = True
+    _uv.setLevel(logging.CRITICAL + 1)
+
     logger.info("Starting %s v%s [%s]", settings.service_name, settings.service_version, settings.environment)
 
     # Production safety checks
