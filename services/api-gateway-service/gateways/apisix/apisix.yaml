@@ -51,7 +51,6 @@ routes:
     type: roundrobin
 - uri: /api/v1/alerts/*
   name: alerts-route
-
   priority: 210
   methods:
   - GET
@@ -68,6 +67,21 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,PATCH,OPTIONS
@@ -90,10 +104,10 @@ routes:
         X-Service: alert-management-service
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       rejected_code: 429
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       allow_degradation: false
       count: 200
@@ -114,15 +128,31 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
       headers:
+        X-Correlation-ID: $request_id
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
@@ -131,16 +161,15 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       rejected_code: 429
       allow_degradation: false
 - uri: /api/v1/audio-lang-detection/*
   name: audio-lang-detection-route
-
   priority: 0
   methods:
   - GET
@@ -156,15 +185,31 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
       headers:
+        X-Correlation-ID: $request_id
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
@@ -173,16 +218,211 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+# --- Public auth routes (no forward-auth, IP-based rate limits) ---
+- uri: /api/v1/auth/login
+  name: auth-login-route
+  priority: 20
+  methods:
+  - GET
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Correlation-ID: $request_id
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      key: remote_addr
+      count: 20
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
+- uri: /api/v1/auth/register
+  name: auth-register-route
+  priority: 20
+  methods:
+  - GET
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Correlation-ID: $request_id
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      key: remote_addr
+      count: 10
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
+- uri: /api/v1/auth/refresh
+  name: auth-refresh-route
+  priority: 20
+  methods:
+  - GET
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Correlation-ID: $request_id
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      key: remote_addr
+      count: 30
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
+- uri: /api/v1/auth/validate
+  name: auth-validate-route
+  priority: 20
+  methods:
+  - GET
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Correlation-ID: $request_id
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+- uri: /api/v1/auth/oauth2/*
+  name: auth-oauth2-route
+  priority: 20
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Correlation-ID: $request_id
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      key: remote_addr
+      count: 30
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
+- uri: /api/v1/auth/.well-known/*
+  name: auth-wellknown-route
+  priority: 20
+  methods:
+  - GET
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token
+      allow_credential: true
+# --- Protected auth routes (forward-auth required, catch-all) ---
 - uri: /api/v1/auth/*
   name: auth-route
-
   priority: 0
   methods:
   - GET
@@ -199,16 +439,35 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token
+      expose_headers: X-Auth-Token,X-Correlation-ID
       allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Correlation-ID: $request_id
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
 - uri: /api/v1/config/*
   name: config-route
-
   priority: 0
   methods:
   - GET
@@ -224,12 +483,27 @@ routes:
     nodes:
       config-service${APISIX_UPSTREAM_SUFFIX}:8082: 1
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token
+      expose_headers: X-Auth-Token,X-Correlation-ID
       allow_credential: true
     response-rewrite:
       headers:
@@ -237,11 +511,20 @@ routes:
       body_base64: false
     proxy-rewrite:
       headers:
+        X-Correlation-ID: $request_id
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: header
+      key: X-User-ID
+      count: 200
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
 - uri: /api/v1/feature-flags/*
   name: feature-flags-route
-
   priority: 0
   methods:
   - GET
@@ -266,7 +549,6 @@ routes:
       allow_credential: true
 - uri: /api/v1/language-detection/*
   name: language-detection-route
-
   priority: 0
   methods:
   - GET
@@ -282,15 +564,31 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
       headers:
+        X-Correlation-ID: $request_id
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
@@ -299,16 +597,15 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       rejected_code: 429
       allow_degradation: false
 - uri: /api/v1/language-diarization/*
   name: language-diarization-route
-
   priority: 0
   methods:
   - GET
@@ -328,15 +625,31 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
       headers:
+        X-Correlation-ID: $request_id
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
@@ -345,16 +658,15 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       count: 60
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       rejected_code: 429
       allow_degradation: false
 - uri: /api/v1/llm/*
   name: llm-route
-
   priority: 0
   methods:
   - GET
@@ -370,15 +682,31 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
       headers:
+        X-Correlation-ID: $request_id
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
@@ -387,10 +715,10 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       count: 60
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -416,13 +744,33 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-Anonymous-Session-Id,X-Try-It,sec-ch-ua,sec-ch-ua-mobile,sec-ch-ua-platform,Referer
-      expose_headers: X-Auth-Token
+      expose_headers: X-Auth-Token,X-Correlation-ID
       allow_credential: true
+    proxy-rewrite:
+      headers:
+        X-Correlation-ID: $request_id
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
     response-rewrite:
       body_base64: false
       headers:
@@ -431,16 +779,15 @@ routes:
           X-Service: model-management
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       rejected_code: 429
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       allow_degradation: false
       count: 120
 - uri: /api/v1/multi-tenant/*
   name: multi-tenant-catch-all-route
-
   priority: 200
   methods:
   - GET
@@ -457,18 +804,34 @@ routes:
     nodes:
       multi-tenant-service${APISIX_UPSTREAM_SUFFIX}:8001: 1
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,PATCH,OPTIONS
       max_age: 3600
       allow_credential: true
-      expose_headers: X-Auth-Token
+      expose_headers: X-Auth-Token,X-Correlation-ID
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
     proxy-rewrite:
       regex_uri:
       - ^/api/v1/multi-tenant/(.*)
       - /$1
       headers:
+        X-Correlation-ID: $request_id
         X-Gateway: apisix
         X-Auth-Source: AUTH_TOKEN
       use_real_request_uri_unsafe: false
@@ -478,16 +841,15 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       count: 200
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       rejected_code: 429
       allow_degradation: false
 - uri: /api/v1/ner/*
   name: ner-route
-
   priority: 0
   methods:
   - GET
@@ -503,15 +865,31 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
       headers:
+        X-Correlation-ID: $request_id
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
@@ -520,16 +898,15 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       rejected_code: 429
       allow_degradation: false
 - uri: /api/v1/nmt/*
   name: nmt-route
-
   priority: 0
   methods:
   - GET
@@ -545,10 +922,26 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     # Use headers.add so client Authorization is preserved (required for tenant_id in observability metrics)
     proxy-rewrite:
       headers:
         add:
+          X-Correlation-ID: $request_id
           X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
@@ -560,19 +953,18 @@ routes:
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       rejected_code: 429
       allow_degradation: false
 - uri: /api/v1/observability/*
   name: telemetry-observability-route
-
   priority: 10
   methods:
   - GET
@@ -597,7 +989,6 @@ routes:
       allow_credential: true
 - uri: /api/v1/ocr/*
   name: ocr-route
-
   priority: 0
   methods:
   - GET
@@ -613,15 +1004,31 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
       headers:
+        X-Correlation-ID: $request_id
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
@@ -630,16 +1037,15 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       count: 60
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       rejected_code: 429
       allow_degradation: false
 - uri: /api/v1/pipeline/*
   name: pipeline-route
-
   priority: 0
   methods:
   - GET
@@ -655,15 +1061,31 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
       headers:
+        X-Correlation-ID: $request_id
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
@@ -672,16 +1094,15 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       count: 60
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       rejected_code: 429
       allow_degradation: false
 - uri: /api/v1/registry/*
   name: config-registry-route
-
   priority: 0
   methods:
   - GET
@@ -697,12 +1118,27 @@ routes:
     nodes:
       config-service${APISIX_UPSTREAM_SUFFIX}:8082: 1
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token
+      expose_headers: X-Auth-Token,X-Correlation-ID
       allow_credential: true
     response-rewrite:
       headers:
@@ -710,11 +1146,20 @@ routes:
       body_base64: false
     proxy-rewrite:
       headers:
+        X-Correlation-ID: $request_id
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: header
+      key: X-User-ID
+      count: 200
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
 - uri: /api/v1/speaker-diarization/*
   name: speaker-diarization-route
-
   priority: 0
   methods:
   - GET
@@ -730,15 +1175,31 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
       headers:
+        X-Correlation-ID: $request_id
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
@@ -747,16 +1208,15 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       count: 60
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       rejected_code: 429
       allow_degradation: false
 - uri: /api/v1/telemetry/*
   name: telemetry-ingestion-route
-
   priority: 0
   methods:
   - GET
@@ -781,7 +1241,6 @@ routes:
       allow_credential: true
 - uri: /api/v1/transliteration/*
   name: transliteration-route
-
   priority: 0
   methods:
   - GET
@@ -797,15 +1256,31 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
       headers:
+        X-Correlation-ID: $request_id
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
@@ -814,16 +1289,15 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       rejected_code: 429
       allow_degradation: false
 - uri: /api/v1/try-it*
   name: api-gateway-try-it-route
-
   priority: 80
   methods:
   - POST
@@ -876,7 +1350,6 @@ routes:
       time_window: 3600
 - uri: /api/v1/tts/*
   name: tts-route
-
   priority: 0
   methods:
   - GET
@@ -892,15 +1365,31 @@ routes:
     pass_host: pass
     type: roundrobin
   plugins:
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
       headers:
+        X-Correlation-ID: $request_id
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
@@ -909,16 +1398,15 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: var
+      key_type: header
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: X-User-ID
       time_window: 60
       rejected_code: 429
       allow_degradation: false
 - uri: /alerts-management
   name: frontend-alerts-management
-
   priority: 3
   methods:
   - GET
@@ -931,7 +1419,6 @@ routes:
     type: roundrobin
 - uri: /alerts-management/*
   name: frontend-alerts-management-prefix
-
   priority: 3
   methods:
   - GET
@@ -944,7 +1431,6 @@ routes:
     type: roundrobin
 - uri: /asr
   name: frontend-asr
-
   priority: 3
   methods:
   - GET
@@ -957,7 +1443,6 @@ routes:
     type: roundrobin
 - uri: /audio-lang-detection
   name: frontend-audio-lang-detection
-
   priority: 3
   methods:
   - GET
@@ -970,7 +1455,6 @@ routes:
     type: roundrobin
 - uri: /audio-language-detection
   name: frontend-audio-language-detection
-
   priority: 3
   methods:
   - GET
@@ -983,7 +1467,6 @@ routes:
     type: roundrobin
 - uri: /audio-language-detection/*
   name: frontend-audio-language-detection-prefix
-
   priority: 3
   methods:
   - GET
@@ -996,7 +1479,6 @@ routes:
     type: roundrobin
 - uri: /auth
   name: frontend-auth
-
   priority: 3
   methods:
   - GET
@@ -1009,7 +1491,6 @@ routes:
     type: roundrobin
 - uri: /auth/callback
   name: auth-callback-route
-
   priority: 10
   methods:
   - GET
@@ -1031,7 +1512,6 @@ routes:
       allow_credential: true
 - uri: /dashboard/*
   name: dashboard-route
-
   priority: 0
   methods:
   - GET
@@ -1061,7 +1541,6 @@ routes:
       use_real_request_uri_unsafe: false
 - uri: /docs*
   name: docs-manager-docs-route
-
   priority: 90
   methods:
   - GET
@@ -1099,7 +1578,6 @@ routes:
     type: roundrobin
 - uri: /feature-flags*
   name: unleash-route
-
   priority: 0
   methods:
   - GET
@@ -1142,7 +1620,6 @@ routes:
       allow_degradation: false
 - uri: /grafana/*
   name: grafana-route
-
   priority: 0
   methods:
   - GET
@@ -1188,7 +1665,6 @@ routes:
     type: roundrobin
 - uri: /jaeger*
   name: jaeger-route
-
   priority: 0
   methods:
   - GET
@@ -1230,7 +1706,6 @@ routes:
       allow_degradation: false
 - uri: /language-detection
   name: frontend-language-detection
-
   priority: 3
   methods:
   - GET
@@ -1243,7 +1718,6 @@ routes:
     type: roundrobin
 - uri: /language-diarization
   name: frontend-language-diarization
-
   priority: 3
   methods:
   - GET
@@ -1256,7 +1730,6 @@ routes:
     type: roundrobin
 - uri: /llm
   name: frontend-llm
-
   priority: 3
   methods:
   - GET
@@ -1269,7 +1742,6 @@ routes:
     type: roundrobin
 - uri: /logs
   name: frontend-logs
-
   priority: 3
   methods:
   - GET
@@ -1282,7 +1754,6 @@ routes:
     type: roundrobin
 - uri: /model-management
   name: frontend-model-management
-
   priority: 3
   methods:
   - GET
@@ -1295,7 +1766,6 @@ routes:
     type: roundrobin
 - uri: /ner
   name: frontend-ner
-
   priority: 3
   methods:
   - GET
@@ -1308,7 +1778,6 @@ routes:
     type: roundrobin
 - uri: /nmt
   name: frontend-nmt
-
   priority: 3
   methods:
   - GET
@@ -1321,7 +1790,6 @@ routes:
     type: roundrobin
 - uri: /ocr
   name: frontend-ocr
-
   priority: 3
   methods:
   - GET
@@ -1334,7 +1802,6 @@ routes:
     type: roundrobin
 - uri: /openapi.json
   name: docs-manager-openapi-route
-
   priority: 100
   methods:
   - GET
@@ -1356,7 +1823,6 @@ routes:
       allow_credential: true
 - uri: /opensearch*
   name: opensearch-dashboards-route
-
   priority: 0
   methods:
   - GET
@@ -1398,7 +1864,6 @@ routes:
       allow_degradation: false
 - uri: /pipeline
   name: frontend-pipeline
-
   priority: 3
   methods:
   - GET
@@ -1411,7 +1876,6 @@ routes:
     type: roundrobin
 - uri: /profile
   name: frontend-profile
-
   priority: 3
   methods:
   - GET
@@ -1424,7 +1888,6 @@ routes:
     type: roundrobin
 - uri: /prometheus
   name: prometheus-redirect
-
   priority: 100
   methods:
   - GET
@@ -1436,7 +1899,6 @@ routes:
       append_query_string: false
 - uri: /prometheus/
   name: prometheus-redirect-slash
-
   priority: 100
   methods:
   - GET
@@ -1448,7 +1910,6 @@ routes:
       append_query_string: false
 - uri: /prometheus/*
   name: prometheus-proxy
-
   priority: 10
   methods:
   - GET
@@ -1487,7 +1948,6 @@ routes:
       count: 200
 - uri: /prometheus/query
   name: prometheus-query-page
-
   priority: 50
   methods:
   - GET
@@ -1504,7 +1964,6 @@ routes:
       use_real_request_uri_unsafe: false
 - uri: /prometheus/query/*
   name: prometheus-query-assets
-
   priority: 45
   methods:
   - GET
@@ -1524,7 +1983,6 @@ routes:
       use_real_request_uri_unsafe: false
 - uri: /services-management
   name: frontend-services-management
-
   priority: 3
   methods:
   - GET
@@ -1537,7 +1995,6 @@ routes:
     type: roundrobin
 - uri: /speaker-diarization
   name: frontend-speaker-diarization
-
   priority: 3
   methods:
   - GET
@@ -1550,7 +2007,6 @@ routes:
     type: roundrobin
 - uri: /traces
   name: frontend-traces
-
   priority: 3
   methods:
   - GET
@@ -1563,7 +2019,6 @@ routes:
     type: roundrobin
 - uri: /transliteration
   name: frontend-transliteration
-
   priority: 3
   methods:
   - GET
@@ -1576,7 +2031,6 @@ routes:
     type: roundrobin
 - uri: /tts
   name: frontend-tts
-
   priority: 3
   methods:
   - GET
