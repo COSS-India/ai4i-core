@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import os
 import sys
@@ -12,7 +13,21 @@ from typing import Callable, Optional
 from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
-from sqlalchemy import MetaData, create_engine, text
+from sqlalchemy import (
+    MetaData,
+    create_engine,
+    text,
+    Table,
+    Column,
+    Integer,
+    String,
+    Text,
+    Float,
+    Boolean,
+    DateTime,
+    UniqueConstraint,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import declarative_base
 
 # NOTE: app_env must be imported AFTER load_dotenv() below so the singleton
@@ -51,7 +66,7 @@ class DatabaseSpec:
 
 DATABASE_ORDER = [
     "alerting_db",
-    "auth_db",
+    "auth_service_v2_db",
     "config_db",
     "dashboard_db",
     "ai4i_platform_db",
@@ -118,12 +133,10 @@ def _ensure_package(name: str) -> None:
 
 
 def _load_auth_metadata():
-    module = _load_module(
-        "ai4i_alembic_dynamic.auth_models",
-        PROJECT_ROOT / "services" / "auth-service" / "models.py",
-    )
+    # Start from auth-service-v2 core metadata (users/sessions/roles/api keys/oauth)
+    module_metadata = _load_auth_service_v2_metadata()
     combined_metadata = MetaData()
-    for table in module.Base.metadata.tables.values():
+    for table in module_metadata.tables.values():
         table.to_metadata(combined_metadata)
 
     service_model_files = [
@@ -149,6 +162,10 @@ def _load_auth_metadata():
             "transliteration",
             PROJECT_ROOT / "services" / "transliteration-service" / "models" / "database_models.py",
         ),
+        (
+            "audio_lang_detection",
+            PROJECT_ROOT / "services" / "audio-lang-detection-service" / "models" / "database_models.py",
+        ),
     ]
 
     replacements = [
@@ -166,6 +183,21 @@ def _load_auth_metadata():
             table.to_metadata(combined_metadata)
 
     return combined_metadata
+
+
+def _load_auth_service_v2_metadata():
+    """Load auth-service-v2 ORM metadata (users/sessions/roles/api keys/oauth)."""
+    auth_v2_root = PROJECT_ROOT / "services" / "auth-service-v2"
+    v2_path = str(auth_v2_root)
+    if v2_path not in sys.path:
+        sys.path.insert(0, v2_path)
+    # Ensure we import auth-service-v2's `app.models` package, not another service's `app`.
+    for module_name in list(sys.modules.keys()):
+        if module_name == "app" or module_name.startswith("app."):
+            sys.modules.pop(module_name, None)
+
+    module = importlib.import_module("app.models")
+    return module.Base.metadata
 
 
 def _load_config_metadata():
@@ -236,7 +268,86 @@ def _load_ai4i_platform_metadata():
         "ai4i_alembic_dynamic.policy_engine.db_models",
         PROJECT_ROOT / "services" / "policy-engine" / "app" / "db_models.py",
     )
-    return module.Base.metadata
+    # Alembic autogenerate for `ai4i_platform_db` uses the SQLAlchemy metadata
+    # returned here. The PII tables live in a separate Alembic revision
+    # (`create_pii_tables.py`) but were not represented in the policy-engine
+    # metadata, so autogenerate could incorrectly generate a migration that
+    # drops them.
+    #
+    # We include lightweight definitions for PII tables here so autogenerate
+    # sees them as expected and preserves them during fresh runs.
+    metadata: MetaData = module.Base.metadata
+
+    if "pattern_library" not in metadata.tables:
+        Table(
+            "pattern_library",
+            metadata,
+            Column("id", Integer(), primary_key=True, nullable=False),
+            Column("entity_label", String(length=50), nullable=False),
+            Column("lang_code", String(length=10), nullable=False),
+            Column("regex_pattern", Text(), nullable=False),
+            Column("risk_score", Float(), server_default=text("1.0"), nullable=True),
+            Column("is_active", Boolean(), server_default=text("true"), nullable=True),
+            UniqueConstraint("entity_label", "lang_code", name="uq_pattern_entity_lang"),
+        )
+
+    if "geo_library" not in metadata.tables:
+        Table(
+            "geo_library",
+            metadata,
+            Column("id", Integer(), primary_key=True, nullable=False),
+            Column("term_text", String(length=100), nullable=False),
+            Column("lang_code", String(length=10), nullable=False),
+            Column("term_type", String(length=20), nullable=False),
+            Column("is_active", Boolean(), server_default=text("true"), nullable=True),
+        )
+
+    if "keyword_library" not in metadata.tables:
+        Table(
+            "keyword_library",
+            metadata,
+            Column("id", Integer(), primary_key=True, nullable=False),
+            Column("word_text", String(length=100), nullable=False),
+            Column("category", String(length=20), nullable=False),
+            Column("lang_code", String(length=10), nullable=False),
+        )
+
+    if "domain_policies" not in metadata.tables:
+        Table(
+            "domain_policies",
+            metadata,
+            Column("domain_id", String(length=50), primary_key=True, nullable=False),
+            Column("is_active", Boolean(), server_default=text("false"), nullable=True),
+            Column("policy_json", JSONB, nullable=False),
+            Column("created_at", DateTime(), server_default=text("CURRENT_TIMESTAMP"), nullable=True),
+        )
+
+    if "audit_logs" not in metadata.tables:
+        Table(
+            "audit_logs",
+            metadata,
+            Column("id", Integer(), primary_key=True, nullable=False),
+            Column("trace_id", UUID(as_uuid=True), nullable=True),
+            Column("tenant_id", String(length=50), nullable=True),
+            Column("domain_id", String(length=50), nullable=True),
+            Column("target_context", String(length=20), nullable=True),
+            Column("pii_count", Integer(), nullable=True),
+            Column("processing_ms", Integer(), nullable=True),
+            Column("trace_json", JSONB, nullable=True),
+            Column("created_at", DateTime(), server_default=text("CURRENT_TIMESTAMP"), nullable=True),
+        )
+
+    if "tenant_pii_domain_map" not in metadata.tables:
+        Table(
+            "tenant_pii_domain_map",
+            metadata,
+            Column("tenant_id", String(length=255), primary_key=True, nullable=False),
+            Column("domain_id", String(length=50), nullable=False),
+            Column("created_at", DateTime(), server_default=text("CURRENT_TIMESTAMP"), nullable=True),
+            Column("updated_at", DateTime(), server_default=text("CURRENT_TIMESTAMP"), nullable=True),
+        )
+
+    return metadata
 
 
 DATABASE_SPECS = {
@@ -249,8 +360,8 @@ DATABASE_SPECS = {
         database_name_key="ALERTING_DB_NAME",
         metadata_loader=_load_alerting_metadata,
     ),
-    "auth_db": DatabaseSpec(
-        name="auth_db",
+    "auth_service_v2_db": DatabaseSpec(
+        name="auth_service_v2_db",
         user_key="AUTH_DB_USER",
         password_key="AUTH_DB_PASSWORD",
         host_key="AUTH_DB_HOST",
@@ -361,6 +472,9 @@ def get_sync_url(name: str) -> str:
 
 
 def get_version_path(name: str) -> Path:
+    # Use the dedicated auth-service-v2 migration folder.
+    if name == "auth_service_v2_db":
+        return ALEMBIC_DIR / "versions" / "auth_service_v2_db"
     return ALEMBIC_DIR / "versions" / name
 
 
@@ -384,7 +498,18 @@ def supports_autogenerate(name: str) -> bool:
 def ensure_database_exists(name: str) -> None:
     parts = get_connection_parts(name)
     target_database = parts["database"]
-    from ai4icore_env import app_env
+    try:
+        from ai4icore_env import app_env
+    except ModuleNotFoundError:
+        candidate_paths = [
+            PROJECT_ROOT / "libs" / "ai4icore_env",
+            PROJECT_ROOT / "libs",
+        ]
+        for candidate in candidate_paths:
+            candidate_str = str(candidate)
+            if candidate.exists() and candidate_str not in sys.path:
+                sys.path.insert(0, candidate_str)
+        from ai4icore_env import app_env
     ai4i_platform_db = app_env.ai4i_platform_db_name
     maintenance_databases = tuple(db for db in ("postgres", ai4i_platform_db, target_database) if db)
     last_error: Exception | None = None

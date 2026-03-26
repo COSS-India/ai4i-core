@@ -1,22 +1,38 @@
-from .headers import get_api_key_from_header, hash_api_key
-from .jwt_handler import JWTHandler
-from .api_key_validator import (
-    validate_api_key_via_auth_service,
-    validate_api_key_local,
+"""
+ai4icore_auth — Shared authentication & authorization library for AI4I-Core.
+
+RS256 JWKS-based JWT verification, permission checking, auth middleware,
+endpoint guard, and FastAPI dependencies.
+Used by ALL microservices as the single source of truth for auth.
+"""
+
+from .jwt_verifier import (
+    AuthClaims,
+    JWTVerifier,
+    JWTVerificationError,
+    JWTExpiredError,
+    JWTRevokedError,
 )
-from .provider import (
-    create_auth_provider,
-    create_optional_auth_provider,
-    make_action_determiner,
+from .permission_checker import PermissionChecker
+from .middleware import AuthMiddleware
+from .dependencies import (
+    create_require_auth,
+    create_require_role,
 )
+from .endpoint_guard import create_endpoint_guard
+from .providers import create_auth_providers, build_jwt_verifier
 
 __all__ = [
-    "get_api_key_from_header",
-    "hash_api_key",
-    "JWTHandler",
-    "validate_api_key_via_auth_service",
-    "validate_api_key_local",
-    "create_auth_provider",
-    "create_optional_auth_provider",
-    "make_action_determiner",
+    "AuthClaims",
+    "JWTVerifier",
+    "JWTVerificationError",
+    "JWTExpiredError",
+    "JWTRevokedError",
+    "PermissionChecker",
+    "AuthMiddleware",
+    "create_require_auth",
+    "create_require_role",
+    "create_endpoint_guard",
+    "create_auth_providers",
+    "build_jwt_verifier",
 ]

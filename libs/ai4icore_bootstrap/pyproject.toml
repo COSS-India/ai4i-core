@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai4icore-bootstrap"
+version = "1.0.0"
+description = "Single-call service bootstrap for AI4I-Core microservices"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "sqlalchemy[asyncio]>=2.0.0",
+    "redis>=5.0.0",
+    "slowapi>=0.1.9",
+    "pydantic>=2.5.0",
+    "ai4icore-exceptions",
+    "ai4icore-logging",
+    "ai4icore-auth",
+    "ai4icore-env",
+]
+
+[project.optional-dependencies]
+telemetry = ["ai4icore-telemetry"]
+observability = ["ai4icore-observability"]
+full = ["ai4icore-telemetry", "ai4icore-observability"]
+
+[tool.setuptools.packages.find]
+include = ["ai4icore_bootstrap*"]

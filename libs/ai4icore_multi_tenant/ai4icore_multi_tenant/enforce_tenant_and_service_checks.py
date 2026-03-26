@@ -55,11 +55,12 @@ async def enforce_tenant_and_service_checks(
 
     # Determine tenant context in a best-effort way.
     tenant_context = getattr(http_request.state, "tenant_context", None)
-    jwt_payload = getattr(http_request.state, "jwt_payload", None)
-    tenant_id_from_jwt = jwt_payload.get("tenant_id") if jwt_payload else None
 
     tenant_data: Optional[Dict[str, Any]] = tenant_context if tenant_context else None
-    tenant_id = tenant_context.get("tenant_id") if tenant_context else (tenant_id_from_jwt or None)
+    tenant_id = (
+        tenant_context.get("tenant_id") if tenant_context
+        else getattr(http_request.state, "tenant_id", None)
+    )
 
     # If still no tenant info, attempt best-effort resolution (returns None for normal users)
     if not tenant_id:
@@ -79,7 +80,7 @@ async def enforce_tenant_and_service_checks(
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(
-                    f"{_api_gateway_url}/api/v1/multi-tenant/admin/view/tenant",
+                    f"{_api_gateway_url}/api/v1/multi-tenant/internal/view/tenant",
                     params={"tenant_id": tenant_id},
                     headers=headers,
                 )
@@ -126,8 +127,8 @@ async def enforce_tenant_and_service_checks(
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             svc_resp = await client.get(
-                f"{_api_gateway_url}/api/v1/multi-tenant/list/services",
-                headers=service_check_headers if service_check_headers else None,
+                f"{_api_gateway_url}/api/v1/multi-tenant/internal/list/services",
+                headers=headers,
             )
             if svc_resp.status_code == 200:
                 services = svc_resp.json().get("services", [])
@@ -178,7 +179,7 @@ async def enforce_tenant_and_service_checks(
             if not tenant_data:
                 async with httpx.AsyncClient(timeout=5.0) as client:
                     resp = await client.get(
-                        f"{_api_gateway_url}/api/v1/multi-tenant/admin/view/tenant",
+                        f"{_api_gateway_url}/api/v1/multi-tenant/internal/view/tenant",
                         params={"tenant_id": tenant_id},
                         headers=headers,
                     )

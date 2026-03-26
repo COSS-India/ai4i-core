@@ -41,6 +41,7 @@ from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from middleware.error_handler_middleware import add_error_handlers
+from ai4icore_exceptions import register_exception_handlers
 from ai4icore_constants.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
 
@@ -520,6 +521,7 @@ try:
     health_router = health_router_module.health_router
     
     # Register error handlers (AFTER middleware, BEFORE routes - matches NMT/TTS pattern)
+    register_exception_handlers(app)
     add_error_handlers(app)
     
     app.include_router(inference_router)

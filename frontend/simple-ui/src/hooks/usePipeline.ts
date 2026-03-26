@@ -853,6 +853,22 @@ export const usePipeline = () => {
     setPendingAudio(null);
   }, [executePipeline, pendingAudio, toast]);
 
+  /**
+   * Clear the uploaded/recorded input (and any pipeline output).
+   * Used for "delete/clear" UX next to the preview.
+   */
+  const clearInput = useCallback(() => {
+    if (pipelineAudioUrlRef.current) {
+      URL.revokeObjectURL(pipelineAudioUrlRef.current);
+      pipelineAudioUrlRef.current = null;
+    }
+
+    setPendingAudio(null);
+    setAudioBlob(null);
+    setResult(null);
+    setTimer(0);
+  }, []);
+
   return {
     isLoading,
     result,
@@ -860,6 +876,7 @@ export const usePipeline = () => {
     audioBlob,
     timer,
     pendingAudio,
+    clearInput,
     startRecording,
     stopRecording,
     executePipeline,

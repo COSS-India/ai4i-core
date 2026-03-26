@@ -143,7 +143,7 @@ export default function ApiKeyManagementTab({
                     <option value="all">All Permissions</option>
                     {(mgmt.allUniquePermissions.length > 0
                       ? mgmt.allUniquePermissions
-                      : mgmt.permissions
+                      : mgmt.permissions.map((p) => p.name)
                     ).map((perm) => (
                       <option key={perm} value={perm}>
                         {perm}
@@ -459,8 +459,8 @@ export default function ApiKeyManagementTab({
                     >
                       <SimpleGrid columns={2} spacing={3}>
                         {mgmt.permissions.map((perm) => (
-                          <Checkbox key={perm} value={perm} colorScheme="blue">
-                            <Text fontSize="sm">{perm}</Text>
+                          <Checkbox key={perm.name} value={perm.name} colorScheme="blue">
+                            <Text fontSize="sm">{perm.name}</Text>
                           </Checkbox>
                         ))}
                       </SimpleGrid>

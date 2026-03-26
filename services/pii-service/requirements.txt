@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+asyncpg
+requests
+httpx
+redis
+aiokafka
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation-fastapi
+opentelemetry-exporter-otlp
+python-dotenv

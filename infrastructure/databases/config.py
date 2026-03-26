@@ -3,8 +3,23 @@ Migration Configuration
 Database connection configurations for all databases
 """
 from typing import Dict, Any
+from pathlib import Path
+import sys
 
-from ai4icore_env import app_env
+try:
+    from ai4icore_env import app_env
+except ModuleNotFoundError:
+    # Fallback for local dev environments where the shared lib is not installed.
+    project_root = Path(__file__).resolve().parents[2]
+    candidate_paths = [
+        project_root / "libs" / "ai4icore_env",
+        project_root / "libs",
+    ]
+    for candidate in candidate_paths:
+        candidate_str = str(candidate)
+        if candidate.exists() and candidate_str not in sys.path:
+            sys.path.insert(0, candidate_str)
+    from ai4icore_env import app_env
 
 
 class MigrationConfig:

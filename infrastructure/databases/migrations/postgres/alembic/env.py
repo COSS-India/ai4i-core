@@ -87,16 +87,44 @@ def process_revision_directives(migration_context, revision, directives) -> None
 
 
 def include_object(object_, name, type_, reflected, compare_to) -> bool:
-    """Skip reflected-only objects when a database has no registered model metadata."""
-    if is_autogenerate and not has_model_metadata and reflected and compare_to is None:
-        return False
+    """Skip reflected objects that are not part of the target metadata.
+
+    This prevents autogenerate from emitting DROP TABLE for tables that
+    exist in the database but belong to a different service/migration scope.
+    """
+    if is_autogenerate and reflected and compare_to is None:
+        # No model metadata at all – skip everything reflected.
+        if not has_model_metadata:
+            return False
+        # Has model metadata – only include tables/indexes/constraints
+        # that are actually declared in the target metadata.
+        if type_ == "table":
+            return name in target_metadata.tables
+        # For non-table objects (indexes, constraints, etc.) on tables
+        # outside our metadata, skip them as well.
+        table_name = getattr(object_, "table", None)
+        if table_name is not None:
+            table_name = getattr(table_name, "name", table_name)
+            return table_name in target_metadata.tables
     return True
 
 
 def render_item(type_, obj, autogen_context):
     """Render custom type decorators as their underlying SQLAlchemy impl."""
     if type_ == "type" and isinstance(obj, TypeDecorator):
-        return autogen_context.impl.render_type(obj.impl, autogen_context)
+        impl = getattr(obj, "impl", None)
+        if impl is None:
+            return False
+        # Alembic compatibility: some versions expose renderer on
+        # autogen_context.migration_context.impl, not autogen_context.impl.
+        migration_context = getattr(autogen_context, "migration_context", None)
+        context_impl = getattr(migration_context, "impl", None)
+        if context_impl is not None and hasattr(context_impl, "render_type"):
+            try:
+                return context_impl.render_type(impl, autogen_context)
+            except Exception:
+                return False
+        return False
     return False
 
 
