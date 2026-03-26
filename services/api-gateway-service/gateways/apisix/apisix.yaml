@@ -96,8 +96,9 @@
       - ^/api/v1/alerts/(.*)
       - /alerts/$1
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
       body_base64: false
@@ -161,8 +162,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
       headers:
@@ -225,8 +227,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
       headers:
@@ -266,8 +269,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     limit-count:
       policy: local
@@ -302,8 +306,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     limit-count:
       policy: local
@@ -338,8 +343,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     limit-count:
       policy: local
@@ -374,8 +380,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
 - uri: /api/v1/auth/oauth2/*
   name: auth-oauth2-route
@@ -403,8 +410,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     limit-count:
       policy: local
@@ -479,8 +487,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
 - uri: /api/v1/config/*
   name: config-route
@@ -534,8 +543,9 @@
       body_base64: false
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     limit-count:
       policy: local
@@ -618,8 +628,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
       headers:
@@ -686,8 +697,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
       headers:
@@ -750,8 +762,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
       headers:
@@ -819,8 +832,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
       body_base64: false
@@ -889,9 +903,11 @@
       - ^/api/v1/multi-tenant/(.*)
       - /$1
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
-        X-Auth-Source: AUTH_TOKEN
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+        set:
+          X-Auth-Source: AUTH_TOKEN
       use_real_request_uri_unsafe: false
     response-rewrite:
       headers:
@@ -954,8 +970,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
       headers:
@@ -1107,8 +1124,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
       headers:
@@ -1171,8 +1189,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
       headers:
@@ -1284,8 +1303,9 @@
       body_base64: false
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     limit-count:
       policy: local
@@ -1344,8 +1364,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
       headers:
@@ -1432,8 +1453,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
       headers:
@@ -1548,8 +1570,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Correlation-ID: $request_id
-        X-Gateway: apisix
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
       use_real_request_uri_unsafe: false
     response-rewrite:
       headers:
