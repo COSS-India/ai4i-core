@@ -447,6 +447,7 @@ services:
       - "8084:8084"
     environment:
       - ENV_FILE=.env
+      - PYTHONPATH=/app:/app/libs/ai4icore_env:/app/libs/ai4icore_telemetry:/app/libs/ai4icore_auth:/app/libs/ai4icore_exceptions:/home/app/.local/lib/python3.11/site-packages
     env_file:
       - ./services/telemetry-service/.env
     volumes:
