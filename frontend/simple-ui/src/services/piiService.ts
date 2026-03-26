@@ -63,4 +63,19 @@ export const piiService = {
     api.post(`${BASE_URL}/admin/tenant-domain/delete`, {
       tenant_id: tenantId,
     }),
+
+  getAuditLogs: (limit = 50) =>
+    api.get<
+      {
+        id: number;
+        trace_id: string;
+        tenant_id: string;
+        domain_id: string;
+        target_context: string;
+        pii_count: number;
+        processing_ms: number;
+        trace_json: unknown;
+        created_at: string;
+      }[]
+    >(`${BASE_URL}/admin/audit-logs`, { params: { limit } }),
 };

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request, Header, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request, Header, Depends, BackgroundTasks, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
@@ -360,7 +360,6 @@ audit_logger = AuditLogger()
 
 class RedactionRequest(BaseModel):
     text: str
-    domain: Optional[str] = None
 
 
 class TenantDomainUpsertRequest(BaseModel):
@@ -458,9 +457,18 @@ async def redact_text(
     x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-Id"),
 ):
     claims_tid = getattr(auth, "tenant_id", None) if auth is not None else None
-    sub_fallback = getattr(auth, "sub", None) if auth is not None else None
     header_tid = (x_tenant_id or "").strip() or None
-    tenant_id = header_tid or claims_tid or sub_fallback or "system"
+    if not claims_tid:
+        raise HTTPException(
+            403,
+            "Authenticated token is missing tenant_id claim.",
+        )
+    if header_tid and header_tid != claims_tid:
+        raise HTTPException(
+            403,
+            "X-Tenant-Id header does not match token tenant_id.",
+        )
+    tenant_id = claims_tid
     start = time.time()
     trace_id = str(uuid.uuid4())
     trace_log = [{"step": "Request", "status": "Success", "details": f"Target: {x_target}, Lang: {x_language}"}]
@@ -468,15 +476,22 @@ async def redact_text(
     if not KB.connected:
         await KB.refresh()
 
-    effective_domain = (request.domain or "").strip() or None
+    if not policy_agent.connected:
+        await policy_agent.refresh_policies()
+    effective_domain = policy_agent.resolve_domain_for_tenant(tenant_id)
+    fallback_message: Optional[str] = None
     if not effective_domain:
-        if not policy_agent.connected:
-            await policy_agent.refresh_policies()
-        effective_domain = policy_agent.resolve_domain_for_tenant(header_tid or claims_tid)
-    if not effective_domain:
-        raise HTTPException(
-            400,
-            "Provide 'domain' in the JSON body, or set X-Tenant-Id / JWT tenant_id with a row in tenant_pii_domain_map.",
+        effective_domain = "logistics"
+        fallback_message = (
+            "No domain is mapped to this tenant. Using 'logistics' as fallback because it is comprehensive. "
+            "Map the tenant to the appropriate domain for specific redaction behavior."
+        )
+        trace_log.append(
+            {
+                "step": "DomainResolution",
+                "status": "Fallback",
+                "details": f"Tenant '{tenant_id}' has no mapped domain. Using 'logistics'.",
+            }
         )
 
     policy = await policy_agent.get_policy(effective_domain)
@@ -519,6 +534,7 @@ async def redact_text(
             "language": x_language,
             "domain": effective_domain,
             "tenant_id": tenant_id,
+            "message": fallback_message,
         },
     }
 
@@ -649,3 +665,23 @@ async def delete_tenant_domain_mapping(req: TenantDomainDeleteRequest, auth=Depe
         await redis_client.publish("policy_updates", "tenant_map")
     await policy_agent.refresh_policies()
     return {"status": "success"}
+
+
+@app.get("/admin/audit-logs")
+async def list_audit_logs(
+    auth=Depends(AuthProvider),
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    _ = auth
+    global db_pool
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, trace_id, tenant_id, domain_id, target_context, pii_count, processing_ms, trace_json, created_at
+            FROM audit_logs
+            ORDER BY created_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+        return [dict(row) for row in rows]

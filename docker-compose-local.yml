@@ -791,7 +791,7 @@ services:
       - path: ./services/pii-service/.env
         required: false
     environment:
-      - AUTH_ENABLED=false
+      - AUTH_ENABLED=true
       - DEV_MODE=true
       - DB_HOST=postgres
       - DB_NAME=${POSTGRES_DB}
@@ -804,7 +804,7 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
       - NER_SERVICE_URL=${EXTERNAL_GPU_NER_URL}
       - AUTH_SERVICE_URL=${AUTH_SERVICE_URL}
-      - JWKS_URL=${JWKS_URL}
+      - JWKS_URL=http://auth-service:8081/api/v1/auth/.well-known/jwks.json
     depends_on:
       postgres:
         condition: service_healthy
