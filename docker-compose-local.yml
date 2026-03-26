@@ -779,6 +779,45 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  pii-guard-service:
+    build:
+      context: .
+      dockerfile: services/pii-service/Dockerfile
+    container_name: ai4v-pii-guard-service
+    ports:
+      - "8105:8000"
+    env_file:
+      - ./services/pii-service/.env.defaults
+      - path: ./services/pii-service/.env
+        required: false
+    environment:
+      - AUTH_ENABLED=false
+      - DEV_MODE=true
+      - DB_HOST=postgres
+      - DB_NAME=${POSTGRES_DB}
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASS=${POSTGRES_PASSWORD}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_AUDIT_TOPIC=${KAFKA_PII_AUDIT_TOPIC:-pii_audit_logs}
+      - OTEL_SERVICE_NAME=pii-guardrail
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - NER_SERVICE_URL=${EXTERNAL_GPU_NER_URL}
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL}
+      - JWKS_URL=${JWKS_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      microservices-network:
+        aliases:
+          - pii-guard-service
+    restart: unless-stopped
+
   llm-service:
     build:
       context: .
@@ -1708,5 +1747,5 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.31.0.0/16
+        - subnet: 172.30.0.0/16
 

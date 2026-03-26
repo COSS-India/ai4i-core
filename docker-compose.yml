@@ -320,6 +320,40 @@ services:
     dns_search: []
     restart: unless-stopped
 
+  auth-service:
+    build:
+      context: .
+      dockerfile: ./services/auth-service-v2/Dockerfile
+    container_name: ai4v-auth-service
+    ports:
+      - "8081:8081"
+    environment:
+      - ENV_FILE=.env
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=auth_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_REFRESH_SECRET_KEY=${JWT_REFRESH_SECRET_KEY}
+      - ENVIRONMENT=development
+      - DEBUG=true
+    env_file:
+      - ./.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      microservices-network:
+        aliases:
+          - auth-service
+    restart: unless-stopped
+
   config-service:
     build:
       context: .
@@ -628,6 +662,44 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    restart: unless-stopped
+
+  pii-guard-service:
+    build:
+      context: .
+      dockerfile: services/pii-service/Dockerfile
+    container_name: ai4v-pii-guard-service
+    ports:
+      - "8105:8000"
+    env_file:
+      - ./services/pii-service/.env.defaults
+      - path: ./services/pii-service/.env
+        required: false
+    environment:
+      - DEV_MODE=false
+      - DB_HOST=postgres
+      - DB_NAME=${POSTGRES_DB}
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASS=${POSTGRES_PASSWORD}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_AUDIT_TOPIC=${KAFKA_PII_AUDIT_TOPIC:-pii_audit_logs}
+      - OTEL_SERVICE_NAME=pii-guardrail
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - NER_SERVICE_URL=${EXTERNAL_GPU_NER_URL}
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL}
+      - JWKS_URL=${JWKS_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      microservices-network:
+        aliases:
+          - pii-guard-service
     restart: unless-stopped
 
   llm-service:
@@ -1305,13 +1377,7 @@ services:
 volumes:
   postgres-data:
     driver: local
-    # Note: Removed bind mount to Linux-specific path for Windows compatibility
-    # Data will persist in Docker's managed volume location
-    # To use a custom path on Linux, uncomment and adjust the driver_opts below:
-    driver_opts:
-      type: "none"
-      o: "bind"
-      device: "/home/ubuntu/ai4i-v/volumes/pg_data"
+    # Use Docker-managed volume by default (portable across environments).
       
   postgres-konga-data:
     driver: local

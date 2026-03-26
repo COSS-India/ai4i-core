@@ -679,6 +679,51 @@ routes:
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+- uri: /api/v1/pii/*
+  name: pii-guard-route
+
+  priority: 20
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      pii-guard-service${APISIX_UPSTREAM_SUFFIX}:8000: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-Language,X-Target,X-Tenant-Id,x-tenant-id,X-Try-It,x-try-it
+      expose_headers: X-Auth-Token,X-Service,X-Gateway
+      allow_credential: true
+    proxy-rewrite:
+      regex_uri:
+      - ^/api/v1/pii/(.*)
+      - /$1
+      headers:
+        X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: pii-guard-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: remote_addr
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
 - uri: /api/v1/registry/*
   name: config-registry-route
 

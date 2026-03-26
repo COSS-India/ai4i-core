@@ -35,6 +35,7 @@ import {
   IoAnalyticsOutline,
   IoPulseOutline,
   IoNotificationsOutline,
+  IoShieldCheckmarkOutline,
 } from "react-icons/io5";
 import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
@@ -169,6 +170,12 @@ const safeColorMap = {
     400: "#FFCA28",
     600: "#F9A825",
   },
+  "pii-management": {
+    50:  "#E8EAF6",
+    300: "#9FA8DA",
+    400: "#7986CB",
+    600: "#5C6BC0",
+  },
 };
 
 const getColor = (serviceId: string, shade: 50 | 300 | 400 | 600) => {
@@ -268,6 +275,15 @@ const topNavItems: NavItem[] = [
     icon: IoNotificationsOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
+  },
+  {
+    id: "pii-management",
+    label: "PII Guardrail",
+    path: "/pii-management",
+    icon: IoShieldCheckmarkOutline,
+    iconSize: 10,
+    iconColor: "",
     requiresAuth: true,
   },
 ];
@@ -459,6 +475,9 @@ const Sidebar: React.FC = () => {
     }
     // Hide admin-only items for non-ADMIN users (only alerts-management is admin-only now)
     if (item.id === "alerts-management" && !isAdmin) {
+      return false;
+    }
+    if (item.id === "pii-management" && isGuest) {
       return false;
     }
 

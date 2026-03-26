@@ -6,6 +6,7 @@ It creates tokens (service-specific), but verifies them through the
 same shared JWTVerifier that every other microservice uses.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -62,7 +63,7 @@ async def lifespan(app: FastAPI):
     await init_jwt_verifier()
 
     # Load API-to-permission mapping
-    await _load_api_permissions()
+    await _load_api_permissions_with_retry()
 
     # Casbin RBAC policies
     try:
@@ -166,8 +167,42 @@ async def _load_api_permissions() -> None:
         _permission_checker = checker
 
         logger.info("API permission mapping loaded: %d endpoints → DB IDs.", len(endpoint_to_id))
-    except (FileNotFoundError, ValueError, OSError) as exc:
+    except (FileNotFoundError, ValueError) as exc:
+        # Non-recoverable for this startup attempt (wrong schema, corrupted file, etc.)
         logger.warning("Failed to load API permission mapping: %s", exc)
+        return
+    except OSError as exc:
+        # Likely infra readiness issue (DB/Redis not yet reachable). Let the retry wrapper handle it.
+        logger.warning("Failed to load API permission mapping: %s", exc)
+        raise
+
+
+async def _load_api_permissions_with_retry(
+    max_attempts: int = 8,
+    base_delay_seconds: float = 1.0,
+) -> None:
+    """
+    Retry api permission mapping load on infra readiness failures.
+
+    This prevents Redis from keeping stale endpoint→permission mappings.
+    """
+    last_exc: OSError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            await _load_api_permissions()
+            return
+        except OSError as exc:
+            last_exc = exc
+            logger.warning(
+                "API permission mapping load retry %d/%d after connection failure: %s",
+                attempt,
+                max_attempts,
+                exc,
+            )
+            await asyncio.sleep(base_delay_seconds * attempt)
+
+    if last_exc:
+        logger.error("Giving up loading API permission mapping after %d attempts: %s", max_attempts, last_exc)
 
 
 def create_app() -> FastAPI:
