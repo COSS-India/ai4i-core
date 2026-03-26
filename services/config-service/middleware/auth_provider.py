@@ -1,17 +1,5 @@
-"""Thin auth wrapper -- delegates to the shared ai4icore_auth library."""
+"""Thin auth wrapper — delegates to the shared ai4icore_auth library."""
 
-from ai4icore_auth import (
-    create_auth_provider,
-    create_optional_auth_provider,
-)
+from ai4icore_auth.providers import create_auth_providers
 
-# Service-specific configuration
-SERVICE_NAME = "config"
-
-AuthProvider = create_auth_provider(
-    service_name=SERVICE_NAME,
-)
-
-OptionalAuthProvider = create_optional_auth_provider(
-    service_name=SERVICE_NAME,
-)
+AuthProvider, OptionalAuthProvider = create_auth_providers()

@@ -32,15 +32,23 @@ from services.tenant_service import (
 
 from logger import logger
 from middleware.auth_provider import AuthProvider
+from middleware.dependencies import require_admin, require_tenant_admin, enforce_tenant_scope
+
 
 
 router = APIRouter(
-    prefix="/admin", 
+    prefix="/admin",
     tags=["Tenants registeration"],
-    dependencies=[Depends(AuthProvider)]
+    dependencies=[Depends(AuthProvider)],
 )
 
-@router.post("/register/tenant", response_model=TenantRegisterResponse, status_code=status.HTTP_201_CREATED)
+
+@router.post(
+    "/register/tenant",
+    response_model=TenantRegisterResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin)],
+)
 async def register_tenant_request(
     payload: TenantRegisterRequest,
     background_tasks: BackgroundTasks,
@@ -71,7 +79,11 @@ async def register_tenant_request(
 
 
 
-@router.post("/register/users", response_model=UserRegisterResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register/users", 
+             response_model=UserRegisterResponse, 
+             status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_tenant_admin)]
+             )
 async def register_user_request(
     request: Request,
     payload: UserRegisterRequest,
@@ -79,6 +91,7 @@ async def register_user_request(
     tenant_db: AsyncSession = Depends(get_tenant_db_session),
     auth_db: AsyncSession = Depends(get_auth_db_session),
 ):
+    enforce_tenant_scope(request, payload.tenant_id)
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
         return await register_user(payload, tenant_db, auth_db, background_tasks, auth_header=auth_header)
@@ -99,7 +112,11 @@ async def register_user_request(
 
 
 
-@router.patch("/update/tenants/status" , response_model=TenantStatusUpdateResponse , status_code=status.HTTP_200_OK)
+@router.patch("/update/tenants/status" , 
+              response_model=TenantStatusUpdateResponse , 
+              status_code=status.HTTP_200_OK,
+              dependencies=[Depends(require_admin)]
+              )
 async def change_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSession = Depends(get_tenant_db_session),):
     try:
         return await update_tenant_status(payload, db)
@@ -117,8 +134,12 @@ async def change_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.patch("/update/users/status", response_model=TenantUserStatusUpdateResponse, status_code=status.HTTP_200_OK)
-async def change_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: AsyncSession = Depends(get_tenant_db_session)):
+@router.patch("/update/users/status", 
+              response_model=TenantUserStatusUpdateResponse, 
+              status_code=status.HTTP_200_OK,
+              dependencies=[Depends(require_tenant_admin)])
+async def change_tenant_user_status(request: Request, payload: TenantUserStatusUpdateRequest, db: AsyncSession = Depends(get_tenant_db_session)):
+    enforce_tenant_scope(request, payload.tenant_id)
     try:
         return await update_tenant_user_status(payload, db)
 
@@ -133,71 +154,13 @@ async def change_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
     except Exception as exc:
         logger.exception(f"Unexpected error while updating tenant user status | tenant={payload.tenant_id} user_id={payload.user_id}: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")
+    
 
-
-@router.patch("/update/user", response_model=TenantUserUpdateResponse, status_code=status.HTTP_200_OK)
-async def update_tenant_user_info(
-    request: Request,
-    payload: TenantUserUpdateRequest,
-    db: AsyncSession = Depends(get_tenant_db_session),
-):
-    """
-    Update tenant user information (username, email, is_approved, roles).
-    Supports partial updates - only provided fields will be updated.
-    """
-    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
-    try:
-        return await update_tenant_user(payload, db, auth_header=auth_header)
-    except HTTPException:
-        raise
-    except IntegrityError as ie:
-        logger.error(
-            f"Integrity error while updating tenant user | tenant_id={payload.tenant_id} user_id={payload.user_id}: {ie}"
-        )
-        raise HTTPException(
-            status_code=409,
-            detail="Tenant user update conflict (e.g., email already exists)",
-        )
-    except ValueError as ve:
-        logger.error(
-            f"Validation error while updating tenant user | tenant_id={payload.tenant_id} user_id={payload.user_id}: {ve}"
-        )
-        raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as exc:
-        logger.exception(
-            f"Unexpected error while updating tenant user | tenant_id={payload.tenant_id} user_id={payload.user_id}: {exc}"
-        )
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@router.delete("/delete/user", response_model=TenantUserDeleteResponse, status_code=status.HTTP_200_OK)
-async def delete_tenant_user_endpoint(
-    payload: TenantUserDeleteRequest,
-    db: AsyncSession = Depends(get_tenant_db_session),
-):
-    """
-    Delete a tenant user and cascade deletions to related records.
-    """
-    try:
-        return await delete_tenant_user(payload, db)
-    except HTTPException:
-        raise
-    except IntegrityError as ie:
-        logger.error(
-            f"Integrity error while deleting tenant user | tenant_id={payload.tenant_id} user_id={payload.user_id}: {ie}"
-        )
-        raise HTTPException(
-            status_code=409,
-            detail="Tenant user deletion failed due to integrity constraint violation",
-        )
-    except Exception as exc:
-        logger.exception(
-            f"Unexpected error while deleting tenant user | tenant_id={payload.tenant_id} user_id={payload.user_id}: {exc}"
-        )
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@router.patch("/update/tenant", response_model=TenantUpdateResponse, status_code=status.HTTP_200_OK)
+@router.patch("/update/tenant", 
+              response_model=TenantUpdateResponse, 
+              status_code=status.HTTP_200_OK,
+              dependencies=[Depends(require_admin)],
+              )
 async def update_tenant_info(
     request: Request,
     payload: TenantUpdateRequest,
@@ -223,7 +186,87 @@ async def update_tenant_info(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/view/tenant", status_code=status.HTTP_200_OK)
+@router.patch("/update/user", 
+              response_model=TenantUserUpdateResponse, 
+              status_code=status.HTTP_200_OK,
+              dependencies=[Depends(require_tenant_admin)]
+              )
+async def update_tenant_user_info(
+    request: Request,
+    payload: TenantUserUpdateRequest,
+    db: AsyncSession = Depends(get_tenant_db_session),
+):
+    """
+    Update tenant user information (username, email, is_approved, roles).
+    Supports partial updates - only provided fields will be updated.
+    """
+    enforce_tenant_scope(request, payload.tenant_id)
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+    try:
+        return await update_tenant_user(payload, db, auth_header=auth_header)
+    except HTTPException:
+        raise
+    except IntegrityError as ie:
+        logger.error(
+            f"Integrity error while updating tenant user | tenant_id={payload.tenant_id} user_id={payload.user_id}: {ie}"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Tenant user update conflict (e.g., email already exists)",
+        )
+    except ValueError as ve:
+        logger.error(
+            f"Validation error while updating tenant user | tenant_id={payload.tenant_id} user_id={payload.user_id}: {ve}"
+        )
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception(
+            f"Unexpected error while updating tenant user | tenant_id={payload.tenant_id} user_id={payload.user_id}: {exc}"
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.delete("/delete/user", 
+               response_model=TenantUserDeleteResponse, 
+               status_code=status.HTTP_200_OK,
+               dependencies=[Depends(require_tenant_admin)]
+               )
+async def delete_tenant_user_endpoint(
+    request: Request,
+    payload: TenantUserDeleteRequest,
+    db: AsyncSession = Depends(get_tenant_db_session),
+    auth_db: AsyncSession = Depends(get_auth_db_session),
+):
+    """
+    Delete a tenant user and cascade deletions to related records.
+    TENANT ADMIN can only delete users from their own tenant.
+    """
+    enforce_tenant_scope(request, payload.tenant_id)
+    try:
+        return await delete_tenant_user(payload, db, auth_db)
+    except HTTPException:
+        raise
+    except IntegrityError as ie:
+        logger.error(
+            f"Integrity error while deleting tenant user | tenant_id={payload.tenant_id} user_id={payload.user_id}: {ie}"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Tenant user deletion failed due to integrity constraint violation",
+        )
+    except Exception as exc:
+        logger.exception(
+            f"Unexpected error while deleting tenant user | tenant_id={payload.tenant_id} user_id={payload.user_id}: {exc}"
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+
+
+@router.get("/view/tenant", 
+            status_code=status.HTTP_200_OK,
+            dependencies=[Depends(require_tenant_admin)]
+            )
 async def view_tenant(
     request: Request,
     tenant_id: str,
@@ -231,8 +274,9 @@ async def view_tenant(
 ):
     """
     View tenant details by tenant_id (human-readable tenant identifier).
-    Includes tenant admin role from auth when Authorization header is provided.
+    TENANT ADMIN can only view their own tenant.
     """
+    enforce_tenant_scope(request, tenant_id)
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
         result = await view_tenant_details(tenant_id, db, auth_header=auth_header)
@@ -249,7 +293,10 @@ async def view_tenant(
     
 
 
-@router.get("/view/user", status_code=status.HTTP_200_OK)
+@router.get("/view/user", 
+            status_code=status.HTTP_200_OK,
+            dependencies=[Depends(require_tenant_admin)]
+            )
 async def view_tenant_user(
     request: Request,
     user_id: int,
@@ -257,7 +304,17 @@ async def view_tenant_user(
 ):
     """
     View tenant user details by auth user_id. Includes roles from auth service when authorized.
+    TENANT ADMIN can only view users from their own tenant.
     """
+    # For TENANT ADMIN, verify the target user belongs to their tenant
+    if not getattr(request.state, "is_platform_admin", False):
+        from sqlalchemy import select
+        from models.db_models import TenantUser
+        tenant_user = await db.scalar(select(TenantUser).where(TenantUser.user_id == user_id))
+        if not tenant_user:
+            raise HTTPException(status_code=404, detail="Tenant user not found")
+        enforce_tenant_scope(request, tenant_user.tenant_id)
+
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
         result = await view_tenant_user_details(user_id, db, auth_header=auth_header)
@@ -273,7 +330,11 @@ async def view_tenant_user(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/list/tenants", response_model=ListTenantsResponse, status_code=status.HTTP_200_OK)
+@router.get("/list/tenants", 
+            response_model=ListTenantsResponse, 
+            status_code=status.HTTP_200_OK,
+            dependencies=[Depends(require_admin)]
+            )
 async def list_tenants(
     request: Request,
     db: AsyncSession = Depends(get_tenant_db_session),
@@ -293,16 +354,22 @@ async def list_tenants(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/list/users", response_model=ListUsersResponse, status_code=status.HTTP_200_OK)
+@router.get("/list/users", 
+            response_model=ListUsersResponse, 
+            status_code=status.HTTP_200_OK,
+            dependencies=[Depends(require_tenant_admin)]
+            )
 async def list_users(
     request: Request,
-    tenant_id: Optional[str] = Query(None, description="Filter users by tenant_id"),
+    tenant_id: str = Query(..., description="Tenant ID is required to list users"),
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
-    List tenant users. Includes roles from auth service when authorized.
-    If tenant_id is provided, only users for that tenant are returned.
+    List tenant users for a specific tenant only.
+    Includes roles from auth service when authorized.
+    TENANT ADMIN can only list their own tenant's users.
     """
+    enforce_tenant_scope(request, tenant_id)
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
         return await list_all_users(db, tenant_id=tenant_id, auth_header=auth_header)
@@ -313,7 +380,11 @@ async def list_users(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.post("/email/send/verification", response_model=TenantSendEmailVerificationResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/email/send/verification", 
+             response_model=TenantSendEmailVerificationResponse, 
+             status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_admin)]
+             )
 async def send_verification_email_admin(
     payload: TenantSendEmailVerificationRequest,
     background_tasks: BackgroundTasks,

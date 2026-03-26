@@ -17,17 +17,16 @@ from sqlalchemy.sql import func, text
 
 
 class TenantStatus(enum.Enum):
-    PENDING = "PENDING"
-    ACTIVE = "ACTIVE"
+    PENDING = "PENDING"          # waiting for email verification 
+    ACTIVE = "ACTIVE"            # once email verified
     SUSPENDED = "SUSPENDED"
-    CANCELLED = "CANCELLED"
+    DEACTIVATED = "DEACTIVATED"
 
 
-class TenantUserStatus(enum.Enum):
-    PENDING = "PENDING"
-    ACTIVE = "ACTIVE"
+class TenantUserStatus(str, enum.Enum):
+    PENDING ="PENDING"           # used as default 
+    ACTIVE = "ACTIVE"            # user created and approved by tenant admin
     SUSPENDED = "SUSPENDED"
-    DELETED = "DELETED"
 
 
 TenantDBBase = declarative_base()
@@ -44,6 +43,9 @@ class Tenant(TenantDBBase):
     tenant_id = Column(String(255), unique=True, nullable=False)
     organization_name = Column(String(255), nullable=False)
     contact_email = Column(String(500), nullable=False, index=True)
+
+    # Indexed hash of normalized contact_email for fast duplicate checks
+    email_hash = Column(String(128), nullable=True, index=True, unique=True)
     phone_number = Column(String(500), nullable=True)
     domain = Column(String(255), unique=True, nullable=False)
 

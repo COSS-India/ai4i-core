@@ -15,8 +15,6 @@ export { useTenantManagement } from "./hooks/useTenantManagement";
 export type { UseTenantManagementOptions } from "./hooks/useTenantManagement";
 export { useUserDetails } from "./hooks/useUserDetails";
 export type { UseUserDetailsOptions } from "./hooks/useUserDetails";
-export { useApiKeyTab } from "./hooks/useApiKeyTab";
-export type { UseApiKeyTabOptions } from "./hooks/useApiKeyTab";
 export { useRolesTab } from "./hooks/useRolesTab";
 export type { UseRolesTabOptions, SelectedUserInfo } from "./hooks/useRolesTab";
 export { useCreateApiKeyTab } from "./hooks/useCreateApiKeyTab";

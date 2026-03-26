@@ -22,64 +22,41 @@ cd ai4i-core
 
 ## Step 2: Configure Environment Variables
 
-### Root Environment File
+### 2.1 Create the Root Environment File
 
 ```bash
 cp env.template .env
 ```
 
-Edit `.env` if needed (defaults should work for development).
+Open `.env` and fill in the **Database Configuration** section (around **line 95**). Replace the `<YOUR_...>` placeholders with your values:
 
-### Service Environment Files
-
-Copy the environment template for each service and the frontend:
-
-
-**Core Services**
 ```bash
-cp services/auth-service/env.template services/auth-service/.env
-cp services/config-service/env.template services/config-service/.env
-cp services/model-management-service/env.template services/model-management-service/.env
-cp services/multi-tenant-feature/env.template services/multi-tenant-feature/.env
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+POSTGRES_DB=ai4i_platform
+AUTH_DB_NAME=auth_db
+MULTI_TENANT_DB_NAME=multi_tenant_db
+CONFIG_DB_NAME=config_db
+MODEL_MANAGEMENT_DB_NAME=model_management_db
+DASHBOARD_DB_NAME=dashboard_db
+TELEMETRY_DB_NAME=telemetry_db
+METRICS_DB_NAME=metrics_db
+ALERTING_DB_NAME=alerting_db
+ALEMBIC_DB_HOST=localhost
+ALEMBIC_DB_PORT=5434
 ```
 
+### 2.2 Generate All Service Environment Files
 
-**AI/ML Services**
+Run the setup script to generate `.env` files for every service, the frontend, and Alembic migrations. The script reads your root `.env` and substitutes the values into each service's `env.template`:
+
 ```bash
-cp services/asr-service/env.template services/asr-service/.env
-cp services/tts-service/env.template services/tts-service/.env
-cp services/nmt-service/env.template services/nmt-service/.env
-cp services/llm-service/env.template services/llm-service/.env
-cp services/transliteration-service/env.template services/transliteration-service/.env
-cp services/ocr-service/env.template services/ocr-service/.env
-cp services/ner-service/env.template services/ner-service/.env
-cp services/language-detection-service/env.template services/language-detection-service/.env
-cp services/language-diarization-service/env.template services/language-diarization-service/.env
-cp services/audio-lang-detection-service/env.template services/audio-lang-detection-service/.env
-cp services/speaker-diarization-service/env.template services/speaker-diarization-service/.env
-cp services/pipeline-service/env.template services/pipeline-service/.env
-cp services/smr-service/env.template services/smr-service/.env
+./scripts/setup-env.sh
 ```
 
- **Observability Services**
-```bash
-cp services/alerting-service/env.template services/alerting-service/.env
-cp services/dashboard-service/env.template services/dashboard-service/.env
-cp services/metrics-service/env.template services/metrics-service/.env
-cp services/telemetry-service/env.template services/telemetry-service/.env
-```
-
-**Frontend**
-```bash
-cp frontend/simple-ui/env.template frontend/simple-ui/.env
-```
-
-**Alembic**
-```bash
-cp infrastructure/databases/migrations/postgres/alembic/env.template  infrastructure/databases/migrations/postgres/alembic/.env
-```
-
-**Note:** You can edit these `.env` files if you need to customize settings, but the defaults should work for initial setup.
+This command will copy `env.template` to `.env` for each service. It always overwrites existing `.env` files, so you can re-run it any time you change values in the root `.env`.
 
 ## Step 3: Build Docker Images
 
