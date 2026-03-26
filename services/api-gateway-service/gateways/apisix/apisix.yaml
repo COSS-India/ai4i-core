@@ -104,10 +104,10 @@ routes:
         X-Service: alert-management-service
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       rejected_code: 429
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       allow_degradation: false
       count: 200
@@ -161,10 +161,10 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       count: 120
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -218,10 +218,10 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       count: 120
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -516,8 +516,8 @@ routes:
       use_real_request_uri_unsafe: false
     limit-count:
       policy: local
-      key_type: header
-      key: X-User-ID
+      key_type: var
+      key: http_x_user_id
       count: 200
       time_window: 60
       rejected_code: 429
@@ -597,10 +597,10 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       count: 120
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -658,10 +658,10 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       count: 60
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -715,10 +715,10 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       count: 60
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -779,10 +779,10 @@ routes:
           X-Service: model-management
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       rejected_code: 429
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       allow_degradation: false
       count: 120
@@ -841,10 +841,10 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       count: 200
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -898,10 +898,10 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       count: 120
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -956,10 +956,10 @@ routes:
       expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       count: 120
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -1037,10 +1037,10 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       count: 60
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -1094,10 +1094,10 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       count: 60
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -1196,8 +1196,8 @@ routes:
       use_real_request_uri_unsafe: false
     limit-count:
       policy: local
-      key_type: header
-      key: X-User-ID
+      key_type: var
+      key: http_x_user_id
       count: 200
       time_window: 60
       rejected_code: 429
@@ -1253,10 +1253,10 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       count: 60
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -1334,10 +1334,10 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       count: 120
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -1443,10 +1443,10 @@ routes:
       body_base64: false
     limit-count:
       policy: local
-      key_type: header
+      key_type: var
       count: 120
       show_limit_quota_header: true
-      key: X-User-ID
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
