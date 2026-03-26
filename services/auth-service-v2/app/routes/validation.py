@@ -5,7 +5,7 @@ Uses the shared ai4icore_auth JWTVerifier.
 
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +32,7 @@ security = HTTPBearer(auto_error=False)
 @router.post("/validate")
 async def validate_token(
     request: Request,
+    response: Response,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     cache_svc: CacheService = Depends(get_cache_service),
     user_svc: UserService = Depends(get_user_service),
@@ -61,6 +62,10 @@ async def validate_token(
         user = await user_svc.get_user_by_id(claims.user_id)
         if user:
             username = user.username
+
+    # Backward-compatible: keep JSON body and add user id header for consumers
+    if claims.user_id:
+        response.headers["X-User-ID"] = str(claims.user_id)
 
     return TokenValidationResponse(
         valid=True,
