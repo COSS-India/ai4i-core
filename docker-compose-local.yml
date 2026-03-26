@@ -319,6 +319,7 @@ services:
       - ./libs/ai4icore_logging:/tmp/ai4icore_logging
       - ./libs/ai4icore_auth:/tmp/ai4icore_auth
       - ./libs/ai4icore_bootstrap:/tmp/ai4icore_bootstrap
+      - ./libs/ai4icore_multi_tenant:/tmp/ai4icore_multi_tenant
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
     depends_on:
       postgres:

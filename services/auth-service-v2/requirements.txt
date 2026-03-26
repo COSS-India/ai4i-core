@@ -7,6 +7,7 @@ ai4icore-constants>=1.0.0
 ai4icore-logging>=1.0.0
 ai4icore-env>=1.0.0
 ai4icore-bootstrap>=1.0.0
+ai4icore-multi-tenant>=1.0.0
 
 # ── Core ──
 fastapi>=0.104.0
