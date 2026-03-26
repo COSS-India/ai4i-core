@@ -162,6 +162,10 @@ def _load_auth_metadata():
             "transliteration",
             PROJECT_ROOT / "services" / "transliteration-service" / "models" / "database_models.py",
         ),
+        (
+            "audio_lang_detection",
+            PROJECT_ROOT / "services" / "audio-lang-detection-service" / "models" / "database_models.py",
+        ),
     ]
 
     replacements = [

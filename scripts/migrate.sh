@@ -132,11 +132,7 @@ supports_autogenerate() {
 
 revision_versions_dir() {
   local db="$1"
-  if [[ "$db" == "auth_service_v2_db" ]]; then
-    echo "auth_db"
-  else
-    echo "$db"
-  fi
+  echo "$db"
 }
 
 has_existing_revisions() {
