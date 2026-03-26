@@ -808,7 +808,7 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
       - NER_SERVICE_URL=${EXTERNAL_GPU_NER_URL}
       - AUTH_SERVICE_URL=${AUTH_SERVICE_URL}
-      - JWKS_URL=http://auth-service:8081/api/v1/auth/.well-known/jwks.json
+      - JWKS_URL=${JWKS_URL}
     depends_on:
       postgres:
         condition: service_healthy
