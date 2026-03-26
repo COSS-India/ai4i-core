@@ -37,6 +37,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 NER_SERVICE_URL = os.getenv("NER_SERVICE_URL", "http://localhost:9001/ner")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 KAFKA_AUDIT_TOPIC = os.getenv("KAFKA_AUDIT_TOPIC", "pii_audit_logs")
+PII_HMAC_KEY = os.getenv("PII_HMAC_KEY", "change-me-in-production").encode("utf-8")
 
 db_pool = None
 redis_client = None
@@ -462,6 +463,7 @@ async def redact_text(
     request: RedactionRequest,
     background_tasks: BackgroundTasks,
     auth=Depends(AuthProvider),
+    include_original_text: bool = Query(default=False),
     x_target: str = Header("user"),
     x_language: str = Header("en"),
     x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-Id"),
@@ -534,7 +536,7 @@ async def redact_text(
         if rule["action"] == "REDACT_TAG":
             rep = rule["config"].get("tag_label", f"[{ent.entity_type}]")
         elif rule["action"] == "HASH":
-            rep = hmac.new(b"secret", ent.text_segment.encode(), hashlib.sha256).hexdigest()[:10] + "..."
+            rep = hmac.new(PII_HMAC_KEY, ent.text_segment.encode(), hashlib.sha256).hexdigest()[:10] + "..."
         elif rule["action"] == "MASK":
             char = rule["config"].get("mask_char", "X")
             rep = char * len(ent.text_segment)
@@ -544,8 +546,7 @@ async def redact_text(
     background_tasks.add_task(
         audit_logger.log_event, trace_id, tenant_id, effective_domain, x_target, len(entities), ms, trace_log
     )
-    return {
-        "original_text": request.text,
+    response_payload = {
         "redacted_text": redacted,
         "pii_detected": entities,
         "trace": trace_log,
@@ -557,6 +558,9 @@ async def redact_text(
             "message": fallback_message,
         },
     }
+    if include_original_text:
+        response_payload["original_text"] = request.text
+    return response_payload
 
 
 @app.get("/admin/all-domains")

@@ -435,7 +435,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'apiKey.delete',
               'roles.assign',
               'roles.read',
-              'pii_guard.admin'
+              'pii_guard.admin',
               'asr.inference',
               'audio-lang-detection.inference',
               'language-detection.inference',
