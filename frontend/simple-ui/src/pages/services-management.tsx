@@ -88,6 +88,7 @@ const ServicesManagementPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
+  const [sortBy, setSortBy] = useState<"time" | "name">("time");
   const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
   const [confirmPublishService, setConfirmPublishService] = useState<Service | null>(null);
   const [confirmUnpublishService, setConfirmUnpublishService] = useState<Service | null>(null);
@@ -168,14 +169,23 @@ const ServicesManagementPage: React.FC = () => {
       return true;
     });
     return [...filtered].sort((a, b) => {
-      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
-      if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
       const timeA = getServiceSortTime(a);
       const timeB = getServiceSortTime(b);
+      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
+
+      // Default mode: newest first. Name is only a tie-breaker.
+      if (sortBy === "time") {
+        if (timeB !== timeA) return timeB - timeA;
+        if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
+        return 0;
+      }
+
+      // Name mode: honor user-selected A-Z / Z-A ordering.
+      if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
       if (timeB !== timeA) return timeB - timeA;
       return 0;
     });
-  }, [services, searchQuery, filterStatus, filterTaskType, nameSortDirection]);
+  }, [services, searchQuery, filterStatus, filterTaskType, nameSortDirection, sortBy]);
 
   const totalServices = filteredServices.length;
   const totalPages = Math.max(1, Math.ceil(totalServices / listPageSize));
@@ -1029,17 +1039,23 @@ const ServicesManagementPage: React.FC = () => {
                                     cursor="pointer"
                                     userSelect="none"
                                     onClick={() => {
-                                      setNameSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+                                      if (sortBy !== "name") {
+                                        setSortBy("name");
+                                        setNameSortDirection("asc");
+                                      } else {
+                                        setNameSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+                                      }
                                       setListPage(1);
                                     }}
                                   >
                                     <HStack spacing={2}>
                                       <Text>Name</Text>
-                                      {nameSortDirection === "asc" ? (
+                                      {sortBy === "name" ? (
+                                      nameSortDirection === "asc" ? (
                                         <TriangleUpIcon boxSize={3} color="gray.500" />
                                       ) : (
                                         <TriangleDownIcon boxSize={3} color="gray.500" />
-                                      )}
+                                      )) : null}
                                     </HStack>
                                   </Th>
                                   <Th>Task Type</Th>
