@@ -205,9 +205,21 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const handleFetchTenantUsers = async () => {
+    const tenantId = tenantDetailView?.tenant_id ?? user?.tenant_id ?? null;
+    if (!tenantId) {
+      toast({
+        title: "Tenant context missing",
+        description: "Unable to load users because no tenant ID is available.",
+        status: "warning",
+        isClosable: true,
+        duration: 5000,
+      });
+      setTenantUsers([]);
+      return;
+    }
     setIsLoadingTenantUsers(true);
     try {
-      const res = await multiTenantService.listUsers(user?.tenant_id ?? undefined);
+      const res = await multiTenantService.listUsers(tenantId);
       const list = Array.isArray(res) ? (res as TenantUserView[]) : (res?.users ?? []);
       setTenantUsers(list);
     } catch (err) {
