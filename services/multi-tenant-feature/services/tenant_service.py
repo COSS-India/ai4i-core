@@ -2089,8 +2089,8 @@ async def update_tenant_user(
         )
     )
 
-    if tenant_user and tenant_user.status == TenantUserStatus.DEACTIVATED:
-        raise HTTPException(status_code=400, detail="Cannot update deactivated tenant user")
+    if tenant_user and tenant_user.status == TenantUserStatus.SUSPENDED:
+        raise HTTPException(status_code=400, detail="Cannot update suspended tenant user")
     
     if tenant.status == TenantStatus.SUSPENDED or tenant.status == TenantStatus.DEACTIVATED:
         raise HTTPException(

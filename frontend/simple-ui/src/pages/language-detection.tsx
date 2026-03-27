@@ -1,4 +1,4 @@
-// Text Language Detection testing page
+// Language Diarization service testing page
 
 import {
   Box,
@@ -13,46 +13,81 @@ import {
   Select,
   Spinner,
   Text,
-  Textarea,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
 import React, { useState } from "react";
+import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
+import AudioInputPreview from "../components/common/AudioInputPreview";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
-import { performLanguageDetectionInference, listLanguageDetectionServices } from "../services/languageDetectionService";
-import { extractErrorInfo } from "../utils/errorHandler";
-import { LANGUAGE_DETECTION_ERRORS, MIN_LANGUAGE_DETECTION_TEXT_LENGTH, MAX_TEXT_LENGTH, MAX_LANGUAGE_DETECTION_INPUT_LENGTH } from "../config/constants";
+import { performLanguageDiarizationInference, listLanguageDiarizationServices } from "../services/languageDiarizationService";
+import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
-const LanguageDetectionPage: React.FC = () => {
+const LanguageDiarizationPage: React.FC = () => {
   const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
-  const [inputTexts, setInputTexts] = useState("");
+  const [audioData, setAudioData] = useState<string | null>(null);
+  const [audioClearToken, setAudioClearToken] = useState(0);
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
 
-  const { data: languageDetectionServices, isLoading: servicesLoading } = useQuery({
-    queryKey: ["language-detection-services"],
-    queryFn: listLanguageDetectionServices,
-    staleTime: 10 * 60 * 1000,
+  // Fetch available Language Diarization services
+  const { data: languageDiarizationServices, isLoading: servicesLoading } = useQuery({
+    queryKey: ["language-diarization-services"],
+    queryFn: listLanguageDiarizationServices,
+    staleTime: 10 * 60 * 1000, // 10 minutes
   });
 
-  const canDetect =
-    !!serviceId?.trim() &&
-    !!inputTexts?.trim() &&
-    inputTexts.length <= MAX_LANGUAGE_DETECTION_INPUT_LENGTH &&
-    !fetching;
-
-  const handleProcess = async () => {
-    if (!serviceId?.trim()) {
+  const {
+    isRecording,
+    timer,
+    startRecording,
+    stopRecording,
+  } = useAudioRecorder({
+    sampleRate: 16000,
+    onRecordingComplete: (audioBase64: string) => {
+      setAudioData(audioBase64);
       toast({
-        title: "Service Required",
-        description: "Please select a service before detecting language.",
+        title: "Recording Complete",
+        description: "Audio recorded successfully. Click Submit to process.",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+    },
+  });
+
+  const handleRecordingChange = (isRecording: boolean) => {
+    if (isRecording) {
+      startRecording();
+    } else {
+      stopRecording();
+    }
+  };
+
+  const handleAudioReady = (audioBase64: string) => {
+    // Store audio data instead of immediately processing
+    setAudioData(audioBase64);
+    toast({
+      title: "Audio Ready",
+      description: "Audio file loaded. Click Submit to process.",
+      status: "success",
+      duration: 3000,
+      isClosable: true,
+    });
+  };
+
+  const handleSubmit = async () => {
+    if (!audioData) {
+      toast({
+        title: "No Audio",
+        description: "Please record or upload audio first.",
         status: "warning",
         duration: 3000,
         isClosable: true,
@@ -60,72 +95,11 @@ const LanguageDetectionPage: React.FC = () => {
       return;
     }
 
-    const trimmedText = inputTexts.trim();
-    if (!trimmedText) {
-      const err = LANGUAGE_DETECTION_ERRORS.TEXT_REQUIRED;
+    if (!serviceId) {
       toast({
-        title: err.title,
-        description: err.description,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-    
-    // Split by newlines or commas for multiple texts
-    const texts = trimmedText
-      .split(/[\n,]/)
-      .map((t) => t.trim())
-      .filter((t) => t.length > 0);
-    
-    // Validate that we have at least one valid text after splitting
-    if (texts.length === 0) {
-      const err = LANGUAGE_DETECTION_ERRORS.TEXT_REQUIRED;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-    
-    // Validate minimum text length for each text
-    const tooShortTexts = texts.filter(t => t.length < MIN_LANGUAGE_DETECTION_TEXT_LENGTH);
-    if (tooShortTexts.length > 0) {
-      const err = LANGUAGE_DETECTION_ERRORS.TEXT_TOO_SHORT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-    
-    // Validate total input length
-    if (trimmedText.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH) {
-      toast({
-        title: "Input too long",
-        description: `Total text must not exceed ${MAX_LANGUAGE_DETECTION_INPUT_LENGTH} characters.`,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    // Validate maximum text length per segment
-    const tooLongTexts = texts.filter(t => t.length > MAX_TEXT_LENGTH);
-    if (tooLongTexts.length > 0) {
-      const err = LANGUAGE_DETECTION_ERRORS.TEXT_TOO_LONG;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: "error",
+        title: "Service Required",
+        description: "Please select a Language Diarization service.",
+        status: "warning",
         duration: 3000,
         isClosable: true,
       });
@@ -138,8 +112,8 @@ const LanguageDetectionPage: React.FC = () => {
 
     try {
       const startTime = Date.now();
-      const response = await performLanguageDetectionInference(
-        texts,
+      const response = await performLanguageDiarizationInference(
+        audioData,
         serviceId
       );
       const endTime = Date.now();
@@ -149,12 +123,24 @@ const LanguageDetectionPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Use centralized error handler (language-detection context so backend message shown as default when no specific mapping)
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'language-detection');
+      // Prioritize API error message from response
+      let errorMessage = "Failed to perform language diarization";
+      
+      if (err?.response?.data?.detail?.message) {
+        errorMessage = err.response.data.detail.message;
+      } else if (err?.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err?.response?.data?.detail) {
+        if (typeof err.response.data.detail === 'string') {
+          errorMessage = err.response.data.detail;
+        }
+      } else if (err?.message) {
+        errorMessage = err.message;
+      }
       
       setError(errorMessage);
       toast({
-        title: showOnlyMessage ? undefined : errorTitle,
+        title: "Error",
         description: errorMessage,
         status: "error",
         duration: 5000,
@@ -168,17 +154,22 @@ const LanguageDetectionPage: React.FC = () => {
   const clearResults = () => {
     setFetched(false);
     setResult(null);
-    setInputTexts("");
+    setAudioData(null);
     setError(null);
+  };
+
+  const handleClearAudioInput = () => {
+    clearResults();
+    setAudioClearToken((t) => t + 1);
   };
 
   return (
     <>
       <Head>
-        <title>Text Language Detection | AI4Inclusion Console</title>
+        <title>Language Diarization | AI4Inclusion Console</title>
         <meta
           name="description"
-          content="Detect the language of any text input using Text Language Detection"
+          content="Test Language Diarization to identify language changes in audio"
         />
       </Head>
 
@@ -187,10 +178,10 @@ const LanguageDetectionPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              {getServiceTitle("language-detection")}
+              {getServiceTitle("language-diarization")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              {getServiceDescription("language-detection")}
+              {getServiceDescription("language-diarization")}
             </Text>
           </Box>
 
@@ -207,7 +198,8 @@ const LanguageDetectionPage: React.FC = () => {
               {/* Service Selection */}
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  Service <Text as="span" color="red.500">*</Text>
+                  Language Diarization Service{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 {servicesLoading ? (
                   <HStack spacing={2} p={2}>
@@ -218,7 +210,7 @@ const LanguageDetectionPage: React.FC = () => {
                   <Select
                     value={serviceId}
                     onChange={(e) => setServiceId(e.target.value)}
-                    placeholder={servicesLoading ? "Loading..." : "Select"}
+                    placeholder="Select"
                     disabled={fetching}
                     size="md"
                     borderColor="gray.300"
@@ -227,14 +219,14 @@ const LanguageDetectionPage: React.FC = () => {
                       boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
                     }}
                   >
-                    {languageDetectionServices?.map((service) => (
+                    {languageDiarizationServices?.map((service) => (
                       <option key={service.service_id} value={service.service_id}>
                         {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
                       </option>
                     ))}
                   </Select>
                 )}
-                {serviceId && languageDetectionServices && (
+                {serviceId && languageDiarizationServices && (
                   <Box
                     mt={2}
                     p={3}
@@ -244,7 +236,7 @@ const LanguageDetectionPage: React.FC = () => {
                     borderColor="orange.200"
                   >
                     {(() => {
-                      const selectedService = languageDetectionServices.find(
+                      const selectedService = languageDiarizationServices.find(
                         (s) => s.service_id === serviceId
                       );
                       return selectedService ? (
@@ -264,49 +256,61 @@ const LanguageDetectionPage: React.FC = () => {
                 )}
               </FormControl>
 
-              <FormControl isInvalid={inputTexts.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH}>
-                <FormLabel fontSize="sm" fontWeight="semibold">
-                  Source Text <Text as="span" color="red.500">*</Text>
-                </FormLabel>
-                <Textarea
-                  value={inputTexts}
-                  onChange={(e) => setInputTexts(e.target.value)}
-                  placeholder="Enter text to detect language..."
-                  rows={6}
-                  isDisabled={fetching}
-                  bg="white"
-                  maxLength={MAX_LANGUAGE_DETECTION_INPUT_LENGTH}
-                  borderColor={inputTexts.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH ? "red.400" : "gray.300"}
-                />
-                {inputTexts.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH && (
-                  <Text fontSize="sm" color="red.500" mt={1}>
-                    Text exceeds the maximum limit of {MAX_LANGUAGE_DETECTION_INPUT_LENGTH} characters. Please reduce the length.
-                  </Text>
-                )}
-              </FormControl>
-              <Box display="flex" justifyContent="flex-end">
-                <Text
-                  fontSize="sm"
-                  color={inputTexts.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH ? "red.500" : "gray.500"}
-                  fontWeight={inputTexts.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH ? "semibold" : "normal"}
-                >
-                  {inputTexts.length} / {MAX_LANGUAGE_DETECTION_INPUT_LENGTH}
+              <Box>
+                <Text mb={4} fontSize="sm" fontWeight="semibold">
+                  Audio Input{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </Text>
+                <AudioRecorder
+                  onAudioReady={handleAudioReady}
+                  isRecording={isRecording}
+                  onRecordingChange={handleRecordingChange}
+                  sampleRate={16000}
+                  disabled={fetching || !serviceId}
+                  timer={timer}
+                  onClear={handleClearAudioInput}
+                  clearToken={audioClearToken}
+                />
               </Box>
 
+              {/* Audio Status + Review/play */}
+              {audioData && (
+                <>
+                  <Box
+                    p={3}
+                    bg="green.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="green.200"
+                  >
+                    <Text fontSize="sm" color="green.700" fontWeight="semibold">
+                      ✓ Audio ready for processing
+                    </Text>
+                  </Box>
+                  <AudioInputPreview
+                    audioBase64OrDataUrl={audioData}
+                    label="Review your audio"
+                    onClear={handleClearAudioInput}
+                  />
+                </>
+              )}
+
+              {/* Instruction above Submit (consistent with other services) */}
               <Text fontSize="sm" color="gray.600">
-                Configure service and enter text, then click Detect Language.
+                Record audio or upload a file above, then click &quot;Submit for Diarization&quot; to detect language switches in the audio.
               </Text>
+
+              {/* Submit Button */}
               <Button
                 colorScheme="orange"
-                onClick={handleProcess}
+                onClick={handleSubmit}
                 isLoading={fetching}
                 loadingText="Processing..."
                 size="md"
                 w="full"
-                isDisabled={!canDetect}
+                isDisabled={!audioData || !serviceId || fetching}
               >
-                Detect Language
+                Submit for Diarization
               </Button>
               </VStack>
             </GridItem>
@@ -315,143 +319,472 @@ const LanguageDetectionPage: React.FC = () => {
             <GridItem pt={0} mt={0} alignSelf="flex-start">
               <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Progress Indicator */}
-              {fetching && (
-                <Box>
-                  <Text mb={2} fontSize="sm" color="gray.600">
-                    Processing text...
-                  </Text>
+                {fetching && (
+                  <Box>
+                    <Text mb={2} fontSize="sm" color="gray.600">
+                      Processing audio...
+                    </Text>
                     <Progress size="xs" isIndeterminate colorScheme="orange" />
-                </Box>
-              )}
+                  </Box>
+                )}
 
                 {/* Error Display */}
-              {error && (
+                {error && (
+                  <Box
+                    p={4}
+                    bg="red.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="red.200"
+                  >
+                    <Text color="red.600" fontSize="sm">
+                      {error}
+                    </Text>
+                  </Box>
+                )}
+
+              {/* Metrics Box */}
+              {fetched && (
                 <Box
                   p={4}
-                  bg="red.50"
+                  bg="orange.50"
                   borderRadius="md"
                   border="1px"
-                  borderColor="red.200"
+                  borderColor="orange.200"
                 >
-                  <Text color="red.600" fontSize="sm">
-                    {error}
-                  </Text>
+                  <HStack spacing={6}>
+                    <VStack align="start" spacing={0}>
+                      <Text fontSize="xs" color="gray.600">
+                        Response Time
+                      </Text>
+                      <Text fontSize="lg" fontWeight="bold" color="gray.800">
+                        {responseTime.toFixed(2)} seconds
+                      </Text>
+                    </VStack>
+                  </HStack>
                 </Box>
               )}
 
-                {/* Language Detection Results */}
-              {fetched && result && result.output && result.output.length > 0 && (
-                  <>
-                <Box
-                  p={4}
-                  bg="blue.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="blue.200"
-                >
-                  <Text fontSize="sm" fontWeight="semibold" mb={2} color="gray.700">
-                    Detected Language:
-                  </Text>
-                  {result.output.map((item: any, index: number) => {
-                    // Support both new (langPrediction[]) and legacy (detectedLanguage/detectedScript) response shapes
-                    const prediction =
-                      Array.isArray(item.langPrediction) && item.langPrediction.length > 0
-                        ? item.langPrediction[0]
-                        : null;
+              {fetched && result && (() => {
+                // Extract data - handle both result.output[0] and direct result structure
+                const data = result.output && result.output[0] ? result.output[0] : result;
+                const segments = data.segments || [];
+                const languages = data.languages || [];
+                // Extract unique languages from segments if not provided directly
+                const uniqueLanguages = languages.length > 0 
+                  ? languages 
+                  : Array.from(new Set(segments.map((s: any) => s.language).filter(Boolean)));
+                const numLanguages = data.num_languages || uniqueLanguages.length || 0;
+                
+                const formatTime = (seconds: number) => {
+                  const mins = Math.floor(seconds / 60);
+                  const secs = (seconds % 60).toFixed(2);
+                  return mins > 0 ? `${mins}:${secs.padStart(5, '0')}` : `${secs}s`;
+                };
 
-                    let detectedLanguage = "Unknown";
-                    let detectedScript: string | undefined;
-                    let langCode: string | undefined;
-                    let confidence: number | undefined;
+                const getLanguageColor = (language: string) => {
+                  const languageIndex = uniqueLanguages.indexOf(language);
+                  const colors = ["orange", "blue", "green", "purple", "pink", "teal", "cyan", "yellow"];
+                  return colors[languageIndex % colors.length] || "gray";
+                };
 
-                    if (prediction) {
-                      detectedLanguage = prediction.language || "Unknown";
-                      detectedScript = prediction.scriptCode;
-                      langCode = prediction.langCode;
-                      confidence = prediction.langScore;
-                    } else {
-                      // Fallback to legacy/alternate fields if present
-                      detectedLanguage =
-                        item.detectedLanguage ||
-                        item.language ||
-                        "Unknown";
-                      detectedScript =
-                        item.detectedScript ||
-                        item.scriptCode ||
-                        item.script;
-                      langCode = item.langCode;
-                      confidence = item.langScore;
-                    }
+                // Check if we have structured data to display
+                const hasStructuredData = segments.length > 0 || numLanguages > 0;
 
-                    return (
-                      <Box key={index} mb={index < result.output.length - 1 ? 3 : 0}>
-                        {item.source && (
-                          <Text fontSize="xs" color="gray.600" mb={1}>
-                            Text: {item.source}
-                          </Text>
-                        )}
-                        <VStack align="start" spacing={3}>
-                          <Box>
+                return (
+                  <Box
+                    p={4}
+                    bg="gray.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="gray.200"
+                  >
+                    <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
+                      Language Diarization Results:
+                    </Text>
+                    
+                    {hasStructuredData ? (
+                      <>
+                        {/* Summary */}
+                        <HStack spacing={4} mb={4}>
+                          <Box
+                            p={3}
+                            bg="orange.100"
+                            borderRadius="md"
+                            border="1px"
+                            borderColor="orange.300"
+                          >
                             <Text fontSize="xs" color="gray.600" mb={1}>
-                              Language
+                              Total Languages
                             </Text>
-                            <Text fontSize="md" fontWeight="semibold" color="blue.700">
-                              {detectedLanguage}
-                              {detectedScript && ` (${detectedScript} script)`}
-                              {langCode && ` (${langCode})`}
+                            <Text fontSize="lg" fontWeight="bold" color="orange.700">
+                              {numLanguages}
                             </Text>
                           </Box>
-                          {confidence !== undefined && (
-                            <Box w="full">
-                              <Text fontSize="xs" color="gray.600" mb={1}>
-                                Confidence Score
-                              </Text>
-                              <HStack spacing={2} align="center">
-                                <Text fontSize="lg" fontWeight="semibold" color="gray.800">
-                                  {(confidence * 100).toFixed(2)}%
+                          <Box
+                            p={3}
+                            bg="blue.100"
+                            borderRadius="md"
+                            border="1px"
+                            borderColor="blue.300"
+                          >
+                            <Text fontSize="xs" color="gray.600" mb={1}>
+                              Total Segments
+                            </Text>
+                            <Text fontSize="lg" fontWeight="bold" color="blue.700">
+                              {segments.length}
+                            </Text>
+                          </Box>
+                        </HStack>
+
+                        {/* Languages List */}
+                        {uniqueLanguages.length > 0 && (
+                          <Box mb={4}>
+                            <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={2}>
+                              Detected Languages:
+                            </Text>
+                            <HStack spacing={2} flexWrap="wrap">
+                              {uniqueLanguages.map((language: string, idx: number) => {
+                                const colorScheme = getLanguageColor(language);
+                                return (
+                                  <Box
+                                    key={language}
+                                    px={3}
+                                    py={1}
+                                    bg={`${colorScheme}.100`}
+                                    borderRadius="full"
+                                    border="1px"
+                                    borderColor={`${colorScheme}.300`}
+                                  >
+                                    <Text fontSize="sm" fontWeight="semibold" color={`${colorScheme}.700`}>
+                                      {language.toUpperCase()}
+                                    </Text>
+                                  </Box>
+                                );
+                              })}
+                            </HStack>
+                          </Box>
+                        )}
+
+                        {/* Segments Timeline */}
+                        {segments.length > 0 && (
+                          <Box>
+                            <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={3}>
+                              Timeline Segments (sorted by start time):
+                            </Text>
+                            <Box
+                              p={3}
+                              bg="white"
+                              borderRadius="md"
+                              maxH="400px"
+                              overflowY="auto"
+                              border="1px"
+                              borderColor="gray.200"
+                            >
+                              <VStack align="stretch" spacing={2}>
+                                {(() => {
+                                  // Sort segments by start_time or start
+                                  const sortedSegments = [...segments].sort(
+                                    (a: any, b: any) => {
+                                      const aStart = a.start_time !== undefined ? a.start_time : a.start;
+                                      const bStart = b.start_time !== undefined ? b.start_time : b.start;
+                                      return aStart - bStart;
+                                    }
+                                  );
+
+                                  return sortedSegments.map((segment: any, idx: number) => {
+                                    const startTime = segment.start_time !== undefined ? segment.start_time : segment.start;
+                                    const endTime = segment.end_time !== undefined ? segment.end_time : segment.end;
+                                    const duration = segment.duration !== undefined 
+                                      ? segment.duration 
+                                      : (endTime - startTime);
+                                    const language = segment.language || "Unknown";
+                                    const colorScheme = getLanguageColor(language);
+
+                                    return (
+                                      <Box
+                                        key={idx}
+                                        p={3}
+                                        bg={`${colorScheme}.50`}
+                                        borderRadius="md"
+                                        border="1px"
+                                        borderColor={`${colorScheme}.200`}
+                                      >
+                                        <HStack justify="space-between" align="start" mb={2}>
+                                          <HStack spacing={2}>
+                                            <Box
+                                              px={2}
+                                              py={1}
+                                              bg={`${colorScheme}.200`}
+                                              borderRadius="md"
+                                            >
+                                              <Text fontSize="xs" fontWeight="bold" color={`${colorScheme}.800`}>
+                                                {language.toUpperCase()}
+                                              </Text>
+                                            </Box>
+                                          </HStack>
+                                          <VStack align="end" spacing={0}>
+                                            <Text fontSize="xs" color="gray.600">
+                                              Duration: {formatTime(duration)}
+                                            </Text>
+                                          </VStack>
+                                        </HStack>
+                                        <HStack spacing={2} fontSize="xs" color="gray.600">
+                                          <Text>
+                                            <Text as="span" fontWeight="semibold">Start:</Text> {formatTime(startTime)}
+                                          </Text>
+                                          <Text>•</Text>
+                                          <Text>
+                                            <Text as="span" fontWeight="semibold">End:</Text> {formatTime(endTime)}
+                                          </Text>
+                                        </HStack>
+                                      </Box>
+                                    );
+                                  });
+                                })()}
+                              </VStack>
+                            </Box>
+                          </Box>
+                        )}
+                      </>
+                    ) : (
+                      /* Fallback to JSON if structure is different */
+                      <Box
+                        p={3}
+                        bg="white"
+                        borderRadius="md"
+                        maxH="400px"
+                        overflowY="auto"
+                      >
+                        <Text as="pre" fontSize="xs" whiteSpace="pre-wrap" wordBreak="break-word">
+                          {JSON.stringify(result, null, 2)}
+                        </Text>
+                      </Box>
+                    )}
+                  </Box>
+                );
+              })()}
+
+                {/* Language Diarization Results */}
+                {fetched && result && (() => {
+                  // Extract data - handle both result.output[0] and direct result structure
+                  const data = result.output && result.output[0] ? result.output[0] : result;
+                  const segments = data.segments || [];
+                  const languages = data.languages || [];
+                  // Extract unique languages from segments if not provided directly
+                  const uniqueLanguages = languages.length > 0 
+                    ? languages 
+                    : Array.from(new Set(segments.map((s: any) => s.language).filter(Boolean)));
+                  const numLanguages = data.num_languages || uniqueLanguages.length || 0;
+                  
+                  const formatTime = (seconds: number) => {
+                    const mins = Math.floor(seconds / 60);
+                    const secs = (seconds % 60).toFixed(2);
+                    return mins > 0 ? `${mins}:${secs.padStart(5, '0')}` : `${secs}s`;
+                  };
+
+                  const getLanguageColor = (language: string) => {
+                    const languageIndex = uniqueLanguages.indexOf(language);
+                    const colors = ["orange", "blue", "green", "purple", "pink", "teal", "cyan", "yellow"];
+                    return colors[languageIndex % colors.length] || "gray";
+                  };
+
+                  // Check if we have structured data to display
+                  const hasStructuredData = segments.length > 0 || numLanguages > 0;
+
+                  return (
+                    <>
+                      <Box
+                        p={4}
+                        bg="gray.50"
+                        borderRadius="md"
+                        border="1px"
+                        borderColor="gray.200"
+                      >
+                        <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
+                          Language Diarization Results:
+                        </Text>
+                        
+                        {hasStructuredData ? (
+                          <>
+                            {/* Summary */}
+                            <HStack spacing={4} mb={4}>
+                              <Box
+                                p={3}
+                                bg="orange.100"
+                                borderRadius="md"
+                                border="1px"
+                                borderColor="orange.300"
+                              >
+                                <Text fontSize="xs" color="gray.600" mb={1}>
+                                  Total Languages
+                                </Text>
+                                <Text fontSize="lg" fontWeight="bold" color="orange.700">
+                                  {numLanguages}
+                                </Text>
+                              </Box>
+                              <Box
+                                p={3}
+                                bg="blue.100"
+                                borderRadius="md"
+                                border="1px"
+                                borderColor="blue.300"
+                              >
+                                <Text fontSize="xs" color="gray.600" mb={1}>
+                                  Total Segments
+                                </Text>
+                                <Text fontSize="lg" fontWeight="bold" color="blue.700">
+                                  {segments.length}
+                                </Text>
+                              </Box>
+                            </HStack>
+
+                            {/* Languages List */}
+                            {uniqueLanguages.length > 0 && (
+                              <Box mb={4}>
+                                <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={2}>
+                                  Detected Languages:
+                                </Text>
+                                <HStack spacing={2} flexWrap="wrap">
+                                  {uniqueLanguages.map((language: string, idx: number) => {
+                                    const colorScheme = getLanguageColor(language);
+                                    return (
+                                      <Box
+                                        key={language}
+                                        px={3}
+                                        py={1}
+                                        bg={`${colorScheme}.100`}
+                                        borderRadius="full"
+                                        border="1px"
+                                        borderColor={`${colorScheme}.300`}
+                                      >
+                                        <Text fontSize="sm" fontWeight="semibold" color={`${colorScheme}.700`}>
+                                          {language.toUpperCase()}
+                                        </Text>
+                                      </Box>
+                                    );
+                                  })}
+                                </HStack>
+                              </Box>
+                            )}
+
+                            {/* Segments Timeline */}
+                            {segments.length > 0 && (
+                              <Box>
+                                <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={3}>
+                                  Timeline Segments (sorted by start time):
                                 </Text>
                                 <Box
-                                  flex={1}
-                                  h="8px"
-                                  bg="gray.200"
-                                  borderRadius="full"
-                                  overflow="hidden"
+                                  p={3}
+                                  bg="white"
+                                  borderRadius="md"
+                                  maxH="400px"
+                                  overflowY="auto"
+                                  border="1px"
+                                  borderColor="gray.200"
                                 >
-                                  <Box
-                                    h="100%"
-                                    bg="orange.500"
-                                    w={`${confidence * 100}%`}
-                                    transition="width 0.3s"
-                                  />
-                                </Box>
-                              </HStack>
-                            </Box>
-                          )}
-                        </VStack>
-                      </Box>
-                    );
-                  })}
-                </Box>
+                                  <VStack align="stretch" spacing={2}>
+                                    {(() => {
+                                      // Sort segments by start_time or start
+                                      const sortedSegments = [...segments].sort(
+                                        (a: any, b: any) => {
+                                          const aStart = a.start_time !== undefined ? a.start_time : a.start;
+                                          const bStart = b.start_time !== undefined ? b.start_time : b.start;
+                                          return aStart - bStart;
+                                        }
+                                      );
 
-                    {/* Clear Results Button */}
-                    <Box textAlign="center">
-                      <button
-                  onClick={clearResults}
-                        style={{
-                          padding: "8px 16px",
-                          backgroundColor: "#f7fafc",
-                          border: "1px solid #e2e8f0",
-                          borderRadius: "6px",
-                          cursor: "pointer",
-                          fontSize: "14px",
-                          color: "#4a5568",
-                        }}
+                                      return sortedSegments.map((segment: any, idx: number) => {
+                                        const startTime = segment.start_time !== undefined ? segment.start_time : segment.start;
+                                        const endTime = segment.end_time !== undefined ? segment.end_time : segment.end;
+                                        const duration = segment.duration !== undefined 
+                                          ? segment.duration 
+                                          : (endTime - startTime);
+                                        const language = segment.language || "Unknown";
+                                        const colorScheme = getLanguageColor(language);
+
+                                        return (
+                                          <Box
+                                            key={idx}
+                                            p={3}
+                                            bg={`${colorScheme}.50`}
+                                            borderRadius="md"
+                                            border="1px"
+                                            borderColor={`${colorScheme}.200`}
+                                          >
+                                            <HStack justify="space-between" align="start" mb={2}>
+                                              <HStack spacing={2}>
+                                                <Box
+                                                  px={2}
+                                                  py={1}
+                                                  bg={`${colorScheme}.200`}
+                                                  borderRadius="md"
+                                                >
+                                                  <Text fontSize="xs" fontWeight="bold" color={`${colorScheme}.800`}>
+                                                    {language.toUpperCase()}
+                                                  </Text>
+                                                </Box>
+                                              </HStack>
+                                              <VStack align="end" spacing={0}>
+                                                <Text fontSize="xs" color="gray.600">
+                                                  Duration: {formatTime(duration)}
+                                                </Text>
+                                              </VStack>
+                                            </HStack>
+                                            <HStack spacing={2} fontSize="xs" color="gray.600">
+                                              <Text>
+                                                <Text as="span" fontWeight="semibold">Start:</Text> {formatTime(startTime)}
+                                              </Text>
+                                              <Text>•</Text>
+                                              <Text>
+                                                <Text as="span" fontWeight="semibold">End:</Text> {formatTime(endTime)}
+                                              </Text>
+                                            </HStack>
+                                          </Box>
+                                        );
+                                      });
+                                    })()}
+                                  </VStack>
+                                </Box>
+                              </Box>
+                            )}
+                          </>
+                        ) : (
+                          /* Fallback to JSON if structure is different */
+                          <Box
+                            p={3}
+                            bg="white"
+                            borderRadius="md"
+                            maxH="400px"
+                            overflowY="auto"
+                          >
+                            <Text as="pre" fontSize="xs" whiteSpace="pre-wrap" wordBreak="break-word">
+                              {JSON.stringify(result, null, 2)}
+                            </Text>
+                          </Box>
+                        )}
+                      </Box>
+
+                      {/* Clear Results Button */}
+                      <Box textAlign="center">
+                        <button
+                  onClick={handleClearAudioInput}
+                          style={{
+                            padding: "8px 16px",
+                            backgroundColor: "#f7fafc",
+                            border: "1px solid #e2e8f0",
+                            borderRadius: "6px",
+                            cursor: "pointer",
+                            fontSize: "14px",
+                            color: "#4a5568",
+                          }}
                 >
                   Clear Results
-                      </button>
-                    </Box>
-                  </>
-              )}
+                        </button>
+                      </Box>
+                    </>
+                  );
+                })()}
             </VStack>
           </GridItem>
         </Grid>
@@ -461,4 +794,4 @@ const LanguageDetectionPage: React.FC = () => {
   );
 };
 
-export default LanguageDetectionPage;
+export default LanguageDiarizationPage;
