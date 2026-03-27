@@ -168,11 +168,14 @@ const ServicesManagementPage: React.FC = () => {
       return true;
     });
     return [...filtered].sort((a, b) => {
-      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
-      if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
+      // Always keep newest services first in the registry.
       const timeA = getServiceSortTime(a);
       const timeB = getServiceSortTime(b);
       if (timeB !== timeA) return timeB - timeA;
+
+      // Use name ordering only as a deterministic tie-breaker.
+      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
+      if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
       return 0;
     });
   }, [services, searchQuery, filterStatus, filterTaskType, nameSortDirection]);
