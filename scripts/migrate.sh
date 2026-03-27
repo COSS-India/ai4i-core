@@ -354,7 +354,7 @@ case "$COMMAND" in
     ;;
   upgrade)
     if [[ "${#EXTRA_ARGS[@]}" -eq 0 ]]; then
-      EXTRA_ARGS=("heads")
+      EXTRA_ARGS=("head")
     fi
     if [[ "$DATABASE" == "all" ]]; then
       run_for_all_databases upgrade "${EXTRA_ARGS[@]}"
