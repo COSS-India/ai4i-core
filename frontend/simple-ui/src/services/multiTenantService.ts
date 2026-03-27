@@ -197,6 +197,15 @@ export async function sendVerificationEmail(tenant_id: string): Promise<SendVeri
 }
 
 /**
+ * Resend verification email to a PENDING tenant (new token, same flow as user-facing resend).
+ * POST /api/v1/multi-tenant/email/resend
+ */
+export async function resendVerificationEmail(tenant_id: string): Promise<SendVerificationEmailResponse> {
+  const { data } = await apiClient.post<SendVerificationEmailResponse>(`${BASE}/email/resend`, { tenant_id });
+  return data;
+}
+
+/**
  * Verify tenant email with token. GET /api/v1/multi-tenant/email/verify?token=...
  */
 export async function verifyEmailWithToken(token: string): Promise<{ message: string }> {

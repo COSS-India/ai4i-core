@@ -333,9 +333,13 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       // }
       // -------------------------------------------------------------------------
 
+      const successMessage =
+        typeof registerResponse?.message === "string" && registerResponse.message.trim().length > 0
+          ? registerResponse.message.trim()
+          : "Tenant created successfully.";
       toast({
         title: "Tenant created",
-        description: `${registerResponse?.message ?? "Tenant created successfully."} Tenant remains pending until verified.`, 
+        description: successMessage,
         status: "success",
         duration: 5000,
         isClosable: true,
@@ -734,28 +738,32 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  // ----- Send Verification Email -----
-  const [sendingVerificationTenantId, setSendingVerificationTenantId] = useState<string | null>(null);
+  // ----- Resend verification email (PENDING tenants) -----
+  const [resendingVerificationTenantId, setResendingVerificationTenantId] = useState<string | null>(null);
 
   /** Validate email format */
   const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-  /** Send verification email to a PENDING tenant. Validates email first. */
-  const handleSendVerificationEmail = async (tenantId: string, email: string | undefined) => {
+  /** Resend verification email to a PENDING tenant via POST /email/resend. Validates email first. */
+  const handleResendVerificationEmail = async (tenantId: string, email: string | undefined) => {
     if (!email || !isValidEmail(email)) {
-      toast({ title: "Invalid Email", description: "Cannot send verification email. The tenant's contact email is invalid or missing.", status: "error", isClosable: true, duration: 5000 });
+      toast({ title: "Invalid Email", description: "Cannot resend verification email. The tenant's contact email is invalid or missing.", status: "error", isClosable: true, duration: 5000 });
       return;
     }
-    setSendingVerificationTenantId(tenantId);
+    setResendingVerificationTenantId(tenantId);
     try {
-      await multiTenantService.sendVerificationEmail(tenantId);
-      toast({ title: "Verification Email Sent", description: `Verification email sent to ${email}.`, status: "success", isClosable: true, duration: 5000 });
+      const res = await multiTenantService.resendVerificationEmail(tenantId);
+      const successMessage =
+        typeof res?.message === "string" && res.message.trim().length > 0
+          ? res.message.trim()
+          : `Verification email resent to ${email}.`;
+      toast({ title: "Verification email resent", description: successMessage, status: "success", isClosable: true, duration: 5000 });
     } catch (err) {
-      console.error("Failed to send verification email:", err);
+      console.error("Failed to resend verification email:", err);
       const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
       toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
     } finally {
-      setSendingVerificationTenantId(null);
+      setResendingVerificationTenantId(null);
     }
   };
 
@@ -1091,9 +1099,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleOpenDeleteUser,
     handleConfirmDeleteUser,
     closeDeleteUserDialog,
-    // Send verification email
-    sendingVerificationTenantId,
-    handleSendVerificationEmail,
+    // Resend verification email
+    resendingVerificationTenantId,
+    handleResendVerificationEmail,
     // Fetch
     handleFetchTenants,
     handleFetchTenantUsers,
