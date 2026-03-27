@@ -260,7 +260,7 @@ const ModelManagementPage: React.FC = () => {
     return updated || submitted;
   };
 
-  // Apply search (model name only) and filters (version status, task type), then sort by name (A-Z / Z-A)
+  // Apply search (model name only) and filters (version status, task type), then sort by latest activity.
   const filteredModels = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const filtered = models.filter((m) => {
@@ -275,13 +275,14 @@ const ModelManagementPage: React.FC = () => {
       if (filterTaskType && (m.task?.type ?? "").toUpperCase() !== filterTaskType) return false;
       return true;
     });
-    // Primary: name sort; secondary: latest update/edit for stable ordering
+    // Primary: latest update/create (newest first); secondary: name for deterministic ties.
     return [...filtered].sort((a, b) => {
-      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
-      if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
       const timeA = getModelSortTime(a);
       const timeB = getModelSortTime(b);
-      if (timeB !== timeA) return timeB - timeA; // newest first tiebreaker
+      if (timeB !== timeA) return timeB - timeA;
+
+      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
+      if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
       return 0;
     });
   }, [models, searchQuery, filterVersionStatus, filterTaskType, nameSortDirection]);
