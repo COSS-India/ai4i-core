@@ -151,6 +151,7 @@ const ModelManagementPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterVersionStatus, setFilterVersionStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
+  const [sortBy, setSortBy] = useState<"time" | "name">("time");
   const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure();
   const cancelConfirmRef = React.useRef<HTMLButtonElement>(null);
@@ -260,7 +261,7 @@ const ModelManagementPage: React.FC = () => {
     return updated || submitted;
   };
 
-  // Apply search (model name only) and filters (version status, task type), then sort by latest activity.
+  // Apply search (model name only) and filters (version status, task type), then sort by selected mode.
   const filteredModels = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const filtered = models.filter((m) => {
@@ -275,17 +276,23 @@ const ModelManagementPage: React.FC = () => {
       if (filterTaskType && (m.task?.type ?? "").toUpperCase() !== filterTaskType) return false;
       return true;
     });
-    // Primary: latest update/create (newest first); secondary: name for deterministic ties.
+    // Default mode is newest-first; users can switch to explicit name sorting.
     return [...filtered].sort((a, b) => {
       const timeA = getModelSortTime(a);
       const timeB = getModelSortTime(b);
-      if (timeB !== timeA) return timeB - timeA;
-
       const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
+
+      if (sortBy === "time") {
+        if (timeB !== timeA) return timeB - timeA;
+        if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
+        return 0;
+      }
+
       if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
+      if (timeB !== timeA) return timeB - timeA;
       return 0;
     });
-  }, [models, searchQuery, filterVersionStatus, filterTaskType, nameSortDirection]);
+  }, [models, searchQuery, filterVersionStatus, filterTaskType, nameSortDirection, sortBy]);
 
   const totalModels = filteredModels.length;
   const totalPages = Math.max(1, Math.ceil(totalModels / listPageSize));
@@ -1032,17 +1039,23 @@ const ModelManagementPage: React.FC = () => {
                                   cursor="pointer"
                                   userSelect="none"
                                   onClick={() => {
-                                    setNameSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+                                    if (sortBy !== "name") {
+                                      setSortBy("name");
+                                      setNameSortDirection("asc");
+                                    } else {
+                                      setNameSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+                                    }
                                     setListPage(1);
                                   }}
                                 >
                                   <HStack spacing={2}>
                                     <Text>Name</Text>
-                                    {nameSortDirection === "asc" ? (
+                                    {sortBy === "name" ? (
+                                    nameSortDirection === "asc" ? (
                                       <TriangleUpIcon boxSize={3} color="gray.500" />
                                     ) : (
                                       <TriangleDownIcon boxSize={3} color="gray.500" />
-                                    )}
+                                    )) : null}
                                   </HStack>
                                 </Th>
                                 <Th>Version</Th>
