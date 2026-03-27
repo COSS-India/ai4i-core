@@ -1454,6 +1454,32 @@ routes:
       simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
     pass_host: pass
     type: roundrobin
+- uri: /pii-management
+  name: frontend-pii-management
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /pii-management/*
+  name: frontend-pii-management-prefix
+
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
 - uri: /profile
   name: frontend-profile
 
