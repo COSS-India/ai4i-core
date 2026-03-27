@@ -205,9 +205,21 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const handleFetchTenantUsers = async () => {
+    const tenantId = tenantDetailView?.tenant_id ?? user?.tenant_id ?? null;
+    if (!tenantId) {
+      toast({
+        title: "Tenant context missing",
+        description: "Unable to load users because no tenant ID is available.",
+        status: "warning",
+        isClosable: true,
+        duration: 5000,
+      });
+      setTenantUsers([]);
+      return;
+    }
     setIsLoadingTenantUsers(true);
     try {
-      const res = await multiTenantService.listUsers(user?.tenant_id ?? undefined);
+      const res = await multiTenantService.listUsers(tenantId);
       const list = Array.isArray(res) ? (res as TenantUserView[]) : (res?.users ?? []);
       setTenantUsers(list);
     } catch (err) {
@@ -521,7 +533,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     try {
       const [detail, usersRes] = await Promise.all([
         multiTenantService.getViewTenant(t.tenant_id),
-        multiTenantService.listUsers(user?.tenant_id ?? undefined),
+        // Always scope list-users to the tenant being viewed; backend enforces TENANT ADMIN ↔ own tenant only.
+        multiTenantService.listUsers(t.tenant_id),
       ]);
       setViewTenantDetail(detail);
       // Support both { users: [...] } and raw array (e.g. from gateway)
