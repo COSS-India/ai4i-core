@@ -1269,7 +1269,7 @@
     hash_on: vars
     scheme: http
     nodes:
-      pii-guard-service${APISIX_UPSTREAM_SUFFIX}:8000: 1
+      pii-service${APISIX_UPSTREAM_SUFFIX}:8000: 1
     pass_host: pass
     type: roundrobin
   plugins:
