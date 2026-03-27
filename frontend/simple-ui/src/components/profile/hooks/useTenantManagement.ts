@@ -521,7 +521,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     try {
       const [detail, usersRes] = await Promise.all([
         multiTenantService.getViewTenant(t.tenant_id),
-        multiTenantService.listUsers(user?.tenant_id ?? undefined),
+        // Always scope list-users to the tenant being viewed; backend enforces TENANT ADMIN ↔ own tenant only.
+        multiTenantService.listUsers(t.tenant_id),
       ]);
       setViewTenantDetail(detail);
       // Support both { users: [...] } and raw array (e.g. from gateway)
