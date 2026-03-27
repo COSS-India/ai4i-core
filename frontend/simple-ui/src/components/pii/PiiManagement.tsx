@@ -58,6 +58,8 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
     void fetchAuditLogs();
   }, [isAdmin, activeTab]);
 
+  // Loads domains + tenant mappings on admin-tab entry (mount and when returning from Audit).
+  // Replaces a plain mount effect calling fetchAllDomains/fetchTenantMappings; uses retry + adminDataError.
   useEffect(() => {
     if (!isAdmin || activeTab !== "admin") return;
     void refreshAdminDataWithRetry();
