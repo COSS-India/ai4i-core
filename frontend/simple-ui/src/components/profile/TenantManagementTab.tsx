@@ -548,11 +548,11 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                                 size="xs"
                                 colorScheme="blue"
                                 leftIcon={<FiMail />}
-                                onClick={() => tm.handleSendVerificationEmail(tm.viewTenantDetail!.tenant_id, tm.viewTenantDetail!.email)}
-                                isLoading={tm.sendingVerificationTenantId === tm.viewTenantDetail.tenant_id}
-                                loadingText="Sending..."
+                                onClick={() => tm.handleResendVerificationEmail(tm.viewTenantDetail!.tenant_id, tm.viewTenantDetail!.email)}
+                                isLoading={tm.resendingVerificationTenantId === tm.viewTenantDetail.tenant_id}
+                                loadingText="Resending..."
                               >
-                                Send Verification Email
+                                Resend Verification Email
                               </Button>
                             )}
                           </HStack>
@@ -669,10 +669,10 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                               {t.status === "PENDING" && (
                                 <MenuItem
                                   icon={<FiMail />}
-                                  onClick={() => tm.handleSendVerificationEmail(t.tenant_id, t.email)}
-                                  isDisabled={tm.sendingVerificationTenantId === t.tenant_id}
+                                  onClick={() => tm.handleResendVerificationEmail(t.tenant_id, t.email)}
+                                  isDisabled={tm.resendingVerificationTenantId === t.tenant_id}
                                 >
-                                  {tm.sendingVerificationTenantId === t.tenant_id ? "Sending..." : "Send Verification Email"}
+                                  {tm.resendingVerificationTenantId === t.tenant_id ? "Resending..." : "Resend Verification Email"}
                                 </MenuItem>
                               )}
                               {t.status === "ACTIVE" && (
