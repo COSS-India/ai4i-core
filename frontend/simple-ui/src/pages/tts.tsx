@@ -262,6 +262,7 @@ const TTSPage: React.FC = () => {
                 {fetched && audio && (
                   <TTSResults
                     audioSrc={audio}
+                    audioFormat={audioFormat}
                     wordCount={requestWordCount}
                     responseTime={Number(requestTime)}
                     audioDuration={audioDuration}
