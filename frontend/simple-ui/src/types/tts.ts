@@ -151,6 +151,7 @@ export interface VoiceSelectorProps {
 
 export interface TTSResultsProps {
   audioSrc: string;
+  audioFormat?: string;
   wordCount: number;
   responseTime: number;
   audioDuration: number;
