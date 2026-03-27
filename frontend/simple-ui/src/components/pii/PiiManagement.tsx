@@ -159,7 +159,8 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
     setEditingDomainId(id);
     try {
       const res = await piiService.getPolicy(id);
-      setEditingRules(res.data.rules || []);
+      const rules = Array.isArray(res.data.rules) ? (res.data.rules as Rule[]) : [];
+      setEditingRules(rules);
     } catch {
       alert("Failed to load policy");
     }
