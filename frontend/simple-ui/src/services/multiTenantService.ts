@@ -41,12 +41,12 @@ export async function listTenants(): Promise<ListTenantsResponse> {
 }
 
 /**
- * List users (optionally filtered by tenant). When tenant_id is passed, only users for that tenant are returned.
+ * List users for one tenant. Backend requires `tenant_id` query param; TENANT ADMIN may only request their own tenant.
  * GET /api/v1/multi-tenant/admin/list/users
- * @param tenant_id - Optional. From /api/v1/auth/me for logged-in tenant; when provided, returns only that tenant's users.
+ * @param tenant_id - Tenant to list (logged-in tenant admin: use `user.tenant_id` from /api/v1/auth/me; platform admin: pass selected tenant).
  */
-export async function listUsers(tenant_id?: string | null): Promise<ListUsersResponse> {
-  const params = tenant_id ? { tenant_id } : {};
+export async function listUsers(tenant_id: string): Promise<ListUsersResponse> {
+  const params = { tenant_id };
   const { data } = await apiClient.get<ListUsersResponse>(`${BASE}/admin/list/users`, { params });
   return data;
 }
