@@ -158,6 +158,8 @@ class AppEnv(BaseSettings):
     pipeline_service_url: str = ""
     ocr_service_url: str = ""
     ner_service_url: str = ""
+    pii_service_url: str = ""
+    pii_redact_timeout: float = 20.0
     speaker_diarization_service_url: str = ""
     language_diarization_service_url: str = ""
     audio_lang_detection_service_url: str = ""
