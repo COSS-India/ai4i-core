@@ -596,6 +596,7 @@
       "name": "TENANT ADMIN",
       "description": "Tenant administrator with tenant-scoped management permissions",
       "permissions": [
+        "P_01",
         "P_02",
         "P_03",
         "P_26",
@@ -690,6 +691,11 @@
       "endpoint": "GET:/api/v1/auth/roles/user/{user_id}",
       "permissionRequired": "roles.read",
       "description": "Get roles for a user"
+    },
+    {
+      "endpoint": "GET:/api/v1/auth/inference/permissions",
+      "permissionRequired": "roles.read",
+      "description": "List inference permissions"
     },
     {
       "endpoint": "POST:/api/v1/auth/api-keys",
