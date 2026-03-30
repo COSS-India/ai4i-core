@@ -51,7 +51,10 @@ class UserRepository:
 
     async def list_all(self, offset: int = 0, limit: int = 100) -> list[User]:
         result = await self._db.execute(
-            select(User).order_by(User.id).offset(offset).limit(limit)
+            select(User)
+            .order_by(User.full_name.asc().nulls_last(), User.username.asc())
+            .offset(offset)
+            .limit(limit)
         )
         return list(result.scalars().all())
 
