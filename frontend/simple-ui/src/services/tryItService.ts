@@ -16,11 +16,9 @@ const tryItClient: AxiosInstance = axios.create({
   },
 });
 
-// Add request interceptor to add anonymous session ID and try-it header
+// Add request interceptor to add anonymous session ID
 tryItClient.interceptors.request.use(
   (config) => {
-    // Mark request as try-it (no auth; backend may return try-it eligible services)
-    config.headers['X-Try-It'] = 'true';
     // Add anonymous session ID for rate limiting
     const sessionId = getAnonymousSessionId();
     config.headers['X-Anonymous-Session-Id'] = sessionId;
