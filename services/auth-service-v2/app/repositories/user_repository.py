@@ -58,6 +58,16 @@ class UserRepository:
         )
         return list(result.scalars().all())
 
+    async def list_by_tenant(self, tenant_id: str, offset: int = 0, limit: int = 100) -> list[User]:
+        result = await self._db.execute(
+            select(User)
+            .where(User.tenant_id_cached == tenant_id)
+            .order_by(User.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
     async def count(self) -> int:
         result = await self._db.execute(select(func.count(User.id)))
         return result.scalar_one()
