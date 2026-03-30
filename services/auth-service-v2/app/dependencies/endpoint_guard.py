@@ -59,10 +59,6 @@ async def enforce_endpoint_permission(
     if required_id in payload.permission_ids:
         return payload
 
-    # ADMIN bypass
-    if "ADMIN" in payload.roles:
-        return payload
-
     logger.warning(
         "Endpoint denied: user=%s %s:%s requires_id=%d has_ids=%s",
         payload.sub, request.method, request.url.path,
