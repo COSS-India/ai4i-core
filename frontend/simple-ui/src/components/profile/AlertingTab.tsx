@@ -2404,10 +2404,16 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                         const v = e.target.value as "global" | "specific_tenant";
                         setEditRuleScope(v);
                         if (v === "global") {
-                          rules.setUpdateForm({ ...rules.updateForm, tenant: null });
+                          // Backend expects global scope to be expressed as tenant="" + rbac_role=ADMIN.
+                          rules.setUpdateForm({ ...rules.updateForm, tenant: "", rbac_role: "ADMIN" });
                           setEditRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; });
                         } else {
-                          rules.setUpdateForm({ ...rules.updateForm, tenant: rules.updateItem?.tenant ?? "" });
+                          rules.setUpdateForm({
+                            ...rules.updateForm,
+                            tenant: rules.updateItem?.tenant ?? "",
+                            // Routing rules always use RBAC delivery with ADMIN.
+                            rbac_role: "ADMIN",
+                          });
                         }
                       }}
                       bg="white"

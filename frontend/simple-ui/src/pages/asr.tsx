@@ -151,7 +151,10 @@ const ASRPage: React.FC = () => {
                   >
                     {asrServices?.map((service) => {
                       const version = service.modelVersion || service.model_version;
-                      const displayText = version ? `${service.service_id} (${version})` : service.service_id;
+                      // Show the human-friendly service name in the dropdown,
+                      // but keep the underlying value as the service_id.
+                      const displayName = service.name || service.service_id;
+                      const displayText = version ? `${displayName} (${version})` : displayName;
                       return (
                         <option key={service.service_id} value={service.service_id}>
                           {displayText}
