@@ -5,6 +5,7 @@ User CRUD business logic.
 import logging
 from typing import Optional
 
+from app.core.exceptions import AuthorizationError
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
@@ -49,8 +50,45 @@ class UserService:
     async def list_users(self, offset: int = 0, limit: int = 100) -> list[User]:
         return await self._users.list_all(offset, limit)
 
+    async def list_users_for_caller(self, caller: User, offset: int = 0, limit: int = 100) -> list[User]:
+        """ADMIN/MODERATOR: all users. TENANT ADMIN: users in caller.tenant_id_cached only."""
+        roles = await self._roles.get_user_roles(caller.id)
+        role_set = set(roles)
+        if "ADMIN" in role_set or "MODERATOR" in role_set:
+            return await self._users.list_all(offset, limit)
+        if "TENANT ADMIN" in role_set:
+            tid = (caller.tenant_id_cached or "").strip()
+            if not tid:
+                raise AuthorizationError(
+                    message="Your account has no tenant context; cannot list users.",
+                    code="TENANT_CONTEXT_REQUIRED",
+                )
+            return await self._users.list_by_tenant(tid, offset, limit)
+        return await self._users.list_all(offset, limit)
+
     async def get_user_by_id(self, user_id: int) -> Optional[User]:
         return await self._users.get_by_id(user_id)
+
+    async def get_user_by_id_for_caller(self, caller: User, user_id: int) -> Optional[User]:
+        """ADMIN/MODERATOR: any user. TENANT ADMIN: same tenant only."""
+        user = await self._users.get_by_id(user_id)
+        if not user:
+            return None
+        roles = await self._roles.get_user_roles(caller.id)
+        role_set = set(roles)
+        if "ADMIN" in role_set or "MODERATOR" in role_set:
+            return user
+        if "TENANT ADMIN" in role_set:
+            tid = (caller.tenant_id_cached or "").strip()
+            if not tid:
+                raise AuthorizationError(
+                    message="Your account has no tenant context; cannot view users.",
+                    code="TENANT_CONTEXT_REQUIRED",
+                )
+            if (user.tenant_id_cached or "").strip() != tid:
+                return None
+            return user
+        return user
 
     async def get_user_permission_names(self, user_id: int) -> list[str]:
         """Get permission names for a user (via roles)."""
