@@ -58,12 +58,12 @@ export interface TryItRequest {
 
 /**
  * Fetch NMT services for try-it (anonymous) users.
- * Uses GET /api/v1/model-management/services/tryout-service-list?task_type=nmt (no auth).
+ * Uses GET /api/v1/model-management/services/try-it-service-list?task_type=nmt (no auth).
  * @returns Promise with raw list of services from the API
  */
 export const listTryItNMTServices = async (): Promise<any[]> => {
   const response = await tryItClient.get<any[]>(
-    '/api/v1/model-management/services/tryout-service-list',
+    '/api/v1/model-management/services/try-it-service-list',
     {
       params: { task_type: 'nmt' },
     }
