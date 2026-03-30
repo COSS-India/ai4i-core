@@ -801,7 +801,7 @@
       connect: 60
       read: 60
     nodes:
-      model-management-service${APISIX_UPSTREAM_SUFFIX}:8094: 1
+      model-management-service${APISIX_UPSTREAM_SUFFIX}:8091: 1
     pass_host: pass
     type: roundrobin
   plugins:
