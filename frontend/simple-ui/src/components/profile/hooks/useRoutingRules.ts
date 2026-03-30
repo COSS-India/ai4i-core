@@ -197,14 +197,6 @@ export function useRoutingRules() {
       return arraysEqual(a, b);
     };
 
-    const hasEmail = (nextForm.email_to ?? []).length > 0;
-    const hasRole = nextForm.rbac_role != null && nextForm.rbac_role !== "";
-
-    // Validate raw form state: user must not submit both delivery modes.
-    if (hasEmail && hasRole) {
-      toast({ title: "Validation Error", description: "Provide either email_to or rbac_role, not both", status: "warning", duration: 3000, isClosable: true });
-      return;
-    }
     setIsUpdating(true);
     try {
       const payload: NotificationReceiverUpdate = {};
