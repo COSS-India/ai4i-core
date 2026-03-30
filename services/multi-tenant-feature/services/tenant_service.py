@@ -2673,7 +2673,7 @@ async def list_all_users(
         raise HTTPException(status_code=400, detail="tenant_id is required")
 
     stmt = select(TenantUser).where(TenantUser.tenant_id == tenant_id)
-    stmt = stmt.order_by(TenantUser.username.asc())
+    stmt = stmt.order_by(func.lower(TenantUser.username).asc(), TenantUser.id.asc())
 
     result = await db.execute(stmt)
     users = result.scalars().all()
