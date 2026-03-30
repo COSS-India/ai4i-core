@@ -244,42 +244,93 @@ export function useNotificationReceivers() {
     if (!updateItem) return;
     setIsUpdating(true);
     try {
-      const payload: NotificationReceiverUpdate = {
-        ...(updateForm.rule_name !== undefined
-          ? { rule_name: updateForm.rule_name }
-          : {}),
-        ...(updateForm.description !== undefined
-          ? { description: updateForm.description }
-          : {}),
-        ...(updateForm.category !== undefined
-          ? { category: updateForm.category }
-          : {}),
-        ...(updateForm.severity !== undefined
-          ? { severity: updateForm.severity }
-          : {}),
-        ...(updateForm.alert_type !== undefined
-          ? { alert_type: updateForm.alert_type }
-          : {}),
-        ...(updateForm.alert_names !== undefined
-          ? { alert_names: updateForm.alert_names }
-          : {}),
-        ...(updateForm.tenant !== undefined
-          ? { tenant: updateForm.tenant }
-          : {}),
-        ...(updateForm.email_subject_template !== undefined
-          ? { email_subject_template: updateForm.email_subject_template }
-          : {}),
-        ...(updateForm.email_body_template !== undefined
-          ? { email_body_template: updateForm.email_body_template }
-          : {}),
-        enabled: updateForm.enabled,
+      const arraysEqual = (a: string[] | null | undefined, b: string[] | null | undefined) => {
+        const aa = a ?? [];
+        const bb = b ?? [];
+        if (aa.length !== bb.length) return false;
+        for (let i = 0; i < aa.length; i++) {
+          if (aa[i] !== bb[i]) return false;
+        }
+        return true;
       };
+
+      const normNullable = <T,>(v: T | null | undefined): T | null => (v === undefined ? null : v);
+
+      const payload: NotificationReceiverUpdate = {};
+      const old = updateItem;
+      const next = updateForm;
+
+      if (next.rule_name !== undefined) {
+        const newVal = normNullable(next.rule_name);
+        const oldVal = normNullable(old.rule_name);
+        if (newVal !== oldVal) payload.rule_name = newVal;
+      }
+      if (next.description !== undefined) {
+        const newVal = normNullable(next.description);
+        const oldVal = normNullable(old.description);
+        if (newVal !== oldVal) payload.description = newVal;
+      }
+      if (next.category !== undefined) {
+        const newVal = normNullable(next.category);
+        const oldVal = normNullable(old.category);
+        if (newVal !== oldVal) payload.category = newVal;
+      }
+      if (next.severity !== undefined) {
+        const newVal = normNullable(next.severity);
+        const oldVal = normNullable(old.severity);
+        if (newVal !== oldVal) payload.severity = newVal;
+      }
+      if (next.alert_type !== undefined) {
+        const newVal = normNullable(next.alert_type);
+        const oldVal = normNullable(old.alert_type);
+        if (newVal !== oldVal) payload.alert_type = newVal;
+      }
+      if (next.alert_names !== undefined) {
+        const newVal = next.alert_names ?? null;
+        const oldVal = old.alert_names ?? null;
+        const same = newVal == null && oldVal == null ? true : arraysEqual(newVal ?? [], oldVal ?? []);
+        if (!same) payload.alert_names = newVal;
+      }
+      if (next.tenant !== undefined) {
+        const newVal = normNullable(next.tenant);
+        const oldVal = normNullable(old.tenant);
+        if (newVal !== oldVal) payload.tenant = newVal;
+      }
+      if (next.email_subject_template !== undefined) {
+        const newVal = normNullable(next.email_subject_template);
+        const oldVal = normNullable(old.email_subject_template);
+        if (newVal !== oldVal) payload.email_subject_template = newVal;
+      }
+      if (next.email_body_template !== undefined) {
+        const newVal = normNullable(next.email_body_template);
+        const oldVal = normNullable(old.email_body_template);
+        if (newVal !== oldVal) payload.email_body_template = newVal;
+      }
+
+      if (next.enabled !== undefined && next.enabled !== old.enabled) {
+        payload.enabled = next.enabled;
+      }
+
+      // Delivery mode: only include delivery fields if they differ from the original item.
       if (updateRecipientMode === "email") {
-        payload.email_to = updateForm.email_to;
-        payload.rbac_role = undefined;
+        const newEmailTo = next.email_to ?? [];
+        if (!arraysEqual(newEmailTo, old.email_to)) payload.email_to = newEmailTo;
+
+        // When switching to email mode, clear RBAC role only if it existed before.
+        const oldRole = normNullable(old.rbac_role);
+        if (oldRole !== null) payload.rbac_role = null;
       } else {
-        payload.rbac_role = updateForm.rbac_role;
-        payload.email_to = undefined;
+        // Role mode: only include rbac_role if it changed.
+        const newRole = normNullable(next.rbac_role);
+        const oldRole = normNullable(old.rbac_role);
+        if (newRole !== oldRole) payload.rbac_role = newRole;
+        // Keep existing email_to if the backend manages it based on rbac_role.
+      }
+
+      if (Object.keys(payload).length === 0) {
+        toast({ title: "No changes", description: "Nothing to update.", status: "info", duration: 3000, isClosable: true });
+        closeUpdate();
+        return;
       }
       await alertingService.updateReceiver(updateItem.id, payload);
       toast({
