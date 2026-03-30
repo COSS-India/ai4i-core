@@ -52,7 +52,7 @@ class UserRepository:
     async def list_all(self, offset: int = 0, limit: int = 100) -> list[User]:
         result = await self._db.execute(
             select(User)
-            .order_by(User.full_name.asc().nulls_last(), User.username.asc())
+            .order_by(func.lower(User.username).asc(), User.id.asc())
             .offset(offset)
             .limit(limit)
         )
