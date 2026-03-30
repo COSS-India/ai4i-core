@@ -1,13 +1,14 @@
 // Custom React hook for LLM functionality with text processing
 
-import { useState, useCallback, useRef } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { performLLMInference } from '../services/llmService';
-import { performNMTInference } from '../services/nmtService';
+import { listNMTServices, performNMTInference } from '../services/nmtService';
 import { getWordCount } from '../utils/helpers';
 import { UseLLMReturn, LLMInferenceRequest } from '../types/llm';
 import { extractErrorInfo } from '../utils/errorHandler';
+import type { NMTServiceDetailsResponse } from '../types/nmt';
 
 const MAX_TEXT_LENGTH = 50000;
 
@@ -29,11 +30,38 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
   const [nmtRequestTime, setNmtRequestTime] = useState<string>('0');
   const [error, setError] = useState<string | null>(null);
 
+  const [nmtServiceId, setNmtServiceId] = useState<string>('');
+  const [nmtServiceDetails, setNmtServiceDetails] = useState<NMTServiceDetailsResponse | null>(null);
+
   // Only show "text exceeds limit" toast once per exceed (not every keystroke)
   const hasShownTextLimitToastRef = useRef(false);
 
   // Toast hook
   const toast = useToastWithDeduplication();
+
+  const { data: nmtServices } = useQuery({
+    queryKey: ['nmt-services-for-llm'],
+    queryFn: listNMTServices,
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
+
+  const defaultPublishedNmtService = useMemo(() => {
+    if (!nmtServices || nmtServices.length === 0) return null;
+
+    // Logged-in users already get published-only via listNMTServices().
+    // For anonymous/try-it responses (or future API changes), prefer an explicitly-published service when present.
+    const anyWithPublishedFlag = (nmtServices as any[]).find(
+      (s) => s && (s.is_published === true || s.isPublished === true || s.status === 'published')
+    ) as NMTServiceDetailsResponse | undefined;
+
+    return anyWithPublishedFlag ?? nmtServices[0];
+  }, [nmtServices]);
+
+  useEffect(() => {
+    if (!defaultPublishedNmtService) return;
+    setNmtServiceId(defaultPublishedNmtService.service_id);
+    setNmtServiceDetails(defaultPublishedNmtService);
+  }, [defaultPublishedNmtService]);
 
   // LLM inference mutation
   const llmMutation = useMutation({
@@ -195,6 +223,17 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
       return;
     }
 
+    if (!nmtServiceId) {
+      toast({
+        title: 'NMT Service Unavailable',
+        description: 'No published NMT service is available right now. Please try again later.',
+        status: 'warning',
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+
     try {
       setIsDualMode(true);
       setFetching(true);
@@ -213,7 +252,7 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
             sourceLanguage: inputLanguage,
             targetLanguage: outputLanguage,
           },
-          serviceId: 'ai4bharat/indictrans--gpu-t4',
+          serviceId: nmtServiceId,
         }),
       ]);
 
@@ -244,7 +283,7 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
         isClosable: true,
       });
     }
-  }, [serviceId, selectedModelId, inputLanguage, outputLanguage, toast]);
+  }, [serviceId, selectedModelId, inputLanguage, outputLanguage, toast, nmtServiceId]);
 
   // Set input text with validation — show toast only when first exceeding limit, not every keystroke
   const setInputTextWithValidation = useCallback((text: string) => {
@@ -323,4 +362,3 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
     swapLanguages,
   };
 };
-
