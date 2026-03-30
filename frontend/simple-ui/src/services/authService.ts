@@ -563,7 +563,7 @@ class AuthService {
     });
   }
 
-  // User management (Admin only)
+  // User management (Admin / Mod / Tenant Admin)
   async getAllUsers(): Promise<User[]> {
     return this.request<User[]>('/users');
   }
@@ -572,7 +572,7 @@ class AuthService {
     return this.request<User>(`/users/${userId}`);
   }
 
-  // Permissions management (Admin only)
+  // Permissions management (inference-only)
   async getAllPermissions(): Promise<Permission[]> {
     return this.request<Permission[]>('/inference/permissions');
   }
