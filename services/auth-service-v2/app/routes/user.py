@@ -41,10 +41,10 @@ async def update_me(
 async def list_users(
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    _admin: User = Depends(require_any_role("ADMIN", "MODERATOR")),
+    caller: User = Depends(require_any_role("ADMIN", "MODERATOR", "TENANT ADMIN")),
     svc: UserService = Depends(get_user_service),
 ):
-    users = await svc.list_users(offset, limit)
+    users = await svc.list_users_for_caller(caller, offset, limit)
     items = [
         UserListResponse.model_validate(u, from_attributes=True).model_dump(by_alias=True)
         for u in users
@@ -55,10 +55,10 @@ async def list_users(
 @router.get("/users/{user_id}")
 async def get_user(
     user_id: int,
-    _admin: User = Depends(require_any_role("ADMIN", "MODERATOR")),
+    caller: User = Depends(require_any_role("ADMIN", "MODERATOR", "TENANT ADMIN")),
     svc: UserService = Depends(get_user_service),
 ):
-    user = await svc.get_user_by_id(user_id)
+    user = await svc.get_user_by_id_for_caller(caller, user_id)
     if not user:
         raise UserNotFoundError()
     profile = await svc.get_user_profile(user)

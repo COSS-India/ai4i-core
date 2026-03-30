@@ -574,7 +574,7 @@ class AuthService {
 
   // Permissions management (Admin only)
   async getAllPermissions(): Promise<Permission[]> {
-    return this.request<Permission[]>('/permissions/');
+    return this.request<Permission[]>('/inference/permissions');
   }
 
   // Utility methods
