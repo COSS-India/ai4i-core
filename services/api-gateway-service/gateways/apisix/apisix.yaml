@@ -786,6 +786,43 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+# --- Public model-management routes (no auth, specific endpoints) ---
+- uri: /api/v1/model-management/services/tryout-service-list
+  name: model-management-tryout-service-list-public-route
+  priority: 200
+  methods:
+  - GET
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    timeout:
+      send: 60
+      connect: 60
+      read: 60
+    nodes:
+      model-management-service${APISIX_UPSTREAM_SUFFIX}:8094: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      body_base64: false
+      headers:
+        set:
+          X-Served-By: APISIX-Gateway
 - uri: /api/v1/model-management/*
   name: model-management-route
   priority: 100
