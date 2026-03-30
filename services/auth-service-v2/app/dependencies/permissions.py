@@ -7,7 +7,7 @@ No service-local permission implementation.
 
 from collections.abc import Callable
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4icore_auth.permission_checker import PermissionChecker
@@ -51,6 +51,7 @@ def require_any_role(*role_names: str) -> Callable:
     """
 
     async def _check(
+        request: Request,
         current_user: User = Depends(get_current_active_user),
         db: AsyncSession = Depends(get_db),
     ) -> User:
@@ -59,6 +60,10 @@ def require_any_role(*role_names: str) -> Callable:
 
         repo = RoleRepository(db)
         user_roles = await repo.get_user_roles(current_user.id)
+
+        # Reuse these role names in downstream services to avoid duplicate DB queries.
+        # (Routes can read `request.state.user_roles`.)
+        request.state.user_roles = user_roles
 
         if not PermissionChecker.has_any_role(list(role_names), user_roles):
             raise InsufficientPermissionsError()
