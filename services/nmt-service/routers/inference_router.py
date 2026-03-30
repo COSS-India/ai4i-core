@@ -835,14 +835,18 @@ async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_tenan
     
     # Get cache TTL from Model Management client config
     cache_ttl_seconds = getattr(model_management_client, "cache_ttl_seconds", 300)
-    
+    pii_url = getattr(request.app.state, "pii_service_url", None)
+    pii_timeout = float(getattr(request.app.state, "pii_redact_timeout", 20.0))
+
     return NMTService(
         repository=repository, 
         text_service=text_service,
         get_triton_client_func=get_triton_client_for_endpoint,
         model_management_client=model_management_client,
         redis_client=redis_client,
-        cache_ttl_seconds=cache_ttl_seconds
+        cache_ttl_seconds=cache_ttl_seconds,
+        pii_redact_base_url=pii_url,
+        pii_redact_timeout=pii_timeout,
     )
 
 
@@ -1134,7 +1138,9 @@ async def run_inference(
                         
                         # Get cache TTL from Model Management client config
                         cache_ttl_seconds = getattr(model_management_client, "cache_ttl_seconds", 300)
-                        
+                        pii_url = getattr(http_request.app.state, "pii_service_url", None)
+                        pii_timeout = float(getattr(http_request.app.state, "pii_redact_timeout", 20.0))
+
                         # Create fallback NMT service with Model Management client (required for dynamic endpoint resolution)
                         fallback_nmt_service = NMTService(
                             repository=fallback_repository,
@@ -1142,7 +1148,9 @@ async def run_inference(
                             get_triton_client_func=get_fallback_triton_client_for_endpoint,
                             model_management_client=model_management_client,
                             redis_client=redis_client,
-                            cache_ttl_seconds=cache_ttl_seconds
+                            cache_ttl_seconds=cache_ttl_seconds,
+                            pii_redact_base_url=pii_url,
+                            pii_redact_timeout=pii_timeout,
                         )
                         
                         # Pre-populate the fallback service cache with the already-resolved endpoint
