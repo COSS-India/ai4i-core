@@ -217,6 +217,9 @@ async def lifespan(app: FastAPI):
     app.state.redis_client = redis_client
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
+    _pii_url = (app_env.pii_service_url or "").strip()
+    app.state.pii_service_url = _pii_url or None
+    app.state.pii_redact_timeout = float(app_env.pii_redact_timeout)
     
     # Tenant schema router is created by MultiTenantPlugin at registration time
     # (uses MULTI_TENANT_DB_URL or DATABASE_URL fallback)

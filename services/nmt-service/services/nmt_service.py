@@ -3,6 +3,7 @@ NMT Service
 Main NMT service containing core inference logic
 """
 
+import asyncio
 import time
 import json
 import logging
@@ -20,6 +21,11 @@ from services.text_service import TextService
 from utils.triton_client import TritonClient
 from utils.model_management_client import ModelManagementClient, ServiceInfo
 from utils.text_utils import count_words
+from utils.pii_redact_client import (
+    PII_SUPPORTED_LANG_CODES,
+    pii_language_code,
+    redact_for_storage,
+)
 
 try:
     from starlette.requests import Request
@@ -55,7 +61,9 @@ class NMTService:
         get_triton_client_func=None,
         model_management_client: Optional[ModelManagementClient] = None,
         redis_client = None,
-        cache_ttl_seconds: int = 300
+        cache_ttl_seconds: int = 300,
+        pii_redact_base_url: Optional[str] = None,
+        pii_redact_timeout: float = 20.0,
     ):
         self.repository = repository
         self.text_service = text_service
@@ -63,11 +71,91 @@ class NMTService:
         self.model_management_client = model_management_client
         self.redis_client = redis_client
         self.cache_ttl_seconds = cache_ttl_seconds
+        self.pii_redact_base_url = (pii_redact_base_url or "").strip() or None
+        self.pii_redact_timeout = pii_redact_timeout
         self.cache_prefix = "nmt:triton"
         # Cache Triton clients and service metadata with TTL so we can refresh on endpoint move
         self._triton_clients: Dict[str, Tuple[TritonClient, str, float]] = {}
         self._service_registry_cache: Dict[str, Tuple[str, str, float]] = {}
         self._service_info_cache: Dict[str, Tuple[ServiceInfo, float]] = {}
+
+    async def _persist_translation_results(
+        self,
+        request_id: UUID,
+        results: List[TranslationOutput],
+        original_source_lang: str,
+        original_target_lang: str,
+        auth_headers: Optional[Dict[str, str]],
+        http_request: Optional[Request],
+    ) -> List[Dict[str, str]]:
+        """
+        Write per-segment rows to the DB. When PII is configured and a side's language is
+        supported (en, hi, mr, ta), that side is redacted before insert. API response text
+        is unchanged — only stored rows are redacted.
+        """
+        tenant_id = None
+        if http_request is not None:
+            tenant_id = getattr(http_request.state, "tenant_id", None)
+        tenant_header = str(tenant_id) if tenant_id else None
+
+        src_lang = pii_language_code(original_source_lang)
+        tgt_lang = pii_language_code(original_target_lang)
+        src_ok = src_lang in PII_SUPPORTED_LANG_CODES
+        tgt_ok = tgt_lang in PII_SUPPORTED_LANG_CODES
+
+        stored_results: List[Dict[str, str]] = []
+
+        if not self.pii_redact_base_url or (not src_ok and not tgt_ok):
+            for result in results:
+                await self.repository.create_result(
+                    request_id=request_id,
+                    translated_text=result.target,
+                    source_text=result.source,
+                )
+                stored_results.append(
+                    {
+                        "source_text": result.source,
+                        "translated_text": result.target,
+                    }
+                )
+            return stored_results
+
+        async def maybe_redact(text: str, lang: str, supported: bool) -> str:
+            if not supported or not text:
+                return text
+            try:
+                return await redact_for_storage(
+                    base_url=self.pii_redact_base_url,
+                    text=text,
+                    lang=lang,
+                    auth_headers=auth_headers,
+                    tenant_id=tenant_header,
+                    timeout=self.pii_redact_timeout,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "NMT: PII redact before DB storage failed; storing raw segment: %s",
+                    exc,
+                )
+                return text
+
+        for result in results:
+            src_stored, tgt_stored = await asyncio.gather(
+                maybe_redact(result.source, src_lang, src_ok),
+                maybe_redact(result.target, tgt_lang, tgt_ok),
+            )
+            await self.repository.create_result(
+                request_id=request_id,
+                translated_text=tgt_stored,
+                source_text=src_stored,
+            )
+            stored_results.append(
+                {
+                    "source_text": src_stored,
+                    "translated_text": tgt_stored,
+                }
+            )
+        return stored_results
     
     async def _get_service_info(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> Optional[ServiceInfo]:
         """Get service info from model management service with caching"""
@@ -499,15 +587,21 @@ class NMTService:
                 # Create response
                 response = NMTInferenceResponse(output=results)
                 
-                # Database logging
+                # Database logging (redacted per PII policy when configured + language supported)
                 with tracer.start_as_current_span("nmt.create_db_results") as results_span:
-                    for result in results:
-                        await self.repository.create_result(
-                            request_id=request_id,
-                            translated_text=result.target,
-                            source_text=result.source
-                        )
+                    stored_results = await self._persist_translation_results(
+                        request_id=request_id,
+                        results=results,
+                        original_source_lang=original_source_lang,
+                        original_target_lang=original_target_lang,
+                        auth_headers=auth_headers,
+                        http_request=http_request,
+                    )
                     results_span.set_attribute("nmt.db_results_created", len(results))
+                    results_span.set_attribute("nmt.db_results_redacted_count", len(stored_results))
+                if http_request is not None:
+                    # Expose stored payload for request middleware/audit sinks.
+                    http_request.state.persisted_translation_results = stored_results
                 
                 # Update request status
                 processing_time = time.time() - start_time
@@ -683,13 +777,17 @@ class NMTService:
             # Create response
             response = NMTInferenceResponse(output=results)
             
-            # Database logging
-            for result in results:
-                await self.repository.create_result(
-                    request_id=request_id,
-                    translated_text=result.target,
-                    source_text=result.source
-                )
+            # Database logging (redacted per PII policy when configured + language supported)
+            stored_results = await self._persist_translation_results(
+                request_id=request_id,
+                results=results,
+                original_source_lang=original_source_lang,
+                original_target_lang=original_target_lang,
+                auth_headers=auth_headers,
+                http_request=http_request,
+            )
+            if http_request is not None:
+                http_request.state.persisted_translation_results = stored_results
             
             # Update request status
             processing_time = time.time() - start_time
