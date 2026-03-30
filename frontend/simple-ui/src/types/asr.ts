@@ -133,6 +133,7 @@ export interface AudioRecorderProps {
 
 export interface AudioPlayerProps {
   audioSrc: string;
+  downloadExtension?: string;
   showVisualization?: boolean;
   onPlay?: () => void;
   onPause?: () => void;
