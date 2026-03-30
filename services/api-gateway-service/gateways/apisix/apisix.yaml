@@ -787,8 +787,8 @@
       rejected_code: 429
       allow_degradation: false
 # --- Public model-management routes (no auth, specific endpoints) ---
-- uri: /api/v1/model-management/services/tryout-service-list
-  name: model-management-tryout-service-list-public-route
+- uri: /api/v1/model-management/services/try-it-service-list
+  name: model-management-try-it-service-list-public-route
   priority: 200
   methods:
   - GET
