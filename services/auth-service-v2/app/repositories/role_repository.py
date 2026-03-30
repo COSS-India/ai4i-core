@@ -73,6 +73,23 @@ class RoleRepository:
         result = await self._db.execute(select(Permission).order_by(Permission.name))
         return list(result.scalars().all())
 
+    async def list_inference_permissions(
+        self,
+        excluded_resources: tuple[str, ...] = (),
+    ) -> list[Permission]:
+        stmt = (
+            select(Permission)
+            .where(
+                Permission.action == "inference",
+                Permission.name.like("%.inference"),
+            )
+            .order_by(Permission.name)
+        )
+        if excluded_resources:
+            stmt = stmt.where(Permission.resource.notin_(excluded_resources))
+        result = await self._db.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_user_permission_ids(self, user_id: int) -> list[int]:
         """Return permission IDs for a user (via roles)."""
         result = await self._db.execute(

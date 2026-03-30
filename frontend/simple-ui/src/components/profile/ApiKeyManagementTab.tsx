@@ -65,6 +65,20 @@ export default function ApiKeyManagementTab({
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
 
+  const sortedUsers = useMemo(() => {
+    return [...users].sort((a, b) => {
+      // Dropdown should be deterministic and alphabetical for UX consistency.
+      const emailA = (a.email ?? "").trim();
+      const emailB = (b.email ?? "").trim();
+      const emailCmp = emailA.localeCompare(emailB, undefined, { sensitivity: "base" });
+      if (emailCmp !== 0) return emailCmp;
+
+      const usernameA = (a.username ?? "").trim();
+      const usernameB = (b.username ?? "").trim();
+      return usernameA.localeCompare(usernameB, undefined, { sensitivity: "base" });
+    });
+  }, [users]);
+
   const mgmt = useApiKeyManagementTab({
     user: user ?? null,
     users,
@@ -75,6 +89,19 @@ export default function ApiKeyManagementTab({
 
   const sortedApiKeys = useMemo(() => {
     return [...mgmt.filteredApiKeys].sort((a, b) => {
+      // When showing all users, keep the overall list alphabetical by user.
+      if (mgmt.filterUser === "all") {
+        const emailA = (a.user_email ?? "").trim();
+        const emailB = (b.user_email ?? "").trim();
+        const emailCmp = emailA.localeCompare(emailB, undefined, { sensitivity: "base" });
+        if (emailCmp !== 0) return emailCmp;
+
+        const usernameA = (a.username ?? "").trim();
+        const usernameB = (b.username ?? "").trim();
+        const usernameCmp = usernameA.localeCompare(usernameB, undefined, { sensitivity: "base" });
+        if (usernameCmp !== 0) return usernameCmp;
+      }
+
       const aName = a.key_name ?? "";
       const bName = b.key_name ?? "";
       const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
@@ -85,7 +112,7 @@ export default function ApiKeyManagementTab({
       const timeB = new Date(b.created_at).getTime();
       return timeB - timeA;
     });
-  }, [mgmt.filteredApiKeys, keyNameSortDirection]);
+  }, [mgmt.filteredApiKeys, keyNameSortDirection, mgmt.filterUser]);
 
   useEffect(() => {
     if (isActive) {
@@ -144,7 +171,7 @@ export default function ApiKeyManagementTab({
                         bg="white"
                       >
                         <option value="all">All Users</option>
-                        {users.map((u) => (
+                        {sortedUsers.map((u) => (
                           <option key={u.id} value={u.id.toString()}>
                             {u.email} ({u.username})
                           </option>
