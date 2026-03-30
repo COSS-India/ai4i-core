@@ -264,7 +264,7 @@ export const getNMTLanguages = async (modelId?: string): Promise<NMTLanguagesRes
       service.languages.forEach((lang: any) => {
         if (typeof lang === 'string') {
           supportedLanguages.push(lang);
-          languageDetails.push({ code: lang, name: lang });
+          languageDetails.push({ code: lang, name: LANG_CODE_TO_LABEL[lang] || lang });
         } else if (lang && typeof lang === 'object') {
           // Handle different language object formats
           const langCode = lang.code || lang.sourceLanguage || lang.targetLanguage || lang.language;
@@ -357,7 +357,7 @@ export const getNMTLanguagesForService = async (
       service.languages.forEach((lang: any) => {
         if (typeof lang === 'string') {
           supportedLanguages.push(lang);
-          languageDetails.push({ code: lang, name: lang });
+          languageDetails.push({ code: lang, name: LANG_CODE_TO_LABEL[lang] || lang });
         } else if (lang && typeof lang === 'object') {
           // Collect all language codes from this entry (e.g. sourceLanguage + targetLanguage)
           const codes: string[] = [];

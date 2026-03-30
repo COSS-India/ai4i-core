@@ -2,6 +2,7 @@
 
 import {
   Box,
+  Badge,
   Button,
   FormControl,
   FormLabel,
@@ -13,6 +14,7 @@ import {
   Select,
   Spinner,
   Text,
+  Textarea,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
@@ -21,8 +23,11 @@ import React, { useState } from "react";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
 import AudioInputPreview from "../components/common/AudioInputPreview";
+import { LANGUAGE_DETECTION_ERRORS, MAX_LANGUAGE_DETECTION_INPUT_LENGTH, MIN_LANGUAGE_DETECTION_TEXT_LENGTH } from "../config/constants";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performLanguageDiarizationInference, listLanguageDiarizationServices } from "../services/languageDiarizationService";
+import { listLanguageDetectionServices, performLanguageDetectionInference } from "../services/languageDetectionService";
+import { extractErrorInfo } from "../utils/errorHandler";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
@@ -794,4 +799,406 @@ const LanguageDiarizationPage: React.FC = () => {
   );
 };
 
-export default LanguageDiarizationPage;
+// Kept for legacy/debug: this file previously (incorrectly) rendered diarization under /language-detection.
+// We re-export the correct page below, but reference the legacy component to avoid unused-var linting.
+void LanguageDiarizationPage;
+
+const LanguageDetectionPage: React.FC = () => {
+  const toast = useToastWithDeduplication();
+  const [inputText, setInputText] = useState("");
+  const [selectedServiceId, setSelectedServiceId] = useState<string>("");
+  const [fetching, setFetching] = useState(false);
+  const [fetched, setFetched] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [responseTime, setResponseTime] = useState<number>(0);
+  const [error, setError] = useState<string | null>(null);
+
+  const {
+    data: services = [],
+    isLoading: isLoadingServices,
+    error: servicesError,
+  } = useQuery({
+    queryKey: ["languageDetectionServices"],
+    queryFn: listLanguageDetectionServices,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+
+  const trimmedText = inputText.trim();
+  const canDetect =
+    !!selectedServiceId?.trim() &&
+    trimmedText.length >= MIN_LANGUAGE_DETECTION_TEXT_LENGTH &&
+    trimmedText.length <= MAX_LANGUAGE_DETECTION_INPUT_LENGTH &&
+    !fetching;
+
+  const handleProcess = async () => {
+    const text = trimmedText;
+
+    if (!text) {
+      const err = LANGUAGE_DETECTION_ERRORS.TEXT_REQUIRED;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (text.length < MIN_LANGUAGE_DETECTION_TEXT_LENGTH) {
+      const err = LANGUAGE_DETECTION_ERRORS.TEXT_TOO_SHORT;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (text.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH) {
+      const err = LANGUAGE_DETECTION_ERRORS.TEXT_TOO_LONG;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (!selectedServiceId) {
+      toast({
+        title: "No Service Selected",
+        description: "Please select a language detection service.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    setFetching(true);
+    setError(null);
+    setFetched(false);
+
+    try {
+      const response = await performLanguageDetectionInference([text], selectedServiceId);
+      setResult(response.data);
+      setResponseTime(response.responseTime);
+      setFetched(true);
+    } catch (err: any) {
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(
+        err,
+        "language-detection"
+      );
+
+      setError(errorMessage);
+      toast({
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMessage,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const clearResults = () => {
+    setFetched(false);
+    setResult(null);
+    setInputText("");
+    setError(null);
+  };
+
+  const getPredictionColor = (idx: number) => {
+    const colors = ["orange", "blue", "green", "purple", "pink", "teal", "cyan", "yellow"];
+    return colors[idx % colors.length] || "gray";
+  };
+
+  const firstOutput = result?.output?.[0];
+  const predictions = (firstOutput?.langPrediction ?? []) as Array<{
+    langCode?: string;
+    scriptCode?: string;
+    langScore?: number;
+    language?: string;
+  }>;
+  const sortedPredictions = [...predictions].sort(
+    (a, b) => (b.langScore ?? 0) - (a.langScore ?? 0)
+  );
+
+  return (
+    <>
+      <Head>
+        <title>Text Language Detection | AI4Inclusion Console</title>
+        <meta
+          name="description"
+          content="Test Text Language Detection to identify the language and script of any text input."
+        />
+      </Head>
+
+      <ContentLayout>
+        <VStack spacing={8} w="full">
+          <Box textAlign="center">
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
+              {getServiceTitle("language-detection")}
+            </Heading>
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
+              {getServiceDescription("language-detection")}
+            </Text>
+          </Box>
+
+          <Grid
+            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
+            gap={8}
+            w="full"
+            maxW="1200px"
+            mx="auto"
+          >
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
+                <FormControl>
+                  <FormLabel fontSize="sm" fontWeight="semibold">
+                    Language Detection Service <Text as="span" color="red.500">*</Text>
+                  </FormLabel>
+
+                  {isLoadingServices ? (
+                    <HStack spacing={2} p={2}>
+                      <Spinner size="sm" color="orange.500" />
+                      <Text fontSize="sm" color="gray.600">Loading services...</Text>
+                    </HStack>
+                  ) : servicesError ? (
+                    <Box p={3} bg="red.50" borderRadius="md" border="1px" borderColor="red.200">
+                      <Text fontSize="sm" color="red.700">
+                        Failed to load services. Please try refreshing the page.
+                      </Text>
+                    </Box>
+                  ) : (
+                    <Select
+                      value={selectedServiceId}
+                      onChange={(e) => setSelectedServiceId(e.target.value)}
+                      placeholder={isLoadingServices ? "Loading..." : "Select"}
+                      disabled={fetching}
+                      size="md"
+                      borderColor="gray.300"
+                      _focus={{
+                        borderColor: "orange.400",
+                        boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
+                      }}
+                    >
+                      {services.map((service) => (
+                        <option key={service.service_id} value={service.service_id}>
+                          {service.name || service.service_id}{" "}
+                          {service.model_version ? `(${service.model_version})` : ""}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+
+                  {selectedServiceId && services.length > 0 && (
+                    <Box
+                      mt={2}
+                      p={3}
+                      bg="orange.50"
+                      borderRadius="md"
+                      border="1px"
+                      borderColor="orange.200"
+                    >
+                      {(() => {
+                        const selectedService = services.find((s) => s.service_id === selectedServiceId);
+                        return selectedService ? (
+                          <>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Service Name:</strong>{" "}
+                              {selectedService.name || selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Supported Languages:</strong>{" "}
+                              {selectedService.supported_languages?.length
+                                ? selectedService.supported_languages.slice(0, 6).join(", ") +
+                                  (selectedService.supported_languages.length > 6 ? "..." : "")
+                                : "Not provided by service"}
+                            </Text>
+                          </>
+                        ) : null;
+                      })()}
+                    </Box>
+                  )}
+                </FormControl>
+
+                <FormControl>
+                  <FormLabel fontSize="sm" fontWeight="semibold">
+                    Input Text <Text as="span" color="red.500">*</Text>
+                  </FormLabel>
+
+                  <Textarea
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    placeholder="Paste text here (e.g., Hindi, Kannada, Telugu)..."
+                    resize="vertical"
+                    size="md"
+                    borderColor="gray.300"
+                    maxLength={MAX_LANGUAGE_DETECTION_INPUT_LENGTH}
+                    _focus={{
+                      borderColor: "orange.400",
+                      boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
+                    }}
+                  />
+
+                  <Text
+                    mt={2}
+                    fontSize="xs"
+                    color={inputText.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH ? "red.500" : "gray.500"}
+                    fontWeight={inputText.length > MAX_LANGUAGE_DETECTION_INPUT_LENGTH ? "semibold" : "normal"}
+                  >
+                    {inputText.length} / {MAX_LANGUAGE_DETECTION_INPUT_LENGTH}
+                  </Text>
+                </FormControl>
+
+                <Text fontSize="sm" color="gray.600">
+                  Enter text and select a service, then click &quot;Detect Language&quot; to identify the language and script.
+                </Text>
+
+                <Button
+                  colorScheme="orange"
+                  onClick={handleProcess}
+                  isLoading={fetching}
+                  loadingText="Processing..."
+                  size="md"
+                  w="full"
+                  isDisabled={!canDetect}
+                >
+                  {fetching ? "Processing..." : "Detect Language"}
+                </Button>
+              </VStack>
+            </GridItem>
+
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
+                {fetching && (
+                  <Box>
+                    <Text mb={2} fontSize="sm" color="gray.600">
+                      Processing text...
+                    </Text>
+                    <Progress size="xs" isIndeterminate colorScheme="orange" />
+                  </Box>
+                )}
+
+                {error && (
+                  <Box
+                    p={4}
+                    bg="red.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="red.200"
+                  >
+                    <Text color="red.600" fontSize="sm">
+                      {error}
+                    </Text>
+                  </Box>
+                )}
+
+                {fetched && (
+                  <Box
+                    p={4}
+                    bg="orange.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="orange.200"
+                  >
+                    <HStack spacing={6}>
+                      <VStack align="start" spacing={0}>
+                        <Text fontSize="xs" color="gray.600">
+                          Response Time
+                        </Text>
+                        <Text fontSize="lg" fontWeight="bold" color="gray.800">
+                          {responseTime.toFixed(3)} seconds
+                        </Text>
+                      </VStack>
+                    </HStack>
+                  </Box>
+                )}
+
+                {fetched && result && result.output && result.output.length > 0 && (
+                  <>
+                    <Box
+                      p={4}
+                      bg="gray.50"
+                      borderRadius="md"
+                      border="1px"
+                      borderColor="gray.200"
+                    >
+                      <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
+                        Detected Languages:
+                      </Text>
+
+                      {sortedPredictions.length > 0 ? (
+                        <VStack align="stretch" spacing={3}>
+                          {sortedPredictions.map((pred, idx) => {
+                            const languageLabel = pred.language || pred.langCode || "Unknown";
+                            const colorScheme = getPredictionColor(idx);
+                            return (
+                              <Box
+                                key={`${languageLabel}-${idx}`}
+                                p={3}
+                                bg="white"
+                                borderRadius="md"
+                                border="1px"
+                                borderColor="gray.200"
+                              >
+                                <HStack justify="space-between" align="start">
+                                  <HStack spacing={3}>
+                                    <Badge colorScheme={colorScheme} variant="subtle">
+                                      {String(languageLabel).toUpperCase()}
+                                    </Badge>
+                                  </HStack>
+                                  <Text fontSize="xs" color="gray.500">
+                                    Score: {(pred.langScore ?? 0).toFixed(3)}
+                                  </Text>
+                                </HStack>
+                                <Text mt={1} fontSize="xs" color="gray.600">
+                                  Script: {pred.scriptCode ?? "N/A"}
+                                </Text>
+                              </Box>
+                            );
+                          })}
+                        </VStack>
+                      ) : (
+                        <Text fontSize="sm" color="gray.500" fontStyle="italic">
+                          No language predictions returned for this input.
+                        </Text>
+                      )}
+                    </Box>
+
+                    <Box textAlign="center">
+                      <button
+                        onClick={clearResults}
+                        style={{
+                          padding: "8px 16px",
+                          backgroundColor: "#f7fafc",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: "6px",
+                          cursor: "pointer",
+                          fontSize: "14px",
+                          color: "#4a5568",
+                        }}
+                      >
+                        Clear Results
+                      </button>
+                    </Box>
+                  </>
+                )}
+              </VStack>
+            </GridItem>
+          </Grid>
+        </VStack>
+      </ContentLayout>
+    </>
+  );
+};
+
+export default LanguageDetectionPage;
