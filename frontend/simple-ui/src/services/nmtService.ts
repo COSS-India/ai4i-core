@@ -111,8 +111,8 @@ function normalizeServiceToNMTDetails(service: any): NMTServiceDetailsResponse {
         pairs.push({
           sourceLanguage: src,
           targetLanguage: tgt,
-          sourceScriptCode: lang.sourceScriptCode || DEFAULT_SCRIPT_BY_LANG[src] || 'Latn',
-          targetScriptCode: lang.targetScriptCode || DEFAULT_SCRIPT_BY_LANG[tgt] || 'Deva',
+          sourceScriptCode: lang.sourceScriptCode || DEFAULT_SCRIPT_BY_LANG[src] || '',
+          targetScriptCode: lang.targetScriptCode || DEFAULT_SCRIPT_BY_LANG[tgt] || '',
         });
       }
     });

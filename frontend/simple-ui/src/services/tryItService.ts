@@ -81,9 +81,22 @@ export const performTryItNMTInference = async (
   config: NMTInferenceRequest['config']
 ): Promise<{ data: NMTInferenceResponse; responseTime: number }> => {
   try {
+    // Strip script codes for try-it: the anonymous try-it model only accepts bare
+    // language codes (e.g. "en", "hi").  Sending "en_Latn" or "hi_Deva" causes a
+    // "Language-pair not supported" 400 from Triton.  Logged-in inference routes
+    // through SMR which picks a model that does support script codes, so we only
+    // need to sanitise the config here.
+    const tryItConfig: NMTInferenceRequest['config'] = {
+      ...config,
+      language: {
+        sourceLanguage: config.language.sourceLanguage,
+        targetLanguage: config.language.targetLanguage,
+      },
+    };
+
     const nmtPayload: NMTInferenceRequest = {
       input: [{ source: text }],
-      config,
+      config: tryItConfig,
       controlConfig: {
         dataTracking: false,
       },
