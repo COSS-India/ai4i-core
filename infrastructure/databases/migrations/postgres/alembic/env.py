@@ -87,9 +87,25 @@ def process_revision_directives(migration_context, revision, directives) -> None
 
 
 def include_object(object_, name, type_, reflected, compare_to) -> bool:
-    """Skip reflected-only objects when a database has no registered model metadata."""
-    if is_autogenerate and not has_model_metadata and reflected and compare_to is None:
-        return False
+    """Skip reflected objects that are not part of the target metadata.
+
+    This prevents autogenerate from emitting DROP TABLE for tables that
+    exist in the database but belong to a different service/migration scope.
+    """
+    if is_autogenerate and reflected and compare_to is None:
+        # No model metadata at all – skip everything reflected.
+        if not has_model_metadata:
+            return False
+        # Has model metadata – only include tables/indexes/constraints
+        # that are actually declared in the target metadata.
+        if type_ == "table":
+            return name in target_metadata.tables
+        # For non-table objects (indexes, constraints, etc.) on tables
+        # outside our metadata, skip them as well.
+        table_name = getattr(object_, "table", None)
+        if table_name is not None:
+            table_name = getattr(table_name, "name", table_name)
+            return table_name in target_metadata.tables
     return True
 
 
