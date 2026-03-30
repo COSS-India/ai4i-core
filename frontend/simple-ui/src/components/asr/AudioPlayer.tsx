@@ -19,6 +19,7 @@ import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication
 
 const AudioPlayer: React.FC<AudioPlayerProps> = ({
   audioSrc,
+  downloadExtension,
   showVisualization = true,
   onPlay,
   onPause,
@@ -184,9 +185,27 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
     if (!audioSrc) return;
 
     try {
+      const resolvedExtension = (() => {
+        if (downloadExtension?.trim()) return downloadExtension.trim().toLowerCase();
+
+        const src = audioSrc.toLowerCase();
+        if (src.startsWith("data:audio/")) {
+          const mime = src.slice("data:audio/".length).split(";")[0].trim();
+          if (mime === "mpeg") return "mp3";
+          if (mime === "wave" || mime === "x-wav") return "wav";
+          if (mime === "x-m4a" || mime === "mp4") return "m4a";
+          return mime || "wav";
+        }
+
+        const clean = src.split("?")[0].split("#")[0];
+        const ext = clean.split(".").pop();
+        if (ext && /^[a-z0-9]+$/.test(ext)) return ext;
+        return "wav";
+      })();
+
       const link = document.createElement('a');
       link.href = audioSrc;
-      link.download = `audio_${Date.now()}.wav`;
+      link.download = `audio_${Date.now()}.${resolvedExtension}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

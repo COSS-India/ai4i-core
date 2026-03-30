@@ -270,7 +270,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
                   isRecording={isRecording}
                   onRecordingChange={handleRecordingChange}
                   sampleRate={16000}
-                  disabled={fetching}
+                  disabled={fetching || !selectedServiceId}
                   timer={timer}
                   onClear={handleClearAudioInput}
                   clearToken={audioClearToken}

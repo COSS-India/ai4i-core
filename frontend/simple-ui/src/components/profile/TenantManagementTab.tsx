@@ -1,7 +1,7 @@
 // Tenant Management tab view (Multi Tenant Management)
 // Uses useTenantManagement for state and handlers; renders tab content + modals.
 
-import React, { useRef, useEffect, useMemo } from "react";
+import React, { useRef, useEffect, useMemo, useState } from "react";
 import {
   Box,
   Button,
@@ -13,6 +13,7 @@ import {
   Heading,
   Input,
   InputGroup,
+  InputLeftElement,
   InputRightElement,
   Text,
   FormErrorMessage,
@@ -57,7 +58,7 @@ import {
   useDisclosure,
 } from "@chakra-ui/react";
 import { FiBriefcase, FiUsers, FiMoreVertical, FiEye, FiEdit2, FiUserPlus, FiPlayCircle, FiRefreshCw, FiPlus, FiSettings, FiArrowLeft, FiMail, FiPause, FiPower, FiTrash2 } from "react-icons/fi";
-import { ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
+import { ViewIcon, ViewOffIcon, TriangleDownIcon, TriangleUpIcon, SearchIcon } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import { TENANT_USER_ROLE_OPTIONS } from "./types";
@@ -109,17 +110,38 @@ function TenantDetailUsersPanel(props: {
     return list;
   }, [tenantUsers, tenantId, userFilterStatus, userFilterRole, userSearch]);
 
+  const [userNameSortDirection, setUserNameSortDirection] = useState<"asc" | "desc">("asc");
+  const sortedFiltered = useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      const aName = a.username ?? "";
+      const bName = b.username ?? "";
+      const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
+      if (nameCmp !== 0) return userNameSortDirection === "asc" ? nameCmp : -nameCmp;
+      const timeA = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+      const timeB = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+      return timeB - timeA;
+    });
+  }, [filtered, userNameSortDirection]);
+
   return (
     <VStack align="stretch" spacing={4}>
-      <HStack spacing={4} flexWrap="wrap">
-        <Input
-          placeholder="Search users..."
-          size="sm"
-          maxW="240px"
-          value={userSearch}
-          onChange={(e) => setUserSearch(e.target.value)}
-          bg="white"
-        />
+      {(() => {
+        const hasActiveFilters =
+          userSearch.trim().length > 0 || userFilterRole !== "all" || userFilterStatus !== "all";
+        return (
+          <HStack spacing={4} flexWrap="wrap" align="flex-end">
+            <InputGroup size="sm" maxW="240px">
+              <InputLeftElement pointerEvents="none">
+                <SearchIcon color="gray.400" />
+              </InputLeftElement>
+              <Input
+                placeholder="Search users..."
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                bg="white"
+                pl={10}
+              />
+            </InputGroup>
         <Select size="sm" maxW="140px" value={userFilterRole} onChange={(e) => setUserFilterRole(e.target.value)} bg="white">
           <option value="all">All Roles</option>
           {roleOptions.map((opt) => (
@@ -128,17 +150,46 @@ function TenantDetailUsersPanel(props: {
         </Select>
         <Select size="sm" maxW="140px" value={userFilterStatus} onChange={(e) => setUserFilterStatus(e.target.value)} bg="white">
           <option value="all">All Status</option>
-          <option value="ACTIVE">ACTIVE</option>
-          <option value="PENDING">PENDING</option>
-          <option value="SUSPENDED">SUSPENDED</option>
-          <option value="DEACTIVATED">DEACTIVATED</option>
+          <option value="ACTIVE">Active</option>
+          <option value="PENDING">Pending</option>
+          <option value="SUSPENDED">Suspended</option>
+          <option value="DEACTIVATED">Deactivated</option>
         </Select>
-      </HStack>
+            {hasActiveFilters ? (
+              <Button
+                size="sm"
+                variant="outline"
+                colorScheme="gray"
+                onClick={() => {
+                  setUserSearch("");
+                  setUserFilterRole("all");
+                  setUserFilterStatus("all");
+                }}
+              >
+                Clear all
+              </Button>
+            ) : null}
+          </HStack>
+        );
+      })()}
       <TableContainer>
         <Table variant="simple" size="sm">
           <Thead>
             <Tr>
-              <Th>NAME</Th>
+              <Th
+                cursor="pointer"
+                userSelect="none"
+                onClick={() => setUserNameSortDirection((d) => (d === "asc" ? "desc" : "asc"))}
+              >
+                <HStack spacing={2}>
+                  <Text>Name</Text>
+                  {userNameSortDirection === "asc" ? (
+                    <TriangleUpIcon boxSize={3} color="gray.500" />
+                  ) : (
+                    <TriangleDownIcon boxSize={3} color="gray.500" />
+                  )}
+                </HStack>
+              </Th>
               <Th>EMAIL</Th>
               <Th>ROLE</Th>
               <Th>LAST LOGIN</Th>
@@ -147,7 +198,7 @@ function TenantDetailUsersPanel(props: {
             </Tr>
           </Thead>
           <Tbody>
-            {filtered.map((u) => (
+            {sortedFiltered.map((u) => (
               <Tr key={u.id}>
                 <Td fontWeight="medium">{u.username || "—"}</Td>
                 <Td fontSize="sm">{u.email}</Td>
@@ -208,6 +259,43 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
 
   const tm = useTenantManagement({ user: user ?? null });
 
+  const [tenantNameSortDirection, setTenantNameSortDirection] = useState<"asc" | "desc">("asc");
+  const [tenantUserNameSortDirection, setTenantUserNameSortDirection] = useState<"asc" | "desc">("asc");
+
+  const sortedTenants = useMemo(() => {
+    return [...(tm.filteredTenants ?? [])].sort((a, b) => {
+      const aName = a.organization_name ?? "";
+      const bName = b.organization_name ?? "";
+      const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
+      if (nameCmp !== 0) return tenantNameSortDirection === "asc" ? nameCmp : -nameCmp;
+      const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return timeB - timeA;
+    });
+  }, [tm.filteredTenants, tenantNameSortDirection]);
+
+  const sortedTenantUsers = useMemo(() => {
+    return [...(tm.filteredTenantUsers ?? [])].sort((a, b) => {
+      const aName = a.username ?? "";
+      const bName = b.username ?? "";
+      const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
+      if (nameCmp !== 0) return tenantUserNameSortDirection === "asc" ? nameCmp : -nameCmp;
+      const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return timeB - timeA;
+    });
+  }, [tm.filteredTenantUsers, tenantUserNameSortDirection]);
+
+  const hasActiveMultiTenantFilters =
+    tm.multiTenantSubView === "adopter"
+      ? tm.tenantFilterStatus !== "all" ||
+        tm.tenantFilterServices !== "all" ||
+        tm.tenantSearch.trim().length > 0
+      : tm.userFilterStatus !== "all" ||
+        tm.userFilterServices !== "all" ||
+        tm.userFilterRole !== "all" ||
+        tm.userSearch.trim().length > 0;
+
   const {
     isOpen: isEditTenantConfirmOpen,
     onOpen: onEditTenantConfirmOpen,
@@ -241,7 +329,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
       tm.handleFetchTenants(); // needed so Manage User Services can find tenant subscriptions in User Management
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, tm.multiTenantSubView]);
+  }, [isActive, user?.id, tm.multiTenantSubView]);
 
   // When in tenant detail view on Users tab and list is empty, refetch users (e.g. initial load failed or state not set)
   useEffect(() => {
@@ -255,6 +343,14 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
   if (!user?.id) return null;
   const showAdopter = user?.is_superuser;
   const showTenant = user?.is_tenant && !user?.is_superuser;
+  const mustKeepManageServicesOpen =
+    tm.manageServicesTenant?.status === "ACTIVE" &&
+    tm.availableServices.length > 0 &&
+    tm.manageServicesSelected.length === 0;
+  const mustKeepManageUserServicesOpen =
+    tm.manageUserServicesUser?.status === "ACTIVE" &&
+    tm.availableServicesForUser.length > 0 &&
+    tm.manageUserServicesSelected.length === 0;
 
   return (
     <>
@@ -299,17 +395,17 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
               {tm.multiTenantSubView === "adopter" ? (
                 <>
                   <FormControl maxW="180px">
-                    <FormLabel fontSize="sm">Filter by Status</FormLabel>
+                    <FormLabel fontSize="sm"> Status</FormLabel>
                     <Select size="sm" value={tm.tenantFilterStatus} onChange={(e) => tm.setTenantFilterStatus(e.target.value)} bg="white">
                       <option value="all">All Status</option>
-                      <option value="ACTIVE">ACTIVE</option>
-                      <option value="PENDING">PENDING</option>
-                      <option value="SUSPENDED">SUSPENDED</option>
-                      <option value="DEACTIVATED">DEACTIVATED</option>
+                      <option value="ACTIVE">Active</option>
+                      <option value="PENDING">Pending</option>
+                      <option value="SUSPENDED">Suspended</option>
+                      <option value="DEACTIVATED">Deactivated</option>
                     </Select>
                   </FormControl>
                   <FormControl maxW="180px">
-                    <FormLabel fontSize="sm">Filter by Services</FormLabel>
+                    <FormLabel fontSize="sm"> Services</FormLabel>
                     <Select size="sm" value={tm.tenantFilterServices} onChange={(e) => tm.setTenantFilterServices(e.target.value)} bg="white">
                       <option value="all">All Services</option>
                       {Array.from(new Set(tm.tenants.flatMap((t) => t.subscriptions || []))).sort().map((s) => (
@@ -320,22 +416,31 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   <FormControl maxW="240px">
                     <FormLabel fontSize="sm">Search by Tenant</FormLabel>
                     <InputGroup size="sm">
-                      <Input placeholder="Search tenant name or ID..." value={tm.tenantSearch} onChange={(e) => tm.setTenantSearch(e.target.value)} bg="white" />
+                      <InputLeftElement pointerEvents="none">
+                        <SearchIcon color="gray.400" />
+                      </InputLeftElement>
+                      <Input
+                        placeholder="Search tenant name or ID..."
+                        value={tm.tenantSearch}
+                        onChange={(e) => tm.setTenantSearch(e.target.value)}
+                        bg="white"
+                        pl={10}
+                      />
                     </InputGroup>
                   </FormControl>
                 </>
               ) : (
                 <>
                   <FormControl maxW="180px">
-                    <FormLabel fontSize="sm">Filter by Status</FormLabel>
+                    <FormLabel fontSize="sm"> Status</FormLabel>
                     <Select size="sm" value={tm.userFilterStatus} onChange={(e) => tm.setUserFilterStatus(e.target.value)} bg="white">
                       <option value="all">All Status</option>
-                      <option value="ACTIVE">ACTIVE</option>
-                      <option value="SUSPENDED">SUSPENDED</option>
+                      <option value="ACTIVE">Active</option>
+                      <option value="SUSPENDED">Suspended</option>
                     </Select>
                   </FormControl>
                   <FormControl maxW="180px">
-                    <FormLabel fontSize="sm">Filter by Services</FormLabel>
+                    <FormLabel fontSize="sm"> Services</FormLabel>
                     <Select size="sm" value={tm.userFilterServices} onChange={(e) => tm.setUserFilterServices(e.target.value)} bg="white">
                       <option value="all">All Services</option>
                       {Array.from(new Set(tm.tenantUsers.flatMap((u) => u.subscriptions || []))).sort().map((s) => (
@@ -344,7 +449,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     </Select>
                   </FormControl>
                                 <FormControl maxW="180px">
-                                  <FormLabel fontSize="sm">Filter by Role</FormLabel>
+                                  <FormLabel fontSize="sm"> Role</FormLabel>
                                   <Select size="sm" value={tm.userFilterRole} onChange={(e) => tm.setUserFilterRole(e.target.value)} bg="white">
                                     <option value="all">All Roles</option>
                                     {TENANT_USER_ROLE_OPTIONS.map((opt) => (
@@ -354,13 +459,27 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                                 </FormControl>
                   <FormControl maxW="240px">
                     <FormLabel fontSize="sm">Search by User</FormLabel>
-                    <Input size="sm" placeholder="Search user name or email..." value={tm.userSearch} onChange={(e) => tm.setUserSearch(e.target.value)} bg="white" />
+                    <InputGroup size="sm">
+                      <InputLeftElement pointerEvents="none">
+                        <SearchIcon color="gray.400" />
+                      </InputLeftElement>
+                      <Input
+                        size="sm"
+                        placeholder="Search user name or email..."
+                        value={tm.userSearch}
+                        onChange={(e) => tm.setUserSearch(e.target.value)}
+                        bg="white"
+                        pl={10}
+                      />
+                    </InputGroup>
                   </FormControl>
                 </>
               )}
-              <Button size="sm" variant="link" colorScheme="gray" onClick={tm.handleResetMultiTenantFilters}>
-                Reset Filters
-              </Button>
+              {hasActiveMultiTenantFilters ? (
+                <Button size="sm" variant="outline" onClick={tm.handleResetMultiTenantFilters}>
+                  Clear all
+                </Button>
+              ) : null}
             </HStack>
           </Box>
           )}
@@ -437,11 +556,11 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                                 size="xs"
                                 colorScheme="blue"
                                 leftIcon={<FiMail />}
-                                onClick={() => tm.handleSendVerificationEmail(tm.viewTenantDetail!.tenant_id, tm.viewTenantDetail!.email)}
-                                isLoading={tm.sendingVerificationTenantId === tm.viewTenantDetail.tenant_id}
-                                loadingText="Sending..."
+                                onClick={() => tm.handleResendVerificationEmail(tm.viewTenantDetail!.tenant_id, tm.viewTenantDetail!.email)}
+                                isLoading={tm.resendingVerificationTenantId === tm.viewTenantDetail.tenant_id}
+                                loadingText="Resending..."
                               >
-                                Send Verification Email
+                                Resend Verification Email
                               </Button>
                             )}
                           </HStack>
@@ -485,7 +604,22 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <Table variant="simple" size="sm">
                   <Thead>
                     <Tr>
-                      <Th>TENANT NAME</Th>
+                      <Th
+                        cursor="pointer"
+                        userSelect="none"
+                        onClick={() =>
+                          setTenantNameSortDirection((d) => (d === "asc" ? "desc" : "asc"))
+                        }
+                      >
+                        <HStack spacing={2}>
+                          <Text>Name</Text>
+                          {tenantNameSortDirection === "asc" ? (
+                            <TriangleUpIcon boxSize={3} color="gray.500" />
+                          ) : (
+                            <TriangleDownIcon boxSize={3} color="gray.500" />
+                          )}
+                        </HStack>
+                      </Th>
                       <Th>TENANT ID</Th>
                       <Th>CONTACT</Th>
                       <Th>SERVICES ENABLED</Th>
@@ -495,7 +629,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     </Tr>
                   </Thead>
                   <Tbody>
-                    {tm.filteredTenants.map((t) => (
+                  {sortedTenants.map((t) => (
                       <Tr
                         key={t.id}
                         cursor="pointer"
@@ -543,10 +677,10 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                               {t.status === "PENDING" && (
                                 <MenuItem
                                   icon={<FiMail />}
-                                  onClick={() => tm.handleSendVerificationEmail(t.tenant_id, t.email)}
-                                  isDisabled={tm.sendingVerificationTenantId === t.tenant_id}
+                                  onClick={() => tm.handleResendVerificationEmail(t.tenant_id, t.email)}
+                                  isDisabled={tm.resendingVerificationTenantId === t.tenant_id}
                                 >
-                                  {tm.sendingVerificationTenantId === t.tenant_id ? "Sending..." : "Send Verification Email"}
+                                  {tm.resendingVerificationTenantId === t.tenant_id ? "Resending..." : "Resend Verification Email"}
                                 </MenuItem>
                               )}
                               {t.status === "ACTIVE" && (
@@ -585,7 +719,22 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
               <Table variant="simple" size="sm">
                 <Thead>
                   <Tr>
-                    <Th>USER NAME</Th>
+                    <Th
+                      cursor="pointer"
+                      userSelect="none"
+                      onClick={() =>
+                        setTenantUserNameSortDirection((d) => (d === "asc" ? "desc" : "asc"))
+                      }
+                    >
+                      <HStack spacing={2}>
+                        <Text>Name</Text>
+                        {tenantUserNameSortDirection === "asc" ? (
+                          <TriangleUpIcon boxSize={3} color="gray.500" />
+                        ) : (
+                          <TriangleDownIcon boxSize={3} color="gray.500" />
+                        )}
+                      </HStack>
+                    </Th>
                     <Th>EMAIL</Th>
                     <Th>TENANT</Th>
                     <Th>ROLE</Th>
@@ -596,7 +745,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   </Tr>
                 </Thead>
                 <Tbody>
-                  {tm.filteredTenantUsers.map((u) => (
+                  {sortedTenantUsers.map((u) => (
                     <Tr
                       key={u.id}
                       cursor="pointer"
@@ -836,11 +985,18 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
       </Modal>
 
       {/* Manage Services Modal (existing tenant) */}
-      <Modal isOpen={tm.isManageServicesModalOpen} onClose={tm.closeManageServices} size="lg" isCentered>
+      <Modal
+        isOpen={tm.isManageServicesModalOpen}
+        onClose={mustKeepManageServicesOpen ? () => {} : tm.closeManageServices}
+        size="lg"
+        isCentered
+        closeOnOverlayClick={!mustKeepManageServicesOpen}
+        closeOnEsc={!mustKeepManageServicesOpen}
+      >
         <ModalOverlay />
         <ModalContent>
           <ModalHeader>Manage Services</ModalHeader>
-          <ModalCloseButton />
+          {!mustKeepManageServicesOpen && <ModalCloseButton />}
           <ModalBody>
             {tm.manageServicesTenant && (
               <>
@@ -945,7 +1101,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           <ModalFooter>
             {tm.availableServices.length > 0 && (
               <>
-                <Button variant="ghost" mr={3} onClick={tm.closeManageServices}>Cancel</Button>
+                <Button variant="ghost" mr={3} onClick={tm.closeManageServices} isDisabled={mustKeepManageServicesOpen}>Cancel</Button>
                 <Button
                   colorScheme="blue"
                   onClick={tm.saveManageServices}
@@ -960,11 +1116,18 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
       </Modal>
 
       {/* Manage User Services Modal */}
-      <Modal isOpen={tm.isManageUserServicesModalOpen} onClose={tm.closeManageUserServices} size="lg" isCentered>
+      <Modal
+        isOpen={tm.isManageUserServicesModalOpen}
+        onClose={mustKeepManageUserServicesOpen ? () => {} : tm.closeManageUserServices}
+        size="lg"
+        isCentered
+        closeOnOverlayClick={!mustKeepManageUserServicesOpen}
+        closeOnEsc={!mustKeepManageUserServicesOpen}
+      >
         <ModalOverlay />
         <ModalContent>
           <ModalHeader>Manage User Services</ModalHeader>
-          <ModalCloseButton />
+          {!mustKeepManageUserServicesOpen && <ModalCloseButton />}
           <ModalBody>
             {tm.manageUserServicesUser && (
               <>
@@ -1069,7 +1232,14 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           <ModalFooter>
             {tm.availableServicesForUser.length > 0 && (
               <>
-                <Button variant="ghost" mr={3} onClick={tm.closeManageUserServices}>Cancel</Button>
+                <Button
+                  variant="ghost"
+                  mr={3}
+                  onClick={tm.closeManageUserServices}
+                  isDisabled={mustKeepManageUserServicesOpen}
+                >
+                  Cancel
+                </Button>
                 <Button
                   colorScheme="blue"
                   onClick={tm.saveManageUserServices}

@@ -54,16 +54,12 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const [auditLoading, setAuditLoading] = useState(false);
 
   useEffect(() => {
-    if (!isAdmin) return;
-    void fetchAllDomains();
-    void fetchTenantMappings();
-  }, [isAdmin]);
-
-  useEffect(() => {
     if (!isAdmin || activeTab !== "audit") return;
     void fetchAuditLogs();
   }, [isAdmin, activeTab]);
 
+  // Loads domains + tenant mappings on admin-tab entry (mount and when returning from Audit).
+  // Replaces a plain mount effect calling fetchAllDomains/fetchTenantMappings; uses retry + adminDataError.
   useEffect(() => {
     if (!isAdmin || activeTab !== "admin") return;
     void refreshAdminDataWithRetry();
@@ -159,7 +155,8 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
     setEditingDomainId(id);
     try {
       const res = await piiService.getPolicy(id);
-      setEditingRules(res.data.rules || []);
+      const rules = Array.isArray(res.data.rules) ? (res.data.rules as Rule[]) : [];
+      setEditingRules(rules);
     } catch {
       alert("Failed to load policy");
     }
