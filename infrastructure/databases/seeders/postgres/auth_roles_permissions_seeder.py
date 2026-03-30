@@ -409,7 +409,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
         print("    ✓ Assigned permissions to MODERATOR role (from seed script)")
 
         # TENANT ADMIN: tenant-scoped management permissions + inference access.
-        # - Can read users, services, and models
+        # - Can create/read/update users, read services and models
         # - Can create/read/update/delete API keys
         # - Can assign roles (but not remove)
         # - Cannot create/update/delete/publish/unpublish models or services
@@ -425,6 +425,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             SELECT r.id, p.id
             FROM roles r
             JOIN permissions p ON p.name IN (
+              'users.create',
               'users.read',
               'users.update',
               'service.read',

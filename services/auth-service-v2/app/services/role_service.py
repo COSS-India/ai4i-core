@@ -95,3 +95,20 @@ class RoleService:
 
     async def list_permissions(self) -> list[Permission]:
         return await self._roles.list_permissions()
+
+    async def list_inference_permissions(self) -> list[Permission]:
+        # Exclude non-inference API domains requested by product.
+        # DB may store resource names with either '-' or '_' separators, so we generate variants.
+        base_excluded_resources = (
+            "model-management",
+            "multi_tenant",
+            "pii_guard",
+        )
+
+        excluded: set[str] = set()
+        for res in base_excluded_resources:
+            excluded.add(res)
+            excluded.add(res.replace("-", "_"))
+            excluded.add(res.replace("_", "-"))
+
+        return await self._roles.list_inference_permissions(excluded_resources=tuple(sorted(excluded)))
