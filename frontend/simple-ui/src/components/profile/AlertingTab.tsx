@@ -2513,7 +2513,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 if (Object.keys(errors).length > 0) return;
                 rules.handleUpdate(
                   isInfrastructure
-                    ? { tenant: null, rbac_role: "ADMIN", email_to: [] }
+                    ? { tenant: null }
                     : undefined
                 );
               }}
