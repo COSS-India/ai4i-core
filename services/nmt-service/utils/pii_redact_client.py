@@ -18,12 +18,8 @@ PII_SUPPORTED_LANG_CODES = frozenset({"en", "hi", "mr", "ta"})
 def pii_language_code(raw: str) -> str:
     """Strip script suffix (e.g. hi_Deva → hi) for PII language header."""
     if not raw:
-        return "en"
+        return ""
     return raw.split("_", 1)[0].strip().lower()
-
-
-def is_pii_supported_language(raw: str) -> bool:
-    return pii_language_code(raw) in PII_SUPPORTED_LANG_CODES
 
 
 async def redact_for_storage(
@@ -34,6 +30,7 @@ async def redact_for_storage(
     auth_headers: Optional[Dict[str, str]],
     tenant_id: Optional[str],
     timeout: float,
+    client: Optional[httpx.AsyncClient] = None,
 ) -> str:
     """
     POST /redact with x-language. Returns redacted_text on success.
@@ -50,16 +47,24 @@ async def redact_for_storage(
     if tenant_id:
         headers["X-Tenant-Id"] = tenant_id
 
-    async with httpx.AsyncClient() as client:
+    if client is not None:
         response = await client.post(
             url,
             json={"text": text},
             headers=headers,
             timeout=timeout,
         )
-        response.raise_for_status()
-        payload = response.json()
-        out = payload.get("redacted_text")
-        if out is None:
-            raise ValueError("PII response missing redacted_text")
-        return str(out)
+    else:
+        async with httpx.AsyncClient() as temp_client:
+            response = await temp_client.post(
+                url,
+                json={"text": text},
+                headers=headers,
+                timeout=timeout,
+            )
+    response.raise_for_status()
+    payload = response.json()
+    out = payload.get("redacted_text")
+    if out is None:
+        raise ValueError("PII response missing redacted_text")
+    return str(out)

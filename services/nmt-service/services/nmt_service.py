@@ -7,10 +7,11 @@ import asyncio
 import time
 import json
 import logging
-from typing import Optional, List, Dict, Tuple, Set, Any
+from typing import Optional, List, Dict, Tuple
 from uuid import UUID
 
 import numpy as np
+import httpx
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
@@ -64,6 +65,7 @@ class NMTService:
         cache_ttl_seconds: int = 300,
         pii_redact_base_url: Optional[str] = None,
         pii_redact_timeout: float = 20.0,
+        pii_http_client: Optional[httpx.AsyncClient] = None,
     ):
         self.repository = repository
         self.text_service = text_service
@@ -73,69 +75,12 @@ class NMTService:
         self.cache_ttl_seconds = cache_ttl_seconds
         self.pii_redact_base_url = (pii_redact_base_url or "").strip() or None
         self.pii_redact_timeout = pii_redact_timeout
+        self.pii_http_client = pii_http_client
         self.cache_prefix = "nmt:triton"
         # Cache Triton clients and service metadata with TTL so we can refresh on endpoint move
         self._triton_clients: Dict[str, Tuple[TritonClient, str, float]] = {}
         self._service_registry_cache: Dict[str, Tuple[str, str, float]] = {}
         self._service_info_cache: Dict[str, Tuple[ServiceInfo, float]] = {}
-        self._background_tasks: Set["asyncio.Task[Any]"] = set()
-
-    async def _persist_results_background(
-        self,
-        request_id: UUID,
-        results: List[TranslationOutput],
-        original_source_lang: str,
-        original_target_lang: str,
-        auth_headers: Optional[Dict[str, str]],
-        http_request: Optional[Request],
-    ) -> None:
-        """
-        Persist redacted rows asynchronously so user response latency is not impacted.
-        """
-        try:
-            stored_results = await self._persist_translation_results(
-                request_id=request_id,
-                results=results,
-                original_source_lang=original_source_lang,
-                original_target_lang=original_target_lang,
-                auth_headers=auth_headers,
-                http_request=http_request,
-            )
-            if http_request is not None:
-                http_request.state.persisted_translation_results = stored_results
-            logger.info(
-                "NMT: background persistence completed for request_id=%s, rows=%s",
-                request_id,
-                len(stored_results),
-            )
-        except Exception as exc:
-            logger.error(
-                "NMT: background persistence failed for request_id=%s: %s",
-                request_id,
-                exc,
-            )
-
-    def _schedule_persistence_task(
-        self,
-        request_id: UUID,
-        results: List[TranslationOutput],
-        original_source_lang: str,
-        original_target_lang: str,
-        auth_headers: Optional[Dict[str, str]],
-        http_request: Optional[Request],
-    ) -> None:
-        task: "asyncio.Task[Any]" = asyncio.create_task(
-            self._persist_results_background(
-                request_id=request_id,
-                results=results,
-                original_source_lang=original_source_lang,
-                original_target_lang=original_target_lang,
-                auth_headers=auth_headers,
-                http_request=http_request,
-            )
-        )
-        self._background_tasks.add(task)
-        task.add_done_callback(lambda t: self._background_tasks.discard(t))
 
     async def _persist_translation_results(
         self,
@@ -158,23 +103,30 @@ class NMTService:
 
         src_lang = pii_language_code(original_source_lang)
         tgt_lang = pii_language_code(original_target_lang)
-        src_ok = src_lang in PII_SUPPORTED_LANG_CODES
-        tgt_ok = tgt_lang in PII_SUPPORTED_LANG_CODES
+        src_ok = bool(src_lang) and src_lang in PII_SUPPORTED_LANG_CODES
+        tgt_ok = bool(tgt_lang) and tgt_lang in PII_SUPPORTED_LANG_CODES
 
         stored_results: List[Dict[str, str]] = []
 
         if not self.pii_redact_base_url or (not src_ok and not tgt_ok):
+            rows = []
             for result in results:
-                await self.repository.create_result(
-                    request_id=request_id,
-                    translated_text=result.target,
-                    source_text=result.source,
+                rows.append(
+                    {
+                        "translated_text": result.target,
+                        "source_text": result.source,
+                    }
                 )
                 stored_results.append(
                     {
                         "source_text": result.source,
                         "translated_text": result.target,
                     }
+                )
+            if rows:
+                await self.repository.create_results_bulk(
+                    request_id=request_id,
+                    rows=rows,
                 )
             return stored_results
 
@@ -189,6 +141,7 @@ class NMTService:
                     auth_headers=auth_headers,
                     tenant_id=tenant_header,
                     timeout=self.pii_redact_timeout,
+                    client=self.pii_http_client,
                 )
             except Exception as exc:
                 logger.warning(
@@ -197,21 +150,28 @@ class NMTService:
                 )
                 return text
 
+        rows = []
         for result in results:
             src_stored, tgt_stored = await asyncio.gather(
                 maybe_redact(result.source, src_lang, src_ok),
                 maybe_redact(result.target, tgt_lang, tgt_ok),
             )
-            await self.repository.create_result(
-                request_id=request_id,
-                translated_text=tgt_stored,
-                source_text=src_stored,
+            rows.append(
+                {
+                    "translated_text": tgt_stored,
+                    "source_text": src_stored,
+                }
             )
             stored_results.append(
                 {
                     "source_text": src_stored,
                     "translated_text": tgt_stored,
                 }
+            )
+        if rows:
+            await self.repository.create_results_bulk(
+                request_id=request_id,
+                rows=rows,
             )
         return stored_results
     
@@ -645,10 +605,9 @@ class NMTService:
                 # Create response
                 response = NMTInferenceResponse(output=results)
                 
-                # Schedule DB persistence asynchronously to avoid adding PII/DB latency
-                # to end-user response time.
-                with tracer.start_as_current_span("nmt.schedule_db_results") as results_span:
-                    self._schedule_persistence_task(
+                # Database logging (redacted per PII policy when configured + language supported)
+                with tracer.start_as_current_span("nmt.create_db_results") as results_span:
+                    stored_results = await self._persist_translation_results(
                         request_id=request_id,
                         results=results,
                         original_source_lang=original_source_lang,
@@ -656,7 +615,11 @@ class NMTService:
                         auth_headers=auth_headers,
                         http_request=http_request,
                     )
-                    results_span.set_attribute("nmt.db_results_scheduled", len(results))
+                    results_span.set_attribute("nmt.db_results_created", len(results))
+                    results_span.set_attribute("nmt.db_results_redacted_count", len(stored_results))
+                if http_request is not None:
+                    # Expose stored payload for request middleware/audit sinks.
+                    http_request.state.persisted_translation_results = stored_results
                 
                 # Update request status
                 processing_time = time.time() - start_time
@@ -832,9 +795,8 @@ class NMTService:
             # Create response
             response = NMTInferenceResponse(output=results)
             
-            # Schedule DB persistence asynchronously to avoid adding PII/DB latency
-            # to end-user response time.
-            self._schedule_persistence_task(
+            # Database logging (redacted per PII policy when configured + language supported)
+            stored_results = await self._persist_translation_results(
                 request_id=request_id,
                 results=results,
                 original_source_lang=original_source_lang,
@@ -842,6 +804,8 @@ class NMTService:
                 auth_headers=auth_headers,
                 http_request=http_request,
             )
+            if http_request is not None:
+                http_request.state.persisted_translation_results = stored_results
             
             # Update request status
             processing_time = time.time() - start_time

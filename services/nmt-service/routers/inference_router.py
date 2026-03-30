@@ -837,6 +837,7 @@ async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_tenan
     cache_ttl_seconds = getattr(model_management_client, "cache_ttl_seconds", 300)
     pii_url = getattr(request.app.state, "pii_service_url", None)
     pii_timeout = float(getattr(request.app.state, "pii_redact_timeout", 20.0))
+    pii_http_client = getattr(request.app.state, "pii_http_client", None)
 
     return NMTService(
         repository=repository, 
@@ -847,6 +848,7 @@ async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_tenan
         cache_ttl_seconds=cache_ttl_seconds,
         pii_redact_base_url=pii_url,
         pii_redact_timeout=pii_timeout,
+        pii_http_client=pii_http_client,
     )
 
 
@@ -1140,6 +1142,7 @@ async def run_inference(
                         cache_ttl_seconds = getattr(model_management_client, "cache_ttl_seconds", 300)
                         pii_url = getattr(http_request.app.state, "pii_service_url", None)
                         pii_timeout = float(getattr(http_request.app.state, "pii_redact_timeout", 20.0))
+                        pii_http_client = getattr(http_request.app.state, "pii_http_client", None)
 
                         # Create fallback NMT service with Model Management client (required for dynamic endpoint resolution)
                         fallback_nmt_service = NMTService(
@@ -1151,6 +1154,7 @@ async def run_inference(
                             cache_ttl_seconds=cache_ttl_seconds,
                             pii_redact_base_url=pii_url,
                             pii_redact_timeout=pii_timeout,
+                            pii_http_client=pii_http_client,
                         )
                         
                         # Pre-populate the fallback service cache with the already-resolved endpoint
