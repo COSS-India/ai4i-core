@@ -343,7 +343,8 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
       try {
         const link = document.createElement('a');
         link.href = audio;
-        link.download = `tts_audio_${Date.now()}.wav`;
+        const downloadExt = audioFormat?.toLowerCase() === 'mp3' ? 'mp3' : 'wav';
+        link.download = `tts_audio_${Date.now()}.${downloadExt}`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -359,7 +360,7 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
         });
       }
     }
-  }, [audio, toast]);
+  }, [audio, audioFormat, toast]);
 
   return {
     // State

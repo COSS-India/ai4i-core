@@ -343,6 +343,14 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
   if (!user?.id) return null;
   const showAdopter = user?.is_superuser;
   const showTenant = user?.is_tenant && !user?.is_superuser;
+  const mustKeepManageServicesOpen =
+    tm.manageServicesTenant?.status === "ACTIVE" &&
+    tm.availableServices.length > 0 &&
+    tm.manageServicesSelected.length === 0;
+  const mustKeepManageUserServicesOpen =
+    tm.manageUserServicesUser?.status === "ACTIVE" &&
+    tm.availableServicesForUser.length > 0 &&
+    tm.manageUserServicesSelected.length === 0;
 
   return (
     <>
@@ -977,11 +985,18 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
       </Modal>
 
       {/* Manage Services Modal (existing tenant) */}
-      <Modal isOpen={tm.isManageServicesModalOpen} onClose={tm.closeManageServices} size="lg" isCentered>
+      <Modal
+        isOpen={tm.isManageServicesModalOpen}
+        onClose={mustKeepManageServicesOpen ? () => {} : tm.closeManageServices}
+        size="lg"
+        isCentered
+        closeOnOverlayClick={!mustKeepManageServicesOpen}
+        closeOnEsc={!mustKeepManageServicesOpen}
+      >
         <ModalOverlay />
         <ModalContent>
           <ModalHeader>Manage Services</ModalHeader>
-          <ModalCloseButton />
+          {!mustKeepManageServicesOpen && <ModalCloseButton />}
           <ModalBody>
             {tm.manageServicesTenant && (
               <>
@@ -1086,7 +1101,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           <ModalFooter>
             {tm.availableServices.length > 0 && (
               <>
-                <Button variant="ghost" mr={3} onClick={tm.closeManageServices}>Cancel</Button>
+                <Button variant="ghost" mr={3} onClick={tm.closeManageServices} isDisabled={mustKeepManageServicesOpen}>Cancel</Button>
                 <Button
                   colorScheme="blue"
                   onClick={tm.saveManageServices}
@@ -1101,11 +1116,18 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
       </Modal>
 
       {/* Manage User Services Modal */}
-      <Modal isOpen={tm.isManageUserServicesModalOpen} onClose={tm.closeManageUserServices} size="lg" isCentered>
+      <Modal
+        isOpen={tm.isManageUserServicesModalOpen}
+        onClose={mustKeepManageUserServicesOpen ? () => {} : tm.closeManageUserServices}
+        size="lg"
+        isCentered
+        closeOnOverlayClick={!mustKeepManageUserServicesOpen}
+        closeOnEsc={!mustKeepManageUserServicesOpen}
+      >
         <ModalOverlay />
         <ModalContent>
           <ModalHeader>Manage User Services</ModalHeader>
-          <ModalCloseButton />
+          {!mustKeepManageUserServicesOpen && <ModalCloseButton />}
           <ModalBody>
             {tm.manageUserServicesUser && (
               <>
@@ -1210,7 +1232,14 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           <ModalFooter>
             {tm.availableServicesForUser.length > 0 && (
               <>
-                <Button variant="ghost" mr={3} onClick={tm.closeManageUserServices}>Cancel</Button>
+                <Button
+                  variant="ghost"
+                  mr={3}
+                  onClick={tm.closeManageUserServices}
+                  isDisabled={mustKeepManageUserServicesOpen}
+                >
+                  Cancel
+                </Button>
                 <Button
                   colorScheme="blue"
                   onClick={tm.saveManageUserServices}
