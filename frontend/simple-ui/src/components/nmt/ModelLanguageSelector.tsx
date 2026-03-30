@@ -77,6 +77,12 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   // When current language pair is not in the new service's options, sync parent so state matches display and Translate uses correct languages
   useEffect(() => {
     if (!currentServiceId) return;
+    const sourceIsEmpty = !languagePair.sourceLanguage?.trim();
+    const targetIsEmpty = !languagePair.targetLanguage?.trim();
+
+    // Don't auto-pick the first languages on initial load; keep placeholders ("Select")
+    if (sourceIsEmpty && targetIsEmpty) return;
+
     const defaultCodes = Object.keys(LANG_CODE_TO_LABEL).sort((a, b) =>
       (LANG_CODE_TO_LABEL[a] || a).localeCompare(LANG_CODE_TO_LABEL[b] || b)
     );
@@ -94,8 +100,16 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
     const sourceValid = options.includes(languagePair.sourceLanguage);
     const targetValid = options.includes(languagePair.targetLanguage);
     if (sourceValid && targetValid) return;
-    const newSource = sourceValid ? languagePair.sourceLanguage : (options[0] ?? '');
-    const newTarget = targetValid ? languagePair.targetLanguage : (options[1] ?? options[0] ?? '');
+    const newSource = sourceValid
+      ? languagePair.sourceLanguage
+      : sourceIsEmpty
+        ? ''
+        : (options[0] ?? '');
+    const newTarget = targetValid
+      ? languagePair.targetLanguage
+      : targetIsEmpty
+        ? ''
+        : (options[1] ?? options[0] ?? '');
     onLanguagePairChange({
       ...languagePair,
       sourceLanguage: newSource,
@@ -170,6 +184,10 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   };
 
   const getLanguageLabel = (code: string) => {
+    // Prefer the shared constant mapping to keep UI consistent with LLM.
+    const mapped = LANG_CODE_TO_LABEL[code];
+    if (mapped) return String(mapped);
+
     const detail = languageDetails.find(d => d.code === code);
     return detail?.name ? String(detail.name) : String(code);
   };
@@ -190,12 +208,14 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
       : defaultLanguageCodes;
 
   // Ensure Select value is always in the options list to avoid client-side crash when switching to a model with different languages
-  const safeSourceValue = languageOptionsForDisplay.includes(languagePair.sourceLanguage)
-    ? languagePair.sourceLanguage
-    : (languageOptionsForDisplay[0] ?? '');
-  const safeTargetValue = languageOptionsForDisplay.includes(languagePair.targetLanguage)
-    ? languagePair.targetLanguage
-    : (languageOptionsForDisplay[1] ?? languageOptionsForDisplay[0] ?? '');
+  const safeSourceValue =
+    languagePair.sourceLanguage?.trim() && languageOptionsForDisplay.includes(languagePair.sourceLanguage)
+      ? languagePair.sourceLanguage
+      : '';
+  const safeTargetValue =
+    languagePair.targetLanguage?.trim() && languageOptionsForDisplay.includes(languagePair.targetLanguage)
+      ? languagePair.targetLanguage
+      : '';
 
   return (
     <Stack spacing={6} pt={0} mt={0}>
@@ -279,7 +299,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                 >
                   {languageOptionsForDisplay.map((langCode) => (
                     <option key={langCode} value={langCode}>
-                      {getLanguageLabel(langCode)} ({langCode})
+                      {getLanguageLabel(langCode)}
                     </option>
                   ))}
                 </Select>
@@ -309,7 +329,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                 >
                   {languageOptionsForDisplay.map((langCode) => (
                     <option key={langCode} value={langCode}>
-                      {getLanguageLabel(langCode)} ({langCode})
+                      {getLanguageLabel(langCode)}
                     </option>
                   ))}
                 </Select>
