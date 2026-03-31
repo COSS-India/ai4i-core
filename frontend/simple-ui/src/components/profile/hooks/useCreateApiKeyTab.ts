@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import authService from "../../../services/authService";
 import type { User, Permission } from "../../../types/auth";
+import type { UserSearchablePick } from "../../common/UserSearchableSelect";
 
 export interface UseCreateApiKeyTabOptions {
   users: User[];
@@ -65,19 +66,20 @@ export function useCreateApiKeyTab({
     }
   };
 
-  const handleUserSelect = (userId: number) => {
-    const u = users.find((x) => x.id === userId);
-    if (u) {
-      setSelectedUserForPermissions({
-        id: u.id,
-        email: u.email,
-        username: u.username || "",
-      });
-      setSelectedUserPermissions([]);
-    } else {
+  const handleUserSelect = (userId: number | null, picked?: UserSearchablePick | null) => {
+    if (userId == null) {
       setSelectedUserForPermissions(null);
       setSelectedUserPermissions([]);
+      return;
     }
+    const u = users.find((x) => x.id === userId) ?? picked;
+    if (!u) return;
+    setSelectedUserForPermissions({
+      id: u.id,
+      email: u.email,
+      username: u.username || "",
+    });
+    setSelectedUserPermissions([]);
   };
 
   const handleCreateApiKeyForUser = async () => {
