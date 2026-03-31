@@ -337,9 +337,7 @@ policy_agent = PolicySyncAgent()
 
 class AuditLogger:
     async def log_event(self, trace_id, tenant_id, domain, target, pii_count, processing_ms, trace_log):
-        global kafka_producer
-        if not kafka_producer:
-            return
+        global db_pool, kafka_producer
         payload = {
             "trace_id": trace_id,
             "tenant_id": tenant_id,
@@ -349,6 +347,38 @@ class AuditLogger:
             "processing_ms": processing_ms,
             "trace_json": trace_log,
         }
+
+        # Primary sink for admin UI: persist directly to audit_logs table.
+        try:
+            if db_pool:
+                async with db_pool.acquire() as conn:
+                    await conn.execute(
+                        """
+                        INSERT INTO audit_logs (
+                            trace_id,
+                            tenant_id,
+                            domain_id,
+                            target_context,
+                            pii_count,
+                            processing_ms,
+                            trace_json
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+                        """,
+                        trace_id,
+                        tenant_id,
+                        domain,
+                        target,
+                        pii_count,
+                        processing_ms,
+                        json.dumps(trace_log),
+                    )
+        except Exception as exc:
+            print(f"Audit DB insert failed: {exc}")
+
+        # Secondary sink: Kafka best-effort publish.
+        if not kafka_producer:
+            return
         try:
             await kafka_producer.send(
                 KAFKA_AUDIT_TOPIC,

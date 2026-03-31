@@ -44,10 +44,12 @@ import {
   Checkbox,
   CheckboxGroup,
   Tooltip,
+  IconButton,
 } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
 import { useApiKeyManagementTab } from "./hooks/useApiKeyManagementTab";
 import { TriangleDownIcon, TriangleUpIcon } from "@chakra-ui/icons";
+import UserSearchableSelect from "../common/UserSearchableSelect";
 
 export interface ApiKeyManagementTabProps {
   users: import("../../types/auth").User[];
@@ -64,20 +66,6 @@ export default function ApiKeyManagementTab({
   const { user } = useAuth();
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
-
-  const sortedUsers = useMemo(() => {
-    return [...users].sort((a, b) => {
-      // Dropdown should be deterministic and alphabetical for UX consistency.
-      const emailA = (a.email ?? "").trim();
-      const emailB = (b.email ?? "").trim();
-      const emailCmp = emailA.localeCompare(emailB, undefined, { sensitivity: "base" });
-      if (emailCmp !== 0) return emailCmp;
-
-      const usernameA = (a.username ?? "").trim();
-      const usernameB = (b.username ?? "").trim();
-      return usernameA.localeCompare(usernameB, undefined, { sensitivity: "base" });
-    });
-  }, [users]);
 
   const mgmt = useApiKeyManagementTab({
     user: user ?? null,
@@ -164,19 +152,15 @@ export default function ApiKeyManagementTab({
                       <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
                         User
                       </FormLabel>
-                      <Select
-                        size="sm"
+                      <UserSearchableSelect
+                        variant="filter"
                         value={mgmt.filterUser}
-                        onChange={(e) => mgmt.setFilterUser(e.target.value)}
-                        bg="white"
-                      >
-                        <option value="all">All Users</option>
-                        {sortedUsers.map((u) => (
-                          <option key={u.id} value={u.id.toString()}>
-                            {u.email} ({u.username})
-                          </option>
-                        ))}
-                      </Select>
+                        onChange={(v) => mgmt.setFilterUser(v)}
+                        seedUsers={users}
+                        size="sm"
+                        allOptionLabel="All Users"
+                        placeholder="All Users"
+                      />
                     </FormControl>
 
                     <FormControl w={{ base: "full", md: "320px" }}>
@@ -236,20 +220,29 @@ export default function ApiKeyManagementTab({
                 <Table variant="simple">
                   <Thead>
                     <Tr>
-                      <Th
-                        cursor="pointer"
-                        userSelect="none"
-                        onClick={() =>
-                          setKeyNameSortDirection((d) => (d === "asc" ? "desc" : "asc"))
-                        }
-                      >
+                      <Th>
                         <HStack spacing={2}>
                           <Text>Key Name</Text>
-                          {keyNameSortDirection === "asc" ? (
-                            <TriangleUpIcon boxSize={3} color="gray.500" />
-                          ) : (
-                            <TriangleDownIcon boxSize={3} color="gray.500" />
-                          )}
+                          <Tooltip label="Sort Name A to Z" hasArrow>
+                            <IconButton
+                              aria-label="Sort API keys by name ascending"
+                              icon={<TriangleUpIcon />}
+                              size="xs"
+                              variant={keyNameSortDirection === "asc" ? "solid" : "ghost"}
+                              colorScheme="gray"
+                              onClick={() => setKeyNameSortDirection("asc")}
+                            />
+                          </Tooltip>
+                          <Tooltip label="Sort Name Z to A" hasArrow>
+                            <IconButton
+                              aria-label="Sort API keys by name descending"
+                              icon={<TriangleDownIcon />}
+                              size="xs"
+                              variant={keyNameSortDirection === "desc" ? "solid" : "ghost"}
+                              colorScheme="gray"
+                              onClick={() => setKeyNameSortDirection("desc")}
+                            />
+                          </Tooltip>
                         </HStack>
                       </Th>
                       <Th>User</Th>

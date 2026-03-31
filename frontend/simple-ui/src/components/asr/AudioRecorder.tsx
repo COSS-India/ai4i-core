@@ -21,6 +21,7 @@ import { formatDuration, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, MAX_AUD
 import { AudioRecorderProps } from "../../types/asr";
 import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
 import { DeleteIcon } from "@chakra-ui/icons";
+import { convertWebmToWav } from "../../utils/helpers";
 
 const AudioRecorder: React.FC<AudioRecorderProps> = ({
   onAudioReady,
@@ -183,57 +184,73 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
           return;
         }
 
-        // If duration is valid, proceed with file processing
+        // If duration is valid, normalize to WAV then proceed with base64 conversion.
         try {
           console.log("Reading file:", file.name);
-          const reader = new FileReader();
+          const readAndSend = (blob: Blob) => {
+            const reader = new FileReader();
 
-          reader.onload = () => {
-            try {
-              const result = reader.result as string;
-              if (!result) {
-                throw new Error("FileReader result is empty");
+            reader.onload = () => {
+              try {
+                const result = reader.result as string;
+                if (!result) {
+                  throw new Error("FileReader result is empty");
+                }
+                const base64Data = result.split(",")[1];
+                if (!base64Data) {
+                  throw new Error("Failed to extract base64 data");
+                }
+                console.log(
+                  "File read successfully, base64 length:",
+                  base64Data.length
+                );
+                setUploadedFileName(file.name);
+                onAudioReady(base64Data);
+              } catch (err) {
+                console.error("Error processing file result:", err);
+                const uploadErr = UPLOAD_ERRORS.UPLOAD_FAILED;
+                toast({
+                  title: uploadErr.title,
+                  description: uploadErr.description,
+                  status: "error",
+                  duration: 3000,
+                  isClosable: true,
+                });
               }
-              const base64Data = result.split(",")[1];
-              if (!base64Data) {
-                throw new Error("Failed to extract base64 data");
-              }
-              console.log(
-                "File read successfully, base64 length:",
-                base64Data.length
-              );
-              setUploadedFileName(file.name);
-              onAudioReady(base64Data);
-            } catch (err) {
-              console.error("Error processing file result:", err);
-              const uploadErr = UPLOAD_ERRORS.UPLOAD_FAILED;
+            };
+
+            reader.onerror = (error) => {
+              console.error("FileReader error:", error);
+              const err = UPLOAD_ERRORS.INVALID_FILE;
               toast({
-                title: uploadErr.title,
-                description: uploadErr.description,
+                title: err.title,
+                description: err.description,
                 status: "error",
                 duration: 3000,
                 isClosable: true,
               });
-            }
+            };
+
+            reader.onabort = () => {
+              console.log("File read aborted");
+            };
+
+            reader.readAsDataURL(blob);
           };
 
-          reader.onerror = (error) => {
-            console.error("FileReader error:", error);
-            const err = UPLOAD_ERRORS.INVALID_FILE;
-            toast({
-              title: err.title,
-              description: err.description,
-              status: "error",
-              duration: 3000,
-              isClosable: true,
+          // Normalize uploads to WAV so all inference endpoints get a consistent format.
+          convertWebmToWav(file, sampleRate)
+            .then((wavBlob) => {
+              if (wavBlob && wavBlob.size > 0) {
+                readAndSend(wavBlob);
+                return;
+              }
+              readAndSend(file);
+            })
+            .catch((conversionError) => {
+              console.warn("Upload WAV conversion failed, using original file:", conversionError);
+              readAndSend(file);
             });
-          };
-
-          reader.onabort = () => {
-            console.log("File read aborted");
-          };
-
-          reader.readAsDataURL(file);
         } catch (error) {
           console.error("Error reading file:", error);
           const err = UPLOAD_ERRORS.INVALID_FILE;

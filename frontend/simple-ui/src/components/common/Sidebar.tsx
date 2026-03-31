@@ -485,8 +485,8 @@ const Sidebar: React.FC = () => {
     if (item.id === "api-key-management" && !(isAdmin || isTenantAdmin)) {
       return false;
     }
-    // Hide logs for users with USER role (regardless of tenant_id)
-    if (item.id === "logs" && isUser) {
+    // Hide logs for users with USER or GUEST role (regardless of tenant_id)
+    if (item.id === "logs" && (isUser || isGuest)) {
       return false;
     }
     // Hide logs for users without tenant_id (but allow admins to see it)

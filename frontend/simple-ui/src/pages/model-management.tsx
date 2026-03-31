@@ -284,7 +284,6 @@ const ModelManagementPage: React.FC = () => {
 
       if (sortBy === "time") {
         if (timeB !== timeA) return timeB - timeA;
-        if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
         return 0;
       }
 
@@ -944,7 +943,7 @@ const ModelManagementPage: React.FC = () => {
                               >
                                 <option value="">All</option>
                                 <option value="active">Active</option>
-                                <option value="deprecated">Deactivated</option>
+                                <option value="deprecated">Deprecated</option>
                               </Select>
                             </FormControl>
                             <FormControl w={{ base: "full", sm: "160px" }}>
@@ -1001,7 +1000,7 @@ const ModelManagementPage: React.FC = () => {
                                   onClick={() => { setFilterVersionStatus(""); setListPage(1); }}
                                   _hover={{ opacity: 0.8 }}
                                 >
-                                  Status: {filterVersionStatus === "active" ? "Active" : "Deactivated"} ×
+                                  Status: {filterVersionStatus === "active" ? "Active" : "Deprecated"} ×
                                 </Badge>
                               )}
                               {filterTaskType && (
@@ -1035,27 +1034,37 @@ const ModelManagementPage: React.FC = () => {
                           <Table variant="simple" bg={tableBg} size="sm" w="100%">
                             <Thead bg={tableHeaderBg}>
                               <Tr>
-                                <Th
-                                  cursor="pointer"
-                                  userSelect="none"
-                                  onClick={() => {
-                                    if (sortBy !== "name") {
-                                      setSortBy("name");
-                                      setNameSortDirection("asc");
-                                    } else {
-                                      setNameSortDirection((d) => (d === "asc" ? "desc" : "asc"));
-                                    }
-                                    setListPage(1);
-                                  }}
-                                >
+                                <Th>
                                   <HStack spacing={2}>
                                     <Text>Name</Text>
-                                    {sortBy === "name" ? (
-                                    nameSortDirection === "asc" ? (
-                                      <TriangleUpIcon boxSize={3} color="gray.500" />
-                                    ) : (
-                                      <TriangleDownIcon boxSize={3} color="gray.500" />
-                                    )) : null}
+                                    <Tooltip label="Sort Name A to Z" hasArrow>
+                                      <IconButton
+                                        aria-label="Sort models by name ascending"
+                                        icon={<TriangleUpIcon />}
+                                        size="xs"
+                                        variant={sortBy === "name" && nameSortDirection === "asc" ? "solid" : "ghost"}
+                                        colorScheme="gray"
+                                        onClick={() => {
+                                          setSortBy("name");
+                                          setNameSortDirection("asc");
+                                          setListPage(1);
+                                        }}
+                                      />
+                                    </Tooltip>
+                                    <Tooltip label="Sort Name Z to A" hasArrow>
+                                      <IconButton
+                                        aria-label="Sort models by name descending"
+                                        icon={<TriangleDownIcon />}
+                                        size="xs"
+                                        variant={sortBy === "name" && nameSortDirection === "desc" ? "solid" : "ghost"}
+                                        colorScheme="gray"
+                                        onClick={() => {
+                                          setSortBy("name");
+                                          setNameSortDirection("desc");
+                                          setListPage(1);
+                                        }}
+                                      />
+                                    </Tooltip>
                                   </HStack>
                                 </Th>
                                 <Th>Version</Th>
