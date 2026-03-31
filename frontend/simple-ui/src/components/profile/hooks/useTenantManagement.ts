@@ -201,6 +201,19 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const handleFetchTenants = async () => {
     setIsLoadingTenants(true);
     try {
+      // Tenant admin must not hit platform-admin-only list endpoint.
+      // Load only their own tenant using the tenant-scoped view endpoint.
+      if (user?.is_tenant && !user?.is_superuser) {
+        const tenantId = user?.tenant_id?.trim();
+        if (!tenantId) {
+          setTenants([]);
+          return;
+        }
+        const tenant = await multiTenantService.getViewTenant(tenantId);
+        setTenants(tenant ? [tenant] : []);
+        return;
+      }
+
       const res = await multiTenantService.listTenants();
       setTenants(res.tenants || []);
     } catch (err) {
