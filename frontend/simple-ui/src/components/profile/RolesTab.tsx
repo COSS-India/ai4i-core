@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from "react";
+import React, { useRef } from "react";
 import {
   AlertDialog,
   AlertDialogBody,
@@ -22,8 +22,8 @@ import {
   Alert,
   AlertIcon,
   AlertDescription,
-  Select,
   Button,
+  Select,
   Badge,
   Table,
   Thead,
@@ -35,6 +35,7 @@ import {
 } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
 import { useRolesTab } from "./hooks/useRolesTab";
+import UserSearchableSelect from "../common/UserSearchableSelect";
 
 export interface RolesTabProps {
   users: import("../../types/auth").User[];
@@ -46,14 +47,6 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
   const inputReadOnlyBg = useColorModeValue("gray.50", "gray.700");
-
-  const sortedUsers = useMemo(() => {
-    return [...users].sort((a, b) => {
-      const nameA = (a.full_name || a.username || "").toLowerCase();
-      const nameB = (b.full_name || b.username || "").toLowerCase();
-      return nameA.localeCompare(nameB);
-    });
-  }, [users]);
 
   const rt = useRolesTab({
     user: user ?? null,
@@ -94,27 +87,20 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
           </HStack>
 
           <Box>
-            <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
-              Select User
-            </Heading>
+           
             <FormControl>
               <FormLabel fontWeight="semibold">User</FormLabel>
-              <Select
-                value={rt.selectedUser?.id ?? ""}
-                onChange={(e) => {
-                  const userId = parseInt(e.target.value, 10);
-                  rt.handleUserSelect(userId);
-                }}
-                placeholder={isLoadingUsers ? "Loading users..." : "Select a user"}
-                bg="white"
+              <UserSearchableSelect
+                variant="pick"
+                value={rt.selectedUser?.id ?? null}
+                onChange={(id, picked) => rt.handleUserSelect(id, picked)}
+                seedUsers={users}
+                isLoading={isLoadingUsers}
                 isDisabled={isLoadingUsers}
-              >
-                {sortedUsers.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.username} ({u.email})
-                  </option>
-                ))}
-              </Select>
+                placeholder={isLoadingUsers ? "Loading users..." : "Select a user"}
+                selectedPreview={rt.selectedUser}
+                allowClear
+              />
             
             </FormControl>
           </Box>
