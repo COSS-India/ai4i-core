@@ -16,7 +16,6 @@ import {
   VStack,
   useColorModeValue,
   Button,
-  Select,
   Alert,
   AlertIcon,
   AlertDescription,
@@ -35,6 +34,7 @@ import {
 import { CopyIcon, CloseIcon } from "@chakra-ui/icons";
 import { useCreateApiKeyTab } from "./hooks/useCreateApiKeyTab";
 import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
+import UserSearchableSelect from "../common/UserSearchableSelect";
 
 export interface CreateApiKeyTabProps {
   users: import("../../types/auth").User[];
@@ -86,36 +86,20 @@ export default function CreateApiKeyTab({
           </HStack>
 
           <Box>
-            <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
-              Select User
-            </Heading>
+          
             <FormControl>
               <FormLabel fontWeight="semibold">User</FormLabel>
-              <Select
-                value={perm.selectedUserForPermissions?.id ?? ""}
-                onChange={(e) => {
-                  const userId = parseInt(e.target.value, 10);
-                  perm.handleUserSelect(userId);
-                }}
-                placeholder={isLoadingUsers ? "Loading users..." : "Select a user"}
-                bg="white"
+              <UserSearchableSelect
+                variant="pick"
+                value={perm.selectedUserForPermissions?.id ?? null}
+                onChange={(id, picked) => perm.handleUserSelect(id, picked)}
+                seedUsers={users}
+                isLoading={isLoadingUsers}
                 isDisabled={isLoadingUsers}
-              >
-                {users
-                  .slice()
-                  .sort((a, b) => {
-                    const nameA = (a.username || a.email || "").toLowerCase();
-                    const nameB = (b.username || b.email || "").toLowerCase();
-                    if (nameA < nameB) return -1;
-                    if (nameA > nameB) return 1;
-                    return 0;
-                  })
-                  .map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.username} ({u.email})
-                  </option>
-                ))}
-              </Select>
+                placeholder={isLoadingUsers ? "Loading users..." : "Select a user"}
+                selectedPreview={perm.selectedUserForPermissions}
+                allowClear
+              />
             </FormControl>
           </Box>
 

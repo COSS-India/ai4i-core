@@ -176,18 +176,29 @@ function TenantDetailUsersPanel(props: {
         <Table variant="simple" size="sm">
           <Thead>
             <Tr>
-              <Th
-                cursor="pointer"
-                userSelect="none"
-                onClick={() => setUserNameSortDirection((d) => (d === "asc" ? "desc" : "asc"))}
-              >
+              <Th>
                 <HStack spacing={2}>
                   <Text>Name</Text>
-                  {userNameSortDirection === "asc" ? (
-                    <TriangleUpIcon boxSize={3} color="gray.500" />
-                  ) : (
-                    <TriangleDownIcon boxSize={3} color="gray.500" />
-                  )}
+                  <Tooltip label="Sort Name A to Z" hasArrow>
+                    <IconButton
+                      aria-label="Sort users by name ascending"
+                      icon={<TriangleUpIcon />}
+                      size="xs"
+                      variant={userNameSortDirection === "asc" ? "solid" : "ghost"}
+                      colorScheme="gray"
+                      onClick={() => setUserNameSortDirection("asc")}
+                    />
+                  </Tooltip>
+                  <Tooltip label="Sort Name Z to A" hasArrow>
+                    <IconButton
+                      aria-label="Sort users by name descending"
+                      icon={<TriangleDownIcon />}
+                      size="xs"
+                      variant={userNameSortDirection === "desc" ? "solid" : "ghost"}
+                      colorScheme="gray"
+                      onClick={() => setUserNameSortDirection("desc")}
+                    />
+                  </Tooltip>
                 </HStack>
               </Th>
               <Th>EMAIL</Th>
@@ -604,20 +615,29 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <Table variant="simple" size="sm">
                   <Thead>
                     <Tr>
-                      <Th
-                        cursor="pointer"
-                        userSelect="none"
-                        onClick={() =>
-                          setTenantNameSortDirection((d) => (d === "asc" ? "desc" : "asc"))
-                        }
-                      >
+                      <Th>
                         <HStack spacing={2}>
                           <Text>Name</Text>
-                          {tenantNameSortDirection === "asc" ? (
-                            <TriangleUpIcon boxSize={3} color="gray.500" />
-                          ) : (
-                            <TriangleDownIcon boxSize={3} color="gray.500" />
-                          )}
+                          <Tooltip label="Sort Name A to Z" hasArrow>
+                            <IconButton
+                              aria-label="Sort tenants by name ascending"
+                              icon={<TriangleUpIcon />}
+                              size="xs"
+                              variant={tenantNameSortDirection === "asc" ? "solid" : "ghost"}
+                              colorScheme="gray"
+                              onClick={() => setTenantNameSortDirection("asc")}
+                            />
+                          </Tooltip>
+                          <Tooltip label="Sort Name Z to A" hasArrow>
+                            <IconButton
+                              aria-label="Sort tenants by name descending"
+                              icon={<TriangleDownIcon />}
+                              size="xs"
+                              variant={tenantNameSortDirection === "desc" ? "solid" : "ghost"}
+                              colorScheme="gray"
+                              onClick={() => setTenantNameSortDirection("desc")}
+                            />
+                          </Tooltip>
                         </HStack>
                       </Th>
                       <Th>TENANT ID</Th>
@@ -719,20 +739,29 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
               <Table variant="simple" size="sm">
                 <Thead>
                   <Tr>
-                    <Th
-                      cursor="pointer"
-                      userSelect="none"
-                      onClick={() =>
-                        setTenantUserNameSortDirection((d) => (d === "asc" ? "desc" : "asc"))
-                      }
-                    >
+                    <Th>
                       <HStack spacing={2}>
                         <Text>Name</Text>
-                        {tenantUserNameSortDirection === "asc" ? (
-                          <TriangleUpIcon boxSize={3} color="gray.500" />
-                        ) : (
-                          <TriangleDownIcon boxSize={3} color="gray.500" />
-                        )}
+                        <Tooltip label="Sort Name A to Z" hasArrow>
+                          <IconButton
+                            aria-label="Sort tenant users by name ascending"
+                            icon={<TriangleUpIcon />}
+                            size="xs"
+                            variant={tenantUserNameSortDirection === "asc" ? "solid" : "ghost"}
+                            colorScheme="gray"
+                            onClick={() => setTenantUserNameSortDirection("asc")}
+                          />
+                        </Tooltip>
+                        <Tooltip label="Sort Name Z to A" hasArrow>
+                          <IconButton
+                            aria-label="Sort tenant users by name descending"
+                            icon={<TriangleDownIcon />}
+                            size="xs"
+                            variant={tenantUserNameSortDirection === "desc" ? "solid" : "ghost"}
+                            colorScheme="gray"
+                            onClick={() => setTenantUserNameSortDirection("desc")}
+                          />
+                        </Tooltip>
                       </HStack>
                     </Th>
                     <Th>EMAIL</Th>
@@ -1197,8 +1226,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                         </Text>
                       </Checkbox>
                     </HStack>
-                    <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="280px" overflowY="auto">
-                      <SimpleGrid columns={{ base: 2, sm: 3, md: 4 }} spacing={2}>
+                    <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="280px" overflowY="auto" overflowX="hidden">
+                      <VStack align="stretch" spacing={2}>
                         {tm.availableServicesForUser.map((svc) => (
                           <Checkbox
                             key={svc.id}
@@ -1208,10 +1237,12 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                             colorScheme="blue"
                             size="sm"
                           >
-                            <Text fontSize="sm" fontWeight="medium">{(svc.service_name ?? "").toUpperCase()}</Text>
+                            <Text fontSize="sm" fontWeight="medium" whiteSpace="normal" wordBreak="break-word">
+                              {(svc.service_name ?? "").toUpperCase()}
+                            </Text>
                           </Checkbox>
                         ))}
-                      </SimpleGrid>
+                      </VStack>
                     </Box>
                     <Text fontSize="sm" color="gray.500">
                       {tm.manageUserServicesSelected.length} service(s) selected
