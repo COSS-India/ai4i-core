@@ -1739,6 +1739,30 @@
       simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
     pass_host: pass
     type: roundrobin
+- uri: /api-key-management
+  name: frontend-api-key-management
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /api-key-management/*
+  name: frontend-api-key-management-prefix
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
 - uri: /auth
   name: frontend-auth
   priority: 3
@@ -2271,6 +2295,30 @@
       use_real_request_uri_unsafe: false
 - uri: /services-management
   name: frontend-services-management
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /tenant/management
+  name: frontend-tenant-management
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /tenant/management/*
+  name: frontend-tenant-management-prefix
   priority: 3
   methods:
   - GET
