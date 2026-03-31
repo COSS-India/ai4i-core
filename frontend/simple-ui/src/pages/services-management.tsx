@@ -9,6 +9,7 @@ import {
   FormControl,
   FormLabel,
   Heading,
+  IconButton,
   Input,
   InputGroup,
   InputLeftElement,
@@ -36,7 +37,8 @@ import {
   Tooltip,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import { SearchIcon } from "@chakra-ui/icons";
+import { SearchIcon, ViewIcon, DeleteIcon, TriangleDownIcon, TriangleUpIcon } from "@chakra-ui/icons";
+import { FaUpload } from "react-icons/fa";
 import { useRouter } from "next/router";
 import { useQueryClient } from "@tanstack/react-query";
 import React, { useState, useEffect, useRef, useMemo } from "react";
@@ -86,6 +88,8 @@ const ServicesManagementPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
+  const [sortBy, setSortBy] = useState<"time" | "name">("time");
+  const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
   const [confirmPublishService, setConfirmPublishService] = useState<Service | null>(null);
   const [confirmUnpublishService, setConfirmUnpublishService] = useState<Service | null>(null);
   /** When viewing a service, true if its model is deprecated (fetched by modelId); null until we know */
@@ -109,33 +113,12 @@ const ServicesManagementPage: React.FC = () => {
     return typeof modelVersionStatus === "string" && modelVersionStatus.toLowerCase() === "deprecated";
   };
 
-  /** Sort by latest update (publishedAt/unpublishedAt) then fallback to publishedOn/created_at; for list ordering */
-  const getServiceSortTime = (s: Service): number => {
-    if (s.isPublished === true && s.publishedAt) {
-      const t = new Date(s.publishedAt).getTime();
-      if (!Number.isNaN(t)) return t;
-    }
-    if (s.isPublished === false && s.unpublishedAt) {
-      const t = new Date(s.unpublishedAt).getTime();
-      if (!Number.isNaN(t)) return t;
-    }
-    if (s.versionStatusUpdatedAt) {
-      const t = new Date(s.versionStatusUpdatedAt).getTime();
-      if (!Number.isNaN(t)) return t;
-    }
-    if (s.updated_at) {
-      const t = new Date(s.updated_at).getTime();
-      if (!Number.isNaN(t)) return t;
-    }
-    if (s.created_at) {
-      const t = new Date(s.created_at).getTime();
-      if (!Number.isNaN(t)) return t;
-    }
-    if (s.publishedOn != null && s.publishedOn > 0) {
-      const n = Number(s.publishedOn);
-      return n > 1e12 ? n : n * 1000;
-    }
-    return 0;
+  /** Parse timestamp safely for SQL-like ordering */
+  const getSortTimestamp = (value?: string | number | null): number => {
+    if (value == null) return 0;
+    if (typeof value === "number") return value > 1e12 ? value : value * 1000;
+    const t = new Date(value).getTime();
+    return Number.isNaN(t) ? 0 : t;
   };
 
   const taskTypeOptions = useMemo(() => {
@@ -151,9 +134,7 @@ const ServicesManagementPage: React.FC = () => {
     const q = searchQuery.trim().toLowerCase();
     const filtered = services.filter((s) => {
       if (q) {
-        const nameMatch = (s.name ?? "").toLowerCase().includes(q);
-        const taskMatch = (s.model?.task?.type ?? s.task?.type ?? s.task_type ?? "").toString().toLowerCase().includes(q);
-        if (!nameMatch && !taskMatch) return false;
+        if (!(s.name ?? "").toLowerCase().includes(q)) return false;
       }
       if (filterStatus) {
         const published = s.isPublished === true;
@@ -167,12 +148,27 @@ const ServicesManagementPage: React.FC = () => {
       return true;
     });
     return [...filtered].sort((a, b) => {
-      const timeA = getServiceSortTime(a);
-      const timeB = getServiceSortTime(b);
-      if (timeB !== timeA) return timeB - timeA;
-      return (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
+      const createdA = getSortTimestamp(a.created_at);
+      const createdB = getSortTimestamp(b.created_at);
+      const updatedA = getSortTimestamp(a.updated_at);
+      const updatedB = getSortTimestamp(b.updated_at);
+      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
+
+      // Default mode: mirror SQL ordering exactly -> ORDER BY created_at DESC, updated_at DESC.
+      if (sortBy === "time") {
+        if (createdB !== createdA) return createdB - createdA;
+        if (updatedB !== updatedA) return updatedB - updatedA;
+        return 0;
+      }
+
+      // Name mode is applied only when user clicks one of the name arrows.
+      if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
+      // Mirror SQL ordering exactly -> ORDER BY created_at DESC, updated_at DESC.
+      if (createdB !== createdA) return createdB - createdA;
+      if (updatedB !== updatedA) return updatedB - updatedA;
+      return 0;
     });
-  }, [services, searchQuery, filterStatus, filterTaskType]);
+  }, [services, searchQuery, filterStatus, filterTaskType, sortBy, nameSortDirection]);
 
   const totalServices = filteredServices.length;
   const totalPages = Math.max(1, Math.ceil(totalServices / listPageSize));
@@ -949,7 +945,7 @@ const ServicesManagementPage: React.FC = () => {
                                     <SearchIcon color="gray.400" />
                                   </InputLeftElement>
                                   <Input
-                                    placeholder="Search by name or task type..."
+                                    placeholder="Search by service name..."
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
                                     bg={cardBg}
@@ -1022,7 +1018,39 @@ const ServicesManagementPage: React.FC = () => {
                             <Table variant="simple" bg={tableBg} size="sm" w="100%">
                               <Thead bg={tableHeaderBg}>
                                 <Tr>
-                                  <Th>Name</Th>
+                                  <Th>
+                                    <HStack spacing={2}>
+                                      <Text>Name</Text>
+                                      <Tooltip label="Sort Name A to Z" hasArrow>
+                                        <IconButton
+                                          aria-label="Sort services by name ascending"
+                                          icon={<TriangleUpIcon />}
+                                          size="xs"
+                                          variant={sortBy === "name" && nameSortDirection === "asc" ? "solid" : "ghost"}
+                                          colorScheme="gray"
+                                          onClick={() => {
+                                            setSortBy("name");
+                                            setNameSortDirection("asc");
+                                            setListPage(1);
+                                          }}
+                                        />
+                                      </Tooltip>
+                                      <Tooltip label="Sort Name Z to A" hasArrow>
+                                        <IconButton
+                                          aria-label="Sort services by name descending"
+                                          icon={<TriangleDownIcon />}
+                                          size="xs"
+                                          variant={sortBy === "name" && nameSortDirection === "desc" ? "solid" : "ghost"}
+                                          colorScheme="gray"
+                                          onClick={() => {
+                                            setSortBy("name");
+                                            setNameSortDirection("desc");
+                                            setListPage(1);
+                                          }}
+                                        />
+                                      </Tooltip>
+                                    </HStack>
+                                  </Th>
                                   <Th>Task Type</Th>
                                   <Th>Status</Th>
                                   <Th>Actions</Th>
@@ -1057,65 +1085,70 @@ const ServicesManagementPage: React.FC = () => {
                                       </Badge>
                                     </Td>
                                     <Td onClick={(e) => e.stopPropagation()}>
-                                      <HStack spacing={2}>
-                                        <Button
-                                          size="sm"
-                                          colorScheme="blue"
-                                          variant="outline"
-                                          onClick={() => handleViewService(service.serviceId || service.service_id || "")}
-                                        >
-                                          View
-                                        </Button>
-                                        {service.isPublished === true ? (
-                                          <Button
+                                      <HStack spacing={1}>
+                                        <Tooltip label="View" placement="top" hasArrow>
+                                          <IconButton
+                                            aria-label="View"
+                                            icon={<ViewIcon />}
                                             size="sm"
-                                            colorScheme="red"
-                                            variant="outline"
-                                            onClick={() => { setConfirmUnpublishService(service); onUnpublishConfirmOpen(); }}
-                                            isLoading={unpublishingServiceUuid === service.uuid}
-                                            loadingText="Unpublishing..."
-                                            isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
-                                          >
-                                            Unpublish
-                                          </Button>
+                                            variant="ghost"
+                                            colorScheme="blue"
+                                            _hover={{ bg: "blue.50" }}
+                                            onClick={() => handleViewService(service.serviceId || service.service_id || "")}
+                                          />
+                                        </Tooltip>
+                                        {service.isPublished === true ? (
+                                          <Tooltip label="Unpublish" placement="top" hasArrow>
+                                            <IconButton
+                                              aria-label="Unpublish"
+                                              icon={<FaUpload />}
+                                              size="sm"
+                                              variant="ghost"
+                                              colorScheme="red"
+                                              _hover={{ bg: "red.50" }}
+                                              onClick={() => { setConfirmUnpublishService(service); onUnpublishConfirmOpen(); }}
+                                              isLoading={unpublishingServiceUuid === service.uuid}
+                                              isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
+                                            />
+                                          </Tooltip>
                                         ) : (
-                                          // Disable Publish when the associated model is deprecated; show message on hover
                                           <Tooltip
-                                            label="This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
-                                            isDisabled={!isServiceModelDeprecated(service)}
+                                            label={isServiceModelDeprecated(service) ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing." : "Publish"}
                                             hasArrow
                                             placement="top"
                                           >
                                             <Box as="span" display="inline-block">
-                                              <Button
+                                              <IconButton
+                                                aria-label="Publish"
+                                                icon={<FaUpload />}
                                                 size="sm"
+                                                variant="ghost"
                                                 colorScheme="green"
-                                                variant="outline"
+                                                _hover={{ bg: "green.50" }}
                                                 onClick={() => { setConfirmPublishService(service); onPublishConfirmOpen(); }}
                                                 isLoading={publishingServiceUuid === service.uuid}
-                                                loadingText="Publishing..."
                                                 isDisabled={
                                                   unpublishingServiceUuid !== null ||
                                                   publishingServiceUuid !== null ||
                                                   isServiceModelDeprecated(service)
                                                 }
-                                              >
-                                                Publish
-                                              </Button>
+                                              />
                                             </Box>
                                           </Tooltip>
                                         )}
-                                        <Button
-                                          size="sm"
-                                          colorScheme="red"
-                                          variant="outline"
-                                          onClick={() => handleDeleteClick(service)}
-                                          isLoading={deletingServiceUuid === service.uuid}
-                                          loadingText="Deleting..."
-                                          isDisabled={deletingServiceUuid !== null}
-                                        >
-                                          Delete
-                                        </Button>
+                                        <Tooltip label="Delete" placement="top" hasArrow>
+                                          <IconButton
+                                            aria-label="Delete"
+                                            icon={<DeleteIcon />}
+                                            size="sm"
+                                            variant="ghost"
+                                            colorScheme="red"
+                                            _hover={{ bg: "red.50" }}
+                                            onClick={() => handleDeleteClick(service)}
+                                            isLoading={deletingServiceUuid === service.uuid}
+                                            isDisabled={deletingServiceUuid !== null}
+                                          />
+                                        </Tooltip>
                                       </HStack>
                                     </Td>
                                   </Tr>
@@ -1218,9 +1251,7 @@ const ServicesManagementPage: React.FC = () => {
                             <FormControl isRequired>
                               <FormLabel fontWeight="semibold">
                                 Service Name{" "}
-                                <Text as="span" color="red.500">
-                                  *
-                                </Text>
+                                
                               </FormLabel>
                               <Input
                                 value={formData.name || ""}
@@ -1236,9 +1267,7 @@ const ServicesManagementPage: React.FC = () => {
                             <FormControl isRequired>
                               <FormLabel fontWeight="semibold">
                                 Service Description{" "}
-                                <Text as="span" color="red.500">
-                                  *
-                                </Text>
+                                
                               </FormLabel>
                               <Textarea
                                 value={formData.serviceDescription || ""}
@@ -1253,9 +1282,7 @@ const ServicesManagementPage: React.FC = () => {
                               <FormControl isRequired>
                                 <FormLabel fontWeight="semibold">
                                   Model Name{" "}
-                                  <Text as="span" color="red.500">
-                                    *
-                                  </Text>
+                               
                                 </FormLabel>
                                 <Select
                                   value={formData.modelId || ""}
@@ -1278,9 +1305,7 @@ const ServicesManagementPage: React.FC = () => {
                               <FormControl isRequired>
                               <FormLabel fontWeight="semibold">
                                 Endpoint{" "}
-                                <Text as="span" color="red.500">
-                                  *
-                                </Text>
+                                
                               </FormLabel>
                                 <Input
                                   value={formData.endpoint || ""}
@@ -1419,41 +1444,40 @@ const ServicesManagementPage: React.FC = () => {
                                       {selectedService.isPublished === true ? "Published" : "Unpublished"}
                                     </Badge>
                                     {selectedService.isPublished === true ? (
-                                      <Button
-                                        size="sm"
-                                        colorScheme="red"
-                                        variant="outline"
-                                        onClick={() => { setConfirmUnpublishService(selectedService); onUnpublishConfirmOpen(); }}
-                                        isLoading={unpublishingServiceUuid === selectedService.uuid}
-                                        loadingText="Unpublishing..."
-                                        isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
-                                      >
-                                        Unpublish
-                                      </Button>
+                                      <Tooltip label="Unpublish" placement="top" hasArrow>
+                                        <IconButton
+                                          aria-label="Unpublish"
+                                          icon={<FaUpload />}
+                                          size="sm"
+                                          colorScheme="red"
+                                          variant="outline"
+                                          onClick={() => { setConfirmUnpublishService(selectedService); onUnpublishConfirmOpen(); }}
+                                          isLoading={unpublishingServiceUuid === selectedService.uuid}
+                                          isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
+                                        />
+                                      </Tooltip>
                                     ) : (
                                       <Tooltip
-                                        label="This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
-                                        isDisabled={!(isServiceModelDeprecated(selectedService) || selectedServiceModelDeprecated === true)}
+                                        label={isServiceModelDeprecated(selectedService) || selectedServiceModelDeprecated === true ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing." : "Publish"}
                                         hasArrow
                                         placement="top"
                                       >
                                         <Box as="span" display="inline-block">
-                                          <Button
+                                          <IconButton
+                                            aria-label="Publish"
+                                            icon={<FaUpload />}
                                             size="sm"
                                             colorScheme="green"
                                             variant="outline"
                                             onClick={() => { setConfirmPublishService(selectedService); onPublishConfirmOpen(); }}
                                             isLoading={publishingServiceUuid === selectedService.uuid}
-                                            loadingText="Publishing..."
                                             isDisabled={
                                               unpublishingServiceUuid !== null ||
                                               publishingServiceUuid !== null ||
                                               isServiceModelDeprecated(selectedService) ||
                                               selectedServiceModelDeprecated === true
                                             }
-                                          >
-                                            Publish
-                                          </Button>
+                                          />
                                         </Box>
                                       </Tooltip>
                                     )}

@@ -190,6 +190,30 @@ export interface RoutingRuleTimingUpdate {
   repeat_interval?: string | null;
 }
 
+// ---- Alert history (read-only audit log) ----
+
+export interface AlertHistoryItem {
+  id: number;
+  name: string;
+  category: string;
+  severity: string;
+  triggered_at: string | null;
+  resolved_at: string | null;
+  status: string;
+  receiver: string | null;
+  notified: string;
+  tenant: string | null;
+  organization: string | null;
+  created_at: string | null;
+}
+
+export interface AlertHistoryListResponse {
+  items: AlertHistoryItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 // ---- Allowed values ----
 
 export const ORGANIZATIONS = ["irctc", "kisanmitra", "bashadaan", "beml"] as const;

@@ -81,13 +81,23 @@ import {
   RadioGroup,
   Stack,
 } from "@chakra-ui/react";
-import { AddIcon, DeleteIcon, ViewIcon, EditIcon, SearchIcon, LockIcon } from "@chakra-ui/icons";
+import {
+  AddIcon,
+  DeleteIcon,
+  ViewIcon,
+  EditIcon,
+  SearchIcon,
+  LockIcon,
+  TriangleDownIcon,
+  TriangleUpIcon,
+} from "@chakra-ui/icons";
 import * as multiTenantService from "../../services/multiTenantService";
 import type { TenantView } from "../../types/multiTenant";
 import type { NotificationReceiver } from "../../types/alerting";
 import { useAlertDefinitions } from "./hooks/useAlertDefinitions";
 import { useNotificationReceivers } from "./hooks/useNotificationReceivers";
 import { useRoutingRules } from "./hooks/useRoutingRules";
+import { useAlertHistory } from "./hooks/useAlertHistory";
 import {
   CATEGORIES,
   SEVERITIES,
@@ -116,6 +126,13 @@ function getAllowedForDurations(evalInterval: string | null | undefined): string
   const key = evalInterval ?? "30s";
   return [...(FOR_DURATION_BY_EVAL_INTERVAL[key] ?? FOR_DURATION_BY_EVAL_INTERVAL["30s"])];
 }
+
+/** Visible mandatory-field marker used with `FormControl isRequired`. */
+const FORM_REQUIRED_ASTERISK = (
+  <Text as="span" color="red.500" ml={1} aria-hidden>
+    *
+  </Text>
+);
 
 const ALERT_TYPES_BY_CATEGORY: Record<string, { value: string; label: string }[]> = {
   application: [
@@ -212,8 +229,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   };
 
   const initEditRuleExtras = (item: NotificationReceiver) => {
-    setEditRuleScope(item.tenant ? "specific_tenant" : "global");
-
     // Prefer direct category/severity from the receiver (backend may return them)
     const cat = item.category ?? null;
     const sev = item.severity ?? null;
@@ -222,9 +237,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     const firstName = item.alert_names?.[0];
     const linkedDef = firstName ? defs.definitions.find((d) => d.name === firstName) : null;
 
-    setEditRuleCategory(cat ?? linkedDef?.category ?? "");
+    const resolvedCat = cat ?? linkedDef?.category ?? "";
+    setEditRuleCategory(resolvedCat);
     setEditRuleSeverity(sev ?? linkedDef?.severity ?? "");
     setEditRuleDef(linkedDef ? String(linkedDef.id) : "");
+    setEditRuleScope(resolvedCat === "infrastructure" ? "global" : item.tenant ? "specific_tenant" : "global");
   };
 
   const fetchTenants = async () => {
@@ -242,18 +259,25 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
 
   const validateAndCreate = async () => {
     const errors: Record<string, string> = {};
+    const isInfrastructure = rules.createForm.category === "infrastructure";
     if (!rules.createForm.rule_name.trim()) errors.ruleName = "Rule name is required.";
     if (!rules.createForm.category) errors.category = "Please select a category.";
     if (!rules.createForm.severity) errors.severity = "Please select a severity.";
-    if (createRuleScope === "specific_tenant" && !createRuleTenant) errors.tenant = "Please select a target tenant.";
+    if (!isInfrastructure && createRuleScope === "specific_tenant" && !createRuleTenant) {
+      errors.tenant = "Please select a target tenant.";
+    }
     setCreateRuleErrors(errors);
     if (Object.keys(errors).length > 0) return;
     const tenantName =
-      createRuleScope === "specific_tenant" && createRuleTenant
-        ? tenants.find((t) => t.tenant_id === createRuleTenant)?.organization_name ?? createRuleTenant
-        : null;
+      isInfrastructure
+        ? null
+        : createRuleScope === "specific_tenant" && createRuleTenant
+          ? tenants.find((t) => t.tenant_id === createRuleTenant)?.organization_name ?? createRuleTenant
+          : null;
     await rules.handleCreate({
       tenant: tenantName,
+      // Infra rules are org-wide: tenant null, notify global admins via RBAC ADMIN (no tenant-scoped delivery).
+      ...(isInfrastructure ? { tenant: null, rbac_role: "ADMIN" as const, email_to: [] as string[] } : {}),
     });
     resetCreateRuleExtras();
   };
@@ -261,6 +285,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const defs = useAlertDefinitions();
   const recvs = useNotificationReceivers();
   const rules = useRoutingRules();
+  const history = useAlertHistory(isActive && subTabIndex === 2);
+
+  const [definitionsNameSortDirection, setDefinitionsNameSortDirection] = useState<"asc" | "desc">("asc");
+  const [receiversNameSortDirection, setReceiversNameSortDirection] = useState<"asc" | "desc">("asc");
+  const [rulesNameSortDirection, setRulesNameSortDirection] = useState<"asc" | "desc">("asc");
 
   const defDeleteRef = useRef<HTMLButtonElement>(null);
   const recvDeleteRef = useRef<HTMLButtonElement>(null);
@@ -277,6 +306,46 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive]);
+
+  const sortedDefinitions = React.useMemo(() => {
+    return [...defs.filteredDefinitions].sort((a, b) => {
+      const aName = a.name ?? "";
+      const bName = b.name ?? "";
+      const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
+      if (nameCmp !== 0) return definitionsNameSortDirection === "asc" ? nameCmp : -nameCmp;
+
+      // Tie-breaker: newest first
+      const timeA = new Date(a.created_at).getTime();
+      const timeB = new Date(b.created_at).getTime();
+      return timeB - timeA;
+    });
+  }, [defs.filteredDefinitions, definitionsNameSortDirection]);
+
+  const sortedReceivers = React.useMemo(() => {
+    return [...recvs.filteredReceivers].sort((a, b) => {
+      const aName = a.receiver_name ?? "";
+      const bName = b.receiver_name ?? "";
+      const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
+      if (nameCmp !== 0) return receiversNameSortDirection === "asc" ? nameCmp : -nameCmp;
+
+      // Tie-breaker: newest first
+      const timeA = new Date(a.created_at).getTime();
+      const timeB = new Date(b.created_at).getTime();
+      return timeB - timeA;
+    });
+  }, [recvs.filteredReceivers, receiversNameSortDirection]);
+
+  const sortedRules = React.useMemo(() => {
+    return [...rules.filteredRules].sort((a, b) => {
+      const aName = (a.rule_name ?? a.receiver_name ?? "") as string;
+      const bName = (b.rule_name ?? b.receiver_name ?? "") as string;
+      const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
+      if (nameCmp !== 0) return rulesNameSortDirection === "asc" ? nameCmp : -nameCmp;
+
+      // Tie-breaker: stable id
+      return String(a.id).localeCompare(String(b.id), undefined, { sensitivity: "base" });
+    });
+  }, [rules.filteredRules, rulesNameSortDirection]);
 
   // Re-initialize edit-rule category / severity / linked-def once definitions are available
   // (they may not be loaded yet when the drawer first opens — this effect fires again once they arrive)
@@ -304,12 +373,13 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     setEditRuleCategory(resolvedCat);
     setEditRuleSeverity(resolvedSev);
     setEditRuleDef(linkedDef ? String(linkedDef.id) : "");
-    setEditRuleScope(item.tenant ? "specific_tenant" : "global");
+    setEditRuleScope(resolvedCat === "infrastructure" ? "global" : item.tenant ? "specific_tenant" : "global");
     // Keep updateForm in sync so the resolved values are included in the save payload
     rules.setUpdateForm((prev) => ({
       ...prev,
       category: resolvedCat || null,
       severity: resolvedSev || null,
+      ...(resolvedCat === "infrastructure" ? { tenant: null } : {}),
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rules.isUpdateOpen, rules.updateItem, defs.definitions]);
@@ -360,6 +430,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         <CardBody>
           <VStack spacing={5} align="stretch">
             {/* Search + Filters + Actions — single row */}
+            {/*
+             * Keep filter/clear UX consistent with model/service registries:
+             * show "Clear all" only when any filter is active.
+             */}
             <HStack spacing={3} align="center" flexWrap="wrap">
               <InputGroup maxW="260px" size="sm">
                 <InputLeftElement pointerEvents="none">
@@ -374,11 +448,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </InputGroup>
               <Select size="sm" maxW="130px" value={defs.filterSeverity} onChange={(e) => defs.setFilterSeverity(e.target.value)} bg="white">
                 <option value="all">Severity</option>
-                {SEVERITIES.map((s) => (<option key={s} value={s}>{s}</option>))}
+                {SEVERITIES.map((s) => (<option key={s} value={s}>{titleCase(s)}</option>))}
               </Select>
               <Select size="sm" maxW="140px" value={defs.filterCategory} onChange={(e) => defs.setFilterCategory(e.target.value)} bg="white">
                 <option value="all">Category</option>
-                {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
+                {CATEGORIES.map((c) => (<option key={c} value={c}>{titleCase(c)}</option>))}
               </Select>
               <Select size="sm" maxW="120px" value={defs.filterEnabled} onChange={(e) => defs.setFilterEnabled(e.target.value)} bg="white">
                 <option value="all">Status</option>
@@ -386,22 +460,18 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <option value="disabled">Inactive</option>
               </Select>
               <Box flex="1" />
-              <Button
-                size="sm"
-                variant="link"
-                colorScheme="gray"
-                textDecoration="underline"
-                alignSelf="center"
-                onClick={defs.resetFilters}
-                isDisabled={
-                  !defs.searchQuery &&
-                  defs.filterSeverity === "all" &&
-                  defs.filterCategory === "all" &&
-                  defs.filterEnabled === "all"
-                }
-              >
-                Reset Filters
-              </Button>
+              {(() => {
+                const hasActiveFilters =
+                  !!defs.searchQuery.trim() ||
+                  defs.filterSeverity !== "all" ||
+                  defs.filterCategory !== "all" ||
+                  defs.filterEnabled !== "all";
+                return hasActiveFilters ? (
+                  <Button size="sm" variant="outline" onClick={defs.resetFilters}>
+                    Clear all
+                  </Button>
+                ) : null;
+              })()}
               <Button
                 size="sm"
                 colorScheme="orange"
@@ -425,7 +495,31 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <Table variant="simple" size="sm">
                   <Thead>
                     <Tr>
-                      <Th>Name</Th>
+                      <Th>
+                        <HStack spacing={2}>
+                          <Text>Name</Text>
+                          <Tooltip label="Sort Name A to Z" hasArrow>
+                            <IconButton
+                              aria-label="Sort definitions by name ascending"
+                              icon={<TriangleUpIcon />}
+                              size="xs"
+                              variant={definitionsNameSortDirection === "asc" ? "solid" : "ghost"}
+                              colorScheme="gray"
+                              onClick={() => setDefinitionsNameSortDirection("asc")}
+                            />
+                          </Tooltip>
+                          <Tooltip label="Sort Name Z to A" hasArrow>
+                            <IconButton
+                              aria-label="Sort definitions by name descending"
+                              icon={<TriangleDownIcon />}
+                              size="xs"
+                              variant={definitionsNameSortDirection === "desc" ? "solid" : "ghost"}
+                              colorScheme="gray"
+                              onClick={() => setDefinitionsNameSortDirection("desc")}
+                            />
+                          </Tooltip>
+                        </HStack>
+                      </Th>
                       <Th>Category</Th>
                       <Th>Severity</Th>
                       <Th>Subcategory</Th>
@@ -435,7 +529,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     </Tr>
                   </Thead>
                   <Tbody>
-                    {defs.filteredDefinitions.map((d) => (
+                    {sortedDefinitions.map((d) => (
                       <Tr
                         key={d.id}
                         _hover={{ bg: "gray.50" }}
@@ -529,7 +623,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
           <DrawerBody py={6}>
             <VStack spacing={5} align="stretch">
               <FormControl isRequired isInvalid={!!defs.createErrors?.name}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Alert Name</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Alert Name
+                </FormLabel>
                 <Input
                   placeholder="e.g. High Latency — ASR Global"
                   value={defs.createForm.name}
@@ -553,7 +649,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Divider />
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.category}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Category
+                </FormLabel>
                 <OptionSelector
                   options={CATEGORIES}
                   value={defs.createForm.category ?? "application"}
@@ -569,7 +667,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </FormControl>
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.sub_category}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Subcategory</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Subcategory
+                </FormLabel>
                 <Select
                   value={defs.createForm.sub_category ?? ""}
                   onChange={(e) => defs.setCreateForm({
@@ -591,7 +691,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </FormControl>
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.signal}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Signal</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Signal
+                </FormLabel>
                 <Select
                   value={defs.createForm.signal ?? ""}
                   onChange={(e) => {
@@ -615,7 +717,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </FormControl>
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.signal_metric}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Signal Metric</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Signal Metric
+                </FormLabel>
                 <Select
                   value={defs.createForm.signal_metric ?? ""}
                   onChange={(e) => defs.setCreateForm({ ...defs.createForm, signal_metric: e.target.value || null })}
@@ -631,7 +735,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </FormControl>
 
               <FormControl isRequired={defs.createForm.category !== "infrastructure"} isInvalid={!!defs.createErrors?.service}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Target</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Target
+                </FormLabel>
                 {defs.createForm.category === "infrastructure" ? (
                   <Box
                     px={3}
@@ -722,7 +828,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Divider />
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.condition_operator || !!defs.createErrors?.threshold_value || !!defs.createErrors?.threshold_unit}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Condition + Threshold</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Condition + Threshold
+                </FormLabel>
                 <SimpleGrid columns={3} spacing={3} mb={1}>
                   <Text fontSize="xs" color="gray.500" fontWeight="medium">Condition</Text>
                   <Text fontSize="xs" color="gray.500" fontWeight="medium">Threshold</Text>
@@ -786,7 +894,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Divider />
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.severity}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Severity
+                </FormLabel>
                 <HStack spacing={2}>
                   {SEVERITIES.map((s) => {
                     const isActive = defs.createForm.severity === s;
@@ -829,7 +939,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
 
               <SimpleGrid columns={2} spacing={4}>
                 <FormControl isRequired isInvalid={!!defs.createErrors?.evaluation_interval}>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Evaluation Interval
+                  </FormLabel>
                   <Select
                     value={defs.createForm.evaluation_interval ?? "30s"}
                     onChange={(e) => {
@@ -848,7 +960,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </FormControl>
 
                 <FormControl isRequired isInvalid={!!defs.createErrors?.for_duration}>
-                  <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    For Duration
+                  </FormLabel>
                   <Select
                     value={(() => {
                       const allowed = getAllowedForDurations(defs.createForm.evaluation_interval);
@@ -870,7 +984,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Divider />
 
               <FormControl isRequired>
-                <FormLabel fontWeight="semibold" fontSize="sm">Status</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Status
+                </FormLabel>
                 <HStack>
                   <Switch
                     isChecked={defs.createForm.enabled !== false}
@@ -992,8 +1108,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
                 <Textarea value={defs.updateForm.description ?? ""} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, description: e.target.value || null })} bg="white" rows={3} />
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Category
+                </FormLabel>
                 <OptionSelector
                   options={CATEGORIES}
                   value={defs.updateForm.category ?? "application"}
@@ -1001,8 +1119,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 />
               </FormControl>
               <Divider />
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Subcategory</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Subcategory
+                </FormLabel>
                 <Select
                   value={defs.updateForm.sub_category ?? ""}
                   onChange={(e) => defs.setUpdateForm({
@@ -1021,8 +1141,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   ))}
                 </Select>
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Signal</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Signal
+                </FormLabel>
                 <Select
                   value={defs.updateForm.signal ?? ""}
                   onChange={(e) => {
@@ -1043,8 +1165,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   ))}
                 </Select>
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Signal Metric</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Signal Metric
+                </FormLabel>
                 <Select
                   value={defs.updateForm.signal_metric ?? ""}
                   onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, signal_metric: e.target.value || undefined })}
@@ -1058,8 +1182,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </Select>
               </FormControl>
               <Divider />
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Target</FormLabel>
+              <FormControl isRequired={defs.updateForm.category !== "infrastructure"}>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Target
+                </FormLabel>
                 {defs.updateForm.category === "infrastructure" ? (
                   <Box
                     px={3}
@@ -1145,8 +1271,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   </Menu>
                 )}
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Condition + Threshold</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Condition + Threshold
+                </FormLabel>
                 <SimpleGrid columns={3} spacing={3} mb={1}>
                   <Text fontSize="xs" color="gray.500" fontWeight="medium">Condition</Text>
                   <Text fontSize="xs" color="gray.500" fontWeight="medium">Threshold</Text>
@@ -1203,8 +1331,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   )}
                 </SimpleGrid>
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Severity
+                </FormLabel>
                 <HStack spacing={2}>
                   {SEVERITIES.map((s) => {
                     const isActive = (defs.updateForm.severity ?? "") === s;
@@ -1241,8 +1371,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   })}
                 </HStack>
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Evaluation Interval
+                </FormLabel>
                 <Select
                   value={defs.updateForm.evaluation_interval ?? "30s"}
                   onChange={(e) => {
@@ -1257,8 +1389,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
                 </Select>
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  For Duration
+                </FormLabel>
                 <Select
                   value={(() => {
                     const allowed = getAllowedForDurations(defs.updateForm.evaluation_interval);
@@ -1273,8 +1407,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   ))}
                 </Select>
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Status</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Status
+                </FormLabel>
                 <HStack>
                   <Switch
                     isChecked={defs.updateForm.enabled ?? true}
@@ -1351,7 +1487,31 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <Table variant="simple" size="sm">
                   <Thead>
                     <Tr>
-                      <Th>Name</Th>
+                      <Th>
+                        <HStack spacing={2}>
+                          <Text>Name</Text>
+                          <Tooltip label="Sort Name A to Z" hasArrow>
+                            <IconButton
+                              aria-label="Sort receivers by name ascending"
+                              icon={<TriangleUpIcon />}
+                              size="xs"
+                              variant={receiversNameSortDirection === "asc" ? "solid" : "ghost"}
+                              colorScheme="gray"
+                              onClick={() => setReceiversNameSortDirection("asc")}
+                            />
+                          </Tooltip>
+                          <Tooltip label="Sort Name Z to A" hasArrow>
+                            <IconButton
+                              aria-label="Sort receivers by name descending"
+                              icon={<TriangleDownIcon />}
+                              size="xs"
+                              variant={receiversNameSortDirection === "desc" ? "solid" : "ghost"}
+                              colorScheme="gray"
+                              onClick={() => setReceiversNameSortDirection("desc")}
+                            />
+                          </Tooltip>
+                        </HStack>
+                      </Th>
                       <Th>Recipient</Th>
                       <Th>Status</Th>
                       <Th>Organization</Th>
@@ -1360,7 +1520,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     </Tr>
                   </Thead>
                   <Tbody>
-                    {recvs.filteredReceivers.map((r) => (
+                    {sortedReceivers.map((r) => (
                       <Tr
                         key={r.id}
                         _hover={{ bg: "gray.50" }}
@@ -1645,16 +1805,21 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             </Select>
           </HStack>
           <HStack spacing={3}>
-            <Button
-              size="sm"
-              variant="link"
-              colorScheme="gray"
-              textDecoration="underline"
-              onClick={() => { rules.setSearchQuery(""); rules.setFilterEnabled("all"); }}
-              isDisabled={!rules.searchQuery && rules.filterEnabled === "all"}
-            >
-              Reset Filters
-            </Button>
+            {(() => {
+              const hasActiveFilters = !!rules.searchQuery.trim() || rules.filterEnabled !== "all";
+              return hasActiveFilters ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    rules.setSearchQuery("");
+                    rules.setFilterEnabled("all");
+                  }}
+                >
+                  Clear all
+                </Button>
+              ) : null;
+            })()}
             <Button
               size="sm"
               colorScheme="orange"
@@ -1678,7 +1843,31 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <Table variant="simple" size="sm" w="100%">
               <Thead>
                 <Tr>
-                  <Th>Rule Name</Th>
+                  <Th>
+                    <HStack spacing={2}>
+                      <Text>Rule Name</Text>
+                      <Tooltip label="Sort Name A to Z" hasArrow>
+                        <IconButton
+                          aria-label="Sort rules by name ascending"
+                          icon={<TriangleUpIcon />}
+                          size="xs"
+                          variant={rulesNameSortDirection === "asc" ? "solid" : "ghost"}
+                          colorScheme="gray"
+                          onClick={() => setRulesNameSortDirection("asc")}
+                        />
+                      </Tooltip>
+                      <Tooltip label="Sort Name Z to A" hasArrow>
+                        <IconButton
+                          aria-label="Sort rules by name descending"
+                          icon={<TriangleDownIcon />}
+                          size="xs"
+                          variant={rulesNameSortDirection === "desc" ? "solid" : "ghost"}
+                          colorScheme="gray"
+                          onClick={() => setRulesNameSortDirection("desc")}
+                        />
+                      </Tooltip>
+                    </HStack>
+                  </Th>
                   <Th>Alert Definitions</Th>
                   <Th>Tenant</Th>
                   <Th>Status</Th>
@@ -1686,7 +1875,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </Tr>
               </Thead>
               <Tbody>
-                {rules.filteredRules.map((rule) => (
+                {sortedRules.map((rule) => (
                     <Tr
                       key={rule.id}
                       _hover={{ bg: "gray.50" }}
@@ -1766,7 +1955,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {/* ── Rule Name + Description ── */}
               <VStack spacing={4} align="stretch" pb={6}>
                 <FormControl isRequired isInvalid={!!createRuleErrors.ruleName}>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Rule Name</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Rule Name
+                  </FormLabel>
                   <Input
                     placeholder="e.g. Route Critical ASR Alerts"
                     value={rules.createForm.rule_name}
@@ -1782,16 +1973,38 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {/* ── Category + Severity + Alert Definition ── */}
               <VStack spacing={4} align="stretch" pb={6}>
                 <FormControl isRequired isInvalid={!!createRuleErrors.category}>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Category
+                  </FormLabel>
                   <OptionSelector
                     options={CATEGORIES}
                     value={rules.createForm.category ?? ""}
-                    onChange={(v) => { rules.setCreateForm({ ...rules.createForm, category: v }); setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.category; return n; }); }}
+                    onChange={(v) => {
+                      rules.setCreateForm({ ...rules.createForm, category: v });
+                      if (v === "infrastructure") {
+                        setCreateRuleScope("global");
+                        setCreateRuleTenant("");
+                        setCreateRuleErrors((prev) => {
+                          const n = { ...prev };
+                          delete n.category;
+                          delete n.tenant;
+                          return n;
+                        });
+                      } else {
+                        setCreateRuleErrors((prev) => {
+                          const n = { ...prev };
+                          delete n.category;
+                          return n;
+                        });
+                      }
+                    }}
                   />
                   <FormErrorMessage>{createRuleErrors.category}</FormErrorMessage>
                 </FormControl>
                 <FormControl isRequired isInvalid={!!createRuleErrors.severity}>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Severity
+                  </FormLabel>
                   <HStack spacing={2}>
                     {SEVERITIES.map((s) => {
                       const isActive = rules.createForm.severity === s;
@@ -1860,19 +2073,40 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {/* ── Scope ── */}
               <VStack spacing={4} align="stretch" pb={6}>
                 <FormControl isRequired>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Scope</FormLabel>
-                  <Select
-                    value={createRuleScope}
-                    onChange={(e) => { setCreateRuleScope(e.target.value as "global" | "specific_tenant"); setCreateRuleTenant(""); setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; }); }}
-                    bg="white"
-                  >
-                    <option value="global">Global</option>
-                    <option value="specific_tenant">Specific Tenant</option>
-                  </Select>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Scope
+                  </FormLabel>
+                  {rules.createForm.category === "infrastructure" ? (
+                    <>
+                      <Select value="global" isDisabled bg="gray.50">
+                        <option value="global">Global</option>
+                      </Select>
+                     
+                    </>
+                  ) : (
+                    <Select
+                      value={createRuleScope}
+                      onChange={(e) => {
+                        setCreateRuleScope(e.target.value as "global" | "specific_tenant");
+                        setCreateRuleTenant("");
+                        setCreateRuleErrors((prev) => {
+                          const n = { ...prev };
+                          delete n.tenant;
+                          return n;
+                        });
+                      }}
+                      bg="white"
+                    >
+                      <option value="global">Global</option>
+                      <option value="specific_tenant">Specific Tenant</option>
+                    </Select>
+                  )}
                 </FormControl>
-                {createRuleScope === "specific_tenant" && (
+                {rules.createForm.category !== "infrastructure" && createRuleScope === "specific_tenant" && (
                   <FormControl isRequired isInvalid={!!createRuleErrors.tenant}>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Target Tenant</FormLabel>
+                    <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                      Target Tenant
+                    </FormLabel>
                     <Select
                       value={createRuleTenant}
                       onChange={(e) => { setCreateRuleTenant(e.target.value); if (e.target.value) setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; }); }}
@@ -1894,7 +2128,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {/* ── Delivery Channel ── */}
               <VStack spacing={2} align="stretch" pb={6}>
                 <FormControl isRequired>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Delivery Channel</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Delivery Channel
+                  </FormLabel>
                   <Box
                     bg="gray.50"
                     border="1px solid"
@@ -2114,7 +2350,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {/* ── Rule Name ── */}
               <VStack spacing={4} align="stretch" pb={6}>
                 <FormControl isRequired isInvalid={!!editRuleErrors.ruleName}>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Rule Name *</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Rule Name
+                  </FormLabel>
                   <Input
                     value={rules.updateForm.rule_name ?? ""}
                     onChange={(e) => {
@@ -2132,20 +2370,39 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
 
               {/* ── Category + Severity + Alert Definition ── */}
               <VStack spacing={4} align="stretch" pb={6}>
-                <FormControl>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+                <FormControl isRequired>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Category
+                  </FormLabel>
                   <OptionSelector
                     options={CATEGORIES}
                     value={editRuleCategory}
                     onChange={(v) => {
                       setEditRuleCategory(v);
                       setEditRuleDef("");
-                      rules.setUpdateForm({ ...rules.updateForm, category: v || null, alert_names: null });
+                      if (v === "infrastructure") {
+                        setEditRuleScope("global");
+                        rules.setUpdateForm({
+                          ...rules.updateForm,
+                          category: v || null,
+                          alert_names: null,
+                          tenant: null,
+                        });
+                        setEditRuleErrors((prev) => {
+                          const n = { ...prev };
+                          delete n.tenant;
+                          return n;
+                        });
+                      } else {
+                        rules.setUpdateForm({ ...rules.updateForm, category: v || null, alert_names: null });
+                      }
                     }}
                   />
                 </FormControl>
-                <FormControl>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+                <FormControl isRequired>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Severity
+                  </FormLabel>
                   <HStack spacing={2}>
                     {SEVERITIES.map((s) => {
                       const isActive = editRuleSeverity === s;
@@ -2226,28 +2483,47 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {/* ── Scope ── */}
               <VStack spacing={4} align="stretch" pb={6}>
                 <FormControl isRequired>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Scope *</FormLabel>
-                  <Select
-                    value={editRuleScope}
-                    onChange={(e) => {
-                      const v = e.target.value as "global" | "specific_tenant";
-                      setEditRuleScope(v);
-                      if (v === "global") {
-                        rules.setUpdateForm({ ...rules.updateForm, tenant: null });
-                        setEditRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; });
-                      } else {
-                        rules.setUpdateForm({ ...rules.updateForm, tenant: rules.updateItem?.tenant ?? "" });
-                      }
-                    }}
-                    bg="white"
-                  >
-                    <option value="global">Global</option>
-                    <option value="specific_tenant">Specific Tenant</option>
-                  </Select>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Scope
+                  </FormLabel>
+                  {editRuleCategory === "infrastructure" ? (
+                    <>
+                      <Select value="global" isDisabled bg="gray.50">
+                        <option value="global">Global</option>
+                      </Select>
+                      
+                    </>
+                  ) : (
+                    <Select
+                      value={editRuleScope}
+                      onChange={(e) => {
+                        const v = e.target.value as "global" | "specific_tenant";
+                        setEditRuleScope(v);
+                        if (v === "global") {
+                          // Backend expects global scope to be expressed as tenant="" + rbac_role=ADMIN.
+                          rules.setUpdateForm({ ...rules.updateForm, tenant: "", rbac_role: "ADMIN" });
+                          setEditRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; });
+                        } else {
+                          rules.setUpdateForm({
+                            ...rules.updateForm,
+                            tenant: rules.updateItem?.tenant ?? "",
+                            // Routing rules always use RBAC delivery with ADMIN.
+                            rbac_role: "ADMIN",
+                          });
+                        }
+                      }}
+                      bg="white"
+                    >
+                      <option value="global">Global</option>
+                      <option value="specific_tenant">Specific Tenant</option>
+                    </Select>
+                  )}
                 </FormControl>
-                {editRuleScope === "specific_tenant" && (
+                {editRuleCategory !== "infrastructure" && editRuleScope === "specific_tenant" && (
                   <FormControl isRequired isInvalid={!!editRuleErrors.tenant}>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Target Tenant *</FormLabel>
+                    <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                      Target Tenant
+                    </FormLabel>
                     <Select
                       value={
                         tenants.find(
@@ -2303,7 +2579,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {/* ── Status ── */}
               <VStack spacing={2} align="stretch">
                 <FormControl isRequired>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Status *</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Status
+                  </FormLabel>
                   <HStack>
                     <Switch
                       isChecked={rules.updateForm.enabled ?? true}
@@ -2332,11 +2610,18 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               loadingText="Saving..."
               onClick={() => {
                 const errors: Record<string, string> = {};
+                const isInfrastructure = editRuleCategory === "infrastructure";
                 if (!rules.updateForm.rule_name?.trim()) errors.ruleName = "Rule name is required.";
-                if (editRuleScope === "specific_tenant" && !rules.updateForm.tenant) errors.tenant = "Please select a target tenant.";
+                if (!isInfrastructure && editRuleScope === "specific_tenant" && !rules.updateForm.tenant) {
+                  errors.tenant = "Please select a target tenant.";
+                }
                 setEditRuleErrors(errors);
                 if (Object.keys(errors).length > 0) return;
-                rules.handleUpdate();
+                rules.handleUpdate(
+                  isInfrastructure
+                    ? { tenant: null }
+                    : undefined
+                );
               }}
             >
               Save Changes
@@ -2362,6 +2647,230 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   );
 
   // ═══════════════════════════════════════════════
+  //  ALERT HISTORY (read-only)
+  // ═══════════════════════════════════════════════
+  const renderAlertHistorySection = () => (
+    <>
+      {/* Same shell + filter toolbar pattern as Alert Definitions (Card, toolbar, Clear all) */}
+      <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
+        <CardBody>
+          <VStack spacing={5} align="stretch">
+            <HStack spacing={3} align="center" flexWrap="wrap" rowGap={3}>
+              <InputGroup maxW="260px" size="sm">
+                <InputLeftElement pointerEvents="none">
+                  <SearchIcon color="gray.400" />
+                </InputLeftElement>
+                <Input
+                  placeholder="Search alerts..."
+                  value={history.searchQuery}
+                  onChange={(e) => history.setSearchQuery(e.target.value)}
+                  bg="white"
+                />
+              </InputGroup>
+              <Select
+                size="sm"
+                maxW="130px"
+                value={history.filterSeverity}
+                onChange={(e) => history.setFilterSeverity(e.target.value)}
+                bg="white"
+              >
+                <option value="all">Severity</option>
+                {SEVERITIES.map((s) => (
+                  <option key={s} value={s}>{titleCase(s)}</option>
+                ))}
+              </Select>
+              <Select
+                size="sm"
+                maxW="140px"
+                value={history.filterCategory}
+                onChange={(e) => history.setFilterCategory(e.target.value)}
+                bg="white"
+              >
+                <option value="all">Category</option>
+                {CATEGORIES.map((c) => (
+                  <option key={c} value={c}>{titleCase(c)}</option>
+                ))}
+              </Select>
+              {/* From/To stay paired; inline labels match toolbar row height (no stacked FormLabel) */}
+              <HStack spacing={2} align="center" flexWrap="nowrap" flexShrink={0}>
+                <Text fontSize="xs" fontWeight="semibold" color="gray.600" whiteSpace="nowrap">
+                  From
+                </Text>
+                <Input
+                  type="date"
+                  size="sm"
+                  w="140px"
+                  maxW="140px"
+                  value={history.dateFrom}
+                  onChange={(e) => history.setDateFrom(e.target.value)}
+                  bg="white"
+                />
+                <Text fontSize="xs" fontWeight="semibold" color="gray.600" whiteSpace="nowrap">
+                  To
+                </Text>
+                <Input
+                  type="date"
+                  size="sm"
+                  w="140px"
+                  maxW="140px"
+                  value={history.dateTo}
+                  onChange={(e) => history.setDateTo(e.target.value)}
+                  bg="white"
+                />
+              </HStack>
+              <Box flex="1" minW={{ base: "100%", sm: 0 }} display={{ base: "none", md: "block" }} />
+              {history.hasActiveFilters ? (
+                <Button size="sm" variant="outline" onClick={() => history.clearFilters()}>
+                  Clear all
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => history.fetchHistory()}
+                isLoading={history.isLoading}
+              >
+                Refresh
+              </Button>
+            </HStack>
+
+            {!history.isLoading && history.total > 0 ? (
+              <HStack justify="space-between" flexWrap="wrap" spacing={3}>
+                <Text fontSize="sm" color="gray.600" fontWeight="medium">
+                  Showing {history.pageStart}–{history.pageEnd} of {history.total}
+                </Text>
+                <HStack spacing={2}>
+                  <Button size="sm" variant="outline" onClick={() => history.goPrev()} isDisabled={!history.canPrev}>
+                    Previous
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => history.goNext()} isDisabled={!history.canNext}>
+                    Next
+                  </Button>
+                </HStack>
+              </HStack>
+            ) : null}
+
+            {history.isLoading ? (
+              <Center py={8}>
+                <VStack spacing={4}>
+                  <Spinner size="lg" color="blue.500" />
+                  <Text color="gray.600">Loading alert history...</Text>
+                </VStack>
+              </Center>
+            ) : history.items.length > 0 ? (
+              <TableContainer>
+                <Table variant="simple" size="sm">
+                  <Thead>
+                    <Tr>
+                      <Th>Name</Th>
+                      <Th>Category</Th>
+                      <Th>Severity</Th>
+                      <Th>Triggered At</Th>
+                      <Th>Notified</Th>
+                      <Th>Actions</Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {history.items.map((row) => (
+                      <Tr key={row.id} _hover={{ bg: "gray.50" }} transition="background 0.15s">
+                        <Td fontWeight="semibold" maxW="260px">
+                          <Text noOfLines={2} title={row.name}>{row.name}</Text>
+                        </Td>
+                        <Td>
+                          <Badge colorScheme={categoryColor(row.category)} textTransform="capitalize">
+                            {row.category || "—"}
+                          </Badge>
+                        </Td>
+                        <Td>
+                          <Badge colorScheme={severityColor(row.severity)} textTransform="capitalize">
+                            {row.severity || "—"}
+                          </Badge>
+                        </Td>
+                        <Td fontSize="sm">{row.triggered_at ?? "—"}</Td>
+                        <Td fontSize="sm" maxW="220px">
+                          <Text noOfLines={2} title={row.notified}>{row.notified || "—"}</Text>
+                        </Td>
+                        <Td>
+                          <HStack spacing={1} className="row-actions">
+                            <Tooltip label="View" placement="top" hasArrow>
+                              <IconButton
+                                aria-label="View"
+                                icon={<ViewIcon />}
+                                size="sm"
+                                variant="ghost"
+                                color="gray.700"
+                                _hover={{ color: "blue.500", bg: "blue.50" }}
+                                onClick={() => history.openView(row)}
+                              />
+                            </Tooltip>
+                          </HStack>
+                        </Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+              </TableContainer>
+            ) : (
+              <Alert status="info" borderRadius="md">
+                <AlertIcon />
+                <AlertDescription>
+                  {history.hasActiveFilters
+                    ? "No entries match the current filters."
+                    : "No alert history yet. Triggered alerts will appear here once your alerting pipeline records them."}
+                </AlertDescription>
+              </Alert>
+            )}
+          </VStack>
+        </CardBody>
+      </Card>
+
+      <Modal isOpen={history.isViewOpen} onClose={history.closeView} size="lg">
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader borderBottomWidth="1px" borderColor="gray.200">
+            <Text fontSize="lg" fontWeight="bold">Alert event</Text>
+            {history.viewItem ? (
+              <Text fontSize="sm" fontWeight="normal" color="gray.600" mt={1} noOfLines={2}>
+                {history.viewItem.name}
+              </Text>
+            ) : null}
+          </ModalHeader>
+          <ModalCloseButton />
+          <ModalBody py={6}>
+            {history.viewItem ? (
+              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                {[
+                  ["Category", titleCase(history.viewItem.category || "—")],
+                  ["Severity", titleCase(history.viewItem.severity || "—")],
+                  ["Status", (history.viewItem.status || "—").replace(/_/g, " ")],
+                  ["Triggered", history.viewItem.triggered_at ?? "—"],
+                  ["Resolved", history.viewItem.resolved_at ?? "—"],
+                  ["Receiver", history.viewItem.receiver ?? "—"],
+                  ["Notified", history.viewItem.notified || "—"],
+                  ["Tenant", history.viewItem.tenant ?? "—"],
+                  ["Organization", history.viewItem.organization ?? "—"],
+                  ["Recorded", history.viewItem.created_at ?? "—"],
+                  ["Id", String(history.viewItem.id)],
+                ].map(([label, val]) => (
+                  <Box key={label}>
+                    <Text fontSize="xs" fontWeight="bold" color="gray.500" textTransform="uppercase" letterSpacing="wider">
+                      {label}
+                    </Text>
+                    <Text fontSize="sm" mt={1} wordBreak="break-word">{val}</Text>
+                  </Box>
+                ))}
+              </SimpleGrid>
+            ) : null}
+          </ModalBody>
+          <ModalFooter borderTopWidth="1px" borderColor="gray.200">
+            <Button onClick={history.closeView}>Close</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+    </>
+  );
+
+  // ═══════════════════════════════════════════════
   //  MAIN RENDER — underline tabs with yellow indicator
   // ═══════════════════════════════════════════════
   return (
@@ -2373,7 +2882,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         mb={6}
       >
         <TabList borderBottom="2px solid" borderColor="gray.200">
-          {["Alert Definitions", "Alert Routing"].map(
+          {["Alert Definitions", "Alert Routing", "Alert History"].map(
             (label, idx) => (
               <Tab
                 key={label}
@@ -2411,6 +2920,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {renderRoutingRulesSection()}
             </VStack>
           </TabPanel>
+          <TabPanel px={0} pt={6}>{renderAlertHistorySection()}</TabPanel>
         </TabPanels>
       </Tabs>
     </Box>

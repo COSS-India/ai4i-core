@@ -27,6 +27,13 @@ The same **`apisix.yaml`** is used for local (Docker Compose) and production (e.
 - **Local:** When `APISIX_UPSTREAM_SUFFIX` is empty or unset, the script defaults to `.` (trailing dot). Upstreams become e.g. `simple-ui.:3000`, `auth-service.:8081`, so the resolver does not append the host search domain and Docker DNS resolves to the correct container IPs.
 - **Production:** Set both variables in the deployment (e.g. Kubernetes env or ConfigMap) so upstreams are e.g. `simple-ui.sandbox.svc.cluster.local:3000`.
 
+## PII Guard (`pii-guard-service`)
+
+Upstream **`pii-guard-service:8000`** is exposed under **`/api/v1/pii/*`**. The gateway strips the prefix: e.g. `POST /api/v1/pii/redact` → upstream `POST /redact`.
+
+- **Browser / CORS:** the PII route allows **`Authorization`**, **`X-Language`**, **`X-Target`**, **`X-Tenant-Id`** (tenant → domain resolution), and **`X-Try-It`** (dev try-it for `/redact`).
+- **Direct service access** (e.g. `localhost:8105`) still works; via APISIX use port **8080** and the `/api/v1/pii/...` paths.
+
 ## Tenant-aware metrics (Authorization header)
 
 When requests go through APISIX (not the legacy API gateway), upstream services (e.g. NMT, ASR, TTS) need the client’s **Authorization** header to extract `tenant_id` from the JWT for observability metrics. APISIX forwards all client request headers by default. For routes that use `proxy-rewrite`, we use **`headers.add`** (e.g. `X-Gateway: apisix`) so we only add headers and never overwrite or remove `Authorization`. If you add new routes or change proxy-rewrite to `headers.set`, ensure you do not overwrite or remove the `Authorization` header so tenant metrics stay correct.

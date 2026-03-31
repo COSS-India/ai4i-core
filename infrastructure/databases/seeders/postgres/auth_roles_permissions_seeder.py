@@ -169,7 +169,11 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
 
             #Multi-tenant
             ('multi-tenant.read','multi_tenant','read'),
-            ('multi-tenant.inference','multi_tenant','inference')
+            ('multi-tenant.inference','multi_tenant','inference'),
+
+            # PII Guard
+            ('pii_guard.inference', 'pii_guard', 'inference'),
+            ('pii_guard.admin', 'pii_guard', 'admin')
 
         ]
         permission_names = [p[0] for p in permissions]
@@ -267,7 +271,9 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'model.unpublish',
               'roles.assign',
               'roles.remove',
-              'roles.read'
+              'roles.read',
+              'pii_guard.admin',
+              'pii_guard.inference'
             )
             WHERE r.name = 'ADMIN'
             ON CONFLICT (role_id, permission_id) DO NOTHING;
@@ -290,7 +296,23 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             JOIN permissions p ON p.name IN (
               'users.read',
               'users.update',
-              'service.read'
+              'service.read',
+              'apiKey.delete',
+              'asr.inference',
+              'audio-lang-detection.inference',
+              'language-detection.inference',
+              'language-diarization.inference',
+              'llm.inference',
+              'model-management.inference',
+              'multi-tenant.inference',
+              'ner.inference',
+              'nmt.inference',
+              'ocr.inference',
+              'pipeline.inference',
+              'pii_guard.inference',
+              'speaker-diarization.inference',
+              'transliteration.inference',
+              'tts.inference'
             )
             WHERE r.name = 'USER'
             ON CONFLICT (role_id, permission_id) DO NOTHING;
@@ -313,7 +335,8 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             JOIN permissions p ON p.name IN (
               'users.read',
               'users.update',
-              'service.read'
+              'service.read',
+              'apiKey.delete'
             )
             WHERE r.name = 'GUEST'
             ON CONFLICT (role_id, permission_id) DO NOTHING;
@@ -352,6 +375,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'dashboards.read',
               'dashboards.update',
               'dashboards.delete',
+              'apiKey.delete',
               'service.create',
               'service.delete',
               'service.update',
@@ -361,7 +385,22 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'model.update',
               'model.delete',
               'model.publish',
-              'model.unpublish'
+              'model.unpublish',
+              'asr.inference',
+              'audio-lang-detection.inference',
+              'language-detection.inference',
+              'language-diarization.inference',
+              'llm.inference',
+              'model-management.inference',
+              'multi-tenant.inference',
+              'ner.inference',
+              'nmt.inference',
+              'ocr.inference',
+              'pipeline.inference',
+              'pii_guard.inference',
+              'speaker-diarization.inference',
+              'transliteration.inference',
+              'tts.inference'
             )
             WHERE r.name = 'MODERATOR'
             ON CONFLICT (role_id, permission_id) DO NOTHING;
@@ -369,8 +408,8 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
         )
         print("    ✓ Assigned permissions to MODERATOR role (from seed script)")
 
-        # TENANT ADMIN: tenant-scoped management permissions.
-        # - Can read users, services, and models
+        # TENANT ADMIN: tenant-scoped management permissions + inference access.
+        # - Can create/read/update users, read services and models
         # - Can create/read/update/delete API keys
         # - Can assign roles (but not remove)
         # - Cannot create/update/delete/publish/unpublish models or services
@@ -386,6 +425,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             SELECT r.id, p.id
             FROM roles r
             JOIN permissions p ON p.name IN (
+              'users.create',
               'users.read',
               'users.update',
               'service.read',
@@ -395,7 +435,22 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'apiKey.update',
               'apiKey.delete',
               'roles.assign',
-              'roles.read'
+              'roles.read',
+              'pii_guard.admin',
+              'asr.inference',
+              'audio-lang-detection.inference',
+              'language-detection.inference',
+              'language-diarization.inference',
+              'llm.inference',
+              'model-management.inference',
+              'multi-tenant.inference',
+              'ner.inference',
+              'nmt.inference',
+              'ocr.inference',
+              'pipeline.inference',
+              'speaker-diarization.inference',
+              'transliteration.inference',
+              'tts.inference'
             )
             WHERE r.name = 'TENANT ADMIN'
             ON CONFLICT (role_id, permission_id) DO NOTHING;

@@ -14,23 +14,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_API_GATEWAY_URL = app_env.api_gateway_url
 
 
-async def resolve_tenant_from_jwt(jwt_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Extract tenant context from JWT payload.
-    """
-    tenant_id = jwt_payload.get("tenant_id")
-    if not tenant_id:
-        return None
-
-    return {
-        "tenant_id": tenant_id,
-        "tenant_uuid": jwt_payload.get("tenant_uuid"),
-        "schema_name": jwt_payload.get("schema_name"),
-        "subscriptions": jwt_payload.get("subscriptions", []),
-        "user_subscriptions": jwt_payload.get("user_subscriptions", []),
-    }
-
-
 async def resolve_tenant_from_user_id(
     user_id: int,
     request: Request,
@@ -41,7 +24,7 @@ async def resolve_tenant_from_user_id(
     All requests are routed through API Gateway for consistency.
     """
     try:
-        resolve_url = f"{api_gateway_url}/api/v1/multi-tenant/resolve/tenant/from/user/{user_id}"
+        resolve_url = f"{api_gateway_url}/api/v1/multi-tenant/resolve/tenant/from/user?user_id={user_id}"
 
         auth_header = request.headers.get("Authorization")
         headers = {}
@@ -84,15 +67,28 @@ async def try_get_tenant_context(
     - Returns None for normal users that are not associated with any tenant.
     """
     _api_gateway_url = api_gateway_url or DEFAULT_API_GATEWAY_URL
-    # Try to get from JWT token (if tenant info is in token)
-    jwt_payload = getattr(request.state, "jwt_payload", None)
-    if jwt_payload:
-        tenant_context = await resolve_tenant_from_jwt(jwt_payload)
-        if tenant_context:
-            request.state.tenant_context = tenant_context
-            request.state.tenant_schema = tenant_context.get("schema_name")
-            request.state.tenant_id = tenant_context.get("tenant_id")
-            return tenant_context
+
+    # Try to read tenant_id from request.state (set by AuthProvider from JWT claims)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    if not tenant_id:
+        # Fallback: check jwt_claims (AuthClaims object from ai4icore_auth)
+        claims = getattr(request.state, "jwt_claims", None)
+        if claims:
+            tenant_id = getattr(claims, "tenant_id", None)
+
+    if tenant_id:
+        # We have tenant_id from JWT — schema_name and subscriptions
+        # will be resolved by tenant_db_dependency via DB lookup
+        tenant_context = {
+            "tenant_id": tenant_id,
+            "tenant_uuid": None,
+            "schema_name": None,
+            "subscriptions": [],
+            "user_subscriptions": [],
+        }
+        request.state.tenant_context = tenant_context
+        request.state.tenant_id = tenant_id
+        return tenant_context
 
     # Fallback: resolve from user_id via API Gateway → multi-tenant-service
     user_id = getattr(request.state, "user_id", None)
@@ -104,7 +100,6 @@ async def try_get_tenant_context(
         return None
 
     request.state.tenant_context = tenant_context
-    request.state.tenant_schema = tenant_context.get("schema_name")
     request.state.tenant_id = tenant_context.get("tenant_id")
     return tenant_context
 

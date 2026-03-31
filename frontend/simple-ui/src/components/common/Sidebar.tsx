@@ -19,6 +19,7 @@ import { FaMicrophone } from "react-icons/fa";
 import {
   IoGitNetworkOutline,
   IoHomeOutline,
+  IoKeyOutline,
   IoLanguageOutline,
   IoSparklesOutline,
   IoVolumeHighOutline,
@@ -34,6 +35,7 @@ import {
   IoAnalyticsOutline,
   IoPulseOutline,
   IoNotificationsOutline,
+  IoShieldCheckmarkOutline,
 } from "react-icons/io5";
 import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
@@ -144,6 +146,12 @@ const safeColorMap = {
     400: "#4DD0E1",
     600: "#00ACC1",
   },
+  "tenant-management": { // Teal → Pastel Teal
+    50:  "#E0F2F1",
+    300: "#80CBC4",
+    400: "#4DB6AC",
+    600: "#00897B",
+  },
   "logs": { // Green → Pastel Green
     50:  "#E8F5E9",
     300: "#81C784",
@@ -161,6 +169,12 @@ const safeColorMap = {
     300: "#FFD54F",
     400: "#FFCA28",
     600: "#F9A825",
+  },
+  "pii-management": {
+    50:  "#E8EAF6",
+    300: "#9FA8DA",
+    400: "#7986CB",
+    600: "#5C6BC0",
   },
 };
 
@@ -219,6 +233,24 @@ const topNavItems: NavItem[] = [
     featureFlag: "services-management-enabled",
   },
   {
+    id: "tenant-management",
+    label: "Tenant Management",
+    path: "/tenant-management",
+    icon: IoPeopleOutline,
+    iconSize: 10,
+    iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
+  },
+  {
+    id: "api-key-management",
+    label: "API Key Management",
+    path: "/api-key-management",
+    icon: IoKeyOutline,
+    iconSize: 10,
+    iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
+  },
+  {
     id: "logs",
     label: "Logs Dashboard",
     path: "/logs",
@@ -243,6 +275,15 @@ const topNavItems: NavItem[] = [
     icon: IoNotificationsOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
+  },
+  {
+    id: "pii-management",
+    label: "PII Guardrail",
+    path: "/pii-management",
+    icon: IoShieldCheckmarkOutline,
+    iconSize: 10,
+    iconColor: "",
     requiresAuth: true,
   },
 ];
@@ -385,6 +426,12 @@ const Sidebar: React.FC = () => {
   // Check if user is ADMIN
   const isAdmin = user?.roles?.includes('ADMIN') || false;
 
+  // Check if user is TENANT ADMIN
+  const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
+
+  // Show Tenant Management only to superuser or tenant users
+  const showTenantManagement = Boolean(user?.is_superuser || user?.is_tenant);
+
   // Single bulk request shared with home page (same queryKey = one request for whole app)
   const { flags: sidebarFlags } = useBulkFlags({
     flagNames: SIDEBAR_FLAG_NAMES,
@@ -422,12 +469,24 @@ const Sidebar: React.FC = () => {
     if ((isGuest || isUser) && (item.id === "model-management" || item.id === "services-management")) {
       return false;
     }
+    // Hide Tenant Management for users who are not superuser or tenant
+    if (item.id === "tenant-management" && !showTenantManagement) {
+      return false;
+    }
     // Hide admin-only items for non-ADMIN users (only alerts-management is admin-only now)
     if (item.id === "alerts-management" && !isAdmin) {
       return false;
     }
-    // Hide logs for users with USER role (regardless of tenant_id)
-    if (item.id === "logs" && isUser) {
+    if (item.id === "pii-management" && isGuest) {
+      return false;
+    }
+
+    // Hide API Key Management for users who are neither ADMIN nor TENANT ADMIN
+    if (item.id === "api-key-management" && !(isAdmin || isTenantAdmin)) {
+      return false;
+    }
+    // Hide logs for users with USER or GUEST role (regardless of tenant_id)
+    if (item.id === "logs" && (isUser || isGuest)) {
       return false;
     }
     // Hide logs for users without tenant_id (but allow admins to see it)

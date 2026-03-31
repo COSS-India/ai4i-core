@@ -55,7 +55,11 @@ class PostgresAdapter(BaseAdapter):
                 f"postgresql://{self.config['user']}:{self.config['password']}"
                 f"@{self.config['host']}:{self.config['port']}/{self.config['database']}"
             )
-            self.engine = create_engine(database_url, echo=False)
+            self.engine = create_engine(
+                database_url,
+                echo=False,
+                connect_args={"connect_timeout": int(self.config.get("connect_timeout", 5))},
+            )
             self.connection = self.engine.connect()
     
     def disconnect(self) -> None:
@@ -82,7 +86,12 @@ class PostgresAdapter(BaseAdapter):
                 f"@{self.config['host']}:{self.config['port']}/{maint_db}"
             )
             try:
-                temp_engine = create_engine(url, echo=False, isolation_level="AUTOCOMMIT")
+                temp_engine = create_engine(
+                    url,
+                    echo=False,
+                    isolation_level="AUTOCOMMIT",
+                    connect_args={"connect_timeout": int(self.config.get("connect_timeout", 5))},
+                )
                 with temp_engine.connect() as temp_conn:
                     result = temp_conn.execute(text(
                         "SELECT 1 FROM pg_database WHERE datname = :dbname"
@@ -103,6 +112,8 @@ class PostgresAdapter(BaseAdapter):
                     temp_engine.dispose()
                 except Exception:
                     pass
+        if last_error is not None:
+            raise last_error
     
     def execute(self, query: str, params: Optional[Dict] = None) -> Any:
         """

@@ -11,6 +11,7 @@ from routers.email_router import router as email_router
 from routers.tenant_router import router as tenant_router, tenant_resolve_router
 from routers.service_router import router as service_router
 from routers.user_router import router as user_router
+from routers.internal_router import router as internal_router
 
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -20,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
+from ai4icore_exceptions import register_exception_handlers
 from cache.app_cache import get_async_cache_connection
 
 from ai4icore_env import app_env
@@ -125,6 +127,7 @@ else:
     logger.warning("Rate limiting middleware skipped - Redis not available")
 
 # Register error handlers
+register_exception_handlers(app)
 add_error_handlers(app)
 
 # Register routers
@@ -135,6 +138,7 @@ app.include_router(tenant_router)
 app.include_router(tenant_resolve_router)  # Tenant resolution endpoint for services
 app.include_router(service_router)
 app.include_router(user_router)
+app.include_router(internal_router)
 
 @app.get("/")
 async def root():

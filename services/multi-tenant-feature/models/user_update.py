@@ -16,7 +16,7 @@ class TenantUserUpdateRequest(BaseModel):
     phone_number: Optional[str] = Field(None, max_length=20, description="User phone number")
     role: Optional[str] = Field(
         None,
-        description="Role for the user (key-value: {'role': 'USER'}). Allowed: ADMIN, USER, GUEST, MODERATOR.",
+        description="Role for the user (key-value: {'role': 'USER'}). Allowed roles are tenant-scoped (see enum).",
     )
 
     @field_validator("role")
@@ -35,6 +35,6 @@ class TenantUserUpdateResponse(BaseModel):
     updated_fields: List[str] = Field(..., description="List of updated field names")
     role: Optional[str] = Field(
         None,
-        description="Current role after update (key-value: {'role': 'USER'}). One of: ADMIN, USER, GUEST, MODERATOR.",
+        description="Current role after update (key-value: {'role': 'USER'}). One of the tenant-scoped allowed roles.",
     )
 

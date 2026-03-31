@@ -36,7 +36,7 @@ EXTRA_ARGS=("${@:3}")
 
 DATABASES=(
   "alerting_db"
-  "auth_db"
+  "auth_service_v2_db"
   "config_db"
   "dashboard_db"
   "ai4i_platform_db"
@@ -84,7 +84,7 @@ Prerequisite:
 
 Examples:
   ./scripts/migrate.sh all upgrade
-  ./scripts/migrate.sh auth_db upgrade head
+  ./scripts/migrate.sh auth_service_v2_db upgrade head
   ./scripts/migrate.sh config_db current
   ./scripts/migrate.sh model_management_db revision --autogenerate -m "add column"
   ./scripts/migrate.sh alerting_db revision -m "manual migration"
@@ -130,9 +130,16 @@ supports_autogenerate() {
   "$PYTHON_BIN" "$REGISTRY_SCRIPT" supports-autogenerate "$db" >/dev/null 2>&1
 }
 
+revision_versions_dir() {
+  local db="$1"
+  echo "$db"
+}
+
 has_existing_revisions() {
   local db="$1"
-  find "$PROJECT_ROOT/infrastructure/databases/migrations/postgres/alembic/versions/$db" -maxdepth 1 -type f -name "*.py" ! -name "__init__.py" | grep -q .
+  local vdir
+  vdir="$(revision_versions_dir "$db")"
+  find "$PROJECT_ROOT/infrastructure/databases/migrations/postgres/alembic/versions/$vdir" -maxdepth 1 -type f -name "*.py" ! -name "__init__.py" | grep -q .
 }
 
 run_autogenerate_revision_if_supported() {

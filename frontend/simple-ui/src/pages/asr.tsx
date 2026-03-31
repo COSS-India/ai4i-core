@@ -33,6 +33,7 @@ import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const ASRPage: React.FC = () => {
   const toast = useToastWithDeduplication();
+  const [audioClearToken, setAudioClearToken] = React.useState(0);
   const {
     language,
     sampleRate,
@@ -57,6 +58,11 @@ const ASRPage: React.FC = () => {
     setInferenceMode,
     clearResults,
   } = useASR();
+
+  const handleClearAudioInput = () => {
+    clearResults();
+    setAudioClearToken((t) => t + 1);
+  };
 
   // Fetch available ASR services from model management
   const { data: asrServices, isLoading: servicesLoading } = useQuery<ASRServiceDetails[]>({
@@ -145,7 +151,10 @@ const ASRPage: React.FC = () => {
                   >
                     {asrServices?.map((service) => {
                       const version = service.modelVersion || service.model_version;
-                      const displayText = version ? `${service.service_id} (${version})` : service.service_id;
+                      // Show the human-friendly service name in the dropdown,
+                      // but keep the underlying value as the service_id.
+                      const displayName = service.name || service.service_id;
+                      const displayText = version ? `${displayName} (${version})` : displayName;
                       return (
                         <option key={service.service_id} value={service.service_id}>
                           {displayText}
@@ -217,6 +226,8 @@ const ASRPage: React.FC = () => {
                     sampleRate={sampleRate}
                     disabled={fetching || !serviceId || !language}
                     timer={timer}
+                    onClear={handleClearAudioInput}
+                    clearToken={audioClearToken}
                   />
                   {/* Upload / recording confirmation - show when audio is ready */}
                   {!recording && pendingAudio && (
@@ -230,6 +241,7 @@ const ASRPage: React.FC = () => {
                       <AudioInputPreview
                         audioBase64OrDataUrl={pendingAudio}
                         label="Review your audio"
+                    onClear={handleClearAudioInput}
                       />
                     </>
                   )}
@@ -295,7 +307,7 @@ const ASRPage: React.FC = () => {
                     {/* Clear Results Button */}
                     <Box textAlign="center">
                       <button
-                        onClick={clearResults}
+                      onClick={handleClearAudioInput}
                         style={{
                           padding: "8px 16px",
                           backgroundColor: "#f7fafc",

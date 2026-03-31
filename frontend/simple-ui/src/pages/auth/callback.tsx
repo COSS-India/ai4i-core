@@ -14,8 +14,9 @@ const OAuthCallback = () => {
   useEffect(() => {
     const handleOAuthCallback = async () => {
       try {
-        // Get tokens from URL query parameters
-        const { access_token, refresh_token, token_type, error: oauthError } = router.query;
+        // New flow: callback includes a one-time code.
+        // Legacy flow: callback may still include access_token/refresh_token.
+        const { code, access_token, refresh_token, error: oauthError } = router.query;
 
         // Check for OAuth errors
         if (oauthError) {
@@ -27,8 +28,21 @@ const OAuthCallback = () => {
           return;
         }
 
-        // Check if we have the required tokens
-        if (!access_token || !refresh_token) {
+        const rememberMe = typeof window !== 'undefined' && localStorage.getItem('remember_me') === 'true';
+        let nextAccessToken = typeof access_token === 'string' ? access_token : '';
+        let nextRefreshToken = typeof refresh_token === 'string' ? refresh_token : '';
+        let nextUser: any = null;
+
+        // Preferred path: exchange one-time code for tokens
+        if (typeof code === 'string' && code.trim()) {
+          const exchange = await authService.exchangeOAuthCode(code);
+          nextAccessToken = exchange.access_token;
+          nextRefreshToken = exchange.refresh_token;
+          nextUser = exchange.user ?? null;
+        }
+
+        // Validate required tokens after exchange/legacy handling
+        if (!nextAccessToken || !nextRefreshToken) {
           setError('Missing authentication tokens. Please try again.');
           setIsProcessing(false);
           setTimeout(() => {
@@ -38,22 +52,14 @@ const OAuthCallback = () => {
         }
 
         // Store tokens
-        authService.setAccessToken(access_token as string);
-        authService.setRefreshToken(refresh_token as string);
+        authService.setAccessToken(nextAccessToken, rememberMe);
+        authService.setRefreshToken(nextRefreshToken, rememberMe);
 
         // Fetch user data to verify token and get user info
         try {
-          const user = await authService.getCurrentUser();
+          const user = nextUser || await authService.getCurrentUser();
           authService.setStoredUser(user);
 
-          // Fetch API keys and store selected key in localStorage for use in services
-          try {
-            const apiKeyList = await authService.listApiKeys();
-            authService.applyApiKeyListToStorage(apiKeyList);
-          } catch {
-            // Non-blocking
-          }
-          
           // Broadcast auth update event
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new Event('auth:updated'));

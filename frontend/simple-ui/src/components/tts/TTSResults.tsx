@@ -19,6 +19,7 @@ import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication
 
 const TTSResults: React.FC<TTSResultsProps> = ({
   audioSrc,
+  audioFormat,
   wordCount,
   responseTime,
   audioDuration,
@@ -27,6 +28,7 @@ const TTSResults: React.FC<TTSResultsProps> = ({
   onDownload,
 }) => {
   const toast = useToastWithDeduplication();
+  const downloadExt = audioFormat?.toLowerCase() === "mp3" ? "mp3" : "wav";
 
   const handleDownload = () => {
     if (!audioSrc) return;
@@ -34,7 +36,7 @@ const TTSResults: React.FC<TTSResultsProps> = ({
     try {
       const link = document.createElement('a');
       link.href = audioSrc;
-      link.download = `tts_audio_${Date.now()}.wav`;
+      link.download = `tts_audio_${Date.now()}.${downloadExt}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -90,7 +92,6 @@ const TTSResults: React.FC<TTSResultsProps> = ({
           <StatNumber color="orange.600">
             {(responseTime / 1000).toFixed(2)}s
           </StatNumber>
-          <StatHelpText>seconds</StatHelpText>
         </Stat>
 
         {/* Audio Duration Stat */}

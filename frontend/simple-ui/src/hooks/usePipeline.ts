@@ -19,6 +19,7 @@ export const usePipeline = () => {
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
   const [timer, setTimer] = useState<number>(0);
   const [pendingAudio, setPendingAudio] = useState<string | null>(null);
+  const [pendingAudioFormat, setPendingAudioFormat] = useState<string>('wav');
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
@@ -502,33 +503,10 @@ export const usePipeline = () => {
     });
   };
 
-  /**
-   * Process audio file input
-   */
-  const processAudioFile = async (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      const timeout = setTimeout(() => {
-        reader.abort();
-        reject(new Error('UPLOAD_TIMEOUT'));
-      }, 30000); // 30 second timeout for file reading
-      
-      reader.onloadend = () => {
-        clearTimeout(timeout);
-        const result = reader.result as string;
-        const base64Data = result.split(',')[1];
-        if (!base64Data) {
-          reject(new Error('INVALID_FILE'));
-        } else {
-          resolve(base64Data);
-        }
-      };
-      reader.onerror = () => {
-        clearTimeout(timeout);
-        reject(new Error('INVALID_FILE'));
-      };
-      reader.readAsDataURL(file);
-    });
+  const inferAudioFormatFromFile = (file: File): string => {
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.mp3') || file.type === 'audio/mpeg' || file.type === 'audio/mp3') return 'mp3';
+    return 'wav';
   };
 
   /**
@@ -558,15 +536,19 @@ export const usePipeline = () => {
         const nmtOutput = pipelineData[1].output?.[0];
         
         // Extract TTS audio (index 2)
-        const ttsAudio = pipelineData[2].audio?.[0];
+        const ttsAudio = pipelineData[2].audio?.[0] || pipelineData[2].output?.[0];
         
         const sourceText = nmtOutput?.source || asrOutput?.source || '';
         const targetText = nmtOutput?.target || '';
         const audioContent = ttsAudio?.audioContent || '';
+        const outputAudioFormat =
+          ttsAudio?.audioFormat ||
+          pipelineData[2]?.config?.audioFormat ||
+          'wav';
 
         let audioUrl = '';
         if (audioContent) {
-          audioUrl = base64ToAudioObjectUrl(audioContent, 'wav');
+          audioUrl = base64ToAudioObjectUrl(audioContent, outputAudioFormat);
           pipelineAudioUrlRef.current = audioUrl;
         }
 
@@ -612,6 +594,7 @@ export const usePipeline = () => {
   const processRecordedAudioInternal = useCallback(async (base64Audio: string) => {
     // Store audio for later execution when user clicks the Run Pipeline button
     setPendingAudio(base64Audio);
+    setPendingAudioFormat('wav');
   }, []);
 
   // Expose a function to set the processing callback with config
@@ -774,9 +757,22 @@ export const usePipeline = () => {
         return;
       }
 
-      const base64Audio = await processAudioFile(file);
+      let fileToEncode: Blob = file;
+      let formatToUse = inferAudioFormatFromFile(file);
+      try {
+        const normalizedWav = await convertWebmToWav(file, 16000);
+        if (normalizedWav && normalizedWav.size > 0) {
+          fileToEncode = normalizedWav;
+          formatToUse = 'wav';
+        }
+      } catch (conversionError) {
+        console.warn('Pipeline upload WAV conversion failed, using original format:', conversionError);
+      }
+
+      const base64Audio = await blobToBase64(fileToEncode);
       // Store audio for later execution when user clicks the Run Pipeline button
       setPendingAudio(base64Audio);
+      setPendingAudioFormat(formatToUse);
     } catch (error: any) {
       console.error('Error processing uploaded audio:', error);
       const err = error?.message === 'UPLOAD_TIMEOUT' 
@@ -819,7 +815,7 @@ export const usePipeline = () => {
           config: {
             serviceId: asrServiceId,
             language: { sourceLanguage },
-            audioFormat: 'wav',
+            audioFormat: pendingAudioFormat,
             preProcessors: ['vad', 'denoiser'],
             postProcessors: ['lm', 'punctuation'],
             transcriptionFormat: 'transcript',
@@ -851,7 +847,24 @@ export const usePipeline = () => {
 
     await executePipeline(request);
     setPendingAudio(null);
-  }, [executePipeline, pendingAudio, toast]);
+  }, [executePipeline, pendingAudio, pendingAudioFormat, toast]);
+
+  /**
+   * Clear the uploaded/recorded input (and any pipeline output).
+   * Used for "delete/clear" UX next to the preview.
+   */
+  const clearInput = useCallback(() => {
+    if (pipelineAudioUrlRef.current) {
+      URL.revokeObjectURL(pipelineAudioUrlRef.current);
+      pipelineAudioUrlRef.current = null;
+    }
+
+    setPendingAudio(null);
+    setPendingAudioFormat('wav');
+    setAudioBlob(null);
+    setResult(null);
+    setTimer(0);
+  }, []);
 
   return {
     isLoading,
@@ -860,6 +873,7 @@ export const usePipeline = () => {
     audioBlob,
     timer,
     pendingAudio,
+    clearInput,
     startRecording,
     stopRecording,
     executePipeline,

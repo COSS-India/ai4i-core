@@ -8,12 +8,14 @@ import {
   FormLabel,
   Heading,
   Input,
+  InputGroup,
+  InputRightElement,
+  IconButton,
   HStack,
   Text,
   VStack,
   useColorModeValue,
   Button,
-  Select,
   Alert,
   AlertIcon,
   AlertDescription,
@@ -29,8 +31,10 @@ import {
   Td,
   TableContainer,
 } from "@chakra-ui/react";
+import { CopyIcon, CloseIcon } from "@chakra-ui/icons";
 import { useCreateApiKeyTab } from "./hooks/useCreateApiKeyTab";
 import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
+import UserSearchableSelect from "../common/UserSearchableSelect";
 
 export interface CreateApiKeyTabProps {
   users: import("../../types/auth").User[];
@@ -82,36 +86,20 @@ export default function CreateApiKeyTab({
           </HStack>
 
           <Box>
-            <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
-              Select User
-            </Heading>
+          
             <FormControl>
               <FormLabel fontWeight="semibold">User</FormLabel>
-              <Select
-                value={perm.selectedUserForPermissions?.id ?? ""}
-                onChange={(e) => {
-                  const userId = parseInt(e.target.value, 10);
-                  perm.handleUserSelect(userId);
-                }}
-                placeholder={isLoadingUsers ? "Loading users..." : "Select a user"}
-                bg="white"
+              <UserSearchableSelect
+                variant="pick"
+                value={perm.selectedUserForPermissions?.id ?? null}
+                onChange={(id, picked) => perm.handleUserSelect(id, picked)}
+                seedUsers={users}
+                isLoading={isLoadingUsers}
                 isDisabled={isLoadingUsers}
-              >
-                {users
-                  .slice()
-                  .sort((a, b) => {
-                    const nameA = (a.username || a.email || "").toLowerCase();
-                    const nameB = (b.username || b.email || "").toLowerCase();
-                    if (nameA < nameB) return -1;
-                    if (nameA > nameB) return 1;
-                    return 0;
-                  })
-                  .map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.username} ({u.email})
-                  </option>
-                ))}
-              </Select>
+                placeholder={isLoadingUsers ? "Loading users..." : "Select a user"}
+                selectedPreview={perm.selectedUserForPermissions}
+                allowClear
+              />
             </FormControl>
           </Box>
 
@@ -207,7 +195,7 @@ export default function CreateApiKeyTab({
                             }
                             onChange={(e) => {
                               if (e.target.checked) {
-                                perm.setSelectedPermissionsForUser([...perm.permissions]);
+                                perm.setSelectedPermissionsForUser(perm.permissions.map((p) => p.name));
                               } else {
                                 perm.setSelectedPermissionsForUser([]);
                               }
@@ -226,8 +214,8 @@ export default function CreateApiKeyTab({
                       </Box>
                       <SimpleGrid columns={2} spacing={3}>
                         {perm.permissions.map((p) => (
-                          <Checkbox key={p} value={p} colorScheme="purple">
-                            <Text fontSize="sm">{p}</Text>
+                          <Checkbox key={p.name} value={p.name} colorScheme="purple">
+                            <Text fontSize="sm">{p.name}</Text>
                           </Checkbox>
                         ))}
                       </SimpleGrid>
@@ -294,6 +282,55 @@ export default function CreateApiKeyTab({
                 >
                   Add Permission (Create API Key)
                 </Button>
+
+                {perm.createdApiKeyToken && (
+                  <Alert status="warning" borderRadius="md" variant="left-accent">
+                    <AlertIcon />
+                    <Box flex="1">
+                      <Text fontWeight="bold" mb={2}>
+                        API Key Created — Copy it now!
+                      </Text>
+                      <Text fontSize="xs" color="gray.600" mb={2}>
+                        This token will not be shown again. Store it securely.
+                      </Text>
+                      <InputGroup size="sm">
+                        <Input
+                          value={perm.createdApiKeyToken}
+                          isReadOnly
+                          fontFamily="mono"
+                          fontSize="xs"
+                          pr="4rem"
+                        />
+                        <InputRightElement width="4rem">
+                          <HStack spacing={0}>
+                            <IconButton
+                              aria-label="Copy API key"
+                              icon={<CopyIcon />}
+                              size="xs"
+                              onClick={() => {
+                                navigator.clipboard.writeText(perm.createdApiKeyToken!);
+                                toast({
+                                  title: "Copied",
+                                  description: "API key copied to clipboard",
+                                  status: "success",
+                                  duration: 2000,
+                                  isClosable: true,
+                                });
+                              }}
+                            />
+                            <IconButton
+                              aria-label="Dismiss"
+                              icon={<CloseIcon />}
+                              size="xs"
+                              variant="ghost"
+                              onClick={perm.clearCreatedApiKeyToken}
+                            />
+                          </HStack>
+                        </InputRightElement>
+                      </InputGroup>
+                    </Box>
+                  </Alert>
+                )}
               </VStack>
             </Box>
           )}
@@ -312,10 +349,10 @@ export default function CreateApiKeyTab({
                   </Thead>
                   <Tbody>
                     {perm.permissions.map((p) => (
-                      <Tr key={p}>
+                      <Tr key={p.name}>
                         <Td>
                           <Badge colorScheme="purple" fontSize="sm" p={1}>
-                            {p}
+                            {p.name}
                           </Badge>
                         </Td>
                       </Tr>

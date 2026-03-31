@@ -1650,8 +1650,9 @@ async def toggle_alert_definition(alert_id: int, organization: Optional[str], en
 # Default email templates for notification receivers (Alertmanager Go template syntax)
 # Include inference endpoint when present (e.g. application latency alerts); .Alerts[0].Labels.endpoint
 DEFAULT_EMAIL_SUBJECT_TEMPLATE = "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }}{{ with (index .Alerts 0).Labels.endpoint }} - {{ . }}{{ end }}"
+# Plain-text severity labels only (no emoji) for consistent rendering in email clients.
 DEFAULT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{ if eq .GroupLabels.severity \"critical\" }}#d32f2f{{ else if eq .GroupLabels.severity \"warning\" }}#f57c00{{ else }}#1976d2{{ end }};">
-  {{ if eq .GroupLabels.severity "critical" }}🚨 CRITICAL{{ else if eq .GroupLabels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
+  {{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
 </h2>
 <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
 <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
@@ -1993,7 +1994,12 @@ async def update_notification_receiver(receiver_id: int, organization: Optional[
         # Handle tenant / RBAC resolution if provided
         email_to = data.email_to
         rbac_role = data.rbac_role if data.rbac_role is not None else existing.get("rbac_role")
-        tenant_for_resolution = (str(data.tenant).strip() if data.tenant and str(data.tenant).strip() else None) or (str(existing.get("tenant") or "").strip() or None)
+        # If `tenant` is omitted, keep routing by stored tenant. If explicitly sent (including ""), do not
+        # fall back to existing — so clearing tenant + setting rbac_role switches from tenant to global role.
+        if data.tenant is not None:
+            tenant_for_resolution = str(data.tenant).strip() or None
+        else:
+            tenant_for_resolution = str(existing.get("tenant") or "").strip() or None
 
         if tenant_for_resolution:
             email_to = await resolve_tenant_name_to_emails(tenant_for_resolution)
@@ -2017,14 +2023,89 @@ async def update_notification_receiver(receiver_id: int, organization: Optional[
             email_to = None
             rbac_role = None
         
+        # When tenant is explicitly cleared, drop --tenant-<name> from receiver_name (same rules as create).
+        auto_receiver_name: Optional[str] = None
+        prev_tenant = str(existing.get("tenant") or "").strip()
+        if data.tenant is not None:
+            eff_tenant_stored = str(data.tenant).strip() or None
+        else:
+            eff_tenant_stored = prev_tenant or None
+
+        if (
+            data.receiver_name is None
+            and data.tenant is not None
+            and eff_tenant_stored is None
+            and prev_tenant
+        ):
+            eff_category = (
+                data.category.lower()
+                if data.category is not None
+                else str(existing.get("category") or "application").lower()
+            )
+            eff_severity = (
+                data.severity.lower()
+                if data.severity is not None
+                else str(existing.get("severity") or "warning").lower()
+            )
+            if data.alert_names is not None:
+                eff_alert_names_list = [n for n in data.alert_names if n and str(n).strip()]
+            else:
+                raw_an = existing.get("alert_names")
+                eff_alert_names_list = [n for n in (raw_an or []) if n and str(n).strip()]
+            base_nm = f"{eff_severity}-{eff_category}"
+            suffix_parts: List[str] = []
+            if eff_alert_names_list:
+                suffix_parts.append(
+                    "alerts-" + "|".join(sorted(eff_alert_names_list))
+                )
+            candidate = base_nm + (
+                "--" + "--".join(suffix_parts) if suffix_parts else ""
+            )
+            if candidate != existing["receiver_name"]:
+                dup = await conn.fetchrow(
+                    "SELECT id FROM notification_receivers WHERE receiver_name = $1 AND id != $2",
+                    candidate,
+                    receiver_id,
+                )
+                if dup:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Automatic receiver name '{candidate}' already exists. "
+                            "Set 'receiver_name' explicitly in the request body."
+                        ),
+                    )
+                auto_receiver_name = candidate
+
+        ex_rule_existing = existing.get("rule_name")
+        ex_rn_existing = existing.get("receiver_name")
+        sync_auto_rule_name = (
+            auto_receiver_name is not None
+            and data.rule_name is None
+            and (
+                ex_rule_existing is None
+                or (
+                    isinstance(ex_rule_existing, str)
+                    and ex_rule_existing.strip() == str(ex_rn_existing).strip()
+                )
+            )
+        )
+
         # Build update query dynamically
         updates = []
         params = []
         param_idx = 1
         
-        if data.receiver_name is not None:
+        receiver_name_to_set = (
+            data.receiver_name if data.receiver_name is not None else auto_receiver_name
+        )
+        if receiver_name_to_set is not None:
             updates.append(f"receiver_name = ${param_idx}")
-            params.append(data.receiver_name)
+            params.append(receiver_name_to_set)
+            param_idx += 1
+        if sync_auto_rule_name:
+            updates.append(f"rule_name = ${param_idx}")
+            params.append(auto_receiver_name)
             param_idx += 1
         if data.rule_name is not None:
             updates.append(f"rule_name = ${param_idx}")
@@ -2099,6 +2180,11 @@ async def update_notification_receiver(receiver_id: int, organization: Optional[
             await conn.execute(
                 "UPDATE routing_rules SET rule_name = COALESCE($1, rule_name), updated_at = CURRENT_TIMESTAMP WHERE receiver_id = $2",
                 new_rule_name, receiver_id
+            )
+        elif sync_auto_rule_name and auto_receiver_name is not None:
+            await conn.execute(
+                "UPDATE routing_rules SET rule_name = $1, updated_at = CURRENT_TIMESTAMP WHERE receiver_id = $2",
+                auto_receiver_name, receiver_id
             )
         
         result = await get_notification_receiver_by_id(receiver_id, actual_organization)

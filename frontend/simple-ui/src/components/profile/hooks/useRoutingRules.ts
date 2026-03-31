@@ -177,36 +177,98 @@ export function useRoutingRules() {
     setUpdateItem(null);
     setUpdateForm({});
   };
-  const handleUpdate = async () => {
+  const handleUpdate = async (overrides?: UpdateForm) => {
     if (!updateItem) return;
-    const hasEmail = updateForm.email_to && updateForm.email_to.length > 0;
-    const hasRole = !!updateForm.rbac_role;
-    // Validate raw form state: user must not submit both delivery modes.
-    if (hasEmail && hasRole) {
-      toast({ title: "Validation Error", description: "Provide either email_to or rbac_role, not both", status: "warning", duration: 3000, isClosable: true });
-      return;
-    }
+    const nextForm = { ...updateForm, ...overrides };
+
+    const arraysEqual = (a: string[] | null | undefined, b: string[] | null | undefined) => {
+      const aa = a ?? [];
+      const bb = b ?? [];
+      if (aa.length !== bb.length) return false;
+      for (let i = 0; i < aa.length; i++) {
+        if (aa[i] !== bb[i]) return false;
+      }
+      return true;
+    };
+
+    const alertNamesEqual = (a: string[] | null | undefined, b: string[] | null | undefined) => {
+      if (a == null && b == null) return true;
+      if (a == null || b == null) return false;
+      return arraysEqual(a, b);
+    };
+
     setIsUpdating(true);
     try {
       const payload: NotificationReceiverUpdate = {};
-      if (updateForm.rule_name !== undefined) payload.rule_name = updateForm.rule_name ?? null;
-      if (updateForm.description !== undefined) payload.description = updateForm.description ?? null;
-      if (updateForm.category !== undefined) payload.category = updateForm.category ?? null;
-      if (updateForm.severity !== undefined) payload.severity = updateForm.severity ?? null;
-      if (updateForm.alert_type !== undefined) payload.alert_type = updateForm.alert_type ?? null;
-      if (updateForm.alert_names !== undefined) payload.alert_names = updateForm.alert_names ?? null;
-      if (updateForm.tenant !== undefined) payload.tenant = updateForm.tenant ?? null;
-      if (updateForm.email_subject_template !== undefined) payload.email_subject_template = updateForm.email_subject_template ?? null;
-      if (updateForm.email_body_template !== undefined) payload.email_body_template = updateForm.email_body_template ?? null;
-      if (updateForm.enabled !== undefined) payload.enabled = updateForm.enabled;
-      // Only include delivery fields when we have a single clear choice; otherwise omit so backend keeps existing (update by id with only changed fields).
-      if (hasEmail && !hasRole) {
-        payload.email_to = updateForm.email_to;
-        payload.rbac_role = null;
-      } else if (hasRole && !hasEmail) {
-        payload.rbac_role = updateForm.rbac_role;
-        payload.email_to = undefined;
+      const old = updateItem;
+
+      // Only include fields that actually changed vs the original item.
+      if (nextForm.rule_name !== undefined) {
+        const newVal = nextForm.rule_name ?? null;
+        const oldVal = old.rule_name ?? null;
+        if (newVal !== oldVal) payload.rule_name = newVal;
       }
+      if (nextForm.description !== undefined) {
+        const newVal = nextForm.description ?? null;
+        const oldVal = old.description ?? null;
+        if (newVal !== oldVal) payload.description = newVal;
+      }
+      if (nextForm.category !== undefined) {
+        const newVal = nextForm.category ?? null;
+        const oldVal = old.category ?? null;
+        if (newVal !== oldVal) payload.category = newVal;
+      }
+      if (nextForm.severity !== undefined) {
+        const newVal = nextForm.severity ?? null;
+        const oldVal = old.severity ?? null;
+        if (newVal !== oldVal) payload.severity = newVal;
+      }
+      if (nextForm.alert_type !== undefined) {
+        const newVal = nextForm.alert_type ?? null;
+        const oldVal = old.alert_type ?? null;
+        if (newVal !== oldVal) payload.alert_type = newVal;
+      }
+      if (nextForm.alert_names !== undefined) {
+        const newVal = nextForm.alert_names ?? null;
+        const oldVal = old.alert_names ?? null;
+        if (!alertNamesEqual(newVal, oldVal)) payload.alert_names = newVal;
+      }
+      if (nextForm.tenant !== undefined) {
+        const newVal = nextForm.tenant ?? null;
+        const oldVal = old.tenant ?? null;
+        if (newVal !== oldVal) payload.tenant = newVal;
+      }
+      if (nextForm.email_subject_template !== undefined) {
+        const newVal = nextForm.email_subject_template ?? null;
+        const oldVal = old.email_subject_template ?? null;
+        if (newVal !== oldVal) payload.email_subject_template = newVal;
+      }
+      if (nextForm.email_body_template !== undefined) {
+        const newVal = nextForm.email_body_template ?? null;
+        const oldVal = old.email_body_template ?? null;
+        if (newVal !== oldVal) payload.email_body_template = newVal;
+      }
+      if (nextForm.enabled !== undefined) {
+        if (nextForm.enabled !== old.enabled) payload.enabled = nextForm.enabled;
+      }
+
+      if (nextForm.email_to !== undefined) {
+        const newVal = nextForm.email_to ?? [];
+        const oldVal = old.email_to ?? [];
+        if (!arraysEqual(newVal, oldVal)) payload.email_to = newVal;
+      }
+      if (nextForm.rbac_role !== undefined) {
+        const newVal = nextForm.rbac_role ?? null;
+        const oldVal = old.rbac_role ?? null;
+        if (newVal !== oldVal) payload.rbac_role = newVal;
+      }
+
+      if (Object.keys(payload).length === 0) {
+        toast({ title: "No changes", description: "Nothing to update.", status: "info", duration: 3000, isClosable: true });
+        closeUpdate();
+        return;
+      }
+
       await alertingService.updateReceiver(updateItem.id, payload);
       toast({ title: "Routing Rule Updated", status: "success", duration: 3000, isClosable: true });
       closeUpdate();

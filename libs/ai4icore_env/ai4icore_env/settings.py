@@ -72,7 +72,12 @@ class AppEnv(BaseSettings):
     # ── JWT Authentication ──
     jwt_secret_key: Optional[str] = None         # credential
     jwt_refresh_secret_key: Optional[str] = None # credential
-    jwt_algorithm: str = "HS256"
+    jwt_issuer: Optional[str] = None
+    jwt_issuer_url: Optional[str] = None
+    jwt_audience: Optional[str] = None
+    jwks_url: Optional[str] = None
+    jwks_path: Optional[str] = None
+    jwt_algorithm: str = "RS256"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
     refresh_token_expire_hours: int = 24
@@ -153,6 +158,8 @@ class AppEnv(BaseSettings):
     pipeline_service_url: str = ""
     ocr_service_url: str = ""
     ner_service_url: str = ""
+    pii_service_url: str = ""
+    pii_redact_timeout: float = 20.0
     speaker_diarization_service_url: str = ""
     language_diarization_service_url: str = ""
     audio_lang_detection_service_url: str = ""
@@ -191,6 +198,7 @@ class AppEnv(BaseSettings):
     auth_http_timeout: float = 5.0
     allow_anonymous_access: bool = False
     require_api_key: Optional[str] = None
+    api_key_cache_ttl: int = 300
     api_key_encryption_key: Optional[str] = None  # credential
 
     # ── SMTP / Email ──
@@ -203,6 +211,8 @@ class AppEnv(BaseSettings):
     default_receiver_emails: str = ""
     login_url: str = ""
     email_verification_link: str = ""
+    # Multi-tenant email verification token expiry (used by multi-tenant-feature)
+    email_verification_token_expire_minutes: int = 15
 
     # ── OAuth ──
     google_client_id: Optional[str] = None        # credential

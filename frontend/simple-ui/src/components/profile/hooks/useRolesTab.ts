@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import roleService, { Role } from "../../../services/roleService";
 import type { User } from "../../../types/auth";
+import type { UserSearchablePick } from "../../common/UserSearchableSelect";
 
 export interface UseRolesTabOptions {
   user: User | null;
@@ -61,29 +62,30 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     }
   };
 
-  const handleUserSelect = async (userId: number) => {
-    const u = users.find((x) => x.id === userId);
-    if (u) {
-      setSelectedUser({ id: u.id, email: u.email, username: u.username || "" });
-      setIsLoadingUserRoles(true);
-      try {
-        const userRolesData = await roleService.getUserRoles(u.id);
-        setSelectedUserRoles(userRolesData.roles);
-      } catch (error) {
-        toast({
-          title: "Error",
-          description: error instanceof Error ? error.message : "Failed to load user roles",
-          status: "error",
-          duration: 5000,
-          isClosable: true,
-        });
-        setSelectedUserRoles([]);
-      } finally {
-        setIsLoadingUserRoles(false);
-      }
-    } else {
+  const handleUserSelect = async (userId: number | null, picked?: UserSearchablePick | null) => {
+    if (userId == null) {
       setSelectedUser(null);
       setSelectedUserRoles([]);
+      return;
+    }
+    const u = users.find((x) => x.id === userId) ?? picked;
+    if (!u) return;
+    setSelectedUser({ id: u.id, email: u.email, username: u.username || "" });
+    setIsLoadingUserRoles(true);
+    try {
+      const userRolesData = await roleService.getUserRoles(u.id);
+      setSelectedUserRoles(userRolesData.roles);
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to load user roles",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      setSelectedUserRoles([]);
+    } finally {
+      setIsLoadingUserRoles(false);
     }
   };
 

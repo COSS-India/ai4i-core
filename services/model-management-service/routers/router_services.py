@@ -41,7 +41,7 @@ router_services = APIRouter(
 )
 
 # Routes that require auth (added via route-level Depends)
-# Routes without auth: list_services, list_services_policies (used by SMR, nmt, transliteration)
+# Routes without auth: list_services_try_it, list_services_policies (used by SMR, nmt, transliteration)
 
 
 @router_services.get("", response_model=List[ServiceListResponse], dependencies=[Depends(AuthProvider)])
@@ -80,6 +80,54 @@ async def list_services(
             }
         )
 
+
+@router_services.get(
+    "/try-it-service-list",
+    response_model=List[ServiceListResponse],
+    summary="Public try-it service listing API",
+    tags=["Model Management"],
+)
+async def list_services_try_it(
+    task_type: str = Query(
+        ...,
+        description="Task type for try-out listing (currently only 'nmt' is supported).",
+    ),
+    db: AsyncSession = Depends(get_auth_db_session),
+    ):
+    """Public 'try it' services listing - GET /services/try-it-service-list.
+
+    - No authentication required.
+    - Currently supported only for `nmt` task type.
+    - For any other task type, returns an error indicating try-it is not available.
+    """
+    try:
+        # Only allow NMT for try-it; reject other task types explicitly
+        if not task_type or task_type.lower() != TaskTypeEnum.nmt.value:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Try-it is not available in these services",
+            )
+
+        task_type_enum = TaskTypeEnum.nmt
+
+        data = await list_all_services(task_type_enum, is_published=True, created_by=None)
+
+        if data is None:
+            return []
+
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error while listing try-it service details from DB.")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "kind": "DBError",
+                "message": "Error listing try-it service details",
+                "error": str(e),
+            },
+        )
 
 @router_services.get("/policies", response_model=ServicePolicyListResponse, include_in_schema=False)
 async def list_services_policies(

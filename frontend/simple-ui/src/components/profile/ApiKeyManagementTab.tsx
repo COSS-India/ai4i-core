@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Button,
@@ -44,9 +44,12 @@ import {
   Checkbox,
   CheckboxGroup,
   Tooltip,
+  IconButton,
 } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
 import { useApiKeyManagementTab } from "./hooks/useApiKeyManagementTab";
+import { TriangleDownIcon, TriangleUpIcon } from "@chakra-ui/icons";
+import UserSearchableSelect from "../common/UserSearchableSelect";
 
 export interface ApiKeyManagementTabProps {
   users: import("../../types/auth").User[];
@@ -69,6 +72,35 @@ export default function ApiKeyManagementTab({
     users,
     isLoadingUsers: false,
   });
+
+  const [keyNameSortDirection, setKeyNameSortDirection] = useState<"asc" | "desc">("asc");
+
+  const sortedApiKeys = useMemo(() => {
+    return [...mgmt.filteredApiKeys].sort((a, b) => {
+      // When showing all users, keep the overall list alphabetical by user.
+      if (mgmt.filterUser === "all") {
+        const emailA = (a.user_email ?? "").trim();
+        const emailB = (b.user_email ?? "").trim();
+        const emailCmp = emailA.localeCompare(emailB, undefined, { sensitivity: "base" });
+        if (emailCmp !== 0) return emailCmp;
+
+        const usernameA = (a.username ?? "").trim();
+        const usernameB = (b.username ?? "").trim();
+        const usernameCmp = usernameA.localeCompare(usernameB, undefined, { sensitivity: "base" });
+        if (usernameCmp !== 0) return usernameCmp;
+      }
+
+      const aName = a.key_name ?? "";
+      const bName = b.key_name ?? "";
+      const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
+      if (nameCmp !== 0) return keyNameSortDirection === "asc" ? nameCmp : -nameCmp;
+
+      // Tie-breaker: newest first
+      const timeA = new Date(a.created_at).getTime();
+      const timeB = new Date(b.created_at).getTime();
+      return timeB - timeA;
+    });
+  }, [mgmt.filteredApiKeys, keyNameSortDirection, mgmt.filterUser]);
 
   useEffect(() => {
     if (isActive) {
@@ -99,71 +131,81 @@ export default function ApiKeyManagementTab({
         <CardBody>
           <VStack spacing={6} align="stretch">
             <Box>
-              <HStack justify="space-between" mb={4}>
-                <Heading size="sm" color="gray.700" userSelect="none" cursor="default">
-                  Filters
-                </Heading>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  colorScheme="gray"
-                  onClick={mgmt.handleResetFilters}
-                  isDisabled={
-                    mgmt.filterUser === "all" &&
-                    mgmt.filterPermission === "all" &&
-                    mgmt.filterActive === "all"
-                  }
-                >
-                  Reset Filters
-                </Button>
-              </HStack>
-              <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
-                <FormControl>
-                  <FormLabel fontWeight="semibold">Filter by User</FormLabel>
-                  <Select
-                    value={mgmt.filterUser}
-                    onChange={(e) => mgmt.setFilterUser(e.target.value)}
-                    bg="white"
-                  >
-                    <option value="all">All Users</option>
-                    {users.map((u) => (
-                      <option key={u.id} value={u.id.toString()}>
-                        {u.email} ({u.username})
-                      </option>
-                    ))}
-                  </Select>
-                </FormControl>
-                <FormControl>
-                  <FormLabel fontWeight="semibold">Filter by Permission</FormLabel>
-                  <Select
-                    value={mgmt.filterPermission}
-                    onChange={(e) => mgmt.setFilterPermission(e.target.value)}
-                    bg="white"
-                  >
-                    <option value="all">All Permissions</option>
-                    {(mgmt.allUniquePermissions.length > 0
-                      ? mgmt.allUniquePermissions
-                      : mgmt.permissions
-                    ).map((perm) => (
-                      <option key={perm} value={perm}>
-                        {perm}
-                      </option>
-                    ))}
-                  </Select>
-                </FormControl>
-                <FormControl>
-                  <FormLabel fontWeight="semibold">Status</FormLabel>
-                  <Select
-                    value={mgmt.filterActive}
-                    onChange={(e) => mgmt.setFilterActive(e.target.value)}
-                    bg="white"
-                  >
-                    <option value="all">All</option>
-                    <option value="active">Active</option>
-                    <option value="inactive">Inactive</option>
-                  </Select>
-                </FormControl>
-              </SimpleGrid>
+              <Heading size="sm" color="gray.700" userSelect="none" cursor="default" mb={4}>
+                Filters
+              </Heading>
+
+              {(() => {
+                const hasActiveFilters =
+                  mgmt.filterUser !== "all" ||
+                  mgmt.filterPermission !== "all" ||
+                  mgmt.filterActive !== "all";
+
+                const permissionOptions =
+                  mgmt.allUniquePermissions.length > 0
+                    ? mgmt.allUniquePermissions
+                    : mgmt.permissions.map((p) => p.name);
+
+                return (
+                  <HStack flexWrap="wrap" gap={3} align="flex-end">
+                    <FormControl w={{ base: "full", md: "320px" }}>
+                      <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
+                        User
+                      </FormLabel>
+                      <UserSearchableSelect
+                        variant="filter"
+                        value={mgmt.filterUser}
+                        onChange={(v) => mgmt.setFilterUser(v)}
+                        seedUsers={users}
+                        size="sm"
+                        allOptionLabel="All Users"
+                        placeholder="All Users"
+                      />
+                    </FormControl>
+
+                    <FormControl w={{ base: "full", md: "320px" }}>
+                      <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
+                        Permission
+                      </FormLabel>
+                      <Select
+                        size="sm"
+                        value={mgmt.filterPermission}
+                        onChange={(e) => mgmt.setFilterPermission(e.target.value)}
+                        bg="white"
+                      >
+                        <option value="all">All Permissions</option>
+                        {permissionOptions.map((perm) => (
+                          <option key={perm} value={perm}>
+                            {perm}
+                          </option>
+                        ))}
+                      </Select>
+                    </FormControl>
+
+                    <FormControl w={{ base: "full", sm: "160px" }}>
+                      <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
+                        Status
+                      </FormLabel>
+                      <Select
+                        size="sm"
+                        value={mgmt.filterActive}
+                        onChange={(e) => mgmt.setFilterActive(e.target.value)}
+                        bg="white"
+                      >
+                        <option value="all">All</option>
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                      </Select>
+                    </FormControl>
+
+                    {hasActiveFilters ? (
+                      <Button size="sm" variant="outline" onClick={mgmt.handleResetFilters}>
+                        Clear all
+                      </Button>
+                    ) : null}
+                  </HStack>
+                );
+              })()}
             </Box>
 
             {mgmt.isLoadingAllApiKeys ? (
@@ -178,7 +220,31 @@ export default function ApiKeyManagementTab({
                 <Table variant="simple">
                   <Thead>
                     <Tr>
-                      <Th>Key Name</Th>
+                      <Th>
+                        <HStack spacing={2}>
+                          <Text>Key Name</Text>
+                          <Tooltip label="Sort Name A to Z" hasArrow>
+                            <IconButton
+                              aria-label="Sort API keys by name ascending"
+                              icon={<TriangleUpIcon />}
+                              size="xs"
+                              variant={keyNameSortDirection === "asc" ? "solid" : "ghost"}
+                              colorScheme="gray"
+                              onClick={() => setKeyNameSortDirection("asc")}
+                            />
+                          </Tooltip>
+                          <Tooltip label="Sort Name Z to A" hasArrow>
+                            <IconButton
+                              aria-label="Sort API keys by name descending"
+                              icon={<TriangleDownIcon />}
+                              size="xs"
+                              variant={keyNameSortDirection === "desc" ? "solid" : "ghost"}
+                              colorScheme="gray"
+                              onClick={() => setKeyNameSortDirection("desc")}
+                            />
+                          </Tooltip>
+                        </HStack>
+                      </Th>
                       <Th>User</Th>
                       <Th>Permissions</Th>
                       <Th>Status</Th>
@@ -188,7 +254,7 @@ export default function ApiKeyManagementTab({
                     </Tr>
                   </Thead>
                   <Tbody>
-                    {mgmt.filteredApiKeys.map((key) => (
+                    {sortedApiKeys.map((key) => (
                       <Tr
                         key={key.id}
                         onClick={() => mgmt.handleOpenViewModal(key)}
@@ -459,8 +525,8 @@ export default function ApiKeyManagementTab({
                     >
                       <SimpleGrid columns={2} spacing={3}>
                         {mgmt.permissions.map((perm) => (
-                          <Checkbox key={perm} value={perm} colorScheme="blue">
-                            <Text fontSize="sm">{perm}</Text>
+                          <Checkbox key={perm.name} value={perm.name} colorScheme="blue">
+                            <Text fontSize="sm">{perm.name}</Text>
                           </Checkbox>
                         ))}
                       </SimpleGrid>

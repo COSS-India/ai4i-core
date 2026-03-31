@@ -109,21 +109,17 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthenticationError)
     async def authentication_error_handler(request: Request, exc: AuthenticationError):
         """Handle authentication errors."""
-        # PRIORITY 1: Check if no API key header is provided FIRST - return API_KEY_MISSING
-        # This handles cases where the error message might not be extracted correctly
-        # Match NMT/OCR pattern: simple check for missing headers
-        x_auth_source = (request.headers.get("x-auth-source") or "API_KEY").upper()
-        x_api_key = request.headers.get("x-api-key")
         authorization = request.headers.get("authorization", "")
-        
-        # If x-api-key is not provided and no authorization header with API key, and auth_source is API_KEY
-        if not x_api_key and x_auth_source == "API_KEY" and not authorization.startswith("ApiKey "):
+
+        # Check if this is a missing-token error (no Authorization header at all)
+        exc_code = getattr(exc, "code", "")
+        if exc_code == "AUTHENTICATION_REQUIRED" or (not authorization):
             return JSONResponse(
                 status_code=401,
                 content={
                     "detail": {
-                        "error": "API_KEY_MISSING",
-                        "message": "API key is required to access this service.",
+                        "error": "AUTHENTICATION_REQUIRED",
+                        "message": "Authentication is required. Provide a valid Bearer token.",
                     }
                 },
             )

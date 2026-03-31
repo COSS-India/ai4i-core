@@ -117,6 +117,13 @@ export type UseASRReturn = ASRHookState & ASRHookMethods;
 // ASR Component Props
 export interface AudioRecorderProps {
   onAudioReady: (audioBase64: string) => void;
+  /** Called when the user clicks clear/delete for an already uploaded audio file */
+  onClear?: () => void;
+  /**
+   * Token used to reset the internal uploaded-file display when parent clears input.
+   * Increment this value to force a reset.
+   */
+  clearToken?: number;
   isRecording: boolean;
   onRecordingChange: (recording: boolean) => void;
   sampleRate: number;
@@ -126,6 +133,7 @@ export interface AudioRecorderProps {
 
 export interface AudioPlayerProps {
   audioSrc: string;
+  downloadExtension?: string;
   showVisualization?: boolean;
   onPlay?: () => void;
   onPause?: () => void;

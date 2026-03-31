@@ -8,18 +8,25 @@ import {
   Button,
   FormControl,
   FormLabel,
+  IconButton,
+  HStack,
   Input,
+  Tooltip,
   Stack,
   Text,
 } from "@chakra-ui/react";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { FaMicrophone, FaMicrophoneSlash, FaUpload } from "react-icons/fa";
 import { formatDuration, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS } from "../../config/constants";
 import { AudioRecorderProps } from "../../types/asr";
 import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
+import { DeleteIcon } from "@chakra-ui/icons";
+import { convertWebmToWav } from "../../utils/helpers";
 
 const AudioRecorder: React.FC<AudioRecorderProps> = ({
   onAudioReady,
+  onClear,
+  clearToken,
   isRecording,
   onRecordingChange,
   sampleRate,
@@ -29,6 +36,15 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const toast = useToastWithDeduplication();
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+
+  // When parent clears input, reset our internal uploaded-file display too.
+  useEffect(() => {
+    if (clearToken === undefined) return;
+    setUploadedFileName(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }, [clearToken]);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -168,57 +184,73 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
           return;
         }
 
-        // If duration is valid, proceed with file processing
+        // If duration is valid, normalize to WAV then proceed with base64 conversion.
         try {
           console.log("Reading file:", file.name);
-          const reader = new FileReader();
+          const readAndSend = (blob: Blob) => {
+            const reader = new FileReader();
 
-          reader.onload = () => {
-            try {
-              const result = reader.result as string;
-              if (!result) {
-                throw new Error("FileReader result is empty");
+            reader.onload = () => {
+              try {
+                const result = reader.result as string;
+                if (!result) {
+                  throw new Error("FileReader result is empty");
+                }
+                const base64Data = result.split(",")[1];
+                if (!base64Data) {
+                  throw new Error("Failed to extract base64 data");
+                }
+                console.log(
+                  "File read successfully, base64 length:",
+                  base64Data.length
+                );
+                setUploadedFileName(file.name);
+                onAudioReady(base64Data);
+              } catch (err) {
+                console.error("Error processing file result:", err);
+                const uploadErr = UPLOAD_ERRORS.UPLOAD_FAILED;
+                toast({
+                  title: uploadErr.title,
+                  description: uploadErr.description,
+                  status: "error",
+                  duration: 3000,
+                  isClosable: true,
+                });
               }
-              const base64Data = result.split(",")[1];
-              if (!base64Data) {
-                throw new Error("Failed to extract base64 data");
-              }
-              console.log(
-                "File read successfully, base64 length:",
-                base64Data.length
-              );
-              setUploadedFileName(file.name);
-              onAudioReady(base64Data);
-            } catch (err) {
-              console.error("Error processing file result:", err);
-              const uploadErr = UPLOAD_ERRORS.UPLOAD_FAILED;
+            };
+
+            reader.onerror = (error) => {
+              console.error("FileReader error:", error);
+              const err = UPLOAD_ERRORS.INVALID_FILE;
               toast({
-                title: uploadErr.title,
-                description: uploadErr.description,
+                title: err.title,
+                description: err.description,
                 status: "error",
                 duration: 3000,
                 isClosable: true,
               });
-            }
+            };
+
+            reader.onabort = () => {
+              console.log("File read aborted");
+            };
+
+            reader.readAsDataURL(blob);
           };
 
-          reader.onerror = (error) => {
-            console.error("FileReader error:", error);
-            const err = UPLOAD_ERRORS.INVALID_FILE;
-            toast({
-              title: err.title,
-              description: err.description,
-              status: "error",
-              duration: 3000,
-              isClosable: true,
+          // Normalize uploads to WAV so all inference endpoints get a consistent format.
+          convertWebmToWav(file, sampleRate)
+            .then((wavBlob) => {
+              if (wavBlob && wavBlob.size > 0) {
+                readAndSend(wavBlob);
+                return;
+              }
+              readAndSend(file);
+            })
+            .catch((conversionError) => {
+              console.warn("Upload WAV conversion failed, using original file:", conversionError);
+              readAndSend(file);
             });
-          };
-
-          reader.onabort = () => {
-            console.log("File read aborted");
-          };
-
-          reader.readAsDataURL(file);
         } catch (error) {
           console.error("Error reading file:", error);
           const err = UPLOAD_ERRORS.INVALID_FILE;
@@ -259,6 +291,14 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
       fileInputRef.current.value = "";
     }
     fileInputRef.current?.click();
+  };
+
+  const handleClearUploadedFile = () => {
+    setUploadedFileName(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+    onClear?.();
   };
 
   return (
@@ -323,9 +363,35 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
           Upload
         </Button>
         {uploadedFileName && (
-          <Text fontSize="sm" color="gray.700" mt={2} noOfLines={1} title={uploadedFileName}>
-            Uploaded: {uploadedFileName}
-          </Text>
+          <HStack
+            direction="row"
+            spacing={2}
+            align="center"
+            justify="space-between"
+            mt={2}
+          >
+            <Text
+              fontSize="sm"
+              color="gray.700"
+              noOfLines={1}
+              title={uploadedFileName}
+            >
+              Uploaded: {uploadedFileName}
+            </Text>
+            {onClear && (
+              <Tooltip label="Remove audio" placement="top" hasArrow>
+                <IconButton
+                  aria-label="Remove audio"
+                  icon={<DeleteIcon />}
+                  size="sm"
+                  variant="ghost"
+                  colorScheme="red"
+                  _hover={{ bg: "red.50" }}
+                  onClick={handleClearUploadedFile}
+                />
+              </Tooltip>
+            )}
+          </HStack>
         )}
       </Box>
 

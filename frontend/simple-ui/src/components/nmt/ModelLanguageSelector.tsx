@@ -63,13 +63,61 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  // Update available languages when languages data changes
+  // Update available languages when languages data changes; clear when null (e.g. service not found) to avoid stale options
   useEffect(() => {
     if (languagesData) {
       setAvailableLanguages(languagesData.supported_languages || []);
       setLanguageDetails(languagesData.language_details || []);
+    } else if (currentServiceId) {
+      setAvailableLanguages([]);
+      setLanguageDetails([]);
     }
-  }, [languagesData]);
+  }, [languagesData, currentServiceId]);
+
+  // When current language pair is not in the new service's options, sync parent so state matches display and Translate uses correct languages
+  useEffect(() => {
+    if (!currentServiceId) return;
+    const sourceIsEmpty = !languagePair.sourceLanguage?.trim();
+    const targetIsEmpty = !languagePair.targetLanguage?.trim();
+
+    // Don't auto-pick the first languages on initial load; keep placeholders ("Select")
+    if (sourceIsEmpty && targetIsEmpty) return;
+
+    const defaultCodes = Object.keys(LANG_CODE_TO_LABEL).sort((a, b) =>
+      (LANG_CODE_TO_LABEL[a] || a).localeCompare(LANG_CODE_TO_LABEL[b] || b)
+    );
+    const options =
+      availableLanguages.length > 0
+        ? [...availableLanguages].sort((a, b) => {
+            const getLabel = (code: string) => {
+              const d = languageDetails.find((x) => x.code === code);
+              return d ? d.name : code;
+            };
+            return getLabel(a).localeCompare(getLabel(b));
+          })
+        : defaultCodes;
+    if (options.length === 0) return;
+    const sourceValid = options.includes(languagePair.sourceLanguage);
+    const targetValid = options.includes(languagePair.targetLanguage);
+    if (sourceValid && targetValid) return;
+    const newSource = sourceValid
+      ? languagePair.sourceLanguage
+      : sourceIsEmpty
+        ? ''
+        : (options[0] ?? '');
+    const newTarget = targetValid
+      ? languagePair.targetLanguage
+      : targetIsEmpty
+        ? ''
+        : (options[1] ?? options[0] ?? '');
+    onLanguagePairChange({
+      ...languagePair,
+      sourceLanguage: newSource,
+      targetLanguage: newTarget,
+      sourceScriptCode: '',
+      targetScriptCode: '',
+    });
+  }, [currentServiceId, availableLanguages.length, languagePair.sourceLanguage, languagePair.targetLanguage, languageDetails.length]);
 
   // Sync with parent when selectedServiceId is set (e.g. anonymous users with fixed IndicTrans)
   useEffect(() => {
@@ -136,8 +184,12 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   };
 
   const getLanguageLabel = (code: string) => {
+    // Prefer the shared constant mapping to keep UI consistent with LLM.
+    const mapped = LANG_CODE_TO_LABEL[code];
+    if (mapped) return String(mapped);
+
     const detail = languageDetails.find(d => d.code === code);
-    return detail ? detail.name : code;
+    return detail?.name ? String(detail.name) : String(code);
   };
 
   const isSwapAvailable = availableLanguages.includes(languagePair.sourceLanguage) &&
@@ -146,12 +198,24 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
 
   // When no service selected, show default language list (always visible). When service selected, use service languages.
   const defaultLanguageCodes = Object.keys(LANG_CODE_TO_LABEL).sort((a, b) =>
-    (LANG_CODE_TO_LABEL[a] || a).localeCompare(LANG_CODE_TO_LABEL[b] || b)
+    String(LANG_CODE_TO_LABEL[a] || a).localeCompare(String(LANG_CODE_TO_LABEL[b] || b))
   );
   const languageOptionsForDisplay =
     currentServiceId && availableLanguages.length > 0
-      ? [...availableLanguages].sort((a, b) => (getLanguageLabel(a)).localeCompare(getLanguageLabel(b)))
+      ? [...availableLanguages].sort((a, b) =>
+          String(getLanguageLabel(a) || a).localeCompare(String(getLanguageLabel(b) || b))
+        )
       : defaultLanguageCodes;
+
+  // Ensure Select value is always in the options list to avoid client-side crash when switching to a model with different languages
+  const safeSourceValue =
+    languagePair.sourceLanguage?.trim() && languageOptionsForDisplay.includes(languagePair.sourceLanguage)
+      ? languagePair.sourceLanguage
+      : '';
+  const safeTargetValue =
+    languagePair.targetLanguage?.trim() && languageOptionsForDisplay.includes(languagePair.targetLanguage)
+      ? languagePair.targetLanguage
+      : '';
 
   return (
     <Stack spacing={6} pt={0} mt={0}>
@@ -229,13 +293,13 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                   <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 <Select
-                  value={languagePair.sourceLanguage}
+                  value={safeSourceValue}
                   onChange={handleSourceLanguageChange}
                   placeholder="Select"
                 >
                   {languageOptionsForDisplay.map((langCode) => (
                     <option key={langCode} value={langCode}>
-                      {getLanguageLabel(langCode)} ({langCode})
+                      {getLanguageLabel(langCode)}
                     </option>
                   ))}
                 </Select>
@@ -259,13 +323,13 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                   <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 <Select
-                  value={languagePair.targetLanguage}
+                  value={safeTargetValue}
                   onChange={handleTargetLanguageChange}
                   placeholder="Select"
                 >
                   {languageOptionsForDisplay.map((langCode) => (
                     <option key={langCode} value={langCode}>
-                      {getLanguageLabel(langCode)} ({langCode})
+                      {getLanguageLabel(langCode)}
                     </option>
                   ))}
                 </Select>

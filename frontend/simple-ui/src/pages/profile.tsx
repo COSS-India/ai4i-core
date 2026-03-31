@@ -21,57 +21,25 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
-import { useApiKey } from "../hooks/useApiKey";
 import authService from "../services/authService";
 import type { User } from "../types/auth";
 import type { APIKeyResponse } from "../types/auth";
 import UserDetailsTab from "../components/profile/UserDetailsTab";
 import ApiKeyTab from "../components/profile/ApiKeyTab";
 import RolesTab from "../components/profile/RolesTab";
-import CreateApiKeyTab from "../components/profile/CreateApiKeyTab";
-import ApiKeyManagementTab from "../components/profile/ApiKeyManagementTab";
-import TenantManagementTab from "../components/profile/TenantManagementTab";
+ 
 
 const ProfilePage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
-  const { setApiKey } = useApiKey();
 
-  // State owned by profile: tab index, API keys list (shared by API Key tab and Create API Key tab), users (shared by Roles, Create API Key, API Key Management)
+  // State owned by profile: tab index, API keys list, users
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [apiKeys, setApiKeys] = useState<APIKeyResponse[]>([]);
-  const [selectedApiKeyId, setSelectedApiKeyId] = useState<number | null>(() => {
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("selected_api_key_id");
-      return stored ? parseInt(stored, 10) : null;
-    }
-    return null;
-  });
   const [users, setUsers] = useState<User[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [isFetchingApiKey, setIsFetchingApiKey] = useState(false);
   const [isLoadingApiKeys, setIsLoadingApiKeys] = useState(false);
-
-  // Persist selected API key ID to localStorage
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      if (selectedApiKeyId !== null) {
-        localStorage.setItem("selected_api_key_id", selectedApiKeyId.toString());
-      } else {
-        localStorage.removeItem("selected_api_key_id");
-      }
-    }
-  }, [selectedApiKeyId]);
-
-  // Restore API key value when selection or list changes
-  useEffect(() => {
-    if (selectedApiKeyId !== null && apiKeys.length > 0) {
-      const selectedKey = apiKeys.find((key) => key.id === selectedApiKeyId);
-      if (selectedKey?.key_value) {
-        setApiKey(selectedKey.key_value);
-      }
-    }
-  }, [selectedApiKeyId, apiKeys, setApiKey]);
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -103,7 +71,6 @@ const ProfilePage: React.FC = () => {
       const response = await authService.listApiKeys();
       const keys = Array.isArray(response.api_keys) ? response.api_keys : [];
       setApiKeys(keys);
-      setSelectedApiKeyId(response.selected_api_key_id ?? null);
     } catch (error) {
       console.error("Failed to fetch API keys:", error);
     } finally {
@@ -116,34 +83,25 @@ const ProfilePage: React.FC = () => {
   const cardBorder = useColorModeValue("gray.200", "gray.700");
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN") || user?.is_superuser);
-  const isTenantAdmin = Boolean(user?.roles?.includes("TENANT ADMIN"));
-  const isModerator = Boolean(user?.roles?.includes("MODERATOR"));
-  const showMultiTenant = Boolean(user?.is_superuser || user?.is_tenant);
   // Single source of truth: tab order must match TabPanels 1:1
   const tabConfig = React.useMemo(() => {
     const tabs: { id: string; label: string; show: boolean }[] = [
       { id: "user-details", label: "User Details", show: true },
       { id: "api-key", label: "API Key", show: true },
       { id: "roles", label: "Roles", show: isAdmin },
-      // Create API Key is available to full ADMIN and TENANT ADMIN roles
-      { id: "create-api-key", label: "Create API Key", show: isAdmin || isTenantAdmin },
-      { id: "api-key-management", label: "API Key Management", show: isAdmin },
-      { id: "multi-tenant", label: "Multi Tenant Management", show: showMultiTenant },
     ];
     return tabs.filter((t) => t.show);
-  }, [isAdmin, isTenantAdmin, isModerator, showMultiTenant]);
+  }, [isAdmin]);
 
   const apiKeyTabIndex = 1;
-  const permissionsTabIndex = isAdmin ? 3 : -1;
-  const apiKeyManagementTabIndex = tabConfig.findIndex((t) => t.id === "api-key-management");
-  const multiTenantTabIndex = tabConfig.findIndex((t) => t.id === "multi-tenant");
+  const rolesTabIndex = tabConfig.findIndex((t) => t.id === "roles");
 
   const handleTabChange = (index: number) => {
     setActiveTabIndex(index);
     if (index === apiKeyTabIndex) {
       handleFetchApiKeys();
     }
-    if (index === permissionsTabIndex && apiKeys.length === 0) {
+    if (index === rolesTabIndex && apiKeys.length === 0) {
       handleFetchApiKeys();
     }
   };
@@ -222,31 +180,12 @@ const ProfilePage: React.FC = () => {
                     {t.id === "api-key" && (
                       <ApiKeyTab
                         apiKeys={apiKeys}
-                        selectedApiKeyId={selectedApiKeyId}
-                        setSelectedApiKeyId={setSelectedApiKeyId}
                         isFetchingApiKey={isFetchingApiKey}
                         isLoadingApiKeys={isLoadingApiKeys}
                         onFetchApiKeys={handleFetchApiKeys}
                       />
                     )}
                     {t.id === "roles" && <RolesTab users={users} isLoadingUsers={isLoadingUsers} />}
-                    {t.id === "create-api-key" && (
-                      <CreateApiKeyTab
-                        users={users}
-                        isLoadingUsers={isLoadingUsers}
-                        setApiKeys={setApiKeys}
-                        setSelectedApiKeyId={setSelectedApiKeyId}
-                      />
-                    )}
-                    {t.id === "api-key-management" && (
-                      <ApiKeyManagementTab
-                        users={users}
-                        isActive={activeTabIndex === apiKeyManagementTabIndex}
-                      />
-                    )}
-                    {t.id === "multi-tenant" && (
-                      <TenantManagementTab isActive={activeTabIndex === multiTenantTabIndex} />
-                    )}
                   </TabPanel>
                 ))}
               </TabPanels>

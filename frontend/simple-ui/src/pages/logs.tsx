@@ -10,6 +10,7 @@ import {
   Input,
   Link,
   Select,
+  Switch,
   Table,
   Thead,
   Tbody,
@@ -18,6 +19,7 @@ import {
   Td,
   TableContainer,
   Text,
+  Tooltip,
   VStack,
   Badge,
   Spinner,
@@ -36,7 +38,7 @@ import {
   AlertDescription,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeftIcon, ChevronRightIcon, SearchIcon, RepeatIcon } from "@chakra-ui/icons";
 import ContentLayout from "../components/common/ContentLayout";
@@ -135,11 +137,19 @@ const LogsPage: React.FC = () => {
   const [appliedStartTime, setAppliedStartTime] = useState<string>("");
   const [appliedEndTime, setAppliedEndTime] = useState<string>("");
   const [appliedTenantId, setAppliedTenantId] = useState<string>("");
-  
+
+  // Auto-refresh state
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [refreshIntervalSecs, setRefreshIntervalSecs] = useState(30);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [countdown, setCountdown] = useState(30);
+
   // Check if user is admin (full ADMIN role — sees all tenants)
   const isAdmin = user?.roles?.includes('ADMIN') || false;
   // Check if user has USER role - hide logs UI for them
   const isUser = user?.roles?.includes('USER') || false;
+  // Check if user has GUEST role - hide logs UI for them
+  const isGuest = user?.roles?.includes('GUEST') || false;
   // Check if user is a TENANT ADMIN — scoped to their own tenant only
   const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
   // Kept for reference (e.g. display purposes); no longer drives access logic
@@ -164,11 +174,11 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, authLoading, router, toast]);
 
-  // Redirect if user has USER role or doesn't have tenant_id (but allow admins)
+  // Redirect if user has USER or GUEST role or doesn't have tenant_id (but allow admins)
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
-      // Hide logs for users with USER role
-      if (isUser) {
+      // Hide logs for users with USER or GUEST role
+      if (isUser || isGuest) {
         toast({
           title: "Access Denied",
           description: "You do not have permission to view logs.",
@@ -192,7 +202,7 @@ const LogsPage: React.FC = () => {
         router.push("/");
       }
     }
-  }, [isAuthenticated, authLoading, user, isUser, isAdmin, router, toast]);
+  }, [isAuthenticated, authLoading, user, isUser, isGuest, isAdmin, router, toast]);
 
   // Static list of all services (not dependent on OpenSearch logs)
   // This ensures all services are always available in the dropdown
@@ -315,6 +325,7 @@ const LogsPage: React.FC = () => {
   }, [isAuthenticated, isAdmin, user, tenantsData, activeTenants, tenantsError]);
 
   // Use static list of all services, filtered to tenant subscriptions for TENANT ADMIN
+  // and for ADMIN when a specific tenant is selected from the tenant dropdown.
   const filteredServices = useMemo(() => {
     let serviceList = [...services];
 
@@ -340,14 +351,38 @@ const LogsPage: React.FC = () => {
       });
     }
 
+    // For ADMIN: when a specific tenant is selected, restrict to that tenant's subscribed services.
+    // When "All Tenants" is selected (selectedTenantId === ""), show all services.
+    if (isAdmin && !isTenantAdmin && selectedTenantId) {
+      const selectedTenant = activeTenants.find((t: any) => t.tenant_id === selectedTenantId);
+      if (selectedTenant?.subscriptions?.length) {
+        const allowedServices = new Set<string>(
+          selectedTenant.subscriptions
+            .map((sub: string) => SUBSCRIPTION_TO_SERVICE_MAP[sub.toLowerCase().trim()] ?? null)
+            .filter(Boolean)
+        );
+
+        serviceList = serviceList.filter((svc) => allowedServices.has(svc));
+
+        console.log('Admin tenant-scoped service filter applied:', {
+          selectedTenantId,
+          rawSubscriptions: selectedTenant.subscriptions,
+          mappedAllowed: Array.from(allowedServices),
+          filteredCount: serviceList.length,
+          filteredServices: serviceList,
+        });
+      }
+    }
+
     const sorted = serviceList.sort();
     console.log('Filtered services for dropdown:', {
       total: sorted.length,
       services: sorted,
       isTenantAdmin,
+      selectedTenantId: selectedTenantId || 'All Tenants',
     });
     return sorted;
-  }, [services, isTenantAdmin, tenantAdminDetail]);
+  }, [services, isTenantAdmin, tenantAdminDetail, isAdmin, selectedTenantId, activeTenants]);
 
   // No longer needed - services are static, no error handling required
 
@@ -505,6 +540,8 @@ const LogsPage: React.FC = () => {
     },
     enabled: isAuthenticated,
     staleTime: 30 * 1000, // 30 seconds
+    // NOTE: auto-refresh is driven by handleRefresh() via setInterval (not refetchInterval)
+    // because handleRefresh shifts the time window to "now" — which is required to fetch new logs.
   });
 
   // Handle logs error
@@ -610,6 +647,37 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, authLoading]);
 
+  // Track last updated timestamp when fresh data arrives
+  useEffect(() => {
+    if (logsData) {
+      setLastUpdated(new Date());
+    }
+  }, [logsData]);
+
+  // Auto-refresh engine — calls handleRefresh() (same as the Refresh button) at the chosen
+  // interval. handleRefresh shifts the time window to "now" so new logs are always in range.
+  useEffect(() => {
+    if (!autoRefresh) {
+      setCountdown(refreshIntervalSecs);
+      return;
+    }
+    setCountdown(refreshIntervalSecs);
+    const refreshTimer = setInterval(() => {
+      handleRefreshRef.current(); // shift time window + trigger fetch — same as clicking Refresh
+      setCountdown(refreshIntervalSecs); // reset visual countdown
+    }, refreshIntervalSecs * 1000);
+    return () => clearInterval(refreshTimer);
+  }, [autoRefresh, refreshIntervalSecs]);
+
+  // Visual countdown ticker — counts down every second (display only, no fetch)
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const ticker = setInterval(() => {
+      setCountdown((prev) => (prev <= 1 ? refreshIntervalSecs : prev - 1));
+    }, 1000);
+    return () => clearInterval(ticker);
+  }, [autoRefresh, refreshIntervalSecs]);
+
   // Set default time range (last 1 hour) - update when page loads or when both are empty
   useEffect(() => {
     // Only set default if both startTime and endTime are empty
@@ -651,7 +719,7 @@ const LogsPage: React.FC = () => {
     // Note: React Query will automatically refetch when applied values change
   };
 
-  const handleRefresh = () => {
+  const handleRefresh = useCallback(() => {
     // Update time range to include latest logs
     const now = new Date();
     const formatDateTime = (date: Date) => {
@@ -706,7 +774,14 @@ const LogsPage: React.FC = () => {
     // Note: React Query will automatically refetch when applied values change
     setPage(1);
     setClientPage(1);
-  };
+  }, [appliedStartTime, appliedEndTime, startTime, endTime]);
+
+  // Keep a ref to always point to the latest handleRefresh.
+  // The auto-refresh setInterval captures this ref, so it never has a stale closure.
+  const handleRefreshRef = useRef(handleRefresh);
+  useEffect(() => {
+    handleRefreshRef.current = handleRefresh;
+  }, [handleRefresh]);
 
   const handleClear = () => {
     // Clear filter inputs
@@ -904,8 +979,8 @@ const LogsPage: React.FC = () => {
 
       <ContentLayout>
         <VStack spacing={6} w="full" align="stretch">
-          {/* Hide logs UI for users with USER role */}
-          {!authLoading && isAuthenticated && isUser ? (
+          {/* Hide logs UI for users with USER or GUEST role */}
+          {!authLoading && isAuthenticated && (isUser || isGuest) ? (
             <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
               <CardBody>
                 <Flex direction="column" align="center" justify="center" py={12}>
@@ -1115,6 +1190,9 @@ const LogsPage: React.FC = () => {
                       onChange={(e) => {
                         const value = e.target.value;
                         setSelectedTenantId(value === "" ? "" : value);
+                        // Reset service selection so a previously selected service
+                        // that no longer belongs to the newly selected tenant is cleared.
+                        setService("");
                         // Don't reset pagination here - wait for Search button
                       }}
                       bg="white"
@@ -1230,34 +1308,58 @@ const LogsPage: React.FC = () => {
                 </FormControl>
               </SimpleGrid>
 
-              <HStack spacing={4} mt={6} justifyContent="flex-end" w="full">
-                <Button
-                  leftIcon={<SearchIcon />}
-                  colorScheme="blue"
-                  onClick={handleSearch}
-                  isLoading={logsLoading}
-                  size="md"
-                  fontWeight="medium"
-                >
-                  Search
-                </Button>
-                <Button 
-                  variant="outline" 
-                  onClick={handleClear}
-                  size="md"
-                  fontWeight="medium"
-                >
-                  Clear
-                </Button>
-                <IconButton
-                  aria-label="Refresh"
-                  icon={<RepeatIcon />}
-                  onClick={handleRefresh}
-                  isLoading={logsLoading}
-                  size="md"
-                  variant="outline"
-                />
-              </HStack>
+              {/* Action row: auto-refresh controls (left) + action buttons (right) */}
+              <Flex mt={6} w="full" justify="space-between" align="center" flexWrap="wrap" gap={3}>
+
+                {/* ── Auto-refresh controls ── */}
+                <HStack spacing={3} align="center">
+                  <FormControl display="flex" alignItems="center" w="auto">
+                    <FormLabel htmlFor="auto-refresh-toggle" mb="0" fontWeight="medium" fontSize="sm" mr={2} whiteSpace="nowrap">
+                      Auto-refresh
+                    </FormLabel>
+                      <Switch
+                        id="auto-refresh-toggle"
+                        colorScheme="green"
+                        isChecked={autoRefresh}
+                        onChange={(e) => setAutoRefresh(e.target.checked)}
+                      />
+                  </FormControl>
+
+
+                </HStack>
+
+                {/* ── Search / Clear / Refresh buttons ── */}
+                <HStack spacing={4}>
+                  <Button
+                    leftIcon={<SearchIcon />}
+                    colorScheme="blue"
+                    onClick={handleSearch}
+                    isLoading={logsLoading}
+                    size="md"
+                    fontWeight="medium"
+                  >
+                    Search
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleClear}
+                    size="md"
+                    fontWeight="medium"
+                  >
+                    Clear
+                  </Button>
+                  <Tooltip label="Refresh now" placement="top" hasArrow>
+                    <IconButton
+                      aria-label="Refresh"
+                      icon={<RepeatIcon />}
+                      onClick={handleRefresh}
+                      isLoading={logsLoading}
+                      size="md"
+                      variant="outline"
+                    />
+                  </Tooltip>
+                </HStack>
+              </Flex>
             </CardBody>
           </Card>
 

@@ -19,6 +19,7 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 # Import middleware components
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.error_handler_middleware import add_error_handlers
+from ai4icore_exceptions import register_exception_handlers
 
 # Import AI4ICore libraries for observability, logging, and tracing
 try:
@@ -194,6 +195,7 @@ app = FastAPI(
 
 # CRITICAL: Register error handlers IMMEDIATELY after app creation
 # This ensures our handlers take precedence over FastAPI's default handlers
+register_exception_handlers(app)
 add_error_handlers(app)
 
 # Observability Plugin (OpenSearch metrics)

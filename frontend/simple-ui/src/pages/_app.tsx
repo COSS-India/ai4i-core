@@ -26,6 +26,8 @@ const layoutRoutes = [
   '/profile', 
   '/model-management',
   '/services-management',
+  '/tenant-management',
+  '/api-key-management',
   '/ocr',
   '/transliteration',
   '/language-detection',
@@ -36,6 +38,7 @@ const layoutRoutes = [
   '/logs',
   '/traces',
   '/alerts-management',
+  '/pii-management',
 ];
 
 export default function App({ Component, pageProps }: AppProps) {

@@ -37,6 +37,15 @@ function isValidEmailFormat(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
 }
 
+/**
+ * Tenant status is authoritative for user status display/action gating.
+ * If tenant is suspended/deactivated, all users should reflect that state.
+ */
+function applyTenantStatusToUsers(users: TenantUserView[], tenantStatus?: string | null): TenantUserView[] {
+  if (tenantStatus !== "SUSPENDED" && tenantStatus !== "DEACTIVATED") return users;
+  return users.map((u) => ({ ...u, status: tenantStatus }));
+}
+
 export interface UseTenantManagementOptions {
   /** Current user from useAuth(); used to set initial sub-view and to filter list users by tenant */
   user: { id?: number; is_superuser?: boolean; is_tenant?: boolean; tenant_id?: string | null } | null;
@@ -204,12 +213,28 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  const handleFetchTenantUsers = async () => {
+  const handleFetchTenantUsers = async (tenantIdOverride?: string) => {
+    const tenantId = tenantIdOverride ?? tenantDetailView?.tenant_id ?? user?.tenant_id ?? null;
+    if (!tenantId) {
+      toast({
+        title: "Tenant context missing",
+        description: "Unable to load users because no tenant ID is available.",
+        status: "warning",
+        isClosable: true,
+        duration: 5000,
+      });
+      setTenantUsers([]);
+      return;
+    }
     setIsLoadingTenantUsers(true);
     try {
-      const res = await multiTenantService.listUsers(user?.tenant_id ?? undefined);
+      const res = await multiTenantService.listUsers(tenantId);
       const list = Array.isArray(res) ? (res as TenantUserView[]) : (res?.users ?? []);
-      setTenantUsers(list);
+      const parentTenantStatus =
+        tenantDetailView?.tenant_id === tenantId
+          ? tenantDetailView.status
+          : tenants.find((t) => t.tenant_id === tenantId)?.status;
+      setTenantUsers(applyTenantStatusToUsers(list, parentTenantStatus));
     } catch (err) {
       console.error("Failed to fetch tenant users:", err);
       const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
@@ -333,9 +358,13 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       // }
       // -------------------------------------------------------------------------
 
+      const successMessage =
+        typeof registerResponse?.message === "string" && registerResponse.message.trim().length > 0
+          ? registerResponse.message.trim()
+          : "Tenant created successfully.";
       toast({
         title: "Tenant created",
-        description: `${registerResponse?.message ?? "Tenant created successfully."} Tenant remains pending until verified.`, 
+        description: successMessage,
         status: "success",
         duration: 5000,
         isClosable: true,
@@ -351,19 +380,27 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  const openUserModal = () => {
-    // Tenant admin: use their tenant_id from /me so the field is never empty and always correct
+  const getDefaultUserTenantId = () => {
+    // Tenant admin: use their tenant_id from /me so the field is never empty and always correct.
     const defaultTenant = user?.tenant_id?.trim()
-      ? tenants.find((t) => (t.tenant_id ?? "").trim().toLowerCase() === user!.tenant_id!.trim().toLowerCase()) ?? tenants[0]
+      ? tenants.find((t) => (t.tenant_id ?? "").trim().toLowerCase() === user.tenant_id!.trim().toLowerCase()) ?? tenants[0]
       : tenants[0];
+    return (user?.tenant_id?.trim() || defaultTenant?.tenant_id) ?? "";
+  };
+
+  const buildDefaultUserForm = (tenantId?: string): TenantUserFormState => ({
+    tenant_id: tenantId ?? getDefaultUserTenantId(),
+    email: "",
+    username: "",
+    full_name: "",
+    services: [],
+    is_approved: false,
+    role: "USER",
+  });
+
+  const openUserModal = () => {
     setUserForm({
-      tenant_id: (user?.tenant_id?.trim() || defaultTenant?.tenant_id) ?? "",
-      email: "",
-      username: "",
-      full_name: "",
-      services: [],
-      is_approved: false,
-      role: "USER",
+      ...buildDefaultUserForm(),
     });
     setUserFormErrors({});
     setIsUserModalOpen(true);
@@ -379,6 +416,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const closeUserModal = () => {
+    setUserForm(buildDefaultUserForm());
+    setUserFormErrors({});
     setIsUserModalOpen(false);
   };
 
@@ -498,7 +537,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       });
       toast({ title: "User added", description: "User " + userForm.username + " registered under tenant.", status: "success", duration: 4000, isClosable: true });
       closeUserModal();
-      handleFetchTenantUsers();
+      handleFetchTenantUsers(userForm.tenant_id);
     } catch (err) {
       console.error("Failed to register user:", err);
       const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
@@ -517,12 +556,13 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     try {
       const [detail, usersRes] = await Promise.all([
         multiTenantService.getViewTenant(t.tenant_id),
-        multiTenantService.listUsers(user?.tenant_id ?? undefined),
+        // Always scope list-users to the tenant being viewed; backend enforces TENANT ADMIN ↔ own tenant only.
+        multiTenantService.listUsers(t.tenant_id),
       ]);
       setViewTenantDetail(detail);
       // Support both { users: [...] } and raw array (e.g. from gateway)
       const usersList: TenantUserView[] = Array.isArray(usersRes) ? (usersRes as TenantUserView[]) : (usersRes?.users ?? []);
-      setTenantUsers(usersList);
+      setTenantUsers(applyTenantStatusToUsers(usersList, detail?.status ?? t.status));
     } catch (err) {
       console.error("Failed to fetch tenant details:", err);
       const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
@@ -594,13 +634,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const openAddUserForTenant = (tenant_id: string) => {
-    const tenant = tenants.find((t) => t.tenant_id === tenant_id);
-    const tenantSubs = tenant?.subscriptions ?? [];
-    setUserForm((prev) => ({
-      ...prev,
-      tenant_id,
-      services: tenantSubs.length > 0 ? tenantSubs.slice(0, 2) : [],
-    }));
+    setUserForm(buildDefaultUserForm(tenant_id));
+    setUserFormErrors({});
     setIsUserModalOpen(true);
   };
 
@@ -735,28 +770,32 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  // ----- Send Verification Email -----
-  const [sendingVerificationTenantId, setSendingVerificationTenantId] = useState<string | null>(null);
+  // ----- Resend verification email (PENDING tenants) -----
+  const [resendingVerificationTenantId, setResendingVerificationTenantId] = useState<string | null>(null);
 
   /** Validate email format */
   const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-  /** Send verification email to a PENDING tenant. Validates email first. */
-  const handleSendVerificationEmail = async (tenantId: string, email: string | undefined) => {
+  /** Resend verification email to a PENDING tenant via POST /email/resend. Validates email first. */
+  const handleResendVerificationEmail = async (tenantId: string, email: string | undefined) => {
     if (!email || !isValidEmail(email)) {
-      toast({ title: "Invalid Email", description: "Cannot send verification email. The tenant's contact email is invalid or missing.", status: "error", isClosable: true, duration: 5000 });
+      toast({ title: "Invalid Email", description: "Cannot resend verification email. The tenant's contact email is invalid or missing.", status: "error", isClosable: true, duration: 5000 });
       return;
     }
-    setSendingVerificationTenantId(tenantId);
+    setResendingVerificationTenantId(tenantId);
     try {
-      await multiTenantService.sendVerificationEmail(tenantId);
-      toast({ title: "Verification Email Sent", description: `Verification email sent to ${email}.`, status: "success", isClosable: true, duration: 5000 });
+      const res = await multiTenantService.resendVerificationEmail(tenantId);
+      const successMessage =
+        typeof res?.message === "string" && res.message.trim().length > 0
+          ? res.message.trim()
+          : `Verification email resent to ${email}.`;
+      toast({ title: "Verification email resent", description: successMessage, status: "success", isClosable: true, duration: 5000 });
     } catch (err) {
-      console.error("Failed to send verification email:", err);
+      console.error("Failed to resend verification email:", err);
       const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
       toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
     } finally {
-      setSendingVerificationTenantId(null);
+      setResendingVerificationTenantId(null);
     }
   };
 
@@ -1092,9 +1131,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleOpenDeleteUser,
     handleConfirmDeleteUser,
     closeDeleteUserDialog,
-    // Send verification email
-    sendingVerificationTenantId,
-    handleSendVerificationEmail,
+    // Resend verification email
+    resendingVerificationTenantId,
+    handleResendVerificationEmail,
     // Fetch
     handleFetchTenants,
     handleFetchTenantUsers,

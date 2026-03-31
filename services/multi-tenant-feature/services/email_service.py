@@ -92,6 +92,7 @@ async def send_verification_email(
     contact_email: str, 
     verification_link: str,
     tenant_id: str = None,
+    expires_in_minutes: int = None,
 ):
     """
     Send email verification link to tenant contact email for account activation.
@@ -100,18 +101,21 @@ async def send_verification_email(
         contact_email: The contact email of the tenant
         verification_link: The verification link to be sent
         tenant_id: The tenant identifier (for resend reference)
+        expires_in_minutes: How long the verification link remains valid
     """
 
     logger.info(f"Sending verification email to {contact_email} with link {verification_link}")
 
     subject = "Verify your AI4I account"
+    if expires_in_minutes is None:
+        expires_in_minutes = app_env.email_verification_token_expire_minutes
 
     # Build text body
     text_body = (
         "Welcome to AI4I!\n\n"
         "Please verify your email by clicking the link below:\n"
         f"{verification_link}\n\n"
-        "This link expires in 15 minutes.\n\n"
+        f"This link expires in {expires_in_minutes} minutes.\n\n"
     )
     if tenant_id:
         text_body += f"Your Tenant ID: {tenant_id}\n\n"
@@ -128,29 +132,11 @@ async def send_verification_email(
             Your Tenant ID: <code style="background:#e5e7eb;padding:2px 8px;border-radius:4px;font-family:monospace;">{tenant_id}</code>
           </p>
           <p style="margin:0;color:#6b7280;font-size:13px;">
-            To resend the verification email, visit the registration page and click "Resend Verification Email", 
-            then enter your Tenant ID above.
+            To receive the verification email again, please coordinate with the Platform Admin, mention the Tenant ID, 
+            and request re-initiation of the email verification process.
           </p>
         </div>
         
-        <!-- 
-        FRONTEND IMPLEMENTATION NOTE:
-        ==============================
-        To implement the "Resend Verification Email" feature on your frontend:
-        
-        1. Create a page/modal with an input field for "Tenant ID"
-        2. On submit, call the API:
-           
-           POST /api/v1/multi-tenant/email/resend
-           Content-Type: application/json
-           
-           {{"tenant_id": "{tenant_id}"}}
-        
-        3. Handle the response:
-           - Success (201): Show "Verification email sent!" message
-           - Error (400/404): Show "Tenant not found" or validation error
-           - Error (409): Show "Tenant already verified"
-        -->
         """
 
     html_body = f"""
@@ -165,7 +151,7 @@ async def send_verification_email(
             Verify Email
           </a>
         </p>
-        <p style="color:#6b7280;">This link expires in <b>15 minutes</b>.</p>
+        <p style="color:#6b7280;">This link expires in <b>{expires_in_minutes} minutes</b>.</p>
         {resend_section}
       </body>
     </html>

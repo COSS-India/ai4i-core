@@ -38,11 +38,10 @@ export const performNMTInference = async (
     if (useTryIt) {
       // Use try-it endpoint for anonymous users
       console.log('Using try-it endpoint for anonymous user');
-      const result = await performTryItNMTInference(text, config);
-      
-      // Track request for client-side rate limit warning
+      // Track every attempt (including rate-limited ones) so the client-side
+      // counter and warning banner stay accurate even when the server rejects.
       trackTryItRequest();
-      
+      const result = await performTryItNMTInference(text, config);
       return result;
     }
 
@@ -90,14 +89,6 @@ export const listNMTModels = async (): Promise<NMTModelDetailsResponse[]> => {
   }
 };
 
-/** Default script codes for common language codes (when API does not return them) */
-const DEFAULT_SCRIPT_BY_LANG: Record<string, string> = {
-  en: 'Latn', hi: 'Deva', bn: 'Beng', ta: 'Taml', te: 'Telu', mr: 'Deva', gu: 'Gujr',
-  kn: 'Knda', ml: 'Mlym', pa: 'Guru', or: 'Orya', as: 'Beng', ur: 'Aran', ks: 'Aran',
-  sa: 'Deva', ne: 'Deva', sd: 'Deva', mai: 'Deva', brx: 'Deva', doi: 'Deva', gom: 'Deva',
-  mni: 'Mtei', sat: 'Olck',
-};
-
 function normalizeServiceToNMTDetails(service: any): NMTServiceDetailsResponse {
   const supportedLanguages: string[] = [];
   const pairs: Array<{ sourceLanguage: string; targetLanguage: string; sourceScriptCode?: string; targetScriptCode?: string }> = [];
@@ -108,11 +99,14 @@ function normalizeServiceToNMTDetails(service: any): NMTServiceDetailsResponse {
       if (src) supportedLanguages.push(src);
       if (tgt) supportedLanguages.push(tgt);
       if (src && tgt) {
+        // Use only what the API returns. If the API returns "" or nothing, pass ""
+        // so the backend does NOT append a script suffix to the language code.
+        // The model-management service is the source of truth for script codes.
         pairs.push({
           sourceLanguage: src,
           targetLanguage: tgt,
-          sourceScriptCode: lang.sourceScriptCode || DEFAULT_SCRIPT_BY_LANG[src] || 'Latn',
-          targetScriptCode: lang.targetScriptCode || DEFAULT_SCRIPT_BY_LANG[tgt] || 'Deva',
+          sourceScriptCode: lang.sourceScriptCode || '',
+          targetScriptCode: lang.targetScriptCode || '',
         });
       }
     });
@@ -264,7 +258,7 @@ export const getNMTLanguages = async (modelId?: string): Promise<NMTLanguagesRes
       service.languages.forEach((lang: any) => {
         if (typeof lang === 'string') {
           supportedLanguages.push(lang);
-          languageDetails.push({ code: lang, name: lang });
+          languageDetails.push({ code: lang, name: LANG_CODE_TO_LABEL[lang] || lang });
         } else if (lang && typeof lang === 'object') {
           // Handle different language object formats
           const langCode = lang.code || lang.sourceLanguage || lang.targetLanguage || lang.language;
@@ -357,7 +351,7 @@ export const getNMTLanguagesForService = async (
       service.languages.forEach((lang: any) => {
         if (typeof lang === 'string') {
           supportedLanguages.push(lang);
-          languageDetails.push({ code: lang, name: lang });
+          languageDetails.push({ code: lang, name: LANG_CODE_TO_LABEL[lang] || lang });
         } else if (lang && typeof lang === 'object') {
           // Collect all language codes from this entry (e.g. sourceLanguage + targetLanguage)
           const codes: string[] = [];
@@ -435,8 +429,8 @@ export const getSupportedLanguagePairs = async (modelId?: string): Promise<Langu
     const languagesResponse = await getNMTLanguages(modelId);
     const languagePairs: LanguagePair[] = [];
     
-    // Generate all possible language pairs from supported languages
-    const supportedLanguages = languagesResponse.supported_languages;
+    // Generate all possible language pairs from supported languages (guard against missing/undefined)
+    const supportedLanguages = languagesResponse?.supported_languages ?? [];
     
     for (let i = 0; i < supportedLanguages.length; i++) {
       for (let j = 0; j < supportedLanguages.length; j++) {

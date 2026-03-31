@@ -9,10 +9,12 @@ import {
   FormControl,
   FormLabel,
   Heading,
+  IconButton,
   Input,
   InputGroup,
   InputLeftElement,
   Select,
+  Switch,
   Table,
   Thead,
   Tbody,
@@ -39,10 +41,11 @@ import {
   AlertDescription,
   Code,
   Spinner,
-  Center
+  Center,
+  Tooltip,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import { SearchIcon } from "@chakra-ui/icons";
+import { SearchIcon, ViewIcon, TriangleDownIcon, TriangleUpIcon } from "@chakra-ui/icons";
 import { useRouter } from "next/router";
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import ContentLayout from "../components/common/ContentLayout";
@@ -148,6 +151,8 @@ const ModelManagementPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterVersionStatus, setFilterVersionStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
+  const [sortBy, setSortBy] = useState<"time" | "name">("time");
+  const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure();
   const cancelConfirmRef = React.useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -256,14 +261,12 @@ const ModelManagementPage: React.FC = () => {
     return updated || submitted;
   };
 
-  // Apply search (name, task type) and filters (version status, task type), then sort by latest update then name
+  // Apply search (model name only) and filters (version status, task type), then sort by selected mode.
   const filteredModels = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const filtered = models.filter((m) => {
       if (q) {
-        const nameMatch = (m.name ?? "").toLowerCase().includes(q);
-        const taskMatch = (m.task?.type ?? "").toLowerCase().includes(q);
-        if (!nameMatch && !taskMatch) return false;
+        if (!(m.name ?? "").toLowerCase().includes(q)) return false;
       }
       if (filterVersionStatus) {
         const status = m.versionStatus?.toLowerCase() || "active";
@@ -273,14 +276,22 @@ const ModelManagementPage: React.FC = () => {
       if (filterTaskType && (m.task?.type ?? "").toUpperCase() !== filterTaskType) return false;
       return true;
     });
-    // Order by latest update/edit (versionStatusUpdatedAt) first, then created; secondary by name
+    // Default mode is newest-first; users can switch to explicit name sorting.
     return [...filtered].sort((a, b) => {
       const timeA = getModelSortTime(a);
       const timeB = getModelSortTime(b);
-      if (timeB !== timeA) return timeB - timeA; // newest first
-      return (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
+      const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
+
+      if (sortBy === "time") {
+        if (timeB !== timeA) return timeB - timeA;
+        return 0;
+      }
+
+      if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
+      if (timeB !== timeA) return timeB - timeA;
+      return 0;
     });
-  }, [models, searchQuery, filterVersionStatus, filterTaskType]);
+  }, [models, searchQuery, filterVersionStatus, filterTaskType, nameSortDirection, sortBy]);
 
   const totalModels = filteredModels.length;
   const totalPages = Math.max(1, Math.ceil(totalModels / listPageSize));
@@ -908,7 +919,7 @@ const ModelManagementPage: React.FC = () => {
                                   <SearchIcon color="gray.400" />
                                 </InputLeftElement>
                                 <Input
-                                  placeholder="Search by name or task type..."
+                                  placeholder="Search by model name..."
                                   value={searchQuery}
                                   onChange={(e) => setSearchQuery(e.target.value)}
                                   bg={cardBg}
@@ -919,7 +930,7 @@ const ModelManagementPage: React.FC = () => {
                             </FormControl>
                             <FormControl w={{ base: "full", sm: "140px" }}>
                               <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-                                Version status
+                                Status
                               </FormLabel>
                               <Select
                                 size="sm"
@@ -932,7 +943,7 @@ const ModelManagementPage: React.FC = () => {
                               >
                                 <option value="">All</option>
                                 <option value="active">Active</option>
-                                <option value="deprecated">Deactivated</option>
+                                <option value="deprecated">Deprecated</option>
                               </Select>
                             </FormControl>
                             <FormControl w={{ base: "full", sm: "160px" }}>
@@ -989,7 +1000,7 @@ const ModelManagementPage: React.FC = () => {
                                   onClick={() => { setFilterVersionStatus(""); setListPage(1); }}
                                   _hover={{ opacity: 0.8 }}
                                 >
-                                  Status: {filterVersionStatus === "active" ? "Active" : "Deactivated"} ×
+                                  Status: {filterVersionStatus === "active" ? "Active" : "Deprecated"} ×
                                 </Badge>
                               )}
                               {filterTaskType && (
@@ -1023,9 +1034,41 @@ const ModelManagementPage: React.FC = () => {
                           <Table variant="simple" bg={tableBg} size="sm" w="100%">
                             <Thead bg={tableHeaderBg}>
                               <Tr>
-                                <Th>Model Name</Th>
-                                <Th>Model Version</Th>
-                                <Th>Version Status</Th>
+                                <Th>
+                                  <HStack spacing={2}>
+                                    <Text>Name</Text>
+                                    <Tooltip label="Sort Name A to Z" hasArrow>
+                                      <IconButton
+                                        aria-label="Sort models by name ascending"
+                                        icon={<TriangleUpIcon />}
+                                        size="xs"
+                                        variant={sortBy === "name" && nameSortDirection === "asc" ? "solid" : "ghost"}
+                                        colorScheme="gray"
+                                        onClick={() => {
+                                          setSortBy("name");
+                                          setNameSortDirection("asc");
+                                          setListPage(1);
+                                        }}
+                                      />
+                                    </Tooltip>
+                                    <Tooltip label="Sort Name Z to A" hasArrow>
+                                      <IconButton
+                                        aria-label="Sort models by name descending"
+                                        icon={<TriangleDownIcon />}
+                                        size="xs"
+                                        variant={sortBy === "name" && nameSortDirection === "desc" ? "solid" : "ghost"}
+                                        colorScheme="gray"
+                                        onClick={() => {
+                                          setSortBy("name");
+                                          setNameSortDirection("desc");
+                                          setListPage(1);
+                                        }}
+                                      />
+                                    </Tooltip>
+                                  </HStack>
+                                </Th>
+                                <Th>Version</Th>
+                                <Th> Status</Th>
                                 <Th>Task Type</Th>
                                 <Th>Actions</Th>
                               </Tr>
@@ -1064,39 +1107,44 @@ const ModelManagementPage: React.FC = () => {
                                   </Badge>
                                 </Td>
                                 <Td onClick={(e) => e.stopPropagation()}>
-                                  <HStack spacing={2}>
-                                    <Button
-                                      size="sm"
-                                      colorScheme="blue"
-                                      variant="outline"
-                                      onClick={() => handleViewModel(model.modelId)}
-                                    >
-                                      View
-                                    </Button>
+                                  <HStack spacing={3} align="center">
+                                    <Tooltip label="View" placement="top" hasArrow>
+                                      <IconButton
+                                        aria-label="View"
+                                        icon={<ViewIcon />}
+                                        size="sm"
+                                        variant="ghost"
+                                        colorScheme="blue"
+                                        _hover={{ bg: "blue.50" }}
+                                        onClick={() => handleViewModel(model.modelId)}
+                                      />
+                                    </Tooltip>
                                     {(model.versionStatus?.toLowerCase() === "active" || !model.versionStatus) && !modelIdsWithPublishedService.has(model.modelId) ? (
-                                      <Button
-                                        size="sm"
-                                        colorScheme="orange"
-                                        variant="outline"
-                                        onClick={() => openConfirmDialog("deprecate", model)}
-                                        isLoading={updatingModelId === model.modelId}
-                                        loadingText="Deprecating..."
-                                        isDisabled={updatingModelId !== null}
-                                      >
-                                        Deprecate
-                                      </Button>
+                                      <Tooltip label="Deprecate model" placement="top" hasArrow>
+                                        <Box as="span" display="inline-flex" alignItems="center">
+                                          <Switch
+                                            size="md"
+                                            colorScheme="green"
+                                            isChecked={true}
+                                            onChange={() => openConfirmDialog("deprecate", model)}
+                                            isDisabled={updatingModelId !== null}
+                                            onClick={(e) => e.stopPropagation()}
+                                          />
+                                        </Box>
+                                      </Tooltip>
                                     ) : (model.versionStatus?.toLowerCase() !== "active" && model.versionStatus) ? (
-                                      <Button
-                                        size="sm"
-                                        colorScheme="green"
-                                        variant="outline"
-                                        onClick={() => openConfirmDialog("activate", model)}
-                                        isLoading={updatingModelId === model.modelId}
-                                        loadingText="Activating..."
-                                        isDisabled={updatingModelId !== null}
-                                      >
-                                        Activate
-                                      </Button>
+                                      <Tooltip label="Activate model" placement="top" hasArrow>
+                                        <Box as="span" display="inline-flex" alignItems="center">
+                                          <Switch
+                                            size="md"
+                                            colorScheme="green"
+                                            isChecked={false}
+                                            onChange={() => openConfirmDialog("activate", model)}
+                                            isDisabled={updatingModelId !== null}
+                                            onClick={(e) => e.stopPropagation()}
+                                          />
+                                        </Box>
+                                      </Tooltip>
                                     ) : null}
                                   </HStack>
                                 </Td>
@@ -1432,29 +1480,29 @@ const ModelManagementPage: React.FC = () => {
                               </Button>
                             )}
                             {(selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithPublishedService.has(selectedModel.modelId) ? (
-                              <Button
-                                size="sm"
-                                colorScheme="orange"
-                                variant="outline"
-                                onClick={() => openConfirmDialog("deprecate", selectedModel)}
-                                isLoading={updatingModelId === selectedModel.modelId}
-                                loadingText="Deprecating..."
-                                isDisabled={updatingModelId !== null}
-                              >
-                                Deprecate Model
-                              </Button>
+                              <Tooltip label="Deprecate model" placement="top" hasArrow>
+                                <Box as="span" display="inline-flex" alignItems="center">
+                                  <Switch
+                                    size="md"
+                                    colorScheme="green"
+                                    isChecked={true}
+                                    onChange={() => openConfirmDialog("deprecate", selectedModel)}
+                                    isDisabled={updatingModelId !== null}
+                                  />
+                                </Box>
+                              </Tooltip>
                             ) : (selectedModel.versionStatus?.toLowerCase() !== "active" && selectedModel.versionStatus) ? (
-                              <Button
-                                size="sm"
-                                colorScheme="green"
-                                variant="outline"
-                                onClick={() => openConfirmDialog("activate", selectedModel)}
-                                isLoading={updatingModelId === selectedModel.modelId}
-                                loadingText="Activating..."
-                                isDisabled={updatingModelId !== null}
-                              >
-                                Activate Model
-                              </Button>
+                              <Tooltip label="Activate model" placement="top" hasArrow>
+                                <Box as="span" display="inline-flex" alignItems="center">
+                                  <Switch
+                                    size="md"
+                                    colorScheme="green"
+                                    isChecked={false}
+                                    onChange={() => openConfirmDialog("activate", selectedModel)}
+                                    isDisabled={updatingModelId !== null}
+                                  />
+                                </Box>
+                              </Tooltip>
                             ) : null}
                           </HStack>
                         </HStack>
@@ -1483,7 +1531,7 @@ const ModelManagementPage: React.FC = () => {
                               </Box>
                               <Box>
                                 <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                  Version status
+                                  Status
                                 </Text>
                                 <Badge
                                   colorScheme={selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus ? "green" : "gray"}

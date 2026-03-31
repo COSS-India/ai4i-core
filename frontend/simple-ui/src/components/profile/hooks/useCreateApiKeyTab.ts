@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import authService from "../../../services/authService";
-import type { User } from "../../../types/auth";
+import type { User, Permission } from "../../../types/auth";
+import type { UserSearchablePick } from "../../common/UserSearchableSelect";
 
 export interface UseCreateApiKeyTabOptions {
   users: User[];
@@ -22,7 +23,7 @@ export function useCreateApiKeyTab({
   setSelectedApiKeyId,
 }: UseCreateApiKeyTabOptions) {
   const toast = useToastWithDeduplication();
-  const [permissions, setPermissions] = useState<string[]>([]);
+  const [permissions, setPermissions] = useState<Permission[]>([]);
   const [selectedUserForPermissions, setSelectedUserForPermissions] =
     useState<SelectedUserForPermissions | null>(null);
   const [selectedUserPermissions, setSelectedUserPermissions] = useState<string[]>([]);
@@ -38,12 +39,13 @@ export function useCreateApiKeyTab({
   });
   const [selectedPermissionsForUser, setSelectedPermissionsForUser] = useState<string[]>([]);
   const [isCreatingApiKeyForUser, setIsCreatingApiKeyForUser] = useState(false);
+  const [createdApiKeyToken, setCreatedApiKeyToken] = useState<string | null>(null);
 
   const handleLoadPermissions = async () => {
     setIsLoadingPermissions(true);
     try {
       const allPermissions = await authService.getAllPermissions();
-      setPermissions(allPermissions);
+      setPermissions(Array.isArray(allPermissions) ? allPermissions : []);
       toast({
         title: "Permissions Loaded",
         description: `Loaded ${allPermissions.length} permissions`,
@@ -64,19 +66,20 @@ export function useCreateApiKeyTab({
     }
   };
 
-  const handleUserSelect = (userId: number) => {
-    const u = users.find((x) => x.id === userId);
-    if (u) {
-      setSelectedUserForPermissions({
-        id: u.id,
-        email: u.email,
-        username: u.username || "",
-      });
-      setSelectedUserPermissions([]);
-    } else {
+  const handleUserSelect = (userId: number | null, picked?: UserSearchablePick | null) => {
+    if (userId == null) {
       setSelectedUserForPermissions(null);
       setSelectedUserPermissions([]);
+      return;
     }
+    const u = users.find((x) => x.id === userId) ?? picked;
+    if (!u) return;
+    setSelectedUserForPermissions({
+      id: u.id,
+      email: u.email,
+      username: u.username || "",
+    });
+    setSelectedUserPermissions([]);
   };
 
   const handleCreateApiKeyForUser = async () => {
@@ -113,24 +116,31 @@ export function useCreateApiKeyTab({
     }
     setIsCreatingApiKeyForUser(true);
     try {
+      // Convert selected permission names to IDs for the v2 API
+      const permissionIds = selectedPermissionsForUser
+        .map((name) => permissions.find((p) => p.name === name)?.id)
+        .filter((id): id is number => id != null);
       const createdKey = await authService.createApiKeyForUser({
         key_name: apiKeyForUser.key_name,
-        permissions: selectedPermissionsForUser,
+        permissions: permissionIds,
         expires_days: Number(apiKeyForUser.expires_days) || 30,
         user_id: selectedUserForPermissions.id,
       });
       try {
         const listResponse = await authService.listApiKeys();
         setApiKeys(Array.isArray(listResponse.api_keys) ? listResponse.api_keys : []);
-        setSelectedApiKeyId(listResponse.selected_api_key_id ?? null);
       } catch (err) {
         console.error("Failed to refresh API keys list:", err);
       }
+      // Store the JWT token so the UI can display it for copying
+      if (createdKey.api_key) {
+        setCreatedApiKeyToken(createdKey.api_key);
+      }
       toast({
         title: "API Key Created",
-        description: `API key "${createdKey.key_name}" created successfully for ${selectedUserForPermissions.username}.`,
+        description: `API key "${createdKey.key_name}" created successfully for ${selectedUserForPermissions.username}. Copy it now — it won't be shown again.`,
         status: "success",
-        duration: 5000,
+        duration: 8000,
         isClosable: true,
       });
       setApiKeyForUser({ key_name: "", permissions: [], expires_days: 30 });
@@ -158,6 +168,8 @@ export function useCreateApiKeyTab({
     selectedPermissionsForUser,
     setSelectedPermissionsForUser,
     isCreatingApiKeyForUser,
+    createdApiKeyToken,
+    clearCreatedApiKeyToken: () => setCreatedApiKeyToken(null),
     handleLoadPermissions,
     handleUserSelect,
     handleCreateApiKeyForUser,

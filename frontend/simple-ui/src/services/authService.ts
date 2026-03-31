@@ -127,7 +127,12 @@ class AuthService {
         throw error;
       }
 
-      return await response.json();
+      const json = await response.json();
+      // Unwrap v2 response envelope: { success: true, data: {...} }
+      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
+        return json.data as T;
+      }
+      return json as T;
     } catch (error: any) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
@@ -172,9 +177,9 @@ class AuthService {
   }
 
   // Authentication methods
-  async register(data: RegisterRequest): Promise<User> {
+  async register(data: RegisterRequest): Promise<{ id: number; email: string; username: string; message: string }> {
     // Register endpoint doesn't require authentication
-    return this.requestWithoutAuth<User>('/register', {
+    return this.requestWithoutAuth<{ id: number; email: string; username: string; message: string }>('/register', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -191,12 +196,6 @@ class AuthService {
     const rememberMe = data.remember_me ?? true; // Default to true for backward compatibility
     this.setAccessToken(response.access_token, rememberMe);
     this.setRefreshToken(response.refresh_token, rememberMe);
-
-    // Clear any previous user's API key so this user starts with no key until they set/select one
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('api_key');
-      localStorage.removeItem('selected_api_key_id');
-    }
 
     return response;
   }
@@ -275,7 +274,12 @@ class AuthService {
         throw error;
       }
 
-      return await response.json();
+      const json = await response.json();
+      // Unwrap v2 response envelope: { success: true, data: {...} }
+      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
+        return json.data as T;
+      }
+      return json as T;
     } catch (error) {
       console.error('Auth service request failed:', error);
       // Re-throw as Error if it's not already one, with proper message
@@ -309,11 +313,6 @@ class AuthService {
     const clearLocalState = () => {
       this.clearTokens();
       this.clearStoredUser();
-      // Clear API key so next user doesn't inherit previous user's key
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('api_key');
-        localStorage.removeItem('selected_api_key_id');
-      }
     };
 
     if (!refreshToken) {
@@ -325,9 +324,6 @@ class AuthService {
     try {
       const response = await this.request<LogoutResponse>('/logout', {
         method: 'POST',
-        headers: {
-          'x-auth-source': 'AUTH_TOKEN',
-        },
         body: JSON.stringify({
           refresh_token: data.refresh_token || refreshToken,
         }),
@@ -378,20 +374,12 @@ class AuthService {
   }
 
   async validateToken(): Promise<TokenValidationResponse> {
-    return this.request<TokenValidationResponse>('/validate', {
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
-    });
+    return this.request<TokenValidationResponse>('/validate');
   }
 
   async getCurrentUser(): Promise<User> {
     // Use a longer timeout for /me endpoint as it's critical for auth validation
-    return this.requestWithTimeout<User>('/me', {
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
-    }, 20000); // 20 seconds timeout for /me endpoint
+    return this.requestWithTimeout<User>('/me', {}, 20000);
   }
 
   // Request method with custom timeout
@@ -462,7 +450,12 @@ class AuthService {
         throw error;
       }
 
-      return await response.json();
+      const json = await response.json();
+      // Unwrap v2 response envelope: { success: true, data: {...} }
+      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
+        return json.data as T;
+      }
+      return json as T;
     } catch (error: any) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
@@ -525,9 +518,6 @@ class AuthService {
     return this.request<APIKeyResponse>('/api-keys', {
       method: 'POST',
       body: JSON.stringify(payload),
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
     });
   }
 
@@ -544,53 +534,13 @@ class AuthService {
     };
   }
 
-  /**
-   * Apply API key list response to localStorage so the selected key is available for services.
-   * Call this after login/sign-in (and on session restore) so the stored key is used for API requests.
-   */
-  applyApiKeyListToStorage(response: APIKeyListResponse): void {
-    if (typeof window === 'undefined') return;
-    const selectedId = response.selected_api_key_id;
-    if (selectedId != null && response.api_keys?.length) {
-      const selected = response.api_keys.find((k) => k.id === selectedId);
-      if (selected?.key_value && selected.key_value.trim() !== '' && selected.key_value !== '***') {
-        localStorage.setItem('api_key', selected.key_value.trim());
-        localStorage.setItem('selected_api_key_id', String(selectedId));
-        return;
-      }
-      localStorage.setItem('selected_api_key_id', String(selectedId));
-    }
-    localStorage.removeItem('api_key');
-    if (selectedId == null) {
-      localStorage.removeItem('selected_api_key_id');
-    }
-  }
-
-  /** Persist the selected API key for the current user (used to restore selection on next login). Pass null to clear selection. */
-  async selectApiKey(apiKeyId: number | null): Promise<{ selected_api_key_id: number | null; message?: string }> {
-    return this.request<{ selected_api_key_id: number | null; message?: string }>('/api-keys/select', {
-      method: 'POST',
-      body: JSON.stringify({ api_key_id: apiKeyId }),
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
-    });
-  }
-
   async listAllApiKeys(): Promise<AdminAPIKeyWithUserResponse[]> {
-    return this.request<AdminAPIKeyWithUserResponse[]>('/api-keys/all', {
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
-    });
+    return this.request<AdminAPIKeyWithUserResponse[]>('/api-keys/all');
   }
 
   async revokeApiKey(keyId: number): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/api-keys/${keyId}`, {
       method: 'DELETE',
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
     });
   }
 
@@ -598,9 +548,6 @@ class AuthService {
     return this.request<APIKeyResponse>(`/api-keys/${keyId}`, {
       method: 'PATCH',
       body: JSON.stringify(updateData),
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
     });
   }
 
@@ -609,30 +556,30 @@ class AuthService {
     return this.request<OAuth2Provider[]>('/oauth2/providers');
   }
 
-  // User management (Admin only)
-  async getAllUsers(): Promise<User[]> {
-    return this.request<User[]>('/users', {
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
+  async exchangeOAuthCode(code: string): Promise<LoginResponse> {
+    return this.requestWithoutAuth<LoginResponse>('/oauth2/exchange', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
     });
+  }
+
+  // User management (Admin / Mod / Tenant Admin)
+  async getAllUsers(): Promise<User[]> {
+    return this.request<User[]>('/users?limit=500&offset=0');
+  }
+
+  /** Paginated user list (same endpoint as getAllUsers; for infinite-scroll pickers). */
+  async listUsersPage(offset: number, limit: number = 100): Promise<User[]> {
+    return this.request<User[]>(`/users?limit=${limit}&offset=${offset}`);
   }
 
   async getUserById(userId: number): Promise<User> {
-    return this.request<User>(`/users/${userId}`, {
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
-    });
+    return this.request<User>(`/users/${userId}`);
   }
 
-  // Permissions management (Admin only)
-  async getAllPermissions(): Promise<string[]> {
-    return this.request<string[]>('/permission/list', {
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
-    });
+  // Permissions management (inference-only)
+  async getAllPermissions(): Promise<Permission[]> {
+    return this.request<Permission[]>('/inference/permissions');
   }
 
   // Utility methods
