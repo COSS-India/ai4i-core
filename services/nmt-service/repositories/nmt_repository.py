@@ -128,6 +128,40 @@ class NMTRepository:
             await self.db.rollback()
             logger.error(f"Failed to create NMT result: {e}")
             raise DatabaseError(f"Failed to create NMT result: {e}")
+
+    async def create_results_bulk(
+        self,
+        request_id: UUID,
+        rows: List[Dict[str, Any]],
+    ) -> None:
+        """Create multiple NMT result rows in a single commit."""
+        try:
+            if not rows:
+                return
+
+            results = [
+                NMTResultDB(
+                    request_id=request_id,
+                    translated_text=row["translated_text"],
+                    source_text=row["source_text"],
+                    confidence_score=row.get("confidence_score"),
+                    language_detected=row.get("language_detected"),
+                    word_alignments=row.get("word_alignments"),
+                )
+                for row in rows
+            ]
+
+            self.db.add_all(results)
+            await self.db.commit()
+            logger.info(
+                "Created %s NMT results for request %s (bulk)",
+                len(results),
+                request_id,
+            )
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Failed to create NMT results in bulk: {e}")
+            raise DatabaseError(f"Failed to create NMT results in bulk: {e}")
     
     async def get_request_by_id(self, request_id: UUID) -> Optional[NMTRequestDB]:
         """Get NMT request by ID with results"""

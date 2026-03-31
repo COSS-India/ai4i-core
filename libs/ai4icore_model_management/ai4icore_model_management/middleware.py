@@ -50,7 +50,7 @@ def extract_auth_headers(request: Request) -> Dict[str, str]:
     x_auth_source = request.headers.get("X-Auth-Source") or request.headers.get("x-auth-source")
     if x_auth_source:
         auth_headers["X-Auth-Source"] = x_auth_source
-    
+
     return auth_headers
 
 
@@ -348,7 +348,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             if not self._should_process(request.url.path):
                 logger.debug(f"Middleware skipping path: {request.url.path} (not in enabled_paths)")
                 return await call_next(request)
-            
+
             logger.debug(f"Model Resolution Middleware processing: {request.method} {request.url.path}")
             
             # For POST requests, try to extract serviceId from body
