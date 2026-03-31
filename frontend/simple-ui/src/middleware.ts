@@ -62,7 +62,7 @@ function getConnectOrigins(): string {
     origins.add('ws://localhost:8087');
     origins.add('ws://localhost:8088');
   }
-  return [...origins].join(' ');
+  return Array.from(origins).join(' ');
 }
 
 // Apply to all routes except static assets
