@@ -148,6 +148,8 @@ const LogsPage: React.FC = () => {
   const isAdmin = user?.roles?.includes('ADMIN') || false;
   // Check if user has USER role - hide logs UI for them
   const isUser = user?.roles?.includes('USER') || false;
+  // Check if user has GUEST role - hide logs UI for them
+  const isGuest = user?.roles?.includes('GUEST') || false;
   // Check if user is a TENANT ADMIN — scoped to their own tenant only
   const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
   // Kept for reference (e.g. display purposes); no longer drives access logic
@@ -172,11 +174,11 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, authLoading, router, toast]);
 
-  // Redirect if user has USER role or doesn't have tenant_id (but allow admins)
+  // Redirect if user has USER or GUEST role or doesn't have tenant_id (but allow admins)
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
-      // Hide logs for users with USER role
-      if (isUser) {
+      // Hide logs for users with USER or GUEST role
+      if (isUser || isGuest) {
         toast({
           title: "Access Denied",
           description: "You do not have permission to view logs.",
@@ -200,7 +202,7 @@ const LogsPage: React.FC = () => {
         router.push("/");
       }
     }
-  }, [isAuthenticated, authLoading, user, isUser, isAdmin, router, toast]);
+  }, [isAuthenticated, authLoading, user, isUser, isGuest, isAdmin, router, toast]);
 
   // Static list of all services (not dependent on OpenSearch logs)
   // This ensures all services are always available in the dropdown
@@ -977,8 +979,8 @@ const LogsPage: React.FC = () => {
 
       <ContentLayout>
         <VStack spacing={6} w="full" align="stretch">
-          {/* Hide logs UI for users with USER role */}
-          {!authLoading && isAuthenticated && isUser ? (
+          {/* Hide logs UI for users with USER or GUEST role */}
+          {!authLoading && isAuthenticated && (isUser || isGuest) ? (
             <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
               <CardBody>
                 <Flex direction="column" align="center" justify="center" py={12}>
