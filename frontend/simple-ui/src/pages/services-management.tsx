@@ -113,33 +113,12 @@ const ServicesManagementPage: React.FC = () => {
     return typeof modelVersionStatus === "string" && modelVersionStatus.toLowerCase() === "deprecated";
   };
 
-  /** Sort by latest update (publishedAt/unpublishedAt) then fallback to publishedOn/created_at; for list ordering */
-  const getServiceSortTime = (s: Service): number => {
-    if (s.isPublished === true && s.publishedAt) {
-      const t = new Date(s.publishedAt).getTime();
-      if (!Number.isNaN(t)) return t;
-    }
-    if (s.isPublished === false && s.unpublishedAt) {
-      const t = new Date(s.unpublishedAt).getTime();
-      if (!Number.isNaN(t)) return t;
-    }
-    if (s.versionStatusUpdatedAt) {
-      const t = new Date(s.versionStatusUpdatedAt).getTime();
-      if (!Number.isNaN(t)) return t;
-    }
-    if (s.updated_at) {
-      const t = new Date(s.updated_at).getTime();
-      if (!Number.isNaN(t)) return t;
-    }
-    if (s.created_at) {
-      const t = new Date(s.created_at).getTime();
-      if (!Number.isNaN(t)) return t;
-    }
-    if (s.publishedOn != null && s.publishedOn > 0) {
-      const n = Number(s.publishedOn);
-      return n > 1e12 ? n : n * 1000;
-    }
-    return 0;
+  /** Parse timestamp safely for SQL-like ordering */
+  const getSortTimestamp = (value?: string | number | null): number => {
+    if (value == null) return 0;
+    if (typeof value === "number") return value > 1e12 ? value : value * 1000;
+    const t = new Date(value).getTime();
+    return Number.isNaN(t) ? 0 : t;
   };
 
   const taskTypeOptions = useMemo(() => {
@@ -169,23 +148,27 @@ const ServicesManagementPage: React.FC = () => {
       return true;
     });
     return [...filtered].sort((a, b) => {
-      const timeA = getServiceSortTime(a);
-      const timeB = getServiceSortTime(b);
+      const createdA = getSortTimestamp(a.created_at);
+      const createdB = getSortTimestamp(b.created_at);
+      const updatedA = getSortTimestamp(a.updated_at);
+      const updatedB = getSortTimestamp(b.updated_at);
       const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
 
-      // Default mode: newest first. Name is only a tie-breaker.
+      // Default mode: mirror SQL ordering exactly -> ORDER BY created_at DESC, updated_at DESC.
       if (sortBy === "time") {
-        if (timeB !== timeA) return timeB - timeA;
-        if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
+        if (createdB !== createdA) return createdB - createdA;
+        if (updatedB !== updatedA) return updatedB - updatedA;
         return 0;
       }
 
-      // Name mode: honor user-selected A-Z / Z-A ordering.
+      // Name mode is applied only when user clicks one of the name arrows.
       if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
-      if (timeB !== timeA) return timeB - timeA;
+      // Mirror SQL ordering exactly -> ORDER BY created_at DESC, updated_at DESC.
+      if (createdB !== createdA) return createdB - createdA;
+      if (updatedB !== updatedA) return updatedB - updatedA;
       return 0;
     });
-  }, [services, searchQuery, filterStatus, filterTaskType, nameSortDirection, sortBy]);
+  }, [services, searchQuery, filterStatus, filterTaskType, sortBy, nameSortDirection]);
 
   const totalServices = filteredServices.length;
   const totalPages = Math.max(1, Math.ceil(totalServices / listPageSize));
@@ -1035,27 +1018,37 @@ const ServicesManagementPage: React.FC = () => {
                             <Table variant="simple" bg={tableBg} size="sm" w="100%">
                               <Thead bg={tableHeaderBg}>
                                 <Tr>
-                                  <Th
-                                    cursor="pointer"
-                                    userSelect="none"
-                                    onClick={() => {
-                                      if (sortBy !== "name") {
-                                        setSortBy("name");
-                                        setNameSortDirection("asc");
-                                      } else {
-                                        setNameSortDirection((d) => (d === "asc" ? "desc" : "asc"));
-                                      }
-                                      setListPage(1);
-                                    }}
-                                  >
+                                  <Th>
                                     <HStack spacing={2}>
                                       <Text>Name</Text>
-                                      {sortBy === "name" ? (
-                                      nameSortDirection === "asc" ? (
-                                        <TriangleUpIcon boxSize={3} color="gray.500" />
-                                      ) : (
-                                        <TriangleDownIcon boxSize={3} color="gray.500" />
-                                      )) : null}
+                                      <Tooltip label="Sort Name A to Z" hasArrow>
+                                        <IconButton
+                                          aria-label="Sort services by name ascending"
+                                          icon={<TriangleUpIcon />}
+                                          size="xs"
+                                          variant={sortBy === "name" && nameSortDirection === "asc" ? "solid" : "ghost"}
+                                          colorScheme="gray"
+                                          onClick={() => {
+                                            setSortBy("name");
+                                            setNameSortDirection("asc");
+                                            setListPage(1);
+                                          }}
+                                        />
+                                      </Tooltip>
+                                      <Tooltip label="Sort Name Z to A" hasArrow>
+                                        <IconButton
+                                          aria-label="Sort services by name descending"
+                                          icon={<TriangleDownIcon />}
+                                          size="xs"
+                                          variant={sortBy === "name" && nameSortDirection === "desc" ? "solid" : "ghost"}
+                                          colorScheme="gray"
+                                          onClick={() => {
+                                            setSortBy("name");
+                                            setNameSortDirection("desc");
+                                            setListPage(1);
+                                          }}
+                                        />
+                                      </Tooltip>
                                     </HStack>
                                   </Th>
                                   <Th>Task Type</Th>
