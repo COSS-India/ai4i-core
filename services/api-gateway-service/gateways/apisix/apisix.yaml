@@ -2305,8 +2305,8 @@
       simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
     pass_host: pass
     type: roundrobin
-- uri: /tenant/management
-  name: frontend-tenant-management
+- uri: /tenant-management
+  name: frontend-tenant-management-dash
   priority: 3
   methods:
   - GET
@@ -2317,8 +2317,8 @@
       simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
     pass_host: pass
     type: roundrobin
-- uri: /tenant/management/*
-  name: frontend-tenant-management-prefix
+- uri: /tenant-management/*
+  name: frontend-tenant-management-dash-prefix
   priority: 3
   methods:
   - GET
