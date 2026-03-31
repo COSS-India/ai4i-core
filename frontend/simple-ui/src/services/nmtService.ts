@@ -38,11 +38,10 @@ export const performNMTInference = async (
     if (useTryIt) {
       // Use try-it endpoint for anonymous users
       console.log('Using try-it endpoint for anonymous user');
-      const result = await performTryItNMTInference(text, config);
-      
-      // Track request for client-side rate limit warning
+      // Track every attempt (including rate-limited ones) so the client-side
+      // counter and warning banner stay accurate even when the server rejects.
       trackTryItRequest();
-      
+      const result = await performTryItNMTInference(text, config);
       return result;
     }
 
@@ -90,14 +89,6 @@ export const listNMTModels = async (): Promise<NMTModelDetailsResponse[]> => {
   }
 };
 
-/** Default script codes for common language codes (when API does not return them) */
-const DEFAULT_SCRIPT_BY_LANG: Record<string, string> = {
-  en: 'Latn', hi: 'Deva', bn: 'Beng', ta: 'Taml', te: 'Telu', mr: 'Deva', gu: 'Gujr',
-  kn: 'Knda', ml: 'Mlym', pa: 'Guru', or: 'Orya', as: 'Beng', ur: 'Aran', ks: 'Aran',
-  sa: 'Deva', ne: 'Deva', sd: 'Deva', mai: 'Deva', brx: 'Deva', doi: 'Deva', gom: 'Deva',
-  mni: 'Mtei', sat: 'Olck',
-};
-
 function normalizeServiceToNMTDetails(service: any): NMTServiceDetailsResponse {
   const supportedLanguages: string[] = [];
   const pairs: Array<{ sourceLanguage: string; targetLanguage: string; sourceScriptCode?: string; targetScriptCode?: string }> = [];
@@ -108,11 +99,14 @@ function normalizeServiceToNMTDetails(service: any): NMTServiceDetailsResponse {
       if (src) supportedLanguages.push(src);
       if (tgt) supportedLanguages.push(tgt);
       if (src && tgt) {
+        // Use only what the API returns. If the API returns "" or nothing, pass ""
+        // so the backend does NOT append a script suffix to the language code.
+        // The model-management service is the source of truth for script codes.
         pairs.push({
           sourceLanguage: src,
           targetLanguage: tgt,
-          sourceScriptCode: lang.sourceScriptCode || DEFAULT_SCRIPT_BY_LANG[src] || '',
-          targetScriptCode: lang.targetScriptCode || DEFAULT_SCRIPT_BY_LANG[tgt] || '',
+          sourceScriptCode: lang.sourceScriptCode || '',
+          targetScriptCode: lang.targetScriptCode || '',
         });
       }
     });
