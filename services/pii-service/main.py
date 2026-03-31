@@ -363,7 +363,7 @@ class AuditLogger:
                             processing_ms,
                             trace_json
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
                         """,
                         trace_id,
                         tenant_id,
@@ -371,7 +371,7 @@ class AuditLogger:
                         target,
                         pii_count,
                         processing_ms,
-                        trace_log,
+                        json.dumps(trace_log),
                     )
         except Exception as exc:
             print(f"Audit DB insert failed: {exc}")
