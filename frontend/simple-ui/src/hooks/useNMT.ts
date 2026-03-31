@@ -80,6 +80,9 @@ export const useNMT = (): UseNMTReturn => {
       
       setError(errorMessage);
       setFetching(false);
+      // Clear previous translation so stale output is not shown alongside the error
+      setTranslatedText('');
+      setFetched(false);
       toast({
         title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
