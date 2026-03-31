@@ -120,26 +120,32 @@ export const performTryItNMTInference = async (
       responseTime
     };
   } catch (error: any) {
-    // Handle rate limit errors
-    if (error.response?.status === 403) {
-      const errorMessage = error.response?.data?.detail || '';
-      if (errorMessage.includes('login')) {
-        throw new Error('Rate limit exceeded. Please login to continue using the service.');
-      }
-    }
-    
     console.error('Try-It NMT inference error:', error);
-    
-    // Provide user-friendly error messages
-    if (error.response?.status === 429) {
-      throw new Error('Too many requests. Please try again later.');
-    } else if (error.response?.status === 403) {
+
+    if (error.response?.status === 403 || error.response?.status === 429) {
+      // Extract message from either FastAPI format (data.detail) or APISIX gateway format (data.error_msg)
+      const rawMessage: string =
+        (typeof error.response?.data?.detail === 'string' ? error.response.data.detail : '') ||
+        error.response?.data?.detail?.message ||
+        error.response?.data?.error_msg ||
+        error.response?.data?.message ||
+        '';
+
+      if (
+        rawMessage.toLowerCase().includes('login') ||
+        rawMessage.toLowerCase().includes('rate') ||
+        error.response?.status === 429
+      ) {
+        throw new Error('Rate limit exceeded. You can try up to 5 translations per hour. Please sign in for unlimited access.');
+      }
+
       throw new Error('Access denied. Please login to access this service.');
-    } else if (error.message) {
-      throw error;
-    } else {
-      throw new Error('Failed to perform translation. Please try again.');
     }
+
+    if (error.message) {
+      throw error;
+    }
+    throw new Error('Failed to perform translation. Please try again.');
   }
 };
 
