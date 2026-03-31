@@ -127,6 +127,13 @@ function getAllowedForDurations(evalInterval: string | null | undefined): string
   return [...(FOR_DURATION_BY_EVAL_INTERVAL[key] ?? FOR_DURATION_BY_EVAL_INTERVAL["30s"])];
 }
 
+/** Visible mandatory-field marker used with `FormControl isRequired`. */
+const FORM_REQUIRED_ASTERISK = (
+  <Text as="span" color="red.500" ml={1} aria-hidden>
+    *
+  </Text>
+);
+
 const ALERT_TYPES_BY_CATEGORY: Record<string, { value: string; label: string }[]> = {
   application: [
     { value: "latency", label: "Latency" },
@@ -488,20 +495,29 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <Table variant="simple" size="sm">
                   <Thead>
                     <Tr>
-                      <Th
-                        cursor="pointer"
-                        userSelect="none"
-                        onClick={() =>
-                          setDefinitionsNameSortDirection((d) => (d === "asc" ? "desc" : "asc"))
-                        }
-                      >
+                      <Th>
                         <HStack spacing={2}>
                           <Text>Name</Text>
-                          {definitionsNameSortDirection === "asc" ? (
-                            <TriangleUpIcon boxSize={3} color="gray.500" />
-                          ) : (
-                            <TriangleDownIcon boxSize={3} color="gray.500" />
-                          )}
+                          <Tooltip label="Sort Name A to Z" hasArrow>
+                            <IconButton
+                              aria-label="Sort definitions by name ascending"
+                              icon={<TriangleUpIcon />}
+                              size="xs"
+                              variant={definitionsNameSortDirection === "asc" ? "solid" : "ghost"}
+                              colorScheme="gray"
+                              onClick={() => setDefinitionsNameSortDirection("asc")}
+                            />
+                          </Tooltip>
+                          <Tooltip label="Sort Name Z to A" hasArrow>
+                            <IconButton
+                              aria-label="Sort definitions by name descending"
+                              icon={<TriangleDownIcon />}
+                              size="xs"
+                              variant={definitionsNameSortDirection === "desc" ? "solid" : "ghost"}
+                              colorScheme="gray"
+                              onClick={() => setDefinitionsNameSortDirection("desc")}
+                            />
+                          </Tooltip>
                         </HStack>
                       </Th>
                       <Th>Category</Th>
@@ -607,7 +623,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
           <DrawerBody py={6}>
             <VStack spacing={5} align="stretch">
               <FormControl isRequired isInvalid={!!defs.createErrors?.name}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Alert Name</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Alert Name
+                </FormLabel>
                 <Input
                   placeholder="e.g. High Latency — ASR Global"
                   value={defs.createForm.name}
@@ -631,7 +649,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Divider />
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.category}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Category
+                </FormLabel>
                 <OptionSelector
                   options={CATEGORIES}
                   value={defs.createForm.category ?? "application"}
@@ -647,7 +667,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </FormControl>
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.sub_category}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Subcategory</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Subcategory
+                </FormLabel>
                 <Select
                   value={defs.createForm.sub_category ?? ""}
                   onChange={(e) => defs.setCreateForm({
@@ -669,7 +691,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </FormControl>
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.signal}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Signal</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Signal
+                </FormLabel>
                 <Select
                   value={defs.createForm.signal ?? ""}
                   onChange={(e) => {
@@ -693,7 +717,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </FormControl>
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.signal_metric}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Signal Metric</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Signal Metric
+                </FormLabel>
                 <Select
                   value={defs.createForm.signal_metric ?? ""}
                   onChange={(e) => defs.setCreateForm({ ...defs.createForm, signal_metric: e.target.value || null })}
@@ -709,7 +735,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </FormControl>
 
               <FormControl isRequired={defs.createForm.category !== "infrastructure"} isInvalid={!!defs.createErrors?.service}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Target</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Target
+                </FormLabel>
                 {defs.createForm.category === "infrastructure" ? (
                   <Box
                     px={3}
@@ -800,7 +828,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Divider />
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.condition_operator || !!defs.createErrors?.threshold_value || !!defs.createErrors?.threshold_unit}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Condition + Threshold</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Condition + Threshold
+                </FormLabel>
                 <SimpleGrid columns={3} spacing={3} mb={1}>
                   <Text fontSize="xs" color="gray.500" fontWeight="medium">Condition</Text>
                   <Text fontSize="xs" color="gray.500" fontWeight="medium">Threshold</Text>
@@ -864,7 +894,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Divider />
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.severity}>
-                <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Severity
+                </FormLabel>
                 <HStack spacing={2}>
                   {SEVERITIES.map((s) => {
                     const isActive = defs.createForm.severity === s;
@@ -907,7 +939,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
 
               <SimpleGrid columns={2} spacing={4}>
                 <FormControl isRequired isInvalid={!!defs.createErrors?.evaluation_interval}>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Evaluation Interval
+                  </FormLabel>
                   <Select
                     value={defs.createForm.evaluation_interval ?? "30s"}
                     onChange={(e) => {
@@ -926,7 +960,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </FormControl>
 
                 <FormControl isRequired isInvalid={!!defs.createErrors?.for_duration}>
-                  <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    For Duration
+                  </FormLabel>
                   <Select
                     value={(() => {
                       const allowed = getAllowedForDurations(defs.createForm.evaluation_interval);
@@ -948,7 +984,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Divider />
 
               <FormControl isRequired>
-                <FormLabel fontWeight="semibold" fontSize="sm">Status</FormLabel>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Status
+                </FormLabel>
                 <HStack>
                   <Switch
                     isChecked={defs.createForm.enabled !== false}
@@ -1070,8 +1108,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
                 <Textarea value={defs.updateForm.description ?? ""} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, description: e.target.value || null })} bg="white" rows={3} />
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Category
+                </FormLabel>
                 <OptionSelector
                   options={CATEGORIES}
                   value={defs.updateForm.category ?? "application"}
@@ -1079,8 +1119,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 />
               </FormControl>
               <Divider />
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Subcategory</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Subcategory
+                </FormLabel>
                 <Select
                   value={defs.updateForm.sub_category ?? ""}
                   onChange={(e) => defs.setUpdateForm({
@@ -1099,8 +1141,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   ))}
                 </Select>
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Signal</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Signal
+                </FormLabel>
                 <Select
                   value={defs.updateForm.signal ?? ""}
                   onChange={(e) => {
@@ -1121,8 +1165,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   ))}
                 </Select>
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Signal Metric</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Signal Metric
+                </FormLabel>
                 <Select
                   value={defs.updateForm.signal_metric ?? ""}
                   onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, signal_metric: e.target.value || undefined })}
@@ -1136,8 +1182,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </Select>
               </FormControl>
               <Divider />
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Target</FormLabel>
+              <FormControl isRequired={defs.updateForm.category !== "infrastructure"}>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Target
+                </FormLabel>
                 {defs.updateForm.category === "infrastructure" ? (
                   <Box
                     px={3}
@@ -1223,8 +1271,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   </Menu>
                 )}
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Condition + Threshold</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Condition + Threshold
+                </FormLabel>
                 <SimpleGrid columns={3} spacing={3} mb={1}>
                   <Text fontSize="xs" color="gray.500" fontWeight="medium">Condition</Text>
                   <Text fontSize="xs" color="gray.500" fontWeight="medium">Threshold</Text>
@@ -1281,8 +1331,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   )}
                 </SimpleGrid>
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Severity
+                </FormLabel>
                 <HStack spacing={2}>
                   {SEVERITIES.map((s) => {
                     const isActive = (defs.updateForm.severity ?? "") === s;
@@ -1319,8 +1371,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   })}
                 </HStack>
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Evaluation Interval
+                </FormLabel>
                 <Select
                   value={defs.updateForm.evaluation_interval ?? "30s"}
                   onChange={(e) => {
@@ -1335,8 +1389,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
                 </Select>
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  For Duration
+                </FormLabel>
                 <Select
                   value={(() => {
                     const allowed = getAllowedForDurations(defs.updateForm.evaluation_interval);
@@ -1351,8 +1407,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   ))}
                 </Select>
               </FormControl>
-              <FormControl>
-                <FormLabel fontWeight="semibold" fontSize="sm">Status</FormLabel>
+              <FormControl isRequired>
+                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  Status
+                </FormLabel>
                 <HStack>
                   <Switch
                     isChecked={defs.updateForm.enabled ?? true}
@@ -1429,20 +1487,29 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <Table variant="simple" size="sm">
                   <Thead>
                     <Tr>
-                      <Th
-                        cursor="pointer"
-                        userSelect="none"
-                        onClick={() =>
-                          setReceiversNameSortDirection((d) => (d === "asc" ? "desc" : "asc"))
-                        }
-                      >
+                      <Th>
                         <HStack spacing={2}>
                           <Text>Name</Text>
-                          {receiversNameSortDirection === "asc" ? (
-                            <TriangleUpIcon boxSize={3} color="gray.500" />
-                          ) : (
-                            <TriangleDownIcon boxSize={3} color="gray.500" />
-                          )}
+                          <Tooltip label="Sort Name A to Z" hasArrow>
+                            <IconButton
+                              aria-label="Sort receivers by name ascending"
+                              icon={<TriangleUpIcon />}
+                              size="xs"
+                              variant={receiversNameSortDirection === "asc" ? "solid" : "ghost"}
+                              colorScheme="gray"
+                              onClick={() => setReceiversNameSortDirection("asc")}
+                            />
+                          </Tooltip>
+                          <Tooltip label="Sort Name Z to A" hasArrow>
+                            <IconButton
+                              aria-label="Sort receivers by name descending"
+                              icon={<TriangleDownIcon />}
+                              size="xs"
+                              variant={receiversNameSortDirection === "desc" ? "solid" : "ghost"}
+                              colorScheme="gray"
+                              onClick={() => setReceiversNameSortDirection("desc")}
+                            />
+                          </Tooltip>
                         </HStack>
                       </Th>
                       <Th>Recipient</Th>
@@ -1776,20 +1843,29 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <Table variant="simple" size="sm" w="100%">
               <Thead>
                 <Tr>
-                  <Th
-                    cursor="pointer"
-                    userSelect="none"
-                    onClick={() =>
-                      setRulesNameSortDirection((d) => (d === "asc" ? "desc" : "asc"))
-                    }
-                  >
+                  <Th>
                     <HStack spacing={2}>
                       <Text>Rule Name</Text>
-                      {rulesNameSortDirection === "asc" ? (
-                        <TriangleUpIcon boxSize={3} color="gray.500" />
-                      ) : (
-                        <TriangleDownIcon boxSize={3} color="gray.500" />
-                      )}
+                      <Tooltip label="Sort Name A to Z" hasArrow>
+                        <IconButton
+                          aria-label="Sort rules by name ascending"
+                          icon={<TriangleUpIcon />}
+                          size="xs"
+                          variant={rulesNameSortDirection === "asc" ? "solid" : "ghost"}
+                          colorScheme="gray"
+                          onClick={() => setRulesNameSortDirection("asc")}
+                        />
+                      </Tooltip>
+                      <Tooltip label="Sort Name Z to A" hasArrow>
+                        <IconButton
+                          aria-label="Sort rules by name descending"
+                          icon={<TriangleDownIcon />}
+                          size="xs"
+                          variant={rulesNameSortDirection === "desc" ? "solid" : "ghost"}
+                          colorScheme="gray"
+                          onClick={() => setRulesNameSortDirection("desc")}
+                        />
+                      </Tooltip>
                     </HStack>
                   </Th>
                   <Th>Alert Definitions</Th>
@@ -1879,7 +1955,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {/* ── Rule Name + Description ── */}
               <VStack spacing={4} align="stretch" pb={6}>
                 <FormControl isRequired isInvalid={!!createRuleErrors.ruleName}>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Rule Name</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Rule Name
+                  </FormLabel>
                   <Input
                     placeholder="e.g. Route Critical ASR Alerts"
                     value={rules.createForm.rule_name}
@@ -1895,7 +1973,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {/* ── Category + Severity + Alert Definition ── */}
               <VStack spacing={4} align="stretch" pb={6}>
                 <FormControl isRequired isInvalid={!!createRuleErrors.category}>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Category
+                  </FormLabel>
                   <OptionSelector
                     options={CATEGORIES}
                     value={rules.createForm.category ?? ""}
@@ -1922,7 +2002,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   <FormErrorMessage>{createRuleErrors.category}</FormErrorMessage>
                 </FormControl>
                 <FormControl isRequired isInvalid={!!createRuleErrors.severity}>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Severity
+                  </FormLabel>
                   <HStack spacing={2}>
                     {SEVERITIES.map((s) => {
                       const isActive = rules.createForm.severity === s;
@@ -1991,7 +2073,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {/* ── Scope ── */}
               <VStack spacing={4} align="stretch" pb={6}>
                 <FormControl isRequired>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Scope</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Scope
+                  </FormLabel>
                   {rules.createForm.category === "infrastructure" ? (
                     <>
                       <Select value="global" isDisabled bg="gray.50">
@@ -2020,7 +2104,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </FormControl>
                 {rules.createForm.category !== "infrastructure" && createRuleScope === "specific_tenant" && (
                   <FormControl isRequired isInvalid={!!createRuleErrors.tenant}>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Target Tenant</FormLabel>
+                    <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                      Target Tenant
+                    </FormLabel>
                     <Select
                       value={createRuleTenant}
                       onChange={(e) => { setCreateRuleTenant(e.target.value); if (e.target.value) setCreateRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; }); }}
@@ -2042,7 +2128,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {/* ── Delivery Channel ── */}
               <VStack spacing={2} align="stretch" pb={6}>
                 <FormControl isRequired>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Delivery Channel</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Delivery Channel
+                  </FormLabel>
                   <Box
                     bg="gray.50"
                     border="1px solid"
@@ -2262,7 +2350,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {/* ── Rule Name ── */}
               <VStack spacing={4} align="stretch" pb={6}>
                 <FormControl isRequired isInvalid={!!editRuleErrors.ruleName}>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Rule Name *</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Rule Name
+                  </FormLabel>
                   <Input
                     value={rules.updateForm.rule_name ?? ""}
                     onChange={(e) => {
@@ -2280,8 +2370,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
 
               {/* ── Category + Severity + Alert Definition ── */}
               <VStack spacing={4} align="stretch" pb={6}>
-                <FormControl>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
+                <FormControl isRequired>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Category
+                  </FormLabel>
                   <OptionSelector
                     options={CATEGORIES}
                     value={editRuleCategory}
@@ -2307,8 +2399,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     }}
                   />
                 </FormControl>
-                <FormControl>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
+                <FormControl isRequired>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Severity
+                  </FormLabel>
                   <HStack spacing={2}>
                     {SEVERITIES.map((s) => {
                       const isActive = editRuleSeverity === s;
@@ -2389,7 +2483,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {/* ── Scope ── */}
               <VStack spacing={4} align="stretch" pb={6}>
                 <FormControl isRequired>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Scope *</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Scope
+                  </FormLabel>
                   {editRuleCategory === "infrastructure" ? (
                     <>
                       <Select value="global" isDisabled bg="gray.50">
@@ -2425,7 +2521,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </FormControl>
                 {editRuleCategory !== "infrastructure" && editRuleScope === "specific_tenant" && (
                   <FormControl isRequired isInvalid={!!editRuleErrors.tenant}>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Target Tenant *</FormLabel>
+                    <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                      Target Tenant
+                    </FormLabel>
                     <Select
                       value={
                         tenants.find(
@@ -2481,7 +2579,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               {/* ── Status ── */}
               <VStack spacing={2} align="stretch">
                 <FormControl isRequired>
-                  <FormLabel fontWeight="semibold" fontSize="sm">Status *</FormLabel>
+                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                    Status
+                  </FormLabel>
                   <HStack>
                     <Switch
                       isChecked={rules.updateForm.enabled ?? true}
