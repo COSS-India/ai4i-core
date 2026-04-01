@@ -264,19 +264,11 @@ def _load_multi_tenant_metadata():
 
 
 def _load_ai4i_platform_metadata():
-    module = _load_module(
-        "ai4i_alembic_dynamic.policy_engine.db_models",
-        PROJECT_ROOT / "services" / "policy-engine" / "app" / "db_models.py",
-    )
-    # Alembic autogenerate for `ai4i_platform_db` uses the SQLAlchemy metadata
-    # returned here. The PII tables live in a separate Alembic revision
-    # (`create_pii_tables.py`) but were not represented in the policy-engine
-    # metadata, so autogenerate could incorrectly generate a migration that
-    # drops them.
-    #
-    # We include lightweight definitions for PII tables here so autogenerate
-    # sees them as expected and preserves them during fresh runs.
-    metadata: MetaData = module.Base.metadata
+    # Policy Engine has been removed from the repository.
+    # Return a standalone SQLAlchemy MetaData that includes the minimal tables
+    # required to prevent Alembic autogenerate from dropping PII-related tables
+    # or other shared artifacts that used to live in the ai4i_platform schema.
+    metadata: MetaData = MetaData()
 
     if "pattern_library" not in metadata.tables:
         Table(
