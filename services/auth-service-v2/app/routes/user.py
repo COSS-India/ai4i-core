@@ -36,7 +36,12 @@ async def update_me(
 ):
     data = body.model_dump(exclude_unset=True)
     await svc.update_profile(current_user, data)
-    profile = await svc.get_user_profile(current_user)
+    # Reload the user from the database after update to avoid accessing
+    # potentially expired attributes on the in-memory instance, which can
+    # trigger async IO in an unsafe context.
+    refreshed_user = await svc.get_user_by_id(current_user.id)
+    # Fallback to the original user object if for some reason the reload fails.
+    profile = await svc.get_user_profile(refreshed_user or current_user)
     return success_response(data=profile)
 
 

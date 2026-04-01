@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from dotenv import load_dotenv
+import httpx
 import redis.asyncio as redis
 import uvicorn
 from fastapi import FastAPI, Request
@@ -217,6 +218,10 @@ async def lifespan(app: FastAPI):
     app.state.redis_client = redis_client
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
+    _pii_url = (app_env.pii_service_url or "").strip()
+    app.state.pii_service_url = _pii_url or None
+    app.state.pii_redact_timeout = float(app_env.pii_redact_timeout)
+    app.state.pii_http_client = httpx.AsyncClient()
     
     # Tenant schema router is created by MultiTenantPlugin at registration time
     # (uses MULTI_TENANT_DB_URL or DATABASE_URL fallback)
@@ -296,6 +301,11 @@ async def lifespan(app: FastAPI):
         if model_management_client:
             await model_management_client.close()
             logger.info("Model Management Service client closed")
+
+        pii_http_client = getattr(app.state, "pii_http_client", None)
+        if pii_http_client:
+            await pii_http_client.aclose()
+            logger.info("PII HTTP client closed")
 
     except Exception as e:
         logger.error(f"Error during shutdown: {e}")
