@@ -51,7 +51,20 @@ class UserRepository:
 
     async def list_all(self, offset: int = 0, limit: int = 100) -> list[User]:
         result = await self._db.execute(
-            select(User).order_by(User.id).offset(offset).limit(limit)
+            select(User)
+            .order_by(func.lower(User.username).asc(), User.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def list_by_tenant(self, tenant_id: str, offset: int = 0, limit: int = 100) -> list[User]:
+        result = await self._db.execute(
+            select(User)
+            .where(User.tenant_id_cached == tenant_id)
+            .order_by(User.id)
+            .offset(offset)
+            .limit(limit)
         )
         return list(result.scalars().all())
 
