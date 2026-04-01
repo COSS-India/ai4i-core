@@ -37,6 +37,15 @@ function isValidEmailFormat(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
 }
 
+/**
+ * Tenant status is authoritative for user status display/action gating.
+ * If tenant is suspended/deactivated, all users should reflect that state.
+ */
+function applyTenantStatusToUsers(users: TenantUserView[], tenantStatus?: string | null): TenantUserView[] {
+  if (tenantStatus !== "SUSPENDED" && tenantStatus !== "DEACTIVATED") return users;
+  return users.map((u) => ({ ...u, status: tenantStatus }));
+}
+
 export interface UseTenantManagementOptions {
   /** Current user from useAuth(); used to set initial sub-view and to filter list users by tenant */
   user: { id?: number; is_superuser?: boolean; is_tenant?: boolean; tenant_id?: string | null } | null;
@@ -192,6 +201,19 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const handleFetchTenants = async () => {
     setIsLoadingTenants(true);
     try {
+      // Tenant admin must not hit platform-admin-only list endpoint.
+      // Load only their own tenant using the tenant-scoped view endpoint.
+      if (user?.is_tenant && !user?.is_superuser) {
+        const tenantId = user?.tenant_id?.trim();
+        if (!tenantId) {
+          setTenants([]);
+          return;
+        }
+        const tenant = await multiTenantService.getViewTenant(tenantId);
+        setTenants(tenant ? [tenant] : []);
+        return;
+      }
+
       const res = await multiTenantService.listTenants();
       setTenants(res.tenants || []);
     } catch (err) {
@@ -204,8 +226,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  const handleFetchTenantUsers = async () => {
-    const tenantId = tenantDetailView?.tenant_id ?? user?.tenant_id ?? null;
+  const handleFetchTenantUsers = async (tenantIdOverride?: string) => {
+    const tenantId = tenantIdOverride ?? tenantDetailView?.tenant_id ?? user?.tenant_id ?? null;
     if (!tenantId) {
       toast({
         title: "Tenant context missing",
@@ -221,7 +243,11 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     try {
       const res = await multiTenantService.listUsers(tenantId);
       const list = Array.isArray(res) ? (res as TenantUserView[]) : (res?.users ?? []);
-      setTenantUsers(list);
+      const parentTenantStatus =
+        tenantDetailView?.tenant_id === tenantId
+          ? tenantDetailView.status
+          : tenants.find((t) => t.tenant_id === tenantId)?.status;
+      setTenantUsers(applyTenantStatusToUsers(list, parentTenantStatus));
     } catch (err) {
       console.error("Failed to fetch tenant users:", err);
       const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
@@ -367,19 +393,27 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  const openUserModal = () => {
-    // Tenant admin: use their tenant_id from /me so the field is never empty and always correct
+  const getDefaultUserTenantId = () => {
+    // Tenant admin: use their tenant_id from /me so the field is never empty and always correct.
     const defaultTenant = user?.tenant_id?.trim()
-      ? tenants.find((t) => (t.tenant_id ?? "").trim().toLowerCase() === user!.tenant_id!.trim().toLowerCase()) ?? tenants[0]
+      ? tenants.find((t) => (t.tenant_id ?? "").trim().toLowerCase() === user.tenant_id!.trim().toLowerCase()) ?? tenants[0]
       : tenants[0];
+    return (user?.tenant_id?.trim() || defaultTenant?.tenant_id) ?? "";
+  };
+
+  const buildDefaultUserForm = (tenantId?: string): TenantUserFormState => ({
+    tenant_id: tenantId ?? getDefaultUserTenantId(),
+    email: "",
+    username: "",
+    full_name: "",
+    services: [],
+    is_approved: false,
+    role: "USER",
+  });
+
+  const openUserModal = () => {
     setUserForm({
-      tenant_id: (user?.tenant_id?.trim() || defaultTenant?.tenant_id) ?? "",
-      email: "",
-      username: "",
-      full_name: "",
-      services: [],
-      is_approved: false,
-      role: "USER",
+      ...buildDefaultUserForm(),
     });
     setUserFormErrors({});
     setIsUserModalOpen(true);
@@ -395,6 +429,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const closeUserModal = () => {
+    setUserForm(buildDefaultUserForm());
+    setUserFormErrors({});
     setIsUserModalOpen(false);
   };
 
@@ -514,7 +550,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       });
       toast({ title: "User added", description: "User " + userForm.username + " registered under tenant.", status: "success", duration: 4000, isClosable: true });
       closeUserModal();
-      handleFetchTenantUsers();
+      handleFetchTenantUsers(userForm.tenant_id);
     } catch (err) {
       console.error("Failed to register user:", err);
       const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
@@ -539,7 +575,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setViewTenantDetail(detail);
       // Support both { users: [...] } and raw array (e.g. from gateway)
       const usersList: TenantUserView[] = Array.isArray(usersRes) ? (usersRes as TenantUserView[]) : (usersRes?.users ?? []);
-      setTenantUsers(usersList);
+      setTenantUsers(applyTenantStatusToUsers(usersList, detail?.status ?? t.status));
     } catch (err) {
       console.error("Failed to fetch tenant details:", err);
       const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
@@ -611,11 +647,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const openAddUserForTenant = (tenant_id: string) => {
-    setUserForm((prev) => ({
-      ...prev,
-      tenant_id,
-      services: [],
-    }));
+    setUserForm(buildDefaultUserForm(tenant_id));
     setUserFormErrors({});
     setIsUserModalOpen(true);
   };

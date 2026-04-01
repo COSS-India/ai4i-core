@@ -565,7 +565,12 @@ class AuthService {
 
   // User management (Admin / Mod / Tenant Admin)
   async getAllUsers(): Promise<User[]> {
-    return this.request<User[]>('/users');
+    return this.request<User[]>('/users?limit=500&offset=0');
+  }
+
+  /** Paginated user list (same endpoint as getAllUsers; for infinite-scroll pickers). */
+  async listUsersPage(offset: number, limit: number = 100): Promise<User[]> {
+    return this.request<User[]>(`/users?limit=${limit}&offset=${offset}`);
   }
 
   async getUserById(userId: number): Promise<User> {

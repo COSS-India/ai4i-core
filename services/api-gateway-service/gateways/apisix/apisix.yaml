@@ -786,6 +786,43 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+# --- Public model-management routes (no auth, specific endpoints) ---
+- uri: /api/v1/model-management/services/try-it-service-list
+  name: model-management-try-it-service-list-public-route
+  priority: 200
+  methods:
+  - GET
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    timeout:
+      send: 60
+      connect: 60
+      read: 60
+    nodes:
+      model-management-service${APISIX_UPSTREAM_SUFFIX}:8091: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      body_base64: false
+      headers:
+        set:
+          X-Served-By: APISIX-Gateway
 - uri: /api/v1/model-management/*
   name: model-management-route
   priority: 100
@@ -814,6 +851,7 @@
       - |
         return function(conf, ctx)
           ngx.req.set_header("X-User-Id", nil)
+          ngx.req.set_header("X-Try-It", nil)
         end
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
@@ -1540,13 +1578,8 @@
     serverless-pre-function:
       functions:
       - 'return function(conf, ctx) local sid = ngx.var.http_x_anonymous_session_id;
-        if sid and sid ~= '''' then ngx.req.set_header(''X-Try-It-RateLimit-Key'',
-        sid) else ngx.req.set_header(''X-Try-It-RateLimit-Key'', ngx.var.remote_addr
-        or ''unknown'') end; ngx.req.read_body(); local b = ngx.req.get_body_data();
-        if b and #b > 0 then local cjson = require(''cjson.safe''); local ok, t =
-        pcall(cjson.decode, b); if ok and t then if t.payload then ngx.req.set_body_data(cjson.encode(t.payload));
-        elseif t.input and t.config then ngx.req.set_body_data(cjson.encode(t)); end;
-        end; end; end'
+        if sid and sid ~= '''' then ngx.req.set_header(''X-Try-It-RateLimit-Key'', sid)
+        else ngx.req.set_header(''X-Try-It-RateLimit-Key'', ngx.var.remote_addr or ''unknown'') end; end'
       phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
@@ -1559,8 +1592,6 @@
       headers:
         X-Try-It: 'true'
         X-Gateway: apisix
-      uri: /api/v1/nmt/inference
-      use_real_request_uri_unsafe: false
     limit-count:
       count: 5
       key: http_x_try_it_ratelimit_key
@@ -1698,6 +1729,30 @@
     type: roundrobin
 - uri: /audio-language-detection/*
   name: frontend-audio-language-detection-prefix
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /api-key-management
+  name: frontend-api-key-management
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /api-key-management/*
+  name: frontend-api-key-management-prefix
   priority: 3
   methods:
   - GET
@@ -2240,6 +2295,30 @@
       use_real_request_uri_unsafe: false
 - uri: /services-management
   name: frontend-services-management
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /tenant-management
+  name: frontend-tenant-management-dash
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /tenant-management/*
+  name: frontend-tenant-management-dash-prefix
   priority: 3
   methods:
   - GET
