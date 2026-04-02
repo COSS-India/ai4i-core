@@ -1,4 +1,5 @@
 from pydantic import BaseModel , Field
+from typing import Optional
 
 class TenantSubscriptionAddRequest(BaseModel):
     tenant_id: str
@@ -15,3 +16,5 @@ class TenantSubscriptionRemoveRequest(BaseModel):
 class TenantSubscriptionResponse(BaseModel):
     tenant_id: str
     subscriptions: list[str]
+    # Optional human-readable message for partial success cases (e.g. duplicates).
+    message: Optional[str] | None = None

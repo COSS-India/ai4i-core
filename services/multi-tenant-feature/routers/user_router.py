@@ -26,6 +26,7 @@ router = APIRouter(
 
 @router.post("/subscriptions/add",
              response_model=UserSubscriptionResponse,
+             response_model_exclude_none=True,
              status_code=status.HTTP_201_CREATED,
              dependencies=[Depends(require_tenant_admin)]
              )
@@ -68,6 +69,7 @@ async def add_user_subscriptions_endpoint(
 
 @router.post("/subscriptions/remove",
              response_model=UserSubscriptionResponse,
+             response_model_exclude_none=True,
              status_code=status.HTTP_200_OK,
              dependencies=[Depends(require_tenant_admin)]
              )

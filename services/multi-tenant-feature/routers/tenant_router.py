@@ -31,6 +31,7 @@ tenant_resolve_router = APIRouter(
 
 @router.post("/subscriptions/add",
              response_model=TenantSubscriptionResponse,
+             response_model_exclude_none=True,
              status_code=status.HTTP_201_CREATED,
              dependencies=[Depends(require_admin)]
              )
@@ -60,6 +61,7 @@ async def add_tenant_subscriptions(
 
 @router.post("/subscriptions/remove",
              response_model=TenantSubscriptionResponse,
+             response_model_exclude_none=True,
              status_code=status.HTTP_200_OK,
              dependencies=[Depends(require_admin)]
              )
