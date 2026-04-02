@@ -138,8 +138,8 @@ class OrganizationSpanProcessor(SpanProcessor):
                 span.set_attribute("organization", organization)
             
             # Add tenant_id attribute (primary filter for multi-tenant RBAC)
-            if tenant_id:
-                span.set_attribute("tenant_id", tenant_id)
+            # OTel attributes cannot be null; emit a stable string so traces are filterable.
+            span.set_attribute("tenant_id", str(tenant_id) if tenant_id else "none")
         except Exception:
             # Silently fail if context is not available
             pass
