@@ -1545,7 +1545,7 @@ async def list_service(db: AsyncSession) -> ListServicesResponse:
 async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSession,) -> TenantSubscriptionResponse:
     """
     Add subscriptions to a tenant.
-    Fails if subscription already exists.
+    Performs partial add: if some subscriptions already exist, it will still add the rest.
 
     Args:
         tenant_id: The tenant identifier
@@ -1575,38 +1575,41 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
             detail=f"Invalid subscriptions: {normalize_to_strings(invalid)}",
         )
 
+    requested = set(subscriptions)
     current = set(tenant.subscriptions or [])
-    duplicates = current & set(subscriptions)
+    duplicates = current & requested
+    to_add = requested - current
 
-    if duplicates:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Subscription(s) already exist: {normalize_to_strings(duplicates)}",
-        )
-
-    updated = list(current | set(subscriptions))
+    updated = list(current | to_add)
     tenant.subscriptions = updated
+
+    message = None
+    if duplicates:
+        # Keep exact message format expected by callers.
+        message = f"Subscription(s) already exist: {normalize_to_strings(duplicates)}"
 
     # Audit log
     db.add(
         AuditLog(
             tenant_id=tenant.id,
             action=AuditAction.subscription_added,
-            details={"added": subscriptions},
+            details={"added": list(to_add)},
         )
     )
 
     # Create tables for newly added services in tenant schema
-    if tenant.status == TenantStatus.ACTIVE and tenant.schema_name:
+    if to_add and tenant.status == TenantStatus.ACTIVE and tenant.schema_name:
         try:
             await create_service_tables_for_subscriptions(
                 schema_name=tenant.schema_name,
-                subscriptions=subscriptions,
+                subscriptions=list(to_add),
                 db=db,  # Pass existing session to use same transaction
             )
-            logger.info(f"Created tables for new subscriptions {subscriptions} in schema '{tenant.schema_name}'")
+            logger.info(
+                f"Created tables for new subscriptions {list(to_add)} in schema '{tenant.schema_name}'"
+            )
         except Exception as e:
-            logger.error(f"Failed to create tables for new subscriptions {subscriptions}: {e}")
+            logger.error(f"Failed to create tables for new subscriptions {list(to_add)}: {e}")
             logger.exception(f"Error details: {e}")
             raise
     try:
@@ -1624,6 +1627,7 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
     return TenantSubscriptionResponse(
         tenant_id=tenant.tenant_id,
         subscriptions=tenant.subscriptions,
+        message=message,
     )
 
 
@@ -1651,22 +1655,22 @@ async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: Async
     current = set(tenant.subscriptions or [])
     to_remove = set(subscriptions)
 
-    # Validate: subscriptions must exist
     missing = to_remove - current
-    if missing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Subscriptions not present for tenant: {normalize_to_strings(missing)}",
-        )
-    
-    updated = list(current - set(subscriptions))
+    to_remove_existing = to_remove & current
+
+    updated = list(current - to_remove_existing)
     tenant.subscriptions = updated
+
+    message = None
+    if missing:
+        # Keep message format expected by callers.
+        message = f"Subscriptions not present for tenant: {normalize_to_strings(missing)}"
 
     db.add(
         AuditLog(
             tenant_id=tenant.id,
             action=AuditAction.subscription_removed,
-            details={"removed": subscriptions},
+            details={"removed": list(to_remove_existing)},
         )
     )
 
@@ -1685,6 +1689,7 @@ async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: Async
     return TenantSubscriptionResponse(
         tenant_id=tenant.tenant_id,
         subscriptions=tenant.subscriptions,
+        message=message,
     )
 
 
@@ -2853,14 +2858,15 @@ async def add_user_subscriptions(
 
     current = set(tenant_user.subscriptions or [])
     duplicates = current & requested_services
-    if duplicates:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Subscription(s) already exist for user: {normalize_to_strings(duplicates)}",
-        )
+    to_add = requested_services - current
 
-    updated = list(current | requested_services)
+    updated = list(current | to_add)
     tenant_user.subscriptions = updated
+
+    message = None
+    if duplicates:
+        # Keep exact message format expected by callers.
+        message = f"Subscription(s) already exist for user: {normalize_to_strings(duplicates)}"
 
     # Audit log for user subscription add
     db.add(
@@ -2870,7 +2876,7 @@ async def add_user_subscriptions(
             actor=AuditActorType.ADMIN,
             details={
                 "user_id": user_id,
-                "added_subscriptions": list(requested_services),
+                "added_subscriptions": list(to_add),
             },
         )
     )
@@ -2895,6 +2901,7 @@ async def add_user_subscriptions(
         tenant_id=tenant_id,
         user_id=user_id,
         subscriptions=tenant_user.subscriptions or [],
+        message=message,
     )
 
 
@@ -2931,14 +2938,14 @@ async def remove_user_subscriptions(
     to_remove = set(subscriptions)
 
     missing = to_remove - current
-    if missing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Subscriptions not present for user: {list(missing)}",
-        )
+    to_remove_existing = to_remove & current
 
-    updated = list(current - to_remove)
+    updated = list(current - to_remove_existing)
     tenant_user.subscriptions = updated
+
+    message = None
+    if missing:
+        message = f"Subscriptions not present for user: {list(missing)}"
 
     # Audit log for user subscription removal
     db.add(
@@ -2948,7 +2955,7 @@ async def remove_user_subscriptions(
             actor=AuditActorType.ADMIN,
             details={
                 "user_id": user_id,
-                "removed_subscriptions": list(to_remove),
+                "removed_subscriptions": list(to_remove_existing),
             },
         )
     )
@@ -2973,6 +2980,7 @@ async def remove_user_subscriptions(
         tenant_id=tenant_id,
         user_id=user_id,
         subscriptions=tenant_user.subscriptions or [],
+        message=message,
     )
 
 async def update_billing_plan(db: AsyncSession,payload: BillingUpdateRequest) -> BillingUpdateResponse:
