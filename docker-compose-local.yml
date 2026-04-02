@@ -218,6 +218,11 @@ services:
       microservices-network:
         aliases:
           - api-gateway-service
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
 
   auth-service:

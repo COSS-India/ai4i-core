@@ -179,17 +179,145 @@ services:
       start_period: 40s
     restart: unless-stopped
 
-  nginx:
-    image: nginx:1.27-alpine
-    container_name: ai4v-nginx-proxy
+  kong:
+    image: kong:3.4-ubuntu
+    container_name: ai4v-gateway
+    profiles:
+      - kong
     ports:
       - "8080:8080"
+      - "8443:8443"
+    environment:
+      KONG_DATABASE: "off"
+      KONG_PROXY_LISTEN: 0.0.0.0:8080
+      KONG_DECLARATIVE_CONFIG: /tmp/kong-substituted.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: "off"
+      KONG_ADMIN_GUI_URL: http://localhost:8002
+      # Load only our custom plugin to avoid missing bundled plugins issues
+      KONG_PLUGINS: token-validator
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      AI4VOICE_API_KEY: ${AI4VOICE_API_KEY}
+      ASR_API_KEY: ${ASR_API_KEY}
+      TTS_API_KEY: ${TTS_API_KEY}
+      NMT_API_KEY: ${NMT_API_KEY}
+      PIPELINE_API_KEY: ${PIPELINE_API_KEY}
+      DEVELOPER_API_KEY: ${DEVELOPER_API_KEY}
+      MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
+      LLM_API_KEY: ${LLM_API_KEY}
+    env_file:
+      - ./.env
     volumes:
-      - ./services/api-gateway-service/gateways/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./services/api-gateway-service/gateways/kong/kong.yml:/kong/kong.yml:ro
+      - ./services/api-gateway-service/gateways/kong/substitute-env.sh:/kong/substitute-env.sh:ro
+      - ./services/Konga-API-manager/plugins/token-validator/kong/plugins:/usr/local/share/lua/5.1/kong/plugins:ro
+    command: >
+      sh -c "
+        CR=$(printf '\\r') &&
+        tr -d \"$$CR\" < /kong/substitute-env.sh > /tmp/kong-substitute-env.sh &&
+        sh /tmp/kong-substitute-env.sh &&
+        /docker-entrypoint.sh kong docker-start
+      "
     networks:
       microservices-network:
         aliases:
           - api-gateway-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  postgres-konga:
+    image: postgres:11-alpine
+    container_name: ai4v-postgres-konga
+    profiles:
+      - kong
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: konga
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres-konga-data:/var/lib/postgresql/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d konga"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped 
+
+  kong-manager:
+    image: pantsel/konga:latest
+    container_name: ai4v-kong-manager
+    profiles:
+      - kong
+    ports:
+      - "8002:1337"
+    environment:
+      NODE_ENV: production
+      DB_ADAPTER: postgres
+      DB_HOST: postgres-konga
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_DATABASE: konga
+      KONGA_HOOK_TIMEOUT: 120000
+      TOKEN_SECRET: ${KONG_MANAGER_TOKEN_SECRET}
+    depends_on:
+      kong:
+        condition: service_healthy
+      postgres-konga:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  apisix:
+    image: apache/apisix:latest
+    container_name: ai4v-gateway
+    profiles:
+      - apisix
+    ports:
+      - "8080:8080"
+    environment:
+      APISIX_STAND_ALONE: "true"
+      APISIX_PUBLIC_ORIGIN: ${APISIX_PUBLIC_ORIGIN:-http://localhost:3000}
+      APISIX_UPSTREAM_SUFFIX: ${APISIX_UPSTREAM_SUFFIX:-}
+    env_file:
+      - ./.env
+    volumes:
+      - ./services/api-gateway-service/gateways/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./services/api-gateway-service/gateways/apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml.template:ro
+      - ./services/api-gateway-service/gateways/apisix/substitute-env.sh:/usr/local/apisix/substitute-env.sh:ro
+    command: >
+      sh -c "
+        CR=$(printf '\\r') &&
+        tr -d \"$$CR\" < /usr/local/apisix/substitute-env.sh > /tmp/substitute-env.sh &&
+        tr -d \"$$CR\" < /usr/local/apisix/conf/apisix.yaml.template > /tmp/apisix.yaml.template &&
+        APISIX_CONFIG_TEMPLATE=/tmp/apisix.yaml.template sh /tmp/substitute-env.sh &&
+        /usr/bin/apisix init &&
+        exec /usr/local/openresty/bin/openresty -p /usr/local/apisix -g 'daemon off;'
+      "
+    networks:
+      microservices-network:
+        aliases:
+          - api-gateway-service
+    dns_search: []
     restart: unless-stopped
 
   auth-service:
@@ -1252,6 +1380,8 @@ volumes:
     driver: local
     # Use Docker-managed volume by default (portable across environments).
       
+  postgres-konga-data:
+    driver: local
   redis-data:
     driver: local
   influxdb-data:
