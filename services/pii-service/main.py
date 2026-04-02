@@ -3,8 +3,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 import re
-import hashlib
-import hmac
 import os
 import json
 import time
@@ -22,10 +20,6 @@ _SERVICE_DIR = Path(__file__).resolve().parent
 load_dotenv(_SERVICE_DIR / ".env")
 
 from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from ai4icore_exceptions import register_exception_handlers
 
@@ -37,25 +31,28 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 NER_SERVICE_URL = os.getenv("NER_SERVICE_URL", "http://localhost:9001/ner")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 KAFKA_AUDIT_TOPIC = os.getenv("KAFKA_AUDIT_TOPIC", "pii_audit_logs")
-PII_HMAC_KEY = os.getenv("PII_HMAC_KEY", "change-me-in-production").encode("utf-8")
 
 db_pool = None
 redis_client = None
 kafka_producer = None
 
-otel_service_name = os.getenv("OTEL_SERVICE_NAME", "pii-guardrail")
-otel_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
-
-resource = Resource(attributes={"service.name": otel_service_name})
-provider = TracerProvider(resource=resource)
-processor = BatchSpanProcessor(OTLPSpanExporter(endpoint=otel_endpoint, insecure=True))
-provider.add_span_processor(processor)
-trace.set_tracer_provider(provider)
-tracer = trace.get_tracer(__name__)
-
 app = FastAPI()
 register_exception_handlers(app)
-FastAPIInstrumentor.instrument_app(app)
+
+# Align with platform: shared telemetry (Jaeger OTLP, org processor, span filtering)
+from ai4icore_env import app_env
+from ai4icore_telemetry import setup_tracing
+
+_pii_service_name = (
+    (getattr(app_env, "service_name", None) or "").strip()
+    or os.getenv("OTEL_SERVICE_NAME", "").strip()
+    or "pii-service"
+)
+_tracer_setup = setup_tracing(_pii_service_name)
+if _tracer_setup:
+    FastAPIInstrumentor.instrument_app(app)
+
+tracer = trace.get_tracer(_pii_service_name)
 
 from middleware.auth_provider import AuthProvider
 
@@ -565,8 +562,6 @@ async def redact_text(
         rep = "[REDACTED]"
         if rule["action"] == "REDACT_TAG":
             rep = rule["config"].get("tag_label", f"[{ent.entity_type}]")
-        elif rule["action"] == "HASH":
-            rep = hmac.new(PII_HMAC_KEY, ent.text_segment.encode(), hashlib.sha256).hexdigest()[:10] + "..."
         elif rule["action"] == "MASK":
             char = rule["config"].get("mask_char", "X")
             rep = char * len(ent.text_segment)
