@@ -4,6 +4,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if command -v cygpath >/dev/null 2>&1; then
+  PROJECT_ROOT=$(cygpath -m "$PROJECT_ROOT")
+fi
 # Alembic is now located under infrastructure/databases/migrations/postgres
 ALEMBIC_INI="$PROJECT_ROOT/infrastructure/databases/migrations/postgres/alembic.ini"
 ALEMBIC_DIR="$(cd "$(dirname "$ALEMBIC_INI")" && pwd)"
@@ -191,6 +194,9 @@ run_alembic_with_db_config() {
   # IMPORTANT: create the temp ini in the same directory as ALEMBIC_INI
   # so that %(here)s in alembic.ini resolves correctly to ALEMBIC_DIR
   temp_ini="$(mktemp "$ALEMBIC_DIR/tmp_alembic_XXXXXX.ini")"
+  if command -v cygpath >/dev/null 2>&1; then
+    temp_ini=$(cygpath -m "$temp_ini")
+  fi
   "$PYTHON_BIN" - <<PY
 from pathlib import Path
 
