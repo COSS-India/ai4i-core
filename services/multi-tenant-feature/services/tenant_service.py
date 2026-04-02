@@ -85,6 +85,28 @@ DB_NAME                 = str(app_env.app_db_name)
 API_GATEWAY_URL        = app_env.api_gateway_url
 API_GATEWAY_TIMEOUT       = app_env.api_gateway_timeout
 
+
+async def invalidate_pending_verification_tokens(
+    tenant_id,
+    db: AsyncSession,
+    *,
+    invalidated_at: Optional[datetime] = None,
+):
+    """
+    Expire every unverified token for a tenant so that only a newly issued one can be used.
+    """
+    invalidated_at = invalidated_at or now_utc()
+
+    await db.execute(
+        update(TenantEmailVerification)
+        .where(
+            TenantEmailVerification.tenant_id == tenant_id,
+            TenantEmailVerification.verified_at.is_(None),
+            TenantEmailVerification.expires_at >= invalidated_at,
+        )
+        .values(expires_at=invalidated_at - timedelta(seconds=1))
+    )
+
 # Status transition rules
 TENANT_STATUS_TRANSITIONS = {
     TenantStatus.PENDING: [TenantStatus.ACTIVE, TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED],
@@ -658,8 +680,11 @@ async def send_verification_link(
         background_tasks: BackgroundTasks to send email asynchronously
     """
 
+    invalidated_at = now_utc()
+    await invalidate_pending_verification_tokens(created.id, db, invalidated_at=invalidated_at)
+
     token = generate_email_verification_token()
-    expiry = now_utc() + timedelta(minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES)
+    expiry = invalidated_at + timedelta(minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES)
 
     verification = TenantEmailVerification(
         tenant_id=created.id,
@@ -947,7 +972,8 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
         raise ValueError("Invalid or expired token")
 
     # Ensure this token is still within its validity window
-    if verification.expires_at < now_utc():
+    current_time = now_utc()
+    if verification.expires_at <= current_time:
         raise ValueError("Token expired")
 
     # Enforce that only the latest unverified token for this tenant is valid.
@@ -957,7 +983,7 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
         .where(
             TenantEmailVerification.tenant_id == verification.tenant_id,
             TenantEmailVerification.verified_at.is_(None),
-            TenantEmailVerification.expires_at >= now_utc(),
+            TenantEmailVerification.expires_at > current_time,
         )
         .order_by(TenantEmailVerification.created_at.desc())
         .limit(1)
@@ -979,6 +1005,7 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     if tenant.status == TenantStatus.SUSPENDED:
         raise ValueError("Tenant is suspended. Contact support.")
 
+    await invalidate_pending_verification_tokens(tenant.id, tenant_db, invalidated_at=current_time)
     verification.verified_at = now_utc()
     tenant.status = TenantStatus.ACTIVE
 
@@ -1179,20 +1206,11 @@ async def resend_verification_email(
     if tenant.status == TenantStatus.SUSPENDED:
         raise ValueError("Tenant is suspended. Contact support.")
     
-    # Invalidate all existing, unverified, non-expired tokens for this tenant
-    # so that only the newest token generated below remains usable.
-    await db.execute(
-        update(TenantEmailVerification)
-        .where(
-            TenantEmailVerification.tenant_id == tenant.id,
-            TenantEmailVerification.verified_at.is_(None),
-            TenantEmailVerification.expires_at > now_utc(),
-        )
-        .values(expires_at=now_utc())
-    )
+    invalidated_at = now_utc()
+    await invalidate_pending_verification_tokens(tenant.id, db, invalidated_at=invalidated_at)
 
     token = generate_email_verification_token()
-    expiry = now_utc() + timedelta(
+    expiry = invalidated_at + timedelta(
         minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES
     )  # Match the expiry time from initial verification
 
