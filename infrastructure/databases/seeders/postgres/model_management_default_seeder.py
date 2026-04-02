@@ -15,12 +15,9 @@ def generate_model_id(model_name: str, version: str) -> str:
     return hashlib.sha256(f"{normalized_name}:{normalized_version}".encode("utf-8")).hexdigest()[:32]
 
 
-def generate_service_id(model_name: str, model_version: str, service_name: str) -> str:
-    normalized_model_name = model_name.strip().lower()
-    normalized_model_version = model_version.strip().lower()
+def generate_service_id(service_name: str) -> str:
     normalized_service_name = service_name.strip().lower()
-    raw = f"{normalized_model_name}:{normalized_model_version}:{normalized_service_name}"
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+    return hashlib.sha256(normalized_service_name.encode("utf-8")).hexdigest()[:32]
 
 
 def generate_uuid(*parts: str) -> str:
@@ -277,7 +274,7 @@ class ModelManagementDefaultSeeder(BaseSeeder):
 
             for svc in m["services"]:
                 svc_name = svc["name"]
-                service_id = generate_service_id(name, version, svc_name)
+                service_id = generate_service_id(svc_name)
 
                 adapter.execute(f"""
                     INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
@@ -292,8 +289,13 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                         '{svc["hardware"]}',
                         {timestamp_ms},
                         false
-                    ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
+                    ) ON CONFLICT (name) DO UPDATE SET
+                        service_id = '{service_id}',
+                        model_id = '{model_id}',
+                        model_version = '{version}',
                         endpoint = '{endpoint_url}',
+                        service_description = '{svc["description"]}',
+                        hardware_description = '{svc["hardware"]}',
                         updated_at = CURRENT_TIMESTAMP;
                 """)
 
