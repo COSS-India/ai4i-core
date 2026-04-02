@@ -6,7 +6,6 @@ import re
 import os
 import json
 import time
-import uuid
 import asyncpg
 import httpx
 import redis.asyncio as aioredis
@@ -506,7 +505,8 @@ async def redact_text(
             )
     tenant_id = claims_tid
     start = time.time()
-    trace_id = str(uuid.uuid4())
+    span_ctx = trace.get_current_span().get_span_context()
+    trace_id = f"{span_ctx.trace_id:032x}" if getattr(span_ctx, "is_valid", False) else ""
     trace_log = [{"step": "Request", "status": "Success", "details": f"Target: {x_target}, Lang: {x_language}"}]
 
     if not KB.connected:
