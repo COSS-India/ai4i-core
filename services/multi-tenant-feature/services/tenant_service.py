@@ -81,6 +81,9 @@ DEFAULT_QUOTAS = {
 
 EMAIL_VERIFICATION_LINK = app_env.email_verification_link
 EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES = app_env.email_verification_token_expire_minutes
+EMAIL_VERIFICATION_RESEND_MIN_INTERVAL_SECONDS = app_env.email_verification_resend_min_interval_seconds
+EMAIL_VERIFICATION_RESEND_MAX_PER_HOUR = app_env.email_verification_resend_max_per_hour
+EMAIL_VERIFICATION_RESEND_MAX_PER_DAY = app_env.email_verification_resend_max_per_day
 DB_NAME                 = str(app_env.app_db_name)
 API_GATEWAY_URL        = app_env.api_gateway_url
 API_GATEWAY_TIMEOUT       = app_env.api_gateway_timeout
@@ -106,6 +109,98 @@ async def invalidate_pending_verification_tokens(
         )
         .values(expires_at=invalidated_at - timedelta(seconds=1))
     )
+
+
+async def _count_verification_resends_since(
+    tenant_uuid,
+    db: AsyncSession,
+    *,
+    since: datetime,
+) -> int:
+    """
+    Count resend attempts since the provided timestamp.
+
+    The first-ever verification email is treated as the initial send.
+    Every later verification token issued for the tenant is treated as a resend.
+    """
+    total_sent = await db.scalar(
+        select(func.count(TenantEmailVerification.id)).where(
+            TenantEmailVerification.tenant_id == tenant_uuid,
+            TenantEmailVerification.created_at >= since,
+        )
+    )
+    total_sent = int(total_sent or 0)
+
+    first_sent_at = await db.scalar(
+        select(TenantEmailVerification.created_at)
+        .where(TenantEmailVerification.tenant_id == tenant_uuid)
+        .order_by(TenantEmailVerification.created_at.asc())
+        .limit(1)
+    )
+
+    if first_sent_at and first_sent_at >= since:
+        return max(0, total_sent - 1)
+    return total_sent
+
+
+async def enforce_verification_send_policy(
+    tenant_uuid,
+    db: AsyncSession,
+    *,
+    current_time: Optional[datetime] = None,
+):
+    """
+    Apply resend controls for every verification email after the initial send.
+    """
+    current_time = current_time or now_utc()
+
+    latest_sent_at = await db.scalar(
+        select(TenantEmailVerification.created_at)
+        .where(TenantEmailVerification.tenant_id == tenant_uuid)
+        .order_by(TenantEmailVerification.created_at.desc())
+        .limit(1)
+    )
+
+    # No prior verification email means this is the initial send, not a resend.
+    if not latest_sent_at:
+        return
+
+    next_allowed_at = latest_sent_at + timedelta(
+        seconds=EMAIL_VERIFICATION_RESEND_MIN_INTERVAL_SECONDS
+    )
+    if current_time < next_allowed_at:
+        retry_after_seconds = max(
+            1, int((next_allowed_at - current_time).total_seconds())
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Please wait before requesting another verification email. "
+                f"Try again in {retry_after_seconds} seconds."
+            ),
+        )
+
+    resends_last_hour = await _count_verification_resends_since(
+        tenant_uuid,
+        db,
+        since=current_time - timedelta(hours=1),
+    )
+    if resends_last_hour >= EMAIL_VERIFICATION_RESEND_MAX_PER_HOUR:
+        raise HTTPException(
+            status_code=429,
+            detail="Verification email resend limit reached for the last hour.",
+        )
+
+    resends_last_day = await _count_verification_resends_since(
+        tenant_uuid,
+        db,
+        since=current_time - timedelta(days=1),
+    )
+    if resends_last_day >= EMAIL_VERIFICATION_RESEND_MAX_PER_DAY:
+        raise HTTPException(
+            status_code=429,
+            detail="Verification email resend limit reached for the last 24 hours.",
+        )
 
 # Status transition rules
 TENANT_STATUS_TRANSITIONS = {
@@ -681,6 +776,7 @@ async def send_verification_link(
     """
 
     invalidated_at = now_utc()
+    await enforce_verification_send_policy(created.id, db, current_time=invalidated_at)
     await invalidate_pending_verification_tokens(created.id, db, invalidated_at=invalidated_at)
 
     token = generate_email_verification_token()
@@ -703,8 +799,6 @@ async def send_verification_link(
         await db.rollback()
         logger.exception(f"Error committing verification token to database: {e}")
         raise HTTPException(status_code=500,detail="Failed to create verification token")
-
-    # verification_link = f"https://{subdomain}/tenant/verify/email?token={token}" TODO : add subdomain if required
 
     verification_link = f"{EMAIL_VERIFICATION_LINK}/api/v1/multi-tenant/email/verify?token={token}"
 
@@ -978,21 +1072,21 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
 
     # Enforce that only the latest unverified token for this tenant is valid.
     # If a newer unverified token exists, this (older) token should be rejected.
-    latest_stmt = (
-        select(TenantEmailVerification)
-        .where(
-            TenantEmailVerification.tenant_id == verification.tenant_id,
-            TenantEmailVerification.verified_at.is_(None),
-            TenantEmailVerification.expires_at > current_time,
-        )
-        .order_by(TenantEmailVerification.created_at.desc())
-        .limit(1)
-    )
-    latest_verification = (await tenant_db.execute(latest_stmt)).scalar_one_or_none()
+    # latest_stmt = (
+    #     select(TenantEmailVerification)
+    #     .where(
+    #         TenantEmailVerification.tenant_id == verification.tenant_id,
+    #         TenantEmailVerification.verified_at.is_(None),
+    #         TenantEmailVerification.expires_at > current_time,
+    #     )
+    #     .order_by(TenantEmailVerification.created_at.desc())
+    #     .limit(1)
+    # )
+    # latest_verification = (await tenant_db.execute(latest_stmt)).scalar_one_or_none()
 
-    if latest_verification and latest_verification.id != verification.id:
-        # A newer verification link has been issued; this older link must not be used.
-        raise ValueError("A newer verification email has been sent. Please use the latest verification link.")
+    # if latest_verification and latest_verification.id != verification.id:
+    #     # A newer verification link has been issued; this older link must not be used.
+    #     raise ValueError("A newer verification email has been sent. Please use the latest verification link.")
 
     tenant = await tenant_db.get(Tenant, verification.tenant_id)
     if not tenant:
@@ -1206,38 +1300,10 @@ async def resend_verification_email(
     if tenant.status == TenantStatus.SUSPENDED:
         raise ValueError("Tenant is suspended. Contact support.")
     
-    invalidated_at = now_utc()
-    await invalidate_pending_verification_tokens(tenant.id, db, invalidated_at=invalidated_at)
+    # Reuse the same send path so expiry, rate limits, and token invalidation stay consistent.
+    class _Payload(BaseModel):
+        contact_email: EmailStr
 
-    token = generate_email_verification_token()
-    expiry = invalidated_at + timedelta(
-        minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES
-    )  # Match the expiry time from initial verification
-
-    verification = TenantEmailVerification(
-        tenant_id=tenant.id,
-        token=token,
-        expires_at=expiry,
-    )
-    db.add(verification)
-    
-    try:
-        await db.commit()
-    except IntegrityError as e:
-        logger.error(f"Integrity error while resending verification email for tenant {tenant.tenant_id}: {e}")
-        await db.rollback()
-        raise HTTPException(status_code=409, detail="Failed to create verification token")
-    except Exception as e:
-        logger.exception(f"Error committing verification token resend to database: {e}")
-        await db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to resend verification email")
-
-    # verification_link = f"https://{tenant.subdomain}/verify-email?token={token}" # : add subdomain if required
-
-    verification_link = f"{EMAIL_VERIFICATION_LINK}/api/v1/multi-tenant/email/verify?token={token}"
-   
-    # Extract values before adding background task to avoid detached object issues
-    # Decrypt email before using it
     try:
         decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
     except DecryptionError as e:
@@ -1249,16 +1315,14 @@ async def resend_verification_email(
 
     if not decrypted_email:
         raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
-    
-    contact_email_str = decrypted_email
-    tenant_id_str = str(tenant.tenant_id)
 
-    background_tasks.add_task(
-        send_verification_email,
-        contact_email_str,
-        verification_link,
-        tenant_id=tenant_id_str,  # Pass tenant_id for resend reference
-        expires_in_minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES,
+    payload = _Payload(contact_email=decrypted_email)
+    token = await send_verification_link(
+        created=tenant,
+        payload=payload,
+        db=db,
+        subdomain=None,
+        background_tasks=background_tasks,
     )
 
     logger.info(f"Verification email resent for tenant {tenant.tenant_id} (status: {tenant.status.value})")
