@@ -216,7 +216,6 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const getActionBadgeColor = (action: string) => {
     switch (action) {
       case 'MASK': return 'bg-gray-800 text-white';
-      case 'HASH': return 'bg-red-600 text-white';
       default: return 'bg-gray-200 text-gray-800';
     }
   };
@@ -347,7 +346,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
               <div className="grid grid-cols-12 gap-2 mb-2">
                 <input type="text" placeholder="Entity (e.g., PASSPORT)" className="col-span-3 border rounded px-2 py-1 text-sm" value={newEntity} onChange={e => setNewEntity(e.target.value)} />
                 <select className="col-span-3 border rounded px-2 py-1 text-sm" value={newAction} onChange={e => setNewAction(e.target.value)}>
-                  <option>REDACT_TAG</option><option>MASK</option><option>HASH</option>
+                  <option>REDACT</option><option>REDACT_TAG</option><option>MASK</option>
                 </select>
                 <div className="col-span-6 flex">
                   <input type="text" placeholder="AI Example (e.g., A1234567)" className="flex-1 border rounded-l px-2 py-1 text-sm" value={newExample} onChange={e => setNewExample(e.target.value)} />

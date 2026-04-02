@@ -3,8 +3,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 import re
-import hashlib
-import hmac
 import os
 import json
 import time
@@ -33,7 +31,6 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 NER_SERVICE_URL = os.getenv("NER_SERVICE_URL", "http://localhost:9001/ner")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 KAFKA_AUDIT_TOPIC = os.getenv("KAFKA_AUDIT_TOPIC", "pii_audit_logs")
-PII_HMAC_KEY = os.getenv("PII_HMAC_KEY", "change-me-in-production").encode("utf-8")
 
 db_pool = None
 redis_client = None
@@ -565,8 +562,6 @@ async def redact_text(
         rep = "[REDACTED]"
         if rule["action"] == "REDACT_TAG":
             rep = rule["config"].get("tag_label", f"[{ent.entity_type}]")
-        elif rule["action"] == "HASH":
-            rep = hmac.new(PII_HMAC_KEY, ent.text_segment.encode(), hashlib.sha256).hexdigest()[:10] + "..."
         elif rule["action"] == "MASK":
             char = rule["config"].get("mask_char", "X")
             rep = char * len(ent.text_segment)
