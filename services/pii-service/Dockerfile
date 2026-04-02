@@ -6,6 +6,7 @@ COPY libs/ai4icore_constants /app/libs/ai4icore_constants
 COPY libs/ai4icore_env /app/libs/ai4icore_env
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_auth /app/libs/ai4icore_auth
+COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY services/pii-service/requirements.txt .
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir --user -r requirements.txt
@@ -14,6 +15,7 @@ RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_constants
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user --force-reinstall packaging
 
 FROM python:3.11-slim
@@ -29,6 +31,7 @@ COPY --from=builder /app/libs/ai4icore_constants /app/libs/ai4icore_constants
 COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
+COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY services/pii-service .
 RUN chown -R app:app /app /home/app/.local && chmod +x /home/app/.local/bin/* || true
 USER app
