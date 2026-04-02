@@ -9,9 +9,8 @@ import json
 import base64
 import io
 import wave
-import hashlib
 import logging
-import random
+from urllib.parse import quote
 from typing import Optional, Dict, Any
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -46,30 +45,52 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         method = request.method
         headers = request.headers
         
-        # Extract organization and app (including from JWT token)
+        # --- Priority 1 & 2: org from X-Customer-ID header or JWT 'name' claim ---
         organization, app = self._extract_customer_app(request)
-        
-        # Extract tenant_id from JWT token or database
-        tenant_id = await self._extract_tenant_id(request)
-        
-        # Normalize tenant for metrics: use tenant_id from JWT/resolution or "unknown" for normal users
-        tenant = str(tenant_id) if tenant_id else "unknown"
-        
-        # Store organization and tenant_id in request.state for other middlewares to access
+
+        # --- Resolve tenant_id AND organization_name from the multi-tenant service ---
+        tenant_id, tenant_org_name = await self._extract_tenant_info(request)
+
+        # --- Priority 3: if org still unknown, use the tenant's organization name ---
+        # For users that don't belong to any tenant, organization stays None.
+        if organization is None:
+            organization = tenant_org_name  # None when user is a non-tenant individual
+
+        # Normalize for Prometheus label: None → "none" (empty string is not label-friendly)
+        organization_label = organization if organization else "none"
+
+        # Normalize tenant label
+        tenant = str(tenant_id) if tenant_id else "none"
+
+        # Store resolved values in request.state for downstream middlewares / handlers
         # IMPORTANT: Set this BEFORE await call_next() so it's available to inner middlewares
-        request.state.organization = organization
+        request.state.organization = organization_label
         request.state.tenant_id = tenant_id
+
+        # Ensure trace spans always contain organization / tenant_id attributes.
+        # Some server spans may start before contextvars are set, so we set attributes
+        # directly on the current span as well.
+        try:
+            from opentelemetry import trace
+
+            current_span = trace.get_current_span()
+            if current_span:
+                current_span.set_attribute("organization", organization_label)
+                current_span.set_attribute("tenant_id", tenant)
+        except Exception:
+            # Best-effort only; tracing may not be configured in all deployments
+            pass
         
         # Set organization in logging context for log formatter
         try:
             from ai4icore_logging.context import set_organization, set_tenant_id, get_tenant_id
-            set_organization(organization)
+            set_organization(organization_label)
             set_tenant_id(tenant_id)
             # Verify it was set correctly
             actual_tenant_id = get_tenant_id()
             if self.config.debug:
                 logger.debug(f"[TENANT_DEBUG] Set tenant_id in logging context: {tenant_id}, verified: {actual_tenant_id}")
-                logger.debug(f"Set organization in logging context: {organization}, tenant_id: {tenant_id}")
+                logger.debug(f"Set organization in logging context: {organization_label}, tenant_id: {tenant_id}")
         except Exception as e:
             # Log error for debugging
             if self.config.debug:
@@ -169,7 +190,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         
         # Debug logging
         if self.config.debug:
-            logger.debug(f"Request: {method} {path} -> Service: {service_type}, Organization: {organization}, App: {app}")
+            logger.debug(f"Request: {method} {path} -> Service: {service_type}, Organization: {organization_label}, App: {app}")
         
         # Process request
         response = await call_next(request)
@@ -185,7 +206,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 logger.debug(f"Tracking metrics for endpoint: {path}, service_type: {service_type}")
             
             self.metrics_collector.track_request(
-                organization=organization,
+                organization=organization_label,
                 app=app,
                 method=method,
                 endpoint=path,
@@ -194,9 +215,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 service_type=service_type,
                 tenant=tenant,
             )
-            
+
             # Track additional metrics based on service type
-            self._track_additional_metrics(organization, app, tenant, service_type, path, duration, tts_characters, translation_characters, asr_audio_length, ocr_characters, ocr_image_size_kb, transliteration_characters, language_detection_characters, audio_lang_detection_length, ner_tokens, speaker_verification_length, speaker_diarization_length, language_diarization_length)
+            self._track_additional_metrics(organization_label, app, tenant, service_type, path, duration, tts_characters, translation_characters, asr_audio_length, ocr_characters, ocr_image_size_kb, transliteration_characters, language_detection_characters, audio_lang_detection_length, ner_tokens, speaker_verification_length, speaker_diarization_length, language_diarization_length)
             
         except Exception as e:
             # Don't let metrics collection break the request
@@ -226,205 +247,222 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             return None
     
     @staticmethod
-    def _get_organization_from_api_key(api_key: str) -> str:
-        """Map API key to organization name using consistent hashing."""
-        # Organization names
-        organizations = ["irctc", "kisanmitra", "bashadaan", "beml"]
-        
-        # Use hash of API key to consistently map to same organization
-        hash_value = int(hashlib.md5(api_key.encode()).hexdigest(), 16)
-        org_index = hash_value % len(organizations)
-        
-        return organizations[org_index]
+    def _get_organization_from_api_key(api_key: str) -> Optional[str]:
+        """Previously mapped an API key to a hardcoded organization via hashing.
+
+        This method is retained for backward compatibility but now returns ``None``
+        so that the caller falls through to the dynamic tenant-based resolution.
+        Organization names are no longer maintained as a static list here.
+        """
+        return None
     
     def _extract_customer_from_token(self, request: Request) -> Optional[str]:
-        """Extract customer name from JWT token in authorization header.
-        
-        Only extracts organization names that are valid (non-numeric, known organizations).
-        Numeric 'sub' fields (like user IDs) are ignored to prevent them from being used as organization names.
+        """Extract customer/organization name from JWT token in authorization header.
+
+        Only uses the 'name' field (explicit organization identifier).
+        Numeric 'sub' fields (user IDs) are intentionally ignored — organization is
+        resolved dynamically from tenant data instead of a static list.
         """
         auth_header = request.headers.get("authorization", "")
-        
+
         if auth_header:
             decoded_token = self._decode_jwt_token(auth_header)
             if decoded_token:
-                # Extract customer name from 'name' field in token
+                # Use 'name' field only — must be a non-empty, non-numeric string
                 customer_name = decoded_token.get("name")
-                if customer_name:
-                    # Validate that it's a valid organization name (not numeric)
-                    if customer_name and not customer_name.isdigit():
-                        if self.config.debug:
-                            logger.debug(f"Extracted customer from JWT 'name': {customer_name}")
-                        return customer_name
-                
-                # Fallback: try to extract from 'sub' field if 'name' is not available
-                # BUT: Only use 'sub' if it's not numeric (user IDs are numeric, org names are not)
-                sub = decoded_token.get("sub")
-                if sub and not str(sub).isdigit():
-                    # Check if it's one of the known organizations
-                    known_orgs = ["irctc", "kisanmitra", "bashadaan", "beml"]
-                    if str(sub).lower() in known_orgs:
-                        if self.config.debug:
-                            logger.debug(f"Using 'sub' field as customer: {sub}")
-                        return str(sub).lower()
-        
+                if customer_name and not str(customer_name).isdigit():
+                    if self.config.debug:
+                        logger.debug(f"Extracted customer from JWT 'name': {customer_name}")
+                    return str(customer_name)
+
         return None
     
-    async def _extract_tenant_id(self, request: Request) -> str:
+    async def _extract_tenant_info(self, request: Request) -> tuple:
         """
-        Extract tenant_id from JWT token or resolve from user_id via API.
-        If tenant_id is not found, attempts to resolve it from user_id in the JWT.
-        Only uses default value as last resort if user_id cannot be resolved.
-        
+        Extract tenant_id and organization_name for the requesting user.
+
+        Resolution order:
+        1. ``tenant_id`` claim in the JWT  →  organization looked up via API (or from JWT).
+        2. ``sub`` (numeric user ID) in JWT  →  both resolved via multi-tenant service API.
+        3. No JWT / no tenant  →  (None, None) — the user is a non-tenant (individual) user.
+
         Returns:
-            tenant_id from JWT if present, otherwise resolved from user_id, 
-            or default value only if resolution fails
+            (tenant_id, organization_name)
+            Both are ``None`` when the user does not belong to any tenant.
         """
         if self.config.debug:
-            logger.debug(f"[TENANT_DEBUG] _extract_tenant_id called for path: {request.url.path}")
+            logger.debug(f"[TENANT_DEBUG] _extract_tenant_info called for path: {request.url.path}")
+
         auth_header = request.headers.get("authorization", "")
         if self.config.debug:
             logger.debug(f"[TENANT_DEBUG] Auth header present: {bool(auth_header)}, length: {len(auth_header) if auth_header else 0}")
-        
+
         if auth_header:
             decoded_token = self._decode_jwt_token(auth_header)
             if self.config.debug:
                 logger.debug(f"[TENANT_DEBUG] JWT decoded: success={bool(decoded_token)}")
+
             if decoded_token:
                 if self.config.debug:
                     logger.debug(f"[TENANT_DEBUG] JWT payload keys: {list(decoded_token.keys())}")
-                # Extract tenant_id from JWT token (highest priority)
+
+                # --- Priority 1: tenant_id is directly present in the JWT ---
                 tenant_id = decoded_token.get("tenant_id")
                 if self.config.debug:
                     logger.debug(f"[TENANT_DEBUG] Extracted tenant_id from JWT: {tenant_id} (type: {type(tenant_id)})")
+
                 if tenant_id is not None and tenant_id != "":
+                    # Org name may also be carried in the JWT itself
+                    organization_name: Optional[str] = (
+                        decoded_token.get("organization_name")
+                        or decoded_token.get("tenant_name")
+                        or decoded_token.get("org_name")
+                        or decoded_token.get("organization")
+                    )
                     if self.config.debug:
-                        logger.debug(f"Extracted tenant_id from JWT: {tenant_id}")
-                    return str(tenant_id)
-                
-                # If tenant_id not in JWT, try to resolve from user_id
+                        logger.debug(
+                            f"[TENANT_DEBUG] ✅ tenant_id from JWT: {tenant_id}, "
+                            f"organization_name from JWT: {organization_name}"
+                        )
+                    # If org name was not in the JWT, resolve from the multi-tenant service
+                    if not organization_name:
+                        organization_name = await self._resolve_organization_from_tenant_id(str(tenant_id), request)
+                    return str(tenant_id), organization_name
+
+                # --- Priority 2: resolve from numeric user_id ('sub') ---
                 user_id = decoded_token.get("sub")
                 if self.config.debug:
-                    logger.debug(f"[TENANT_DEBUG] JWT token has no tenant_id. Checking user_id from 'sub' field: {user_id} (type: {type(user_id)})")
-                
-                # Handle both string and int user_id from JWT
+                    logger.debug(f"[TENANT_DEBUG] JWT has no tenant_id. Checking 'sub' field: {user_id} (type: {type(user_id)})")
+
                 if user_id:
                     try:
-                        # Convert to int - handle both string "9" and int 9
                         if isinstance(user_id, str):
-                            if user_id.isdigit():
-                                user_id_int = int(user_id)
-                                if self.config.debug:
-                                    logger.debug(f"[TENANT_DEBUG] Converted string user_id '{user_id}' to int: {user_id_int}")
-                            else:
-                                if self.config.debug:
-                                    logger.debug(f"[TENANT_DEBUG] user_id '{user_id}' is not numeric, cannot resolve tenant")
-                                user_id_int = None
+                            user_id_int = int(user_id) if user_id.isdigit() else None
+                            if user_id_int is None and self.config.debug:
+                                logger.debug(f"[TENANT_DEBUG] user_id '{user_id}' is not numeric, cannot resolve tenant")
                         else:
                             user_id_int = int(user_id)
-                            if self.config.debug:
-                                logger.debug(f"[TENANT_DEBUG] Using integer user_id: {user_id_int}")
-                        
+
                         if user_id_int:
                             if self.config.debug:
-                                logger.debug(f"[TENANT_DEBUG] Attempting to resolve tenant_id for user_id {user_id_int} via API")
-                            resolved_tenant_id = await self._resolve_tenant_from_user_id(user_id_int, request)
-                            if resolved_tenant_id:
+                                logger.debug(f"[TENANT_DEBUG] Resolving tenant info for user_id={user_id_int} via API")
+                            tenant_info = await self._resolve_tenant_from_user_id(user_id_int, request)
+                            if tenant_info:
+                                resolved_tid = tenant_info.get("tenant_id")
+                                resolved_org = tenant_info.get("organization_name")
+                                if not resolved_org and resolved_tid:
+                                    resolved_org = await self._resolve_organization_from_tenant_id(str(resolved_tid), request)
                                 if self.config.debug:
-                                    logger.debug(f"[TENANT_DEBUG] ✅ Successfully resolved tenant_id {resolved_tenant_id} for user_id {user_id_int}")
-                                return resolved_tenant_id
+                                    logger.debug(
+                                        f"[TENANT_DEBUG] ✅ Resolved tenant_id={resolved_tid}, "
+                                        f"organization_name={resolved_org} for user_id={user_id_int}"
+                                    )
+                                return resolved_tid, resolved_org
                             else:
                                 if self.config.debug:
-                                    logger.debug(f"[TENANT_DEBUG] ❌ Could not resolve tenant_id for user_id {user_id_int} via API, will use default")
+                                    logger.debug(f"[TENANT_DEBUG] No tenant found for user_id={user_id_int} (non-tenant user)")
                         else:
                             if self.config.debug:
-                                logger.debug(f"[TENANT_DEBUG] user_id_int is None, cannot resolve tenant")
+                                logger.debug("[TENANT_DEBUG] user_id_int is None, cannot resolve tenant")
                     except (ValueError, TypeError) as e:
                         if self.config.debug:
                             logger.debug(f"[TENANT_DEBUG] Exception converting user_id to int: {user_id}, error: {e}", exc_info=True)
                 else:
                     if self.config.debug:
-                        logger.debug("[TENANT_DEBUG] JWT token has no 'sub' field, cannot resolve tenant from user_id")
-        
-        # Last resort: normal user (no tenant in JWT and could not resolve from user_id)
+                        logger.debug("[TENANT_DEBUG] JWT has no 'sub' field, cannot resolve tenant from user_id")
+
+        # Non-tenant user (individual user with no tenant association)
         if self.config.debug:
-            logger.debug("[TENANT_DEBUG] No tenant_id in JWT and could not resolve; using 'unknown' for normal user")
-        return "unknown"
+            logger.debug("[TENANT_DEBUG] No tenant_id resolved — treating as non-tenant user (org=None)")
+        return None, None
     
-    async def _resolve_tenant_from_user_id(self, user_id: int, request: Request) -> Optional[str]:
+    async def _resolve_tenant_from_user_id(self, user_id: int, request: Request) -> Optional[Dict[str, Optional[str]]]:
         """
-        Resolve tenant_id from user_id by calling the multi-tenant service API.
-        
+        Resolve tenant information from user_id by calling the multi-tenant service API.
+
         Args:
             user_id: The user ID from JWT token
             request: The request object to forward auth headers
-            
+
         Returns:
-            tenant_id if found, None otherwise
+            A dict with keys ``tenant_id`` and ``organization_name`` when the user
+            belongs to a tenant, or ``None`` when no tenant is found or the call fails.
+            Example: {"tenant_id": "42", "organization_name": "acme-corp"}
         """
         try:
-            # Get multi-tenant service URL from config or db_settings
-            # Supports both environment variable and service discovery (Kubernetes/Docker service names)
+            # Resolve multi-tenant service URL from config or environment / service discovery
             multi_tenant_service_url = getattr(self.config, 'multi_tenant_service_url', None)
             if not multi_tenant_service_url:
                 multi_tenant_service_url = app_env.multi_tenant_service_url
 
-            # If not set, try to construct from service name (for Kubernetes/Docker service discovery)
             if not multi_tenant_service_url:
-                # Try common service discovery patterns
-                service_name = app_env.multi_tenant_service_name
-                # Default port is 8001 (internal Docker port), not 8100 (external mapped port)
-                service_port = app_env.multi_tenant_service_port
-                service_scheme = app_env.multi_tenant_service_scheme
-                # Construct URL from service name (works with Docker service names and Kubernetes DNS)
+                # Fall back to known local docker-compose service when env vars are unset.
+                # Without this, constructing f"{service_scheme}://{service_name}:{service_port}"
+                # can produce an invalid URL like "://:8001" which makes httpx fail with
+                # "Request URL is missing an 'http://' or 'https://' protocol."
+                service_name = (app_env.multi_tenant_service_name or "").strip() or "multi-tenant-service"
+                service_port = (app_env.multi_tenant_service_port or "").strip() or "8001"
+                service_scheme = (app_env.multi_tenant_service_scheme or "").strip() or "http"
                 multi_tenant_service_url = f"{service_scheme}://{service_name}:{service_port}"
                 if self.config.debug:
                     logger.debug(f"MULTI_TENANT_SERVICE_URL not set, using service discovery: {multi_tenant_service_url}")
-            
+
             if not multi_tenant_service_url:
                 logger.error("Cannot determine multi-tenant service URL. Set MULTI_TENANT_SERVICE_URL or MULTI_TENANT_SERVICE_NAME environment variable.")
                 return None
-            
-            # Use the correct API endpoint path (query parameter, not path parameter)
+
             resolve_url = f"{multi_tenant_service_url}/resolve/tenant/from/user?user_id={user_id}"
-            
+
             if self.config.debug:
-                logger.debug(f"Resolving tenant for user_id {user_id} via {resolve_url}")
-            
+                logger.debug(f"Resolving tenant info for user_id {user_id} via {resolve_url}")
+
             # Forward auth headers from original request
-            headers = {}
+            headers: Dict[str, str] = {}
             auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
             if auth_header:
                 headers["Authorization"] = auth_header
-            
             api_key = request.headers.get("X-API-Key")
             if api_key:
                 headers["X-API-Key"] = api_key
-            
-            # Call API with short timeout to avoid blocking
+
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(resolve_url, headers=headers)
-                
+
                 if self.config.debug:
                     logger.debug(f"[TENANT_DEBUG] API Response status: {response.status_code}")
-                
+
                 if response.status_code == 200:
                     tenant_data = response.json()
                     if self.config.debug:
                         logger.debug(f"[TENANT_DEBUG] API Response data: {tenant_data}")
+
                     tenant_id = tenant_data.get("tenant_id")
-                    if tenant_id:
-                        if self.config.debug:
-                            logger.debug(f"[TENANT_DEBUG] ✅ Extracted tenant_id {tenant_id} from API response")
-                        return tenant_id
-                    else:
+                    if not tenant_id:
                         if self.config.debug:
                             logger.debug(f"[TENANT_DEBUG] ❌ Tenant data returned but no tenant_id field for user_id {user_id}: {tenant_data}")
                         return None
-                elif response.status_code == 404:
-                    # User not assigned to any tenant - this is expected for some users
+
+                    # Extract organization name — try several common field names that the
+                    # multi-tenant service may return.
+                    organization_name: Optional[str] = (
+                        tenant_data.get("organization_name")
+                        or tenant_data.get("name")
+                        or tenant_data.get("tenant_name")
+                        or tenant_data.get("org_name")
+                        or tenant_data.get("organization")
+                    )
+
                     if self.config.debug:
-                        logger.debug(f"[TENANT_DEBUG] ❌ Tenant not found for user_id {user_id} (404)")
+                        logger.debug(
+                            f"[TENANT_DEBUG] ✅ Resolved tenant_id={tenant_id}, "
+                            f"organization_name={organization_name} for user_id={user_id}"
+                        )
+                    return {"tenant_id": str(tenant_id), "organization_name": organization_name}
+
+                elif response.status_code == 404:
+                    # User is not assigned to any tenant — normal for individual (non-enterprise) users
+                    if self.config.debug:
+                        logger.debug(f"[TENANT_DEBUG] User user_id={user_id} has no tenant (404)")
                     return None
                 else:
                     error_detail = response.text[:500] if hasattr(response, 'text') else str(response.content[:500])
@@ -434,10 +472,103 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                             f"HTTP {response.status_code} - {error_detail}"
                         )
                     return None
-                    
+
         except httpx.TimeoutException as e:
             if self.config.debug:
                 logger.debug(f"[TENANT_DEBUG] ❌ Timeout resolving tenant for user_id {user_id} (exceeded 5s): {e}")
+            return None
+
+    async def _resolve_organization_from_tenant_id(self, tenant_id: str, request: Request) -> Optional[str]:
+        """
+        Resolve organization name by tenant_id.
+
+        The multi-tenant "resolve tenant from user" endpoint returns tenant_id and
+        schema/subscriptions, but does not include organization_name. This method
+        calls a tenant details endpoint to fetch organization_name so metrics/logs
+        can be labeled dynamically.
+        """
+        try:
+            multi_tenant_service_url = getattr(self.config, "multi_tenant_service_url", None)
+            if not multi_tenant_service_url:
+                multi_tenant_service_url = app_env.multi_tenant_service_url
+
+            if not multi_tenant_service_url:
+                # Same fallback as in _resolve_tenant_from_user_id.
+                service_name = (app_env.multi_tenant_service_name or "").strip() or "multi-tenant-service"
+                service_port = (app_env.multi_tenant_service_port or "").strip() or "8001"
+                service_scheme = (app_env.multi_tenant_service_scheme or "").strip() or "http"
+                multi_tenant_service_url = f"{service_scheme}://{service_name}:{service_port}"
+                if self.config.debug:
+                    logger.debug(
+                        f"MULTI_TENANT_SERVICE_URL not set, using service discovery: {multi_tenant_service_url}"
+                    )
+
+            if not multi_tenant_service_url:
+                logger.error(
+                    "Cannot determine multi-tenant service URL. Set MULTI_TENANT_SERVICE_URL or MULTI_TENANT_SERVICE_NAME environment variable."
+                )
+                return None
+
+            encoded_tenant_id = quote(str(tenant_id), safe="")
+
+            headers: Dict[str, str] = {}
+            auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+            if auth_header:
+                headers["Authorization"] = auth_header
+            api_key = request.headers.get("X-API-Key")
+            if api_key:
+                headers["X-API-Key"] = api_key
+
+            # Try multiple endpoint shapes because `multi_tenant_service_url` may point to:
+            # - API base: {host}/api/v1/multi-tenant
+            # - or service root: {host}
+            candidates = [
+                # Documented admin endpoint (may require tenant admin role)
+                f"{multi_tenant_service_url}/admin/view/tenant?tenant_id={encoded_tenant_id}",
+                # Internal endpoint exposed on the multi-tenant service (authenticated users only)
+                f"{multi_tenant_service_url}/internal/view/tenant?tenant_id={encoded_tenant_id}",
+            ]
+
+            api_prefix = "/api/v1/multi-tenant"
+            if api_prefix in multi_tenant_service_url:
+                service_root = multi_tenant_service_url.split(api_prefix, 1)[0]
+                candidates.append(f"{service_root}/internal/view/tenant?tenant_id={encoded_tenant_id}")
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                for resolve_url in candidates:
+                    if self.config.debug:
+                        logger.debug(f"[TENANT_DEBUG] Resolving organization for tenant_id={tenant_id} via {resolve_url}")
+
+                    response = await client.get(resolve_url, headers=headers)
+                    if response.status_code == 200:
+                        tenant_data = response.json()
+                        organization_name: Optional[str] = (
+                            tenant_data.get("organization_name")
+                            or tenant_data.get("organization")
+                            or tenant_data.get("tenant_name")
+                            or tenant_data.get("org_name")
+                        )
+                        if organization_name:
+                            return str(organization_name)
+                        return None
+                    if response.status_code in (401, 403, 404):
+                        continue
+
+            return None
+        except httpx.TimeoutException as e:
+            if self.config.debug:
+                logger.debug(f"[TENANT_DEBUG] Timeout resolving organization for tenant_id={tenant_id}: {e}")
+            return None
+        except httpx.RequestError as e:
+            if self.config.debug:
+                logger.debug(f"[TENANT_DEBUG] Request error resolving organization for tenant_id={tenant_id}: {type(e).__name__}: {e}")
+            return None
+        except Exception as e:
+            if self.config.debug:
+                logger.debug(
+                    f"[TENANT_DEBUG] Unexpected error resolving organization for tenant_id={tenant_id}: {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
             return None
         except httpx.ConnectError as e:
             if self.config.debug:
@@ -457,8 +588,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
         Priority order:
         1. X-Customer-ID header (explicit organization identifier - highest priority)
-        2. JWT token claims
-        3. Random organization assignment (for even distribution across organizations)
+        2. JWT token claims (non-numeric 'name' field)
+        3. Returns None — organization will be resolved dynamically from tenant data in dispatch()
         """
         organization: Optional[str] = None
 
@@ -474,12 +605,10 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 logger.debug("No X-Customer-ID found, trying JWT token extraction...")
             organization = self._extract_customer_from_token(request)
 
-        # PRIORITY 3: If still no organization, randomly assign one for even distribution
-        if organization is None:
-            organizations = ["irctc", "kisanmitra", "bashadaan", "beml"]
-            organization = random.choice(organizations)
-            if self.config.debug:
-                logger.debug(f"No organization found, randomly assigned: {organization}")
+        # NOTE: No random fallback — if organization is still None, it will be populated
+        # in dispatch() from the resolved tenant name. Non-tenant users will have org=None.
+        if organization is None and self.config.debug:
+            logger.debug("No organization determined from header/JWT; will resolve from tenant data.")
 
         # Get app from header or use "unknown"
         app = request.headers.get("X-App-ID")
