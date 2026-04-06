@@ -17,9 +17,11 @@ from db_operations import (
 )
 from db_connection import get_auth_db_session
 from utils.permission_checker import require_permission, require_permission_dependency
+from validators import validate_endpoint, ValidationStatus
 from logger import logger
 from typing import List, Union, Optional
 from models.type_enum import TaskTypeEnum
+from ai4icore_env import app_env
 
 
 def get_user_id_from_request(request: Request) -> Optional[str]:
@@ -128,6 +130,26 @@ async def create_model(
     """Create a new model - POST /models. Requires 'model.create' permission (ADMIN or MODERATOR only)."""
     
     try:
+        # Validate inference endpoint URL if provided
+        endpoint_url = payload.inferenceEndPoint.endpoint
+        if endpoint_url:
+            validation = await validate_endpoint(
+                endpoint=endpoint_url,
+                task_type=payload.task.type,
+                request_schema=payload.inferenceEndPoint.schema.request or None,
+                run_inference_test=app_env.run_inference_test,
+            )
+            if not validation.is_valid:
+                failed = [d for d in validation.details if d.status == ValidationStatus.FAILED]
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "kind": "EndpointValidationError",
+                        "message": "Inference endpoint URL is invalid.",
+                        "errors": [d.message for d in failed],
+                    },
+                )
+
         user_id = get_user_id_from_request(request)
         model_id = await save_model_to_db(payload, created_by=user_id)
         logger.info(f"Model '{payload.name}' inserted successfully by user {user_id}.")
@@ -151,6 +173,29 @@ async def update_model_endpoint(
     """Update a model - PATCH /models. Requires 'model.update' permission (ADMIN or MODERATOR only)."""
     
     try:
+        # Validate inference endpoint URL if being updated
+        if payload.inferenceEndPoint and payload.inferenceEndPoint.endpoint:
+            task_type = payload.task.type if payload.task else None
+            validation = await validate_endpoint(
+                endpoint=payload.inferenceEndPoint.endpoint,
+                task_type=task_type,
+                request_schema=(
+                    payload.inferenceEndPoint.schema.request
+                    if payload.inferenceEndPoint.schema else None
+                ),
+                run_inference_test=app_env.run_inference_test,
+            )
+            if not validation.is_valid:
+                failed = [d for d in validation.details if d.status == ValidationStatus.FAILED]
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "kind": "EndpointValidationError",
+                        "message": "Inference endpoint URL is invalid.",
+                        "errors": [d.message for d in failed],
+                    },
+                )
+
         user_id = get_user_id_from_request(request)
         result = await update_model(payload, updated_by=user_id)
 

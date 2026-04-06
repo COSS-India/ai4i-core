@@ -181,6 +181,7 @@ class AppEnv(BaseSettings):
     model_management_cache_ttl: int = 300
     max_active_versions_per_model: int = 5
     allow_deprecated_model_changes: bool = True
+    run_inference_test: bool = True
 
     # ── Multi-tenant ──
     multi_tenant_enabled: bool = True

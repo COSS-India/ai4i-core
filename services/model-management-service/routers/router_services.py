@@ -12,6 +12,7 @@ from models.service_create import ServiceCreateRequest
 from models.service_update import ServiceUpdateRequest
 from models.service_health import ServiceHeartbeatRequest
 from db_operations import (
+    get_model_details,
     get_service_details,
     list_all_services,
     get_service_policy,
@@ -24,15 +25,43 @@ from db_operations import (
 )
 from db_connection import get_auth_db_session
 from utils.permission_checker import require_permission, require_permission_dependency
+from validators import validate_endpoint, ValidationStatus
 from logger import logger
 from typing import List, Union, Optional
 from models.type_enum import TaskTypeEnum
+from ai4icore_env import app_env
 
 
 def get_user_id_from_request(request: Request) -> Optional[str]:
     """Extract user_id from request state (set by AuthProvider or Kong) as string."""
     user_id = getattr(request.state, 'user_id', None)
     return str(user_id) if user_id is not None else None
+
+
+async def _validate_service_endpoint(
+    endpoint: str,
+    task_type: Optional[str],
+    request_schema: Optional[dict],
+    api_key: Optional[str],
+) -> None:
+    """Run endpoint validation and raise HTTPException on failure."""
+    validation = await validate_endpoint(
+        endpoint=endpoint,
+        task_type=task_type,
+        request_schema=request_schema or None,
+        api_key=api_key or None,
+        run_inference_test=app_env.run_inference_test,
+    )
+    if not validation.is_valid:
+        failed = [d for d in validation.details if d.status == ValidationStatus.FAILED]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "kind": "EndpointValidationError",
+                "message": "Service endpoint validation failed.",
+                "errors": [d.message for d in failed],
+            },
+        )
 
 
 router_services = APIRouter(
@@ -193,6 +222,25 @@ async def create_service(
     """Create a new service - POST /services. Requires 'service.create' permission (ADMIN or MODERATOR only)."""
     
     try:
+        # Fetch associated model to get task type and inference schema for validation
+        model_data = await get_model_details(payload.modelId, version=payload.modelVersion)
+        if not model_data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Model with ID '{payload.modelId}' version '{payload.modelVersion}' not found. Cannot validate endpoint.",
+            )
+
+        task_type = (model_data.get("task") or {}).get("type")
+        inference_ep = model_data.get("inferenceEndPoint") or {}
+        request_schema = (inference_ep.get("schema") or {}).get("request")
+
+        await _validate_service_endpoint(
+            endpoint=payload.endpoint,
+            task_type=task_type,
+            request_schema=request_schema,
+            api_key=payload.api_key,
+        )
+
         user_id = get_user_id_from_request(request)
         service_id = await save_service_to_db(payload, created_by=user_id)
         logger.info(f"Service '{payload.name}' inserted successfully by user {user_id}.")
@@ -222,6 +270,23 @@ async def update_service_endpoint(
         await require_permission(permission, request, db)
     
     try:
+        # Validate endpoint URL if being updated
+        if payload.endpoint:
+            service_data = await get_service_details(payload.serviceId)
+            if service_data:
+                model_info = service_data.get("model") or {}
+                task_type = (model_info.get("task") or {}).get("type")
+                inference_ep = model_info.get("inferenceEndPoint") or {}
+                request_schema = (inference_ep.get("schema") or {}).get("request")
+                api_key = payload.api_key or service_data.get("api_key")
+
+                await _validate_service_endpoint(
+                    endpoint=payload.endpoint,
+                    task_type=task_type,
+                    request_schema=request_schema,
+                    api_key=api_key,
+                )
+
         user_id = get_user_id_from_request(request)
         result = await update_service(payload, updated_by=user_id)
 

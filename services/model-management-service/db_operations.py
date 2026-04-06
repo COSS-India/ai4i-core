@@ -922,7 +922,7 @@ async def save_service_to_db(payload: ServiceCreateRequest, created_by: str = No
             logger.warning(f"Duplicate service: model_id={payload.modelId}, model_version={payload.modelVersion}, name={payload.name}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Service with name '{payload.name}' for model '{model.name}' version '{payload.modelVersion}' already exists."
+                detail=f"Service with name '{payload.name}' already exists."
             )
         
         payload_dict = _json_safe(payload.model_dump(by_alias=True))
