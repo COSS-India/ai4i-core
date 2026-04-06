@@ -11,7 +11,8 @@ import io
 import wave
 import logging
 from urllib.parse import quote
-from typing import Optional, Dict, Any, Tuple
+from collections import OrderedDict
+from typing import Optional, Dict, Any
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from ai4icore_env import app_env
@@ -32,11 +33,68 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.metrics_collector = metrics_collector or MetricsCollector()
         self.config = config or PluginConfig()
+
         # In-memory caches (best-effort) to keep tenant/org resolution out of the hot path.
-        # These are per-process caches; if you run multiple replicas, each keeps its own.
-        self._tenant_org_cache: Dict[str, Tuple[Optional[str], float]] = {}  # tenant_id -> (org_name|None, expires_at)
-        self._user_tenant_cache: Dict[int, Tuple[Optional[Dict[str, Optional[str]]], float]] = {}  # user_id -> (tenant_info|None, expires_at)
+        # IMPORTANT: caches are bounded (LRU) to avoid unbounded growth.
+        self._tenant_org_cache: "OrderedDict[str, tuple[Optional[str], float]]" = OrderedDict()
+        self._user_tenant_cache: "OrderedDict[int, tuple[Optional[Dict[str, Optional[str]]], float]]" = OrderedDict()
         self._tenant_cache_ttl_seconds: int = int(getattr(self.config, "tenant_cache_ttl_seconds", 300) or 300)
+        self._tenant_org_cache_maxsize: int = int(getattr(self.config, "tenant_org_cache_maxsize", 5000) or 5000)
+        self._user_tenant_cache_maxsize: int = int(getattr(self.config, "user_tenant_cache_maxsize", 10000) or 10000)
+
+        # Shared http client for connection pooling / reuse.
+        self._resolve_timeout_seconds: float = float(getattr(self.config, "multi_tenant_resolve_timeout_seconds", 2.0) or 2.0)
+        self._http: Optional[httpx.AsyncClient] = None
+        self._app = app
+        if hasattr(app, "add_event_handler"):
+            try:
+                app.add_event_handler("shutdown", self._close_http_client)  # type: ignore[attr-defined]
+            except Exception:
+                # Best effort only: app may not be a FastAPI instance in some deployments.
+                pass
+
+    async def _close_http_client(self) -> None:
+        if self._http is not None:
+            try:
+                await self._http.aclose()
+            finally:
+                self._http = None
+
+    def _get_http_client(self) -> httpx.AsyncClient:
+        if self._http is None:
+            # Use a single client so connection pools are reused between requests.
+            self._http = httpx.AsyncClient(timeout=self._resolve_timeout_seconds)
+        return self._http
+
+    @staticmethod
+    def _cache_get(cache: "OrderedDict[Any, tuple[Any, float]]", key: Any, now: float) -> Optional[Any]:
+        """LRU + TTL cache get.
+
+        Returns cached value if present and not expired, otherwise None.
+        """
+        entry = cache.get(key)
+        if not entry:
+            return None
+        value, expires_at = entry
+        if expires_at <= now:
+            cache.pop(key, None)
+            return None
+        cache.move_to_end(key)
+        return value
+
+    @staticmethod
+    def _cache_set(
+        cache: "OrderedDict[Any, tuple[Any, float]]",
+        key: Any,
+        value: Any,
+        expires_at: float,
+        maxsize: int,
+    ) -> None:
+        """LRU + TTL cache set with max-size eviction."""
+        cache[key] = (value, expires_at)
+        cache.move_to_end(key)
+        while maxsize > 0 and len(cache) > maxsize:
+            cache.popitem(last=False)
     
     async def dispatch(self, request: Request, call_next):
         """Process request through middleware."""
@@ -266,6 +324,20 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             or payload.get("name")
         )
         return str(value) if value else None
+
+    def _get_multi_tenant_service_url(self) -> Optional[str]:
+        """Resolve multi-tenant service base URL from config/env with a single shared rule."""
+        multi_tenant_service_url = getattr(self.config, "multi_tenant_service_url", None)
+        if not multi_tenant_service_url:
+            multi_tenant_service_url = app_env.multi_tenant_service_url
+
+        if not multi_tenant_service_url:
+            # Fall back to service discovery defaults when env vars are unset.
+            service_name = (app_env.multi_tenant_service_name or "").strip() or "multi-tenant-service"
+            service_port = (app_env.multi_tenant_service_port or "").strip() or "8001"
+            service_scheme = (app_env.multi_tenant_service_scheme or "").strip() or "http"
+            multi_tenant_service_url = f"{service_scheme}://{service_name}:{service_port}"
+        return multi_tenant_service_url or None
     
     def _extract_customer_from_token(self, request: Request) -> Optional[str]:
         """Extract customer/organization name from JWT token in authorization header.
@@ -396,30 +468,13 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             Example: {"tenant_id": "42", "organization_name": "acme-corp"}
         """
         try:
-            cached = self._user_tenant_cache.get(user_id)
             now = time.time()
-            if cached:
-                tenant_info, expires_at = cached
-                if expires_at > now:
-                    return tenant_info
-                self._user_tenant_cache.pop(user_id, None)
+            tenant_info = self._cache_get(self._user_tenant_cache, user_id, now)
+            if tenant_info is not None:
+                return tenant_info
 
             # Resolve multi-tenant service URL from config or environment / service discovery
-            multi_tenant_service_url = getattr(self.config, 'multi_tenant_service_url', None)
-            if not multi_tenant_service_url:
-                multi_tenant_service_url = app_env.multi_tenant_service_url
-
-            if not multi_tenant_service_url:
-                # Fall back to known local docker-compose service when env vars are unset.
-                # Without this, constructing f"{service_scheme}://{service_name}:{service_port}"
-                # can produce an invalid URL like "://:8001" which makes httpx fail with
-                # "Request URL is missing an 'http://' or 'https://' protocol."
-                service_name = (app_env.multi_tenant_service_name or "").strip() or "multi-tenant-service"
-                service_port = (app_env.multi_tenant_service_port or "").strip() or "8001"
-                service_scheme = (app_env.multi_tenant_service_scheme or "").strip() or "http"
-                multi_tenant_service_url = f"{service_scheme}://{service_name}:{service_port}"
-                if self.config.debug:
-                    logger.debug(f"MULTI_TENANT_SERVICE_URL not set, using service discovery: {multi_tenant_service_url}")
+            multi_tenant_service_url = self._get_multi_tenant_service_url()
 
             if not multi_tenant_service_url:
                 logger.error("Cannot determine multi-tenant service URL. Set MULTI_TENANT_SERVICE_URL or MULTI_TENANT_SERVICE_NAME environment variable.")
@@ -439,52 +494,64 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if api_key:
                 headers["X-API-Key"] = api_key
 
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(resolve_url, headers=headers)
+            client = self._get_http_client()
+            response = await client.get(resolve_url, headers=headers)
+
+            if self.config.debug:
+                logger.debug(f"[TENANT_DEBUG] API Response status: {response.status_code}")
+
+            if response.status_code == 200:
+                tenant_data = response.json()
+                if self.config.debug:
+                    logger.debug(f"[TENANT_DEBUG] API Response data: {tenant_data}")
+
+                tenant_id = tenant_data.get("tenant_id")
+                if not tenant_id:
+                    if self.config.debug:
+                        logger.debug(f"[TENANT_DEBUG] ❌ Tenant data returned but no tenant_id field for user_id {user_id}: {tenant_data}")
+                    # Do NOT cache transient schema issues; just degrade gracefully.
+                    return None
+
+                # Extract organization name — try several common field names that the
+                # multi-tenant service may return.
+                organization_name = self._extract_organization_name(tenant_data)
 
                 if self.config.debug:
-                    logger.debug(f"[TENANT_DEBUG] API Response status: {response.status_code}")
+                    logger.debug(
+                        f"[TENANT_DEBUG] ✅ Resolved tenant_id={tenant_id}, "
+                        f"organization_name={organization_name} for user_id={user_id}"
+                    )
+                tenant_info = {"tenant_id": str(tenant_id), "organization_name": organization_name}
+                self._cache_set(
+                    self._user_tenant_cache,
+                    user_id,
+                    tenant_info,
+                    now + self._tenant_cache_ttl_seconds,
+                    self._user_tenant_cache_maxsize,
+                )
+                return tenant_info
 
-                if response.status_code == 200:
-                    tenant_data = response.json()
-                    if self.config.debug:
-                        logger.debug(f"[TENANT_DEBUG] API Response data: {tenant_data}")
+            if response.status_code == 404:
+                # True negative: user has no tenant — safe to cache.
+                if self.config.debug:
+                    logger.debug(f"[TENANT_DEBUG] User user_id={user_id} has no tenant (404)")
+                self._cache_set(
+                    self._user_tenant_cache,
+                    user_id,
+                    None,
+                    now + self._tenant_cache_ttl_seconds,
+                    self._user_tenant_cache_maxsize,
+                )
+                return None
 
-                    tenant_id = tenant_data.get("tenant_id")
-                    if not tenant_id:
-                        if self.config.debug:
-                            logger.debug(f"[TENANT_DEBUG] ❌ Tenant data returned but no tenant_id field for user_id {user_id}: {tenant_data}")
-                        self._user_tenant_cache[user_id] = (None, now + self._tenant_cache_ttl_seconds)
-                        return None
-
-                    # Extract organization name — try several common field names that the
-                    # multi-tenant service may return.
-                    organization_name = self._extract_organization_name(tenant_data)
-
-                    if self.config.debug:
-                        logger.debug(
-                            f"[TENANT_DEBUG] ✅ Resolved tenant_id={tenant_id}, "
-                            f"organization_name={organization_name} for user_id={user_id}"
-                        )
-                    tenant_info = {"tenant_id": str(tenant_id), "organization_name": organization_name}
-                    self._user_tenant_cache[user_id] = (tenant_info, now + self._tenant_cache_ttl_seconds)
-                    return tenant_info
-
-                elif response.status_code == 404:
-                    # User is not assigned to any tenant — normal for individual (non-enterprise) users
-                    if self.config.debug:
-                        logger.debug(f"[TENANT_DEBUG] User user_id={user_id} has no tenant (404)")
-                    self._user_tenant_cache[user_id] = (None, now + min(self._tenant_cache_ttl_seconds, 120))
-                    return None
-                else:
-                    error_detail = response.text[:500] if hasattr(response, 'text') else str(response.content[:500])
-                    if self.config.debug:
-                        logger.debug(
-                            f"[TENANT_DEBUG] ❌ Failed to resolve tenant for user_id {user_id}: "
-                            f"HTTP {response.status_code} - {error_detail}"
-                        )
-                    self._user_tenant_cache[user_id] = (None, now + min(self._tenant_cache_ttl_seconds, 60))
-                    return None
+            # Transient failure (5xx/401/403/etc) — do NOT cache None.
+            error_detail = response.text[:500] if hasattr(response, 'text') else str(response.content[:500])
+            if self.config.debug:
+                logger.debug(
+                    f"[TENANT_DEBUG] ❌ Failed to resolve tenant for user_id {user_id}: "
+                    f"HTTP {response.status_code} - {error_detail}"
+                )
+            return None
 
         except httpx.TimeoutException as e:
             if self.config.debug:
@@ -519,28 +586,12 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         """
         try:
             tenant_id_str = str(tenant_id)
-            cached = self._tenant_org_cache.get(tenant_id_str)
             now = time.time()
-            if cached:
-                org_name, expires_at = cached
-                if expires_at > now:
-                    return org_name
-                self._tenant_org_cache.pop(tenant_id_str, None)
+            cached_org = self._cache_get(self._tenant_org_cache, tenant_id_str, now)
+            if cached_org is not None:
+                return cached_org
 
-            multi_tenant_service_url = getattr(self.config, "multi_tenant_service_url", None)
-            if not multi_tenant_service_url:
-                multi_tenant_service_url = app_env.multi_tenant_service_url
-
-            if not multi_tenant_service_url:
-                # Same fallback as in _resolve_tenant_from_user_id.
-                service_name = (app_env.multi_tenant_service_name or "").strip() or "multi-tenant-service"
-                service_port = (app_env.multi_tenant_service_port or "").strip() or "8001"
-                service_scheme = (app_env.multi_tenant_service_scheme or "").strip() or "http"
-                multi_tenant_service_url = f"{service_scheme}://{service_name}:{service_port}"
-                if self.config.debug:
-                    logger.debug(
-                        f"MULTI_TENANT_SERVICE_URL not set, using service discovery: {multi_tenant_service_url}"
-                    )
+            multi_tenant_service_url = self._get_multi_tenant_service_url()
 
             if not multi_tenant_service_url:
                 logger.error(
@@ -558,40 +609,49 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if api_key:
                 headers["X-API-Key"] = api_key
 
-            # Try multiple endpoint shapes because `multi_tenant_service_url` may point to:
-            # - API base: {host}/api/v1/multi-tenant
-            # - or service root: {host}
-            candidates = [
-                # Documented admin endpoint (may require tenant admin role)
-                f"{multi_tenant_service_url}/admin/view/tenant?tenant_id={encoded_tenant_id}",
-                # Internal endpoint exposed on the multi-tenant service (authenticated users only)
-                f"{multi_tenant_service_url}/internal/view/tenant?tenant_id={encoded_tenant_id}",
-            ]
+            # Candidate endpoints should be configurable to avoid unbounded retries in production.
+            configured_candidates = getattr(self.config, "multi_tenant_tenant_details_candidates", None)
+            if isinstance(configured_candidates, (list, tuple)) and configured_candidates:
+                candidates = [str(c).format(base=multi_tenant_service_url, tenant_id=encoded_tenant_id) for c in configured_candidates]
+            else:
+                # Default candidates (kept for backward compatibility).
+                candidates = [
+                    f"{multi_tenant_service_url}/internal/view/tenant?tenant_id={encoded_tenant_id}",
+                    f"{multi_tenant_service_url}/admin/view/tenant?tenant_id={encoded_tenant_id}",
+                ]
 
-            api_prefix = "/api/v1/multi-tenant"
-            if api_prefix in multi_tenant_service_url:
-                service_root = multi_tenant_service_url.split(api_prefix, 1)[0]
-                candidates.append(f"{service_root}/internal/view/tenant?tenant_id={encoded_tenant_id}")
+            client = self._get_http_client()
+            for resolve_url in candidates:
+                if self.config.debug:
+                    logger.debug(f"[TENANT_DEBUG] Resolving organization for tenant_id={tenant_id} via {resolve_url}")
 
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                for resolve_url in candidates:
-                    if self.config.debug:
-                        logger.debug(f"[TENANT_DEBUG] Resolving organization for tenant_id={tenant_id} via {resolve_url}")
+                response = await client.get(resolve_url, headers=headers)
+                if response.status_code == 200:
+                    tenant_data = response.json()
+                    organization_name = self._extract_organization_name(tenant_data)
+                    if organization_name:
+                        org_str = str(organization_name)
+                        self._cache_set(
+                            self._tenant_org_cache,
+                            tenant_id_str,
+                            org_str,
+                            now + self._tenant_cache_ttl_seconds,
+                            self._tenant_org_cache_maxsize,
+                        )
+                        return org_str
+                    # Avoid caching None for long on ambiguous responses.
+                    return None
+                if response.status_code in (401, 403, 404):
+                    continue
 
-                    response = await client.get(resolve_url, headers=headers)
-                    if response.status_code == 200:
-                        tenant_data = response.json()
-                        organization_name = self._extract_organization_name(tenant_data)
-                        if organization_name:
-                            org_str = str(organization_name)
-                            self._tenant_org_cache[tenant_id_str] = (org_str, now + self._tenant_cache_ttl_seconds)
-                            return org_str
-                        self._tenant_org_cache[tenant_id_str] = (None, now + min(self._tenant_cache_ttl_seconds, 60))
-                        return None
-                    if response.status_code in (401, 403, 404):
-                        continue
-
-            self._tenant_org_cache[tenant_id_str] = (None, now + min(self._tenant_cache_ttl_seconds, 60))
+            # If we got 404 across all candidates, treat as true negative and cache None.
+            self._cache_set(
+                self._tenant_org_cache,
+                tenant_id_str,
+                None,
+                now + self._tenant_cache_ttl_seconds,
+                self._tenant_org_cache_maxsize,
+            )
             return None
         except httpx.TimeoutException as e:
             if self.config.debug:
