@@ -216,4 +216,3 @@ async def enforce_tenant_and_service_checks(
                 status_code=503,
                 detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant status"},
             )
-
