@@ -11,7 +11,7 @@ import io
 import wave
 import logging
 from urllib.parse import quote
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from ai4icore_env import app_env
@@ -32,6 +32,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.metrics_collector = metrics_collector or MetricsCollector()
         self.config = config or PluginConfig()
+        # In-memory caches (best-effort) to keep tenant/org resolution out of the hot path.
+        # These are per-process caches; if you run multiple replicas, each keeps its own.
+        self._tenant_org_cache: Dict[str, Tuple[Optional[str], float]] = {}  # tenant_id -> (org_name|None, expires_at)
+        self._user_tenant_cache: Dict[int, Tuple[Optional[Dict[str, Optional[str]]], float]] = {}  # user_id -> (tenant_info|None, expires_at)
+        self._tenant_cache_ttl_seconds: int = int(getattr(self.config, "tenant_cache_ttl_seconds", 300) or 300)
     
     async def dispatch(self, request: Request, call_next):
         """Process request through middleware."""
@@ -56,11 +61,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         if organization is None:
             organization = tenant_org_name  # None when user is a non-tenant individual
 
-        # Normalize for Prometheus label: None → "none" (empty string is not label-friendly)
-        organization_label = organization if organization else "none"
+        # Normalize for Prometheus label: None/empty → "unknown" (backward compatible with existing dashboards)
+        organization_label = organization if organization else "unknown"
 
-        # Normalize tenant label
-        tenant = str(tenant_id) if tenant_id else "none"
+        # Normalize tenant label (backward compatible with existing dashboards)
+        tenant = str(tenant_id) if tenant_id else "unknown"
 
         # Store resolved values in request.state for downstream middlewares / handlers
         # IMPORTANT: Set this BEFORE await call_next() so it's available to inner middlewares
@@ -247,14 +252,20 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             return None
     
     @staticmethod
-    def _get_organization_from_api_key(api_key: str) -> Optional[str]:
-        """Previously mapped an API key to a hardcoded organization via hashing.
+    def _extract_organization_name(payload: Dict[str, Any]) -> Optional[str]:
+        """Extract organization name from a tenant payload using a single, shared rule.
 
-        This method is retained for backward compatibility but now returns ``None``
-        so that the caller falls through to the dynamic tenant-based resolution.
-        Organization names are no longer maintained as a static list here.
+        The canonical field should be defined by the multi-tenant service API contract.
+        We keep a small set of fallbacks for backward compatibility.
         """
-        return None
+        value = (
+            payload.get("organization_name")
+            or payload.get("organization")
+            or payload.get("org_name")
+            or payload.get("tenant_name")
+            or payload.get("name")
+        )
+        return str(value) if value else None
     
     def _extract_customer_from_token(self, request: Request) -> Optional[str]:
         """Extract customer/organization name from JWT token in authorization header.
@@ -277,7 +288,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
         return None
     
-    async def _extract_tenant_info(self, request: Request) -> tuple:
+    async def _extract_tenant_info(self, request: Request) -> tuple[Optional[str], Optional[str]]:
         """
         Extract tenant_id and organization_name for the requesting user.
 
@@ -313,12 +324,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
                 if tenant_id is not None and tenant_id != "":
                     # Org name may also be carried in the JWT itself
-                    organization_name: Optional[str] = (
-                        decoded_token.get("organization_name")
-                        or decoded_token.get("tenant_name")
-                        or decoded_token.get("org_name")
-                        or decoded_token.get("organization")
-                    )
+                    organization_name = self._extract_organization_name(decoded_token)
                     if self.config.debug:
                         logger.debug(
                             f"[TENANT_DEBUG] ✅ tenant_id from JWT: {tenant_id}, "
@@ -390,6 +396,14 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             Example: {"tenant_id": "42", "organization_name": "acme-corp"}
         """
         try:
+            cached = self._user_tenant_cache.get(user_id)
+            now = time.time()
+            if cached:
+                tenant_info, expires_at = cached
+                if expires_at > now:
+                    return tenant_info
+                self._user_tenant_cache.pop(user_id, None)
+
             # Resolve multi-tenant service URL from config or environment / service discovery
             multi_tenant_service_url = getattr(self.config, 'multi_tenant_service_url', None)
             if not multi_tenant_service_url:
@@ -440,29 +454,27 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     if not tenant_id:
                         if self.config.debug:
                             logger.debug(f"[TENANT_DEBUG] ❌ Tenant data returned but no tenant_id field for user_id {user_id}: {tenant_data}")
+                        self._user_tenant_cache[user_id] = (None, now + self._tenant_cache_ttl_seconds)
                         return None
 
                     # Extract organization name — try several common field names that the
                     # multi-tenant service may return.
-                    organization_name: Optional[str] = (
-                        tenant_data.get("organization_name")
-                        or tenant_data.get("name")
-                        or tenant_data.get("tenant_name")
-                        or tenant_data.get("org_name")
-                        or tenant_data.get("organization")
-                    )
+                    organization_name = self._extract_organization_name(tenant_data)
 
                     if self.config.debug:
                         logger.debug(
                             f"[TENANT_DEBUG] ✅ Resolved tenant_id={tenant_id}, "
                             f"organization_name={organization_name} for user_id={user_id}"
                         )
-                    return {"tenant_id": str(tenant_id), "organization_name": organization_name}
+                    tenant_info = {"tenant_id": str(tenant_id), "organization_name": organization_name}
+                    self._user_tenant_cache[user_id] = (tenant_info, now + self._tenant_cache_ttl_seconds)
+                    return tenant_info
 
                 elif response.status_code == 404:
                     # User is not assigned to any tenant — normal for individual (non-enterprise) users
                     if self.config.debug:
                         logger.debug(f"[TENANT_DEBUG] User user_id={user_id} has no tenant (404)")
+                    self._user_tenant_cache[user_id] = (None, now + min(self._tenant_cache_ttl_seconds, 120))
                     return None
                 else:
                     error_detail = response.text[:500] if hasattr(response, 'text') else str(response.content[:500])
@@ -471,11 +483,29 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                             f"[TENANT_DEBUG] ❌ Failed to resolve tenant for user_id {user_id}: "
                             f"HTTP {response.status_code} - {error_detail}"
                         )
+                    self._user_tenant_cache[user_id] = (None, now + min(self._tenant_cache_ttl_seconds, 60))
                     return None
 
         except httpx.TimeoutException as e:
             if self.config.debug:
                 logger.debug(f"[TENANT_DEBUG] ❌ Timeout resolving tenant for user_id {user_id} (exceeded 5s): {e}")
+            return None
+        except httpx.ConnectError as e:
+            if self.config.debug:
+                logger.debug(f"[TENANT_DEBUG] ❌ Connection error resolving tenant for user_id {user_id}: {e}")
+            return None
+        except httpx.RequestError as e:
+            if self.config.debug:
+                logger.debug(
+                    f"[TENANT_DEBUG] ❌ Request error resolving tenant for user_id {user_id}: {type(e).__name__}: {e}"
+                )
+            return None
+        except Exception as e:
+            if self.config.debug:
+                logger.debug(
+                    f"[TENANT_DEBUG] ❌ Unexpected error resolving tenant from user_id {user_id}: {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
             return None
 
     async def _resolve_organization_from_tenant_id(self, tenant_id: str, request: Request) -> Optional[str]:
@@ -488,6 +518,15 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         can be labeled dynamically.
         """
         try:
+            tenant_id_str = str(tenant_id)
+            cached = self._tenant_org_cache.get(tenant_id_str)
+            now = time.time()
+            if cached:
+                org_name, expires_at = cached
+                if expires_at > now:
+                    return org_name
+                self._tenant_org_cache.pop(tenant_id_str, None)
+
             multi_tenant_service_url = getattr(self.config, "multi_tenant_service_url", None)
             if not multi_tenant_service_url:
                 multi_tenant_service_url = app_env.multi_tenant_service_url
@@ -542,18 +581,17 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     response = await client.get(resolve_url, headers=headers)
                     if response.status_code == 200:
                         tenant_data = response.json()
-                        organization_name: Optional[str] = (
-                            tenant_data.get("organization_name")
-                            or tenant_data.get("organization")
-                            or tenant_data.get("tenant_name")
-                            or tenant_data.get("org_name")
-                        )
+                        organization_name = self._extract_organization_name(tenant_data)
                         if organization_name:
-                            return str(organization_name)
+                            org_str = str(organization_name)
+                            self._tenant_org_cache[tenant_id_str] = (org_str, now + self._tenant_cache_ttl_seconds)
+                            return org_str
+                        self._tenant_org_cache[tenant_id_str] = (None, now + min(self._tenant_cache_ttl_seconds, 60))
                         return None
                     if response.status_code in (401, 403, 404):
                         continue
 
+            self._tenant_org_cache[tenant_id_str] = (None, now + min(self._tenant_cache_ttl_seconds, 60))
             return None
         except httpx.TimeoutException as e:
             if self.config.debug:
@@ -569,18 +607,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     f"[TENANT_DEBUG] Unexpected error resolving organization for tenant_id={tenant_id}: {type(e).__name__}: {e}",
                     exc_info=True,
                 )
-            return None
-        except httpx.ConnectError as e:
-            if self.config.debug:
-                logger.debug(f"[TENANT_DEBUG] ❌ Connection error resolving tenant for user_id {user_id}: {e}")
-            return None
-        except httpx.RequestError as e:
-            if self.config.debug:
-                logger.debug(f"[TENANT_DEBUG] ❌ Request error resolving tenant for user_id {user_id}: {type(e).__name__}: {e}")
-            return None
-        except Exception as e:
-            if self.config.debug:
-                logger.debug(f"[TENANT_DEBUG] ❌ Unexpected error resolving tenant from user_id {user_id}: {type(e).__name__}: {e}", exc_info=True)
             return None
     
     def _extract_customer_app(self, request: Request) -> tuple:
