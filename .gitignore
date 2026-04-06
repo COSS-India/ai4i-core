@@ -131,3 +131,7 @@ init_alerting_db_commands.sql
 docs/alerts-api-reference.md
 
 services/auth-service-v2/keys/
+
+# Private keys and certificates
+*.pem
+*.key
