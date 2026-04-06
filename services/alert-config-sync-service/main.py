@@ -52,6 +52,8 @@ DB_NAME = "alerting_db"
 
 # Auth DB (same host/user/password, different database) - for resolving ADMIN emails for default receiver
 AUTH_DB_NAME = app_env.auth_db_name
+if not AUTH_DB_NAME:
+    raise EnvironmentError("AUTH_DB_NAME is required but not set. Set the AUTH_DB_NAME environment variable.")
 
 # Multi-tenant DB (same host/user/password) - for resolving tenant name -> tenant_id and tenant user email. Set via MULTI_TENANT_DB_NAME env.
 MULTI_TENANT_DB_NAME = (app_env.multi_tenant_db_name or os.getenv("MULTI_TENANT_DB_NAME") or "").strip() or None
