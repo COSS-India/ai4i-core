@@ -183,12 +183,25 @@ def build_inference_payload(
             else:
                 payload[key] = value
         if payload:
+            logger.info(
+                f"Using model schema.request for test payload "
+                f"(task_type={task_type}): {payload}"
+            )
             return payload
 
-    return _DUMMY_PAYLOADS.get(
-        task_type,
-        {"input": [{"source": "test"}]},
+    if task_type in _DUMMY_PAYLOADS:
+        logger.info(
+            f"Using built-in dummy payload for task_type={task_type} "
+            f"(model schema.request is empty or not provided)"
+        )
+        return _DUMMY_PAYLOADS[task_type]
+
+    fallback = {"input": [{"source": "test"}]}
+    logger.info(
+        f"Using generic fallback payload for unknown task_type={task_type} "
+        f"(no model schema.request, no built-in dummy): {fallback}"
     )
+    return fallback
 
 
 async def test_inference(
