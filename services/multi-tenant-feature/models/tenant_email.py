@@ -27,5 +27,5 @@ class TenantResendEmailVerificationResponse(BaseModel):
     token: str
     message: str
 
-class _Payload(BaseModel):
+class EmailVerificationPayload(BaseModel):
     contact_email: EmailStr

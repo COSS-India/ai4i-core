@@ -62,7 +62,7 @@ from models.user_subscription import UserSubscriptionResponse
 from models.user_update import TenantUserUpdateRequest, TenantUserUpdateResponse
 from models.user_delete import TenantUserDeleteRequest,TenantUserDeleteResponse
 
-from models.tenant_email import TenantSendEmailVerificationResponse, TenantResendEmailVerificationResponse, _Payload
+from models.tenant_email import TenantSendEmailVerificationResponse, TenantResendEmailVerificationResponse, EmailVerificationPayload
 from services.email_service import send_welcome_email, send_verification_email , send_user_welcome_email
 from models.billing_update import BillingUpdateRequest, BillingUpdateResponse
 
@@ -160,6 +160,16 @@ async def enforce_verification_send_policy(
     Apply resend controls for every verification email after the initial send.
     """
     current_time = current_time or now_utc()
+
+    # Lock the tenant row so concurrent resends cannot both pass rate checks before either
+    # inserts a new verification row (child inserts do not lock the parent).
+    locked_id = await db.scalar(
+        select(Tenant.id)
+        .where(Tenant.id == tenant_uuid)
+        .with_for_update()
+    )
+    if locked_id is None:
+        raise HTTPException(status_code=404, detail="Tenant not found")
 
     latest_sent_at = await db.scalar(
         select(TenantEmailVerification.created_at)
@@ -782,30 +792,35 @@ async def send_verification_link(
         background_tasks: BackgroundTasks to send email asynchronously
     """
 
+    # End any implicit transaction from the caller (e.g. SELECT tenant) so invalidation and
+    # the new token row are written in a single explicit transaction (rollback + begin).
+    await db.rollback()
+
     invalidated_at = now_utc()
-    await enforce_verification_send_policy(created.id, db, current_time=invalidated_at)
-    await invalidate_pending_verification_tokens(created.id, db, invalidated_at=invalidated_at)
-
-    token = generate_email_verification_token()
-    expiry = invalidated_at + timedelta(minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES)
-
-    verification = TenantEmailVerification(
-        tenant_id=created.id,
-        token=token,
-        expires_at=expiry,
-    )
-    db.add(verification)
-
     try:
-        await db.commit()
+        async with db.begin():
+            await enforce_verification_send_policy(created.id, db, current_time=invalidated_at)
+            await invalidate_pending_verification_tokens(created.id, db, invalidated_at=invalidated_at)
+
+            token = generate_email_verification_token()
+            expiry = invalidated_at + timedelta(minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES)
+
+            verification = TenantEmailVerification(
+                tenant_id=created.id,
+                token=token,
+                expires_at=expiry,
+            )
+            db.add(verification)
+    except HTTPException:
+        raise
     except IntegrityError as e:
         await db.rollback()
         logger.error(f"Integrity error while creating verification token for tenant {created.id}: {e}")
-        raise HTTPException(status_code=409,detail="Verification token creation failed")
+        raise HTTPException(status_code=409, detail="Verification token creation failed")
     except Exception as e:
         await db.rollback()
         logger.exception(f"Error committing verification token to database: {e}")
-        raise HTTPException(status_code=500,detail="Failed to create verification token")
+        raise HTTPException(status_code=500, detail="Failed to create verification token")
 
     verification_link = f"{EMAIL_VERIFICATION_LINK}/api/v1/multi-tenant/email/verify?token={token}"
 
@@ -1031,7 +1046,7 @@ async def send_initial_verification_email(
     
     # Construct a minimal payload-like object for email helper
 
-    payload = _Payload(contact_email=decrypted_email)
+    payload = EmailVerificationPayload(contact_email=decrypted_email)
 
     # Reuse the existing token creation + email send helper
     token = await send_verification_link(
@@ -1306,7 +1321,7 @@ async def resend_verification_email(
     if not decrypted_email:
         raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
 
-    payload = _Payload(contact_email=decrypted_email)
+    payload = EmailVerificationPayload(contact_email=decrypted_email)
     token = await send_verification_link(
         created=tenant,
         payload=payload,
