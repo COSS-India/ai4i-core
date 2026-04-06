@@ -597,10 +597,7 @@ TENANT_EMAIL_SUBJECT_TEMPLATE = (
 )
 
 
-GLOBAL_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{if eq .GroupLabels.severity \"critical\"}}#d32f2f{{else if eq .GroupLabels.severity \"warning\"}}#f57c00{{else}}#1976d2{{end}};">
-  {{if eq .GroupLabels.severity "critical"}}CRITICAL{{else if eq .GroupLabels.severity "warning"}}WARNING{{else}}INFO{{end}}: {{(index .Alerts 0).Annotations.signal_display}}
-</h2>
-<p><strong>Alert Name</strong></p>
+GLOBAL_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
 <p>{{ .GroupLabels.alertname }}</p>
 
 <p><strong>Category</strong></p>
@@ -634,10 +631,7 @@ GLOBAL_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{if eq .GroupLabels.severity 
 <p>{{ index (index .Alerts 0).Annotations "sustained_for" }}</p>
 """
 
-TENANT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{if eq .GroupLabels.severity \"critical\"}}#d32f2f{{else if eq .GroupLabels.severity \"warning\"}}#f57c00{{else}}#1976d2{{end}};">
-  {{if eq .GroupLabels.severity "critical"}}CRITICAL{{else if eq .GroupLabels.severity "warning"}}WARNING{{else}}INFO{{end}}: {{(index .Alerts 0).Annotations.signal_display}}
-</h2>
-<p><strong>Alert Name</strong></p>
+TENANT_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
 <p>{{ .GroupLabels.alertname }}</p>
 
 <p><strong>Category</strong></p>
@@ -650,7 +644,7 @@ TENANT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{if eq .GroupLabels.severity 
 <p>{{ index (index .Alerts 0).Annotations "service_type_full" }}</p>
 
 <p><strong>Tenant</strong></p>
-<p>{{ (index .Alerts 0).Labels.tenant }}</p>
+<p>__TENANT_NAME__</p>
 
 <p><strong>Environment</strong></p>
 <p>__ENVIRONMENT_TITLE__</p>
@@ -836,6 +830,10 @@ def generate_alertmanager_yaml(
             if not stored_body or not str(stored_body).strip()
             else stored_body
         )
+
+        if is_tenant_receiver:
+            tenant_name = (receiver.get("tenant") or "").strip()
+            email_body_template = email_body_template.replace("__TENANT_NAME__", tenant_name)
 
         for email in email_list:
             if email and str(email).strip():
