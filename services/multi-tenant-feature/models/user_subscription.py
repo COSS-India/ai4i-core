@@ -19,5 +19,5 @@ class UserSubscriptionResponse(BaseModel):
     user_id: int
     subscriptions: list[str]
     # Optional human-readable message for partial success cases (e.g. duplicates).
-    message: Optional[str] | None = None
+    message: Optional[str] = None
 
