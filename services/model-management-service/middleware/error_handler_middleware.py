@@ -65,7 +65,15 @@ def add_error_handlers(app: FastAPI) -> None:
         if isinstance(exc.detail, dict) and "message" in exc.detail:
             message = exc.detail["message"]
             code = exc.detail.get("kind") or exc.detail.get("code") or "HTTP_ERROR"
-            details = exc.detail.get("error")
+            raw = exc.detail.get("error")
+            if raw is None:
+                raw = exc.detail.get("details")
+            if isinstance(raw, (dict, list)):
+                details = raw
+            elif raw is not None:
+                details = str(raw)
+            else:
+                details = None
         else:
             message = str(exc.detail)
             code = "HTTP_ERROR"

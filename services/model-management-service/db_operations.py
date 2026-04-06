@@ -18,6 +18,9 @@ from models.service_health import ServiceHeartbeatRequest
 from models.service_policy import ServicePolicyData
 from models.type_enum import TaskTypeEnum
 
+from validation import validate_hosted_inference_endpoint
+from validation.types import EndpointValidationFailure
+
 from db_connection import AppDatabase
 from uuid import UUID, uuid4
 from ai4icore_env import app_env
@@ -885,6 +888,31 @@ async def save_service_to_db(payload: ServiceCreateRequest, created_by: str = No
                 status_code=400,
                 detail=f"Model with ID {payload.modelId} and version {payload.modelVersion} does not exist, cannot create service."
             )
+
+        task = model.task if isinstance(model.task, dict) else {}
+        task_type = str(task.get("type") or "")
+        inference_endpoint = model.inference_endpoint if isinstance(model.inference_endpoint, dict) else {}
+        model_languages = model.languages if isinstance(model.languages, list) else []
+        try:
+            await validate_hosted_inference_endpoint(
+                payload.endpoint,
+                payload.api_key,
+                inference_endpoint,
+                task_type,
+                languages=model_languages,
+            )
+        except EndpointValidationFailure as ev:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "kind": "EndpointValidationError",
+                    "message": ev.message,
+                    "error": {
+                        **ev.details,
+                        "stage": ev.stage.value,
+                    },
+                },
+            ) from ev
         
         # Service ID is derived from the service name only.
         generated_service_id = generate_service_id(payload.name)
@@ -1025,6 +1053,42 @@ async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
         if db_service is None:
             logger.warning(f"No DB record found for service {request.serviceId}")
             return 0  # Service not found
+
+        if "endpoint" in request_dict or "api_key" in request_dict:
+            result_m = await db.execute(
+                select(Model).where(
+                    Model.model_id == db_service.model_id,
+                    Model.version == db_service.model_version,
+                )
+            )
+            mdl = result_m.scalars().first()
+            if mdl:
+                task = mdl.task if isinstance(mdl.task, dict) else {}
+                task_type = str(task.get("type") or "")
+                inference_endpoint = mdl.inference_endpoint if isinstance(mdl.inference_endpoint, dict) else {}
+                mdl_languages = mdl.languages if isinstance(mdl.languages, list) else []
+                ep = request_dict.get("endpoint", db_service.endpoint)
+                api_key = request_dict.get("api_key", db_service.api_key)
+                try:
+                    await validate_hosted_inference_endpoint(
+                        ep,
+                        api_key,
+                        inference_endpoint,
+                        task_type,
+                        languages=mdl_languages,
+                    )
+                except EndpointValidationFailure as ev:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "kind": "EndpointValidationError",
+                            "message": ev.message,
+                            "error": {
+                                **ev.details,
+                                "stage": ev.stage.value,
+                            },
+                        },
+                    ) from ev
 
         if not db_update:
             logger.warning("No valid update fields provided for service update. Valid fields: serviceDescription, hardwareDescription, endpoint, api_key, healthStatus, benchmarks, isPublished. Note: name, modelId, modelVersion are not updatable.")

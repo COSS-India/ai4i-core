@@ -666,30 +666,40 @@ class TestServiceModelVersionAssociation:
         Test that creating a service with valid model version succeeds.
         """
         with patch('db_operations.AppDatabase', return_value=mock_db_session):
-            from db_operations import save_service_to_db
+            with patch(
+                'db_operations.validate_hosted_inference_endpoint',
+                new_callable=AsyncMock,
+            ) as _mock_val:
+                from validation.types import EndpointValidationResult, ValidationStage
 
-            request = create_service_request(
-                service_id="new-service",
-                model_id="test-model",
-                model_version="1.0.0"
-            )
+                _mock_val.return_value = EndpointValidationResult(
+                    ok=True,
+                    stage=ValidationStage.GENERIC_JSON_PROBE,
+                    message="skipped in test",
+                )
+                from db_operations import save_service_to_db
 
-            # Mock: no duplicate service
-            mock_service_result = MagicMock()
-            mock_service_result.scalars.return_value.first.return_value = None
-            
-            # Mock: model version exists
-            mock_model_result = MagicMock()
-            mock_model_result.scalars.return_value.first.return_value = mock_model
-            
-            mock_db_session.execute.side_effect = [mock_service_result, mock_model_result]
+                request = create_service_request(
+                    service_id="new-service",
+                    model_id="test-model",
+                    model_version="1.0.0",
+                )
 
-            try:
-                await save_service_to_db(request)
-            except HTTPException:
-                pytest.fail("Should not raise HTTPException for valid model version")
-            except Exception:
-                pass  # Other mocked exceptions are ok
+                # Mock: model version exists, then no duplicate service name
+                mock_model_result = MagicMock()
+                mock_model_result.scalars.return_value.first.return_value = mock_model
+
+                mock_service_result = MagicMock()
+                mock_service_result.scalars.return_value.first.return_value = None
+
+                mock_db_session.execute.side_effect = [mock_model_result, mock_service_result]
+
+                try:
+                    await save_service_to_db(request)
+                except HTTPException:
+                    pytest.fail("Should not raise HTTPException for valid model version")
+                except Exception:
+                    pass  # Other mocked exceptions are ok
 
     @pytest.mark.asyncio
     async def test_create_service_with_nonexistent_model_version_fails(self, mock_db_session):
@@ -705,15 +715,11 @@ class TestServiceModelVersionAssociation:
                 model_version="99.0.0"  # Non-existent
             )
 
-            # Mock: no duplicate service
-            mock_service_result = MagicMock()
-            mock_service_result.scalars.return_value.first.return_value = None
-            
-            # Mock: model version NOT found
+            # Mock: model version NOT found (only one query before failure)
             mock_model_result = MagicMock()
             mock_model_result.scalars.return_value.first.return_value = None
-            
-            mock_db_session.execute.side_effect = [mock_service_result, mock_model_result]
+
+            mock_db_session.execute.side_effect = [mock_model_result]
 
             with pytest.raises(HTTPException) as exc_info:
                 await save_service_to_db(request)

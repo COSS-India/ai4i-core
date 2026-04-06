@@ -38,6 +38,14 @@ class ServiceCreateRequest(BaseModel):
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = False
 
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint_url_shape(cls, v: str) -> str:
+        """Synchronous URL shape check; deeper probes run in ``save_service_to_db``."""
+        from validation.url import normalize_http_url
+
+        return normalize_http_url(v)
+
     @field_validator("name")
     def validate_name(cls, v):
         """Validate service name format: only alphanumeric, hyphen, and forward slash allowed."""

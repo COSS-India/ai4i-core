@@ -10,7 +10,7 @@ via the shared register_exception_handlers().
 
 from fastapi import HTTPException
 from pydantic import BaseModel
-from typing import Optional, Dict
+from typing import Any, Optional, Dict
 import time
 
 
@@ -265,7 +265,8 @@ class ErrorDetail(BaseModel):
     message: str
     code: Optional[str] = None
     timestamp: float = time.time()
-    details: Optional[str] = None
+    # Structured diagnostics (dict/list) serialize as nested JSON; str kept for plain messages.
+    details: Optional[Any] = None
 
 
 class ErrorResponse(BaseModel):

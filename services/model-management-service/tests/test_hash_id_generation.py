@@ -259,38 +259,49 @@ class TestHashIdIntegrationWithDb:
     async def test_save_service_generates_hash_id(self, mock_db_session, mock_model):
         """Service creation should auto-generate hash-based service ID."""
         with patch('db_operations.AppDatabase', return_value=mock_db_session):
-            from db_operations import save_service_to_db
-            from models.service_create import ServiceCreateRequest
+            with patch(
+                'db_operations.validate_hosted_inference_endpoint',
+                new_callable=AsyncMock,
+            ) as _mock_val:
+                from validation.types import EndpointValidationResult, ValidationStage
 
-            mock_model.name = "test-model"
-            mock_model_result = MagicMock()
-            mock_model_result.scalars.return_value.first.return_value = mock_model
-            
-            mock_dup_result = MagicMock()
-            mock_dup_result.scalars.return_value.first.return_value = None
-            
-            mock_db_session.execute.side_effect = [mock_model_result, mock_dup_result]
+                _mock_val.return_value = EndpointValidationResult(
+                    ok=True,
+                    stage=ValidationStage.GENERIC_JSON_PROBE,
+                    message="skipped in test",
+                )
+                from db_operations import save_service_to_db
+                from models.service_create import ServiceCreateRequest
 
-            request = ServiceCreateRequest(
-                name="test-service",
-                serviceDescription="Test service",
-                hardwareDescription="GPU",
-                modelId="existing-model-id",
-                modelVersion="1.0.0",
-                endpoint="http://localhost:8080",
-                api_key="test-key"
-            )
-            
-            expected_service_id = generate_service_id("test-service")
-            
-            try:
-                await save_service_to_db(request)
-            except Exception:
-                pass
+                mock_model.name = "test-model"
+                mock_model_result = MagicMock()
+                mock_model_result.scalars.return_value.first.return_value = mock_model
 
-            if mock_db_session.add.called:
-                added_service = mock_db_session.add.call_args[0][0]
-                assert added_service.service_id == expected_service_id
+                mock_dup_result = MagicMock()
+                mock_dup_result.scalars.return_value.first.return_value = None
+
+                mock_db_session.execute.side_effect = [mock_model_result, mock_dup_result]
+
+                request = ServiceCreateRequest(
+                    name="test-service",
+                    serviceDescription="Test service",
+                    hardwareDescription="GPU",
+                    modelId="existing-model-id",
+                    modelVersion="1.0.0",
+                    endpoint="http://localhost:8080",
+                    api_key="test-key",
+                )
+
+                expected_service_id = generate_service_id("test-service")
+
+                try:
+                    await save_service_to_db(request)
+                except Exception:
+                    pass
+
+                if mock_db_session.add.called:
+                    added_service = mock_db_session.add.call_args[0][0]
+                    assert added_service.service_id == expected_service_id
 
 
 @pytest.mark.unit
