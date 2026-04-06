@@ -1,7 +1,7 @@
 from fastapi import BackgroundTasks, HTTPException
 from datetime import datetime, timezone , timedelta , date
 
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from sqlalchemy import insert , select , update , delete , text , MetaData , func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError , NoResultFound
@@ -62,7 +62,7 @@ from models.user_subscription import UserSubscriptionResponse
 from models.user_update import TenantUserUpdateRequest, TenantUserUpdateResponse
 from models.user_delete import TenantUserDeleteRequest,TenantUserDeleteResponse
 
-from models.tenant_email import TenantSendEmailVerificationResponse,TenantResendEmailVerificationResponse
+from models.tenant_email import TenantSendEmailVerificationResponse, TenantResendEmailVerificationResponse, _Payload
 from services.email_service import send_welcome_email, send_verification_email , send_user_welcome_email
 from models.billing_update import BillingUpdateRequest, BillingUpdateResponse
 
@@ -94,13 +94,17 @@ async def invalidate_pending_verification_tokens(
     db: AsyncSession,
     *,
     invalidated_at: Optional[datetime] = None,
+    exclude_verification_id: Optional[UUID] = None,
 ):
     """
     Expire every unverified token for a tenant so that only a newly issued one can be used.
+
+    When invalidating around a successful verify, pass exclude_verification_id so the row
+    being verified is not given a backdated expires_at (bulk updates do not see pending ORM state).
     """
     invalidated_at = invalidated_at or now_utc()
 
-    await db.execute(
+    stmt = (
         update(TenantEmailVerification)
         .where(
             TenantEmailVerification.tenant_id == tenant_id,
@@ -109,6 +113,9 @@ async def invalidate_pending_verification_tokens(
         )
         .values(expires_at=invalidated_at - timedelta(seconds=1))
     )
+    if exclude_verification_id is not None:
+        stmt = stmt.where(TenantEmailVerification.id != exclude_verification_id)
+    await db.execute(stmt)
 
 
 async def _count_verification_resends_since(
@@ -1023,8 +1030,6 @@ async def send_initial_verification_email(
         raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
     
     # Construct a minimal payload-like object for email helper
-    class _Payload(BaseModel):
-        contact_email: EmailStr
 
     payload = _Payload(contact_email=decrypted_email)
 
@@ -1081,7 +1086,12 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     if tenant.status == TenantStatus.SUSPENDED:
         raise ValueError("Tenant is suspended. Contact support.")
 
-    await invalidate_pending_verification_tokens(tenant.id, tenant_db, invalidated_at=current_time)
+    await invalidate_pending_verification_tokens(
+        tenant.id,
+        tenant_db,
+        invalidated_at=current_time,
+        exclude_verification_id=verification.id,
+    )
     verification.verified_at = now_utc()
     tenant.status = TenantStatus.ACTIVE
 
@@ -1283,8 +1293,6 @@ async def resend_verification_email(
         raise ValueError("Tenant is suspended. Contact support.")
     
     # Reuse the same send path so expiry, rate limits, and token invalidation stay consistent.
-    class _Payload(BaseModel):
-        contact_email: EmailStr
 
     try:
         decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
@@ -1542,7 +1550,11 @@ async def list_service(db: AsyncSession) -> ListServicesResponse:
 
 
 
-async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSession,) -> TenantSubscriptionResponse:
+async def add_subscriptions(
+    tenant_id: str,
+    subscriptions: list[str],
+    db: AsyncSession,
+) -> Tuple[TenantSubscriptionResponse, bool]:
     """
     Add subscriptions to a tenant.
     Performs partial add: if some subscriptions already exist, it will still add the rest.
@@ -1580,15 +1592,25 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
     duplicates = current & requested
     to_add = requested - current
 
-    updated = list(current | to_add)
-    tenant.subscriptions = updated
-
     message = None
     if duplicates:
         # Keep exact message format expected by callers.
         message = f"Subscription(s) already exist: {normalize_to_strings(duplicates)}"
 
-    # Audit log
+    if not to_add:
+        return (
+            TenantSubscriptionResponse(
+                tenant_id=tenant.tenant_id,
+                subscriptions=list(tenant.subscriptions or []),
+                message=message,
+            ),
+            False,
+        )
+
+    updated = list(current | to_add)
+    tenant.subscriptions = updated
+
+    # Audit log only when something was actually added
     db.add(
         AuditLog(
             tenant_id=tenant.id,
@@ -1624,17 +1646,24 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to add subscriptions")
 
-    return TenantSubscriptionResponse(
-        tenant_id=tenant.tenant_id,
-        subscriptions=tenant.subscriptions,
-        message=message,
+    return (
+        TenantSubscriptionResponse(
+            tenant_id=tenant.tenant_id,
+            subscriptions=tenant.subscriptions,
+            message=message,
+        ),
+        True,
     )
 
 
 
 
 
-async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSession,) -> TenantSubscriptionResponse:
+async def remove_subscriptions(
+    tenant_id: str,
+    subscriptions: list[str],
+    db: AsyncSession,
+) -> Tuple[TenantSubscriptionResponse, bool]:
     """
     Remove subscriptions from a tenant and drop corresponding tables from tenant schema.
     
@@ -1658,13 +1687,23 @@ async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: Async
     missing = to_remove - current
     to_remove_existing = to_remove & current
 
-    updated = list(current - to_remove_existing)
-    tenant.subscriptions = updated
-
     message = None
     if missing:
         # Keep message format expected by callers.
         message = f"Subscriptions not present for tenant: {normalize_to_strings(missing)}"
+
+    if not to_remove_existing:
+        return (
+            TenantSubscriptionResponse(
+                tenant_id=tenant.tenant_id,
+                subscriptions=list(tenant.subscriptions or []),
+                message=message,
+            ),
+            False,
+        )
+
+    updated = list(current - to_remove_existing)
+    tenant.subscriptions = updated
 
     db.add(
         AuditLog(
@@ -1686,10 +1725,13 @@ async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: Async
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to remove subscriptions")
 
-    return TenantSubscriptionResponse(
-        tenant_id=tenant.tenant_id,
-        subscriptions=tenant.subscriptions,
-        message=message,
+    return (
+        TenantSubscriptionResponse(
+            tenant_id=tenant.tenant_id,
+            subscriptions=tenant.subscriptions,
+            message=message,
+        ),
+        True,
     )
 
 
@@ -2802,7 +2844,7 @@ async def add_user_subscriptions(
     user_id: int,
     subscriptions: list[str],
     db: AsyncSession,
-) -> UserSubscriptionResponse:
+) -> Tuple[UserSubscriptionResponse, bool]:
     """
     Add subscriptions to a tenant user.
     Validates tenant, tenant user, and that requested services are enabled and active.
@@ -2860,15 +2902,26 @@ async def add_user_subscriptions(
     duplicates = current & requested_services
     to_add = requested_services - current
 
-    updated = list(current | to_add)
-    tenant_user.subscriptions = updated
-
     message = None
     if duplicates:
         # Keep exact message format expected by callers.
         message = f"Subscription(s) already exist for user: {normalize_to_strings(duplicates)}"
 
-    # Audit log for user subscription add
+    if not to_add:
+        return (
+            UserSubscriptionResponse(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                subscriptions=list(tenant_user.subscriptions or []),
+                message=message,
+            ),
+            False,
+        )
+
+    updated = list(current | to_add)
+    tenant_user.subscriptions = updated
+
+    # Audit log for user subscription add (only when something was added)
     db.add(
         AuditLog(
             tenant_id=tenant.id,
@@ -2897,11 +2950,14 @@ async def add_user_subscriptions(
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to add user subscriptions")
 
-    return UserSubscriptionResponse(
-        tenant_id=tenant_id,
-        user_id=user_id,
-        subscriptions=tenant_user.subscriptions or [],
-        message=message,
+    return (
+        UserSubscriptionResponse(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            subscriptions=tenant_user.subscriptions or [],
+            message=message,
+        ),
+        True,
     )
 
 
@@ -2910,7 +2966,7 @@ async def remove_user_subscriptions(
     user_id: int,
     subscriptions: list[str],
     db: AsyncSession,
-) -> UserSubscriptionResponse:
+) -> Tuple[UserSubscriptionResponse, bool]:
     """
     Remove subscriptions from a tenant user.
     Validates that subscriptions exist for the user.
@@ -2940,14 +2996,25 @@ async def remove_user_subscriptions(
     missing = to_remove - current
     to_remove_existing = to_remove & current
 
-    updated = list(current - to_remove_existing)
-    tenant_user.subscriptions = updated
-
     message = None
     if missing:
         message = f"Subscriptions not present for user: {list(missing)}"
 
-    # Audit log for user subscription removal
+    if not to_remove_existing:
+        return (
+            UserSubscriptionResponse(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                subscriptions=list(tenant_user.subscriptions or []),
+                message=message,
+            ),
+            False,
+        )
+
+    updated = list(current - to_remove_existing)
+    tenant_user.subscriptions = updated
+
+    # Audit log for user subscription removal (only when something was removed)
     db.add(
         AuditLog(
             tenant_id=tenant.id,
@@ -2976,11 +3043,14 @@ async def remove_user_subscriptions(
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to remove user subscriptions")
 
-    return UserSubscriptionResponse(
-        tenant_id=tenant_id,
-        user_id=user_id,
-        subscriptions=tenant_user.subscriptions or [],
-        message=message,
+    return (
+        UserSubscriptionResponse(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            subscriptions=tenant_user.subscriptions or [],
+            message=message,
+        ),
+        True,
     )
 
 async def update_billing_plan(db: AsyncSession,payload: BillingUpdateRequest) -> BillingUpdateResponse:

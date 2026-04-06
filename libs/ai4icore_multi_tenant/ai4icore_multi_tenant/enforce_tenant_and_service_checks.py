@@ -173,4 +173,47 @@ async def enforce_tenant_and_service_checks(
         )
 
     # Finally, if tenant context present, enforce tenant status (must be ACTIVE)
-    #removing tenant status check since tenant wont be able to login if not active
+    
+    if tenant_id:
+        try:
+            # reuse tenant_data if loaded above
+            if not tenant_data:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.get(
+                        f"{_api_gateway_url}/api/v1/multi-tenant/internal/view/tenant",
+                        params={"tenant_id": tenant_id},
+                        headers=headers,
+                    )
+                    if resp.status_code == 200:
+                        tenant_data = resp.json()
+                    elif resp.status_code == 404:
+                        raise HTTPException(
+                            status_code=403,
+                            detail={"code": "TENANT_NOT_FOUND", "message": "Tenant not found"},
+                        )
+                    else:
+                        raise HTTPException(
+                            status_code=503,
+                            detail={
+                                "code": "TENANT_CHECK_FAILED",
+                                "message": "Failed to verify tenant status",
+                            },
+                        )
+
+            status_val = (tenant_data.get("status") or "").upper()  # type: ignore[union-attr]
+            if status_val != "ACTIVE":
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "TENANT_INACTIVE",
+                        "message": f"Tenant status is {status_val}. Access denied.",
+                    },
+                )
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Failed to verify tenant status for tenant_id={tenant_id}: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant status"},
+            )
