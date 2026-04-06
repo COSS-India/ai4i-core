@@ -173,7 +173,6 @@ async def enforce_tenant_and_service_checks(
         )
 
     # Finally, if tenant context present, enforce tenant status (must be ACTIVE)
-    
     if tenant_id:
         try:
             # reuse tenant_data if loaded above

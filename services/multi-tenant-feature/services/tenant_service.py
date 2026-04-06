@@ -90,7 +90,7 @@ API_GATEWAY_TIMEOUT       = app_env.api_gateway_timeout
 
 
 async def invalidate_pending_verification_tokens(
-    tenant_id,
+    tenant_id: UUID,
     db: AsyncSession,
     *,
     invalidated_at: Optional[datetime] = None,
@@ -119,7 +119,7 @@ async def invalidate_pending_verification_tokens(
 
 
 async def _count_verification_resends_since(
-    tenant_uuid,
+    tenant_uuid: UUID,
     db: AsyncSession,
     *,
     since: datetime,
@@ -151,7 +151,7 @@ async def _count_verification_resends_since(
 
 
 async def enforce_verification_send_policy(
-    tenant_uuid,
+    tenant_uuid: UUID,
     db: AsyncSession,
     *,
     current_time: Optional[datetime] = None,
@@ -783,7 +783,18 @@ async def send_verification_link(
         ):
     """
     Generate and send email verification link to the tenant's contact email.
-    
+
+    Transaction contract:
+        This helper runs its work inside ``async with db.begin()``. If the caller already
+        has an open transaction, it must not hold uncommitted ORM changes: this function
+        ends a read-only implicit transaction (e.g. after a SELECT) with ``rollback()`` so
+        the verification token work runs in one explicit transaction. If the session has
+        pending inserts/updates/deletes, it raises instead of discarding them.
+
+        **WARNING:** If there is an open transaction with no pending ORM state, this
+        function calls ``rollback()`` solely to close that implicit transaction before
+        starting its own—never to discard uncommitted writes.
+
     Args:
         created: The created Tenant object
         payload: The TenantRegisterRequest payload
@@ -792,21 +803,35 @@ async def send_verification_link(
         background_tasks: BackgroundTasks to send email asynchronously
     """
 
-    # End any implicit transaction from the caller (e.g. SELECT tenant) so invalidation and
-    # the new token row are written in a single explicit transaction (rollback + begin).
-    await db.rollback()
+    # Snapshot attributes before rollback(): rollback expires mapped instances; touching
+    # created.id afterward can lazy-load and raise MissingGreenlet on AsyncSession.
+    tenant_uuid = created.id
+    tenant_id_for_email = created.tenant_id
+
+    if db.in_transaction():
+        if db.new or db.dirty or db.deleted:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Cannot send verification link while the database session has uncommitted "
+                    "changes; commit or roll back before sending verification email."
+                ),
+            )
+        # End implicit read transaction from the caller (e.g. SELECT tenant) so invalidation
+        # and the new token row run in a single explicit transaction via db.begin().
+        await db.rollback()
 
     invalidated_at = now_utc()
     try:
         async with db.begin():
-            await enforce_verification_send_policy(created.id, db, current_time=invalidated_at)
-            await invalidate_pending_verification_tokens(created.id, db, invalidated_at=invalidated_at)
+            await enforce_verification_send_policy(tenant_uuid, db, current_time=invalidated_at)
+            await invalidate_pending_verification_tokens(tenant_uuid, db, invalidated_at=invalidated_at)
 
             token = generate_email_verification_token()
             expiry = invalidated_at + timedelta(minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES)
 
             verification = TenantEmailVerification(
-                tenant_id=created.id,
+                tenant_id=tenant_uuid,
                 token=token,
                 expires_at=expiry,
             )
@@ -814,11 +839,9 @@ async def send_verification_link(
     except HTTPException:
         raise
     except IntegrityError as e:
-        await db.rollback()
-        logger.error(f"Integrity error while creating verification token for tenant {created.id}: {e}")
+        logger.error(f"Integrity error while creating verification token for tenant {tenant_uuid}: {e}")
         raise HTTPException(status_code=409, detail="Verification token creation failed")
     except Exception as e:
-        await db.rollback()
         logger.exception(f"Error committing verification token to database: {e}")
         raise HTTPException(status_code=500, detail="Failed to create verification token")
 
@@ -828,7 +851,7 @@ async def send_verification_link(
         send_verification_email,
         payload.contact_email,
         verification_link,
-        tenant_id=created.tenant_id,  # Pass tenant_id for resend reference
+        tenant_id=tenant_id_for_email,  # Pass tenant_id for resend reference
         expires_in_minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES,
     )
     return token
@@ -993,22 +1016,33 @@ async def create_new_tenant(
         await db.rollback()
         raise HTTPException(status_code=500,detail="Failed to create tenant")
 
+    # Snapshot ORM fields before verification send: it rolls back the session and expires instances.
+    register_id = created.id
+    register_tenant_id = created.tenant_id
+    register_schema_name = created.schema_name
+    register_subscriptions = created.subscriptions or []
+    register_quotas = created.quotas or {}
+    register_usage = created.usage or {}
+    register_status = (
+        created.status.value if hasattr(created.status, "value") else str(created.status)
+    )
+
     # Automatically send initial verification email to the tenant contact email.
     # This creates the verification token and schedules the actual email via background tasks.
     await send_initial_verification_email(
-        tenant_id=created.tenant_id,
+        tenant_id=register_tenant_id,
         db=db,
         background_tasks=background_tasks,
     )
 
     response = TenantRegisterResponse(
-        id=created.id,
-        tenant_id=created.tenant_id,
-        schema_name=created.schema_name,
-        subscriptions=created.subscriptions or [],
-        quotas=created.quotas or {},
-        usage_quota=created.usage or {},
-        status=created.status.value if hasattr(created.status, "value") else str(created.status),
+        id=register_id,
+        tenant_id=register_tenant_id,
+        schema_name=register_schema_name,
+        subscriptions=register_subscriptions,
+        quotas=register_quotas,
+        usage_quota=register_usage,
+        status=register_status,
         message="Tenant successfully created. A verification email has been sent.",
     )
 
@@ -1048,6 +1082,10 @@ async def send_initial_verification_email(
 
     payload = EmailVerificationPayload(contact_email=decrypted_email)
 
+    # Snapshot before send_verification_link: it may rollback the session and expire tenant.
+    tenant_uuid = tenant.id
+    tenant_id_str = tenant.tenant_id
+
     # Reuse the existing token creation + email send helper
     token = await send_verification_link(
         created=tenant,
@@ -1058,8 +1096,8 @@ async def send_initial_verification_email(
     )
 
     return TenantSendEmailVerificationResponse(
-        tenant_uuid=tenant.id,
-        tenant_id=tenant.tenant_id,
+        tenant_uuid=tenant_uuid,
+        tenant_id=tenant_id_str,
         token=token,
         message="Verification email sent successfully",
     )
@@ -1322,6 +1360,14 @@ async def resend_verification_email(
         raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
 
     payload = EmailVerificationPayload(contact_email=decrypted_email)
+
+    # Snapshot before send_verification_link: it may rollback the session and expire tenant.
+    tenant_uuid = tenant.id
+    tenant_id_str = tenant.tenant_id
+    tenant_status_value = (
+        tenant.status.value if hasattr(tenant.status, "value") else str(tenant.status)
+    )
+
     token = await send_verification_link(
         created=tenant,
         payload=payload,
@@ -1330,11 +1376,13 @@ async def resend_verification_email(
         background_tasks=background_tasks,
     )
 
-    logger.info(f"Verification email resent for tenant {tenant.tenant_id} (status: {tenant.status.value})")
+    logger.info(
+        f"Verification email resent for tenant {tenant_id_str} (status: {tenant_status_value})"
+    )
 
     response = TenantResendEmailVerificationResponse(
-        tenant_uuid=tenant.id,
-        tenant_id=tenant.tenant_id,
+        tenant_uuid=tenant_uuid,
+        tenant_id=tenant_id_str,
         token=token,
         message="Verification email resent successfully",
     )
