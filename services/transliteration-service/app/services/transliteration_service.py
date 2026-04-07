@@ -212,18 +212,6 @@ class TransliterationService:
                     except Exception as update_error:
                         logger.error(f"Failed to update request status: {update_error}")
 
-                # Check for static fallback on Triton-related errors
                 if isinstance(e, TritonInferenceError):
-                    from ai4icore_constants.static_fallback_responses import (
-                        is_static_fallback_enabled,
-                        get_transliteration_static_response,
-                    )
-                    if is_static_fallback_enabled():
-                        input_texts = [inp.source for inp in request.input]
-                        static_data = get_transliteration_static_response(input_texts)
-                        output = [TransliterationOutput(**o) for o in static_data["output"]]
-                        logger.info("Returning static Transliteration fallback (Triton unreachable)")
-                        return TransliterationInferenceResponse(output=output)
                     raise
-
                 raise TritonInferenceError(f"Transliteration inference failed: {e}")

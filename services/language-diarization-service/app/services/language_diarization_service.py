@@ -83,25 +83,6 @@ class LanguageDiarizationService:
         try:
             return await self._do_inference(request, user_id, api_key_id, session_id)
         except TritonInferenceError:
-            from ai4icore_constants.static_fallback_responses import (
-                is_static_fallback_enabled,
-                get_language_diarization_static_response,
-            )
-            if is_static_fallback_enabled():
-                num_inputs = len(request.audio)
-                static_data = get_language_diarization_static_response(num_inputs)
-                output = []
-                for o in static_data["output"]:
-                    segments = [LanguageSegment(**s) for s in o["segments"]]
-                    output.append(
-                        LanguageDiarizationOutput(
-                            total_segments=o["total_segments"],
-                            segments=segments,
-                            target_language=o["target_language"],
-                        )
-                    )
-                logger.info("Returning static Language Diarization fallback (Triton unreachable)")
-                return LanguageDiarizationInferenceResponse(output=output)
             raise
 
     async def _do_inference(
