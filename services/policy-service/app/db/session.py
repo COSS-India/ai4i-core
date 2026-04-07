@@ -2,7 +2,7 @@ from typing import AsyncGenerator
 
 try:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine  # type: ignore
-except Exception:  # pragma: no cover
+except (ImportError, ModuleNotFoundError):  # pragma: no cover
     AsyncEngine = AsyncSession = async_sessionmaker = create_async_engine = None  # type: ignore
 
 from ai4icore_env import app_env  # type: ignore

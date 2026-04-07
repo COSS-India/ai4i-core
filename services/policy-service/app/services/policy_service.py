@@ -1,4 +1,5 @@
 """Business logic for Policy management."""
+import asyncio
 from typing import List, Optional, Sequence
 from uuid import UUID
 
@@ -7,12 +8,47 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import httpx
 from ai4icore_env import app_env  # type: ignore
+from ai4icore_auth.providers import build_jwt_verifier  # type: ignore
 
 from app.models.orm import PiiPolicy
 from app.models.schemas import PolicyCreate, PolicyStatusUpdate, PolicyUpdate
 from app.repositories.policy_repository import PolicyRepository
 from app.repositories.tenant_policy_repository import TenantPolicyRepository
 from app.repositories.pii_type_repository import PiiTypeRepository
+
+
+_forward_auth_init_lock = asyncio.Lock()
+_forward_auth_verifier = build_jwt_verifier()
+
+
+async def _validated_forward_auth_header(auth_header: Optional[str]) -> Optional[str]:
+    """
+    Validate an inbound Authorization header before forwarding it to downstream services.
+
+    Why: prevents leaking arbitrary header values (or malformed tokens) to misconfigured URLs.
+    How: verify RS256 signature via JWKS using the shared platform verifier.
+    """
+    if not auth_header:
+        return None
+
+    # Accept either "Bearer <jwt>" or a raw token, but always forward as "Bearer <jwt>".
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else auth_header
+    token = token.strip()
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": "UNAUTHORIZED", "message": "Empty authorization token"}},
+        )
+
+    # Initialize JWKS lazily (same pattern as the shared AuthProvider).
+    if _forward_auth_verifier.loaded_key_count == 0:
+        async with _forward_auth_init_lock:
+            if _forward_auth_verifier.loaded_key_count == 0:
+                await _forward_auth_verifier.initialize()
+
+    # Verify signature/issuer/audience as configured (raises on failure).
+    await _forward_auth_verifier.verify(token)
+    return f"Bearer {token}"
 
 
 class PolicyService:
@@ -160,9 +196,10 @@ class PolicyService:
         primary_url = f"{base}/admin/list/tenants"
         gateway_url = f"{base}/api/v1/multi-tenant/admin/list/tenants"
         headers = {}
-        if auth_header:
-            headers["Authorization"] = auth_header
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        validated = await _validated_forward_auth_header(auth_header)
+        if validated:
+            headers["Authorization"] = validated
+        async with httpx.AsyncClient(timeout=app_env.policy_service_http_timeout) as client:
             resp = await client.get(primary_url, headers=headers)
             if resp.status_code == 404:
                 resp = await client.get(gateway_url, headers=headers)
@@ -176,7 +213,19 @@ class PolicyService:
                     }
                 },
             )
-        data = resp.json() or {}
+        try:
+            data = resp.json() or {}
+        except ValueError:
+            # Downstream may return HTML/text for errors even when status < 400 via proxies.
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": {
+                        "code": "TENANT_SERVICE_ERROR",
+                        "message": "Failed to parse tenants response as JSON",
+                    }
+                },
+            )
         tenants = data.get("tenants") or []
         active = []
         for t in tenants:

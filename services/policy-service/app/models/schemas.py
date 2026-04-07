@@ -111,7 +111,7 @@ class PolicyPiiTypeOut(BaseModel):
     model_config = {"from_attributes": True}
 
 class PolicyOut(BaseModel):
-    domain_id: UUID = Field(alias="policy_id")
+    policy_id: UUID
     name: str
     description: Optional[str] = None
     is_active: bool
@@ -121,10 +121,10 @@ class PolicyOut(BaseModel):
     pii_types_count: Optional[int] = None
     pii_types: List[PolicyPiiTypeOut] = []
     created_at: datetime
-    model_config = {"from_attributes": True, "populate_by_name": True}
+    model_config = {"from_attributes": True}
 
 class PolicyDetailOut(BaseModel):
-    domain_id: UUID = Field(alias="policy_id")
+    policy_id: UUID
     name: str
     description: Optional[str] = None
     is_active: bool
@@ -133,7 +133,7 @@ class PolicyDetailOut(BaseModel):
     tenant_id: Optional[str] = None
     pii_types: List[PolicyPiiTypeOut] = []
     created_at: datetime
-    model_config = {"from_attributes": True, "populate_by_name": True}
+    model_config = {"from_attributes": True}
 
 class PolicyListResponse(BaseModel):
     data: List[PolicyOut]
