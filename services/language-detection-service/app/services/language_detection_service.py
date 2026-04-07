@@ -287,21 +287,6 @@ class LanguageDetectionService:
                     except Exception as update_error:
                         logger.error(f"Failed to update request status: {update_error}")
 
-                # Check for static fallback
-                from ai4icore_constants.static_fallback_responses import (
-                    is_static_fallback_enabled,
-                    get_language_detection_static_response,
-                )
-                if is_static_fallback_enabled():
-                    input_texts = [inp.source for inp in request.input]
-                    static_data = get_language_detection_static_response(input_texts)
-                    output = []
-                    for item in static_data["output"]:
-                        preds = [LanguagePrediction(**p) for p in item["langPrediction"]]
-                        output.append(LanguageDetectionOutput(source=item["source"], langPrediction=preds))
-                    logger.info("Returning static Language Detection fallback (Triton unreachable)")
-                    return LanguageDetectionInferenceResponse(output=output)
-
                 raise
 
             except Exception as e:
