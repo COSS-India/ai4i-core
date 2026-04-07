@@ -4,8 +4,13 @@ Test script to query Triton servers and list available models
 Fetches NMT services from model management service and tests their Triton endpoints
 """
 
+import os
 import sys
 import asyncio
+
+# Add the parent directory to the path so app.* imports work
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, parent_dir)
 
 from ai4icore_env import app_env
 
@@ -17,13 +22,7 @@ except ImportError:
     print("  pip install tritonclient[http]")
     sys.exit(1)
 
-# Add the parent directory to the path to import modules
-# (test file is in tests/ subdirectory, need to go up one level)
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, parent_dir)
-
-from utils.triton_client import TritonClient
-from utils.model_management_client import ModelManagementClient
+from ai4icore_model_management import TritonClient, ModelManagementClient
 
 
 def test_triton_endpoint(endpoint: str, service_id: str = None, expected_model: str = None):
