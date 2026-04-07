@@ -18,7 +18,7 @@ import {
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performTransliterationInference, listTransliterationServices } from "../services/transliterationService";
@@ -37,6 +37,33 @@ const TransliterationPage: React.FC = () => {
   const [result, setResult] = useState<any>(null);
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const languageOptions = useMemo(
+    () => [
+      { value: "en", label: "English" },
+      { value: "hi", label: "Hindi" },
+      { value: "ta", label: "Tamil" },
+      { value: "te", label: "Telugu" },
+      { value: "kn", label: "Kannada" },
+      { value: "ml", label: "Malayalam" },
+      { value: "mr", label: "Marathi" },
+      { value: "gu", label: "Gujarati" },
+      { value: "bn", label: "Bengali" },
+      { value: "pa", label: "Punjabi" },
+      { value: "or", label: "Odia" },
+      { value: "as", label: "Assamese" },
+    ],
+    []
+  );
+  const targetLanguageOptions = useMemo(
+    () => languageOptions.filter((lang) => lang.value !== sourceLanguage),
+    [languageOptions, sourceLanguage]
+  );
+
+  useEffect(() => {
+    if (targetLanguage && targetLanguage === sourceLanguage) {
+      setTargetLanguage("");
+    }
+  }, [sourceLanguage, targetLanguage]);
 
   // Fetch available transliteration options
   const { data: transliterationServices, isLoading: servicesLoading } = useQuery({
@@ -265,18 +292,11 @@ const TransliterationPage: React.FC = () => {
                     isDisabled={fetching}
                     size="md"
                   >
-                    <option value="en">English</option>
-                    <option value="hi">Hindi</option>
-                    <option value="ta">Tamil</option>
-                    <option value="te">Telugu</option>
-                    <option value="kn">Kannada</option>
-                    <option value="ml">Malayalam</option>
-                    <option value="mr">Marathi</option>
-                    <option value="gu">Gujarati</option>
-                    <option value="bn">Bengali</option>
-                    <option value="pa">Punjabi</option>
-                    <option value="or">Odia</option>
-                    <option value="as">Assamese</option>
+                    {languageOptions.map((lang) => (
+                      <option key={lang.value} value={lang.value}>
+                        {lang.label}
+                      </option>
+                    ))}
                   </Select>
                 </FormControl>
 
@@ -292,18 +312,11 @@ const TransliterationPage: React.FC = () => {
                     isDisabled={fetching}
                     size="md"
                   >
-                    <option value="en">English</option>
-                    <option value="hi">Hindi</option>
-                    <option value="ta">Tamil</option>
-                    <option value="te">Telugu</option>
-                    <option value="kn">Kannada</option>
-                    <option value="ml">Malayalam</option>
-                    <option value="mr">Marathi</option>
-                    <option value="gu">Gujarati</option>
-                    <option value="bn">Bengali</option>
-                    <option value="pa">Punjabi</option>
-                    <option value="or">Odia</option>
-                    <option value="as">Assamese</option>
+                    {targetLanguageOptions.map((lang) => (
+                      <option key={lang.value} value={lang.value}>
+                        {lang.label}
+                      </option>
+                    ))}
                   </Select>
                 </FormControl>
               </HStack>

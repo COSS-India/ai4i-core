@@ -40,7 +40,7 @@ import {
 import Head from "next/head";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeftIcon, ChevronRightIcon, SearchIcon, RepeatIcon } from "@chakra-ui/icons";
+import { SearchIcon, RepeatIcon } from "@chakra-ui/icons";
 import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
 import { useRouter } from "next/router";
@@ -55,6 +55,7 @@ import {
 } from "../services/observabilityService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 import { listTenants, getViewTenant } from "../services/multiTenantService";
+import { TablePaginationBar } from "../components/common/TableControls";
 
 /**
  * Convert datetime-local format (YYYY-MM-DDTHH:mm) to ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
@@ -943,7 +944,9 @@ const LogsPage: React.FC = () => {
 
   // Calculate pagination for filtered logs
   const totalFilteredLogs = allFilteredLogs.length;
-  const totalFilteredPages = Math.ceil(totalFilteredLogs / size);
+  const totalFilteredPages = Math.max(1, Math.ceil(totalFilteredLogs / size));
+  const filteredStartRow = totalFilteredLogs === 0 ? 0 : (clientPage - 1) * size + 1;
+  const filteredEndRow = Math.min(clientPage * size, totalFilteredLogs);
   
   // Step 2: Get the current page of filtered logs (client-side pagination)
   const filteredLogs = useMemo(() => {
@@ -1514,40 +1517,29 @@ const LogsPage: React.FC = () => {
                     </CardBody>
                   </Card>
 
-                  {/* Pagination - based on filtered logs */}
-                  {totalFilteredPages > 1 && (
-                    <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" mt={4} w="full">
-                      <CardBody py={3}>
-                        <Flex justify="space-between" align="center" w="full">
-                          <Text fontSize="sm" color="gray.600" fontWeight="medium">
-                            Page {clientPage} of {totalFilteredPages} ({totalFilteredLogs.toLocaleString()} filtered logs)
-                          </Text>
-                          <HStack spacing={2}>
-                            <IconButton
-                              aria-label="Previous page"
-                              icon={<ChevronLeftIcon />}
-                              onClick={() => setClientPage((p) => Math.max(1, p - 1))}
-                              isDisabled={clientPage === 1}
-                              size="sm"
-                              variant="outline"
-                            />
-                            <Text fontSize="sm" fontWeight="bold" color="gray.700" minW="30px" textAlign="center">
-                              {clientPage}
-                            </Text>
-                            <IconButton
-                              aria-label="Next page"
-                              icon={<ChevronRightIcon />}
-                              onClick={() =>
-                                setClientPage((p) => Math.min(totalFilteredPages, p + 1))
-                              }
-                              isDisabled={clientPage === totalFilteredPages}
-                              size="sm"
-                              variant="outline"
-                            />
-                          </HStack>
-                        </Flex>
-                      </CardBody>
-                    </Card>
+                  {totalFilteredLogs > 0 && (
+                    <TablePaginationBar
+                      startRow={filteredStartRow}
+                      endRow={filteredEndRow}
+                      totalItems={totalFilteredLogs}
+                      page={clientPage}
+                      totalPages={totalFilteredPages}
+                      pageSize={size}
+                      pageSizeOptions={[10, 25, 50, 100]}
+                      onPageSizeChange={(value) => {
+                        setSize(value);
+                        setPage(1);
+                        setClientPage(1);
+                      }}
+                      onFirst={() => setClientPage(1)}
+                      onPrev={() => setClientPage((p) => Math.max(1, p - 1))}
+                      onNext={() => setClientPage((p) => Math.min(totalFilteredPages, p + 1))}
+                      onLast={() => setClientPage(totalFilteredPages)}
+                      canPrev={clientPage > 1}
+                      canNext={clientPage < totalFilteredPages}
+                      borderColor={borderColor}
+                      bg={cardBg}
+                    />
                   )}
                 </>
                 ) : logsData.logs.length > 0 ? (
