@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
@@ -26,12 +26,14 @@ router = APIRouter(
 
 @router.post("/subscriptions/add",
              response_model=UserSubscriptionResponse,
+             response_model_exclude_none=True,
              status_code=status.HTTP_201_CREATED,
              dependencies=[Depends(require_tenant_admin)]
              )
 async def add_user_subscriptions_endpoint(
     request: Request,
     payload: UserSubscriptionAddRequest,
+    response: Response,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
@@ -40,18 +42,25 @@ async def add_user_subscriptions_endpoint(
     """
     enforce_tenant_scope(request, payload.tenant_id)
     try:
-        response = await add_user_subscriptions(
+        result, created_any = await add_user_subscriptions(
             tenant_id=payload.tenant_id,
             user_id=payload.user_id,
             subscriptions=payload.subscriptions,
             db=db,
         )
-
-        logger.info(
-            f"User subscriptions added successfully | tenant_id={payload.tenant_id} | user_id={payload.user_id} | added={payload.subscriptions}",
-        )
-
-        return response
+        if created_any:
+            response.status_code = status.HTTP_201_CREATED
+            logger.info(
+                f"User subscriptions added successfully | tenant_id={payload.tenant_id} | "
+                f"user_id={payload.user_id} | added={payload.subscriptions}",
+            )
+        else:
+            response.status_code = status.HTTP_200_OK
+            logger.info(
+                f"No new user subscriptions added (all duplicates or empty request) | "
+                f"tenant_id={payload.tenant_id} | user_id={payload.user_id}",
+            )
+        return result
 
     except HTTPException:
         raise
@@ -68,6 +77,7 @@ async def add_user_subscriptions_endpoint(
 
 @router.post("/subscriptions/remove",
              response_model=UserSubscriptionResponse,
+             response_model_exclude_none=True,
              status_code=status.HTTP_200_OK,
              dependencies=[Depends(require_tenant_admin)]
              )
@@ -82,18 +92,23 @@ async def remove_user_subscriptions_endpoint(
     """
     enforce_tenant_scope(request, payload.tenant_id)
     try:
-        response = await remove_user_subscriptions(
+        result, removed_any = await remove_user_subscriptions(
             tenant_id=payload.tenant_id,
             user_id=payload.user_id,
             subscriptions=payload.subscriptions,
             db=db,
         )
-
-        logger.info(
-            f"User subscriptions removed successfully | tenant_id={payload.tenant_id} | user_id={payload.user_id} | removed={payload.subscriptions}",
-        )
-
-        return response
+        if removed_any:
+            logger.info(
+                f"User subscriptions removed successfully | tenant_id={payload.tenant_id} | "
+                f"user_id={payload.user_id} | removed={payload.subscriptions}",
+            )
+        else:
+            logger.info(
+                f"No user subscriptions removed (none matched or empty request) | "
+                f"tenant_id={payload.tenant_id} | user_id={payload.user_id}",
+            )
+        return result
 
     except HTTPException:
         raise
