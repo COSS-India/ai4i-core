@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { piiService } from "../../services/piiService";
 import styles from "./PiiManagement.module.css";
+import { TableFilterToolbar, TablePaginationBar, TableSortHeader } from "../common/TableControls";
 
 interface Rule {
   entity_type: string;
@@ -34,6 +35,7 @@ export interface PiiManagementProps {
 }
 
 export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
+  const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
   const [activeTab, setActiveTab] = useState<PageTab>("admin");
   const [allDomains, setAllDomains] = useState<Domain[]>([]);
   const [checkedDomains, setCheckedDomains] = useState<Set<string>>(new Set());
@@ -52,6 +54,17 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const [adminDataError, setAdminDataError] = useState<string | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
+  const [rulesSortDirection, setRulesSortDirection] = useState<"asc" | "desc">("asc");
+  const [rulesPage, setRulesPage] = useState(1);
+  const [rulesPageSize, setRulesPageSize] = useState(10);
+  const [mappingSearch, setMappingSearch] = useState("");
+  const [mappingSortDirection, setMappingSortDirection] = useState<"asc" | "desc">("asc");
+  const [mappingPage, setMappingPage] = useState(1);
+  const [mappingPageSize, setMappingPageSize] = useState(10);
+  const [auditSearch, setAuditSearch] = useState("");
+  const [auditSortDirection, setAuditSortDirection] = useState<"asc" | "desc">("desc");
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditPageSize, setAuditPageSize] = useState(10);
 
   useEffect(() => {
     if (!isAdmin || activeTab !== "audit") return;
@@ -219,6 +232,64 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
 
   const activeDomainCount = allDomains.filter((d) => d.is_active).length;
 
+  const sortedRules = [...editingRules].sort((a, b) => {
+    const nameCmp = (a.entity_type ?? "").localeCompare(b.entity_type ?? "", undefined, { sensitivity: "base" });
+    return rulesSortDirection === "asc" ? nameCmp : -nameCmp;
+  });
+  const rulesTotal = sortedRules.length;
+  const rulesTotalPages = Math.max(1, Math.ceil(rulesTotal / rulesPageSize));
+  const rulesStartRow = rulesTotal === 0 ? 0 : (rulesPage - 1) * rulesPageSize + 1;
+  const rulesEndRow = Math.min(rulesPage * rulesPageSize, rulesTotal);
+  const paginatedRules = sortedRules.slice((rulesPage - 1) * rulesPageSize, rulesPage * rulesPageSize);
+
+  const filteredMappings = tenantMappings.filter((row) => {
+    const q = mappingSearch.trim().toLowerCase();
+    if (!q) return true;
+    return (row.tenant_id ?? "").toLowerCase().includes(q) || (row.domain_id ?? "").toLowerCase().includes(q);
+  });
+  const sortedMappings = [...filteredMappings].sort((a, b) => {
+    const nameCmp = (a.tenant_id ?? "").localeCompare(b.tenant_id ?? "", undefined, { sensitivity: "base" });
+    return mappingSortDirection === "asc" ? nameCmp : -nameCmp;
+  });
+  const mappingsTotal = sortedMappings.length;
+  const mappingsTotalPages = Math.max(1, Math.ceil(mappingsTotal / mappingPageSize));
+  const mappingsStartRow = mappingsTotal === 0 ? 0 : (mappingPage - 1) * mappingPageSize + 1;
+  const mappingsEndRow = Math.min(mappingPage * mappingPageSize, mappingsTotal);
+  const paginatedMappings = sortedMappings.slice((mappingPage - 1) * mappingPageSize, mappingPage * mappingPageSize);
+
+  const filteredAuditLogs = auditLogs.filter((row) => {
+    const q = auditSearch.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      (row.trace_id ?? "").toLowerCase().includes(q) ||
+      (row.tenant_id ?? "").toLowerCase().includes(q) ||
+      (row.domain_id ?? "").toLowerCase().includes(q) ||
+      (row.target_context ?? "").toLowerCase().includes(q)
+    );
+  });
+  const sortedAuditLogs = [...filteredAuditLogs].sort((a, b) => {
+    const timeA = new Date(a.created_at ?? "").getTime();
+    const timeB = new Date(b.created_at ?? "").getTime();
+    return auditSortDirection === "asc" ? timeA - timeB : timeB - timeA;
+  });
+  const auditTotal = sortedAuditLogs.length;
+  const auditTotalPages = Math.max(1, Math.ceil(auditTotal / auditPageSize));
+  const auditStartRow = auditTotal === 0 ? 0 : (auditPage - 1) * auditPageSize + 1;
+  const auditEndRow = Math.min(auditPage * auditPageSize, auditTotal);
+  const paginatedAuditLogs = sortedAuditLogs.slice((auditPage - 1) * auditPageSize, auditPage * auditPageSize);
+
+  useEffect(() => {
+    if (rulesPage > rulesTotalPages) setRulesPage(rulesTotalPages);
+  }, [rulesPage, rulesTotalPages]);
+
+  useEffect(() => {
+    if (mappingPage > mappingsTotalPages) setMappingPage(mappingsTotalPages);
+  }, [mappingPage, mappingsTotalPages]);
+
+  useEffect(() => {
+    if (auditPage > auditTotalPages) setAuditPage(auditTotalPages);
+  }, [auditPage, auditTotalPages]);
+
   if (!isAdmin) {
     return (
       <div className={`${styles.root} p-6 bg-gray-50 min-h-screen font-sans`}>
@@ -316,27 +387,56 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
               <table className="w-full text-left text-sm">
                 <thead className="bg-gray-200">
                   <tr>
-                    <th className="p-2">Entity</th>
+                    <th className="p-2">
+                      <TableSortHeader
+                        label="Entity"
+                        direction={rulesSortDirection}
+                        onAsc={() => { setRulesSortDirection("asc"); setRulesPage(1); }}
+                        onDesc={() => { setRulesSortDirection("desc"); setRulesPage(1); }}
+                        ascAriaLabel="Sort rules by entity ascending"
+                        descAriaLabel="Sort rules by entity descending"
+                      />
+                    </th>
                     <th className="p-2">Action</th>
                     <th className="p-2">Delete</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {editingRules.map((r, i) => (
+                  {paginatedRules.map((r, i) => (
                     <tr key={i} className="border-b bg-white">
                       <td className="p-2 font-bold">{r.entity_type}</td>
                       <td className="p-2"><span className="border bg-gray-100 px-2 rounded text-xs">{r.action}</span></td>
                       <td className="p-2">
-                        <button onClick={() => removeRule(i)} className="text-red-500 hover:underline text-xs">Delete</button>
+                        <button onClick={() => removeRule((rulesPage - 1) * rulesPageSize + i)} className="text-red-500 hover:underline text-xs">Delete</button>
                       </td>
                     </tr>
                   ))}
-                  {editingRules.length === 0 && (
+                  {rulesTotal === 0 && (
                     <tr><td colSpan={3} className="text-center p-4 text-gray-400">No rules configured for this domain.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
+            {rulesTotal > 0 ? (
+              <TablePaginationBar
+                startRow={rulesStartRow}
+                endRow={rulesEndRow}
+                totalItems={rulesTotal}
+                page={rulesPage}
+                totalPages={rulesTotalPages}
+                pageSize={rulesPageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSizeChange={(value) => { setRulesPageSize(value); setRulesPage(1); }}
+                onFirst={() => setRulesPage(1)}
+                onPrev={() => setRulesPage((p) => Math.max(1, p - 1))}
+                onNext={() => setRulesPage((p) => Math.min(rulesTotalPages, p + 1))}
+                onLast={() => setRulesPage(rulesTotalPages)}
+                canPrev={rulesPage > 1}
+                canNext={rulesPage < rulesTotalPages}
+                borderColor="#e2e8f0"
+                bg="white"
+              />
+            ) : null}
 
             <div className="border rounded p-4 mb-4 bg-white">
               <h6 className="text-sm font-bold text-blue-600 mb-3">Add Custom Rule</h6>
@@ -404,22 +504,43 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                 {adminDataError}
               </div>
             ) : null}
+            <TableFilterToolbar
+              hasActiveFilters={!!mappingSearch.trim()}
+              onClear={() => { setMappingSearch(""); setMappingPage(1); }}
+            >
+              <input
+                type="text"
+                placeholder="Search tenant or domain..."
+                className="border rounded p-2 text-sm min-w-[240px]"
+                value={mappingSearch}
+                onChange={(e) => { setMappingSearch(e.target.value); setMappingPage(1); }}
+              />
+            </TableFilterToolbar>
             <table className="w-full text-left text-sm">
               <thead className="bg-gray-100">
                 <tr>
-                  <th className="p-2">Tenant ID</th>
+                  <th className="p-2">
+                    <TableSortHeader
+                      label="Tenant ID"
+                      direction={mappingSortDirection}
+                      onAsc={() => { setMappingSortDirection("asc"); setMappingPage(1); }}
+                      onDesc={() => { setMappingSortDirection("desc"); setMappingPage(1); }}
+                      ascAriaLabel="Sort mappings by tenant ascending"
+                      descAriaLabel="Sort mappings by tenant descending"
+                    />
+                  </th>
                   <th className="p-2">Domain</th>
                   <th className="p-2">Updated</th>
                   <th className="p-2 w-24">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {tenantMappings.length === 0 ? (
+                {mappingsTotal === 0 ? (
                   <tr>
                     <td colSpan={4} className="p-4 text-center text-gray-400">No mappings configured.</td>
                   </tr>
                 ) : (
-                  tenantMappings.map((row) => (
+                  paginatedMappings.map((row) => (
                     <tr key={row.tenant_id} className="border-b">
                       <td className="p-2 font-mono text-xs">{row.tenant_id}</td>
                       <td className="p-2 font-semibold">{row.domain_id}</td>
@@ -434,6 +555,26 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                 )}
               </tbody>
             </table>
+            {mappingsTotal > 0 ? (
+              <TablePaginationBar
+                startRow={mappingsStartRow}
+                endRow={mappingsEndRow}
+                totalItems={mappingsTotal}
+                page={mappingPage}
+                totalPages={mappingsTotalPages}
+                pageSize={mappingPageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSizeChange={(value) => { setMappingPageSize(value); setMappingPage(1); }}
+                onFirst={() => setMappingPage(1)}
+                onPrev={() => setMappingPage((p) => Math.max(1, p - 1))}
+                onNext={() => setMappingPage((p) => Math.min(mappingsTotalPages, p + 1))}
+                onLast={() => setMappingPage(mappingsTotalPages)}
+                canPrev={mappingPage > 1}
+                canNext={mappingPage < mappingsTotalPages}
+                borderColor="#e2e8f0"
+                bg="white"
+              />
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -470,10 +611,40 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
             </div>
           </div>
           <div className="bg-white p-5 rounded-lg border shadow-sm overflow-x-auto">
+            <TableFilterToolbar
+              hasActiveFilters={!!auditSearch.trim()}
+              onClear={() => { setAuditSearch(""); setAuditPage(1); }}
+              rightContent={(
+                <button
+                  type="button"
+                  onClick={() => void fetchAuditLogs()}
+                  className="border border-gray-300 px-4 py-2 rounded text-sm hover:bg-gray-50"
+                >
+                  Refresh
+                </button>
+              )}
+            >
+              <input
+                type="text"
+                placeholder="Search trace/tenant/domain/target..."
+                className="border rounded p-2 text-sm min-w-[260px]"
+                value={auditSearch}
+                onChange={(e) => { setAuditSearch(e.target.value); setAuditPage(1); }}
+              />
+            </TableFilterToolbar>
             <table className="w-full text-left text-sm">
               <thead className="bg-gray-100">
                 <tr>
-                  <th className="p-2">Time</th>
+                  <th className="p-2">
+                    <TableSortHeader
+                      label="Time"
+                      direction={auditSortDirection}
+                      onAsc={() => { setAuditSortDirection("asc"); setAuditPage(1); }}
+                      onDesc={() => { setAuditSortDirection("desc"); setAuditPage(1); }}
+                      ascAriaLabel="Sort audit logs by time ascending"
+                      descAriaLabel="Sort audit logs by time descending"
+                    />
+                  </th>
                   <th className="p-2">Trace ID</th>
                   <th className="p-2">Tenant</th>
                   <th className="p-2">Domain</th>
@@ -487,12 +658,12 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                   <tr>
                     <td colSpan={7} className="p-4 text-center text-gray-500">Loading logs...</td>
                   </tr>
-                ) : auditLogs.length === 0 ? (
+                ) : auditTotal === 0 ? (
                   <tr>
                     <td colSpan={7} className="p-4 text-center text-gray-400">No audit logs found.</td>
                   </tr>
                 ) : (
-                  auditLogs.map((row) => (
+                  paginatedAuditLogs.map((row) => (
                     <tr key={row.id} className="border-b">
                       <td className="p-2 text-xs text-gray-600">
                         {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
@@ -508,6 +679,26 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                 )}
               </tbody>
             </table>
+            {!auditLoading && auditTotal > 0 ? (
+              <TablePaginationBar
+                startRow={auditStartRow}
+                endRow={auditEndRow}
+                totalItems={auditTotal}
+                page={auditPage}
+                totalPages={auditTotalPages}
+                pageSize={auditPageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSizeChange={(value) => { setAuditPageSize(value); setAuditPage(1); }}
+                onFirst={() => setAuditPage(1)}
+                onPrev={() => setAuditPage((p) => Math.max(1, p - 1))}
+                onNext={() => setAuditPage((p) => Math.min(auditTotalPages, p + 1))}
+                onLast={() => setAuditPage(auditTotalPages)}
+                canPrev={auditPage > 1}
+                canNext={auditPage < auditTotalPages}
+                borderColor="#e2e8f0"
+                bg="white"
+              />
+            ) : null}
           </div>
         </div>
       ) : null}
