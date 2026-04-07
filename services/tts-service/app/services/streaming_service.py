@@ -359,7 +359,7 @@ class StreamingTTSService:
                 inputs, outputs = self.triton_client.get_tts_io_for_triton(
                     processed_text, gender, state.config.language
                 )
-                response = self.triton_client.send_triton_request("tts", input_list=inputs, output_list=outputs)
+                response = self.triton_client.send_triton_request("tts", inputs=inputs, outputs=outputs)
                 raw_audio = response.as_numpy("OUTPUT_GENERATED_AUDIO")[0]
 
                 target_sr = state.config.samplingRate

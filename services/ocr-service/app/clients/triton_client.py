@@ -39,8 +39,7 @@ class OCRTritonClient(TritonClient):
         [batch_size, 1] BYTES tensor named IMAGE_DATA. The model returns a
         BYTES tensor named OUTPUT_TEXT, each entry being a JSON string.
         """
-        nested = [[img] for img in images_base64]
-        inputs = [self._get_string_tensor(nested, "IMAGE_DATA")]
+        inputs = [self._get_string_tensor(images_base64, "IMAGE_DATA")]
         outputs = [InferRequestedOutput("OUTPUT_TEXT")]
         return inputs, outputs
 
