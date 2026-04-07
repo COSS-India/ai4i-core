@@ -9,11 +9,11 @@ import logging
 import time
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Request, Depends
-from models.pipeline_request import PipelineInferenceRequest
-from models.pipeline_response import PipelineInferenceResponse
-from services.pipeline_service import PipelineService
-from utils.http_client import ServiceClient
-from middleware.auth_provider import AuthProvider
+from app.schemas.pipeline_request import PipelineInferenceRequest
+from app.schemas.pipeline_response import PipelineInferenceResponse
+from app.services.pipeline_service import PipelineService
+from app.clients.http_client import ServiceClient
+from app.dependencies.auth import AuthProvider
 from ai4icore_constants.exceptions import (
     PipelineError,
     PipelineTaskError,
