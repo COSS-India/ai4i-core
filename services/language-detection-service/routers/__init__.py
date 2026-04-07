@@ -1,5 +1,0 @@
-"""
-Routers
-FastAPI route handlers
-"""
-
