@@ -1,11 +1,5 @@
-import React, { useRef } from "react";
+import React from "react";
 import {
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogContent,
-  AlertDialogOverlay,
   Box,
   Card,
   CardBody,
@@ -23,19 +17,15 @@ import {
   AlertIcon,
   AlertDescription,
   Button,
-  Select,
   Badge,
-  Table,
-  Thead,
-  Tbody,
-  Tr,
-  Th,
-  Td,
-  TableContainer,
+  Select,
+  Wrap,
+  WrapItem,
 } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
 import { useRolesTab } from "./hooks/useRolesTab";
 import UserSearchableSelect from "../common/UserSearchableSelect";
+import StandardModal from "../common/StandardModal";
 
 export interface RolesTabProps {
   users: import("../../types/auth").User[];
@@ -46,15 +36,11 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
   const { user } = useAuth();
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
-  const inputReadOnlyBg = useColorModeValue("gray.50", "gray.700");
-
   const rt = useRolesTab({
     user: user ?? null,
     users,
     isLoadingUsers,
   });
-  const cancelRef = useRef<HTMLButtonElement>(null);
-
   return (
     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
       <CardHeader>
@@ -71,18 +57,17 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
       </CardHeader>
       <CardBody>
         <VStack spacing={6} align="stretch">
-          <HStack justify="space-between">
+          <HStack justify="space-between" align="flex-start">
             <Text fontSize="sm" color="gray.600">
               Manage user roles and permissions
             </Text>
             <Button
               size="sm"
               colorScheme="blue"
-              onClick={rt.handleLoadRoles}
-              isLoading={rt.isLoadingRoles}
-              loadingText="Loading..."
+              onClick={rt.openManageRoles}
+              isDisabled={!rt.selectedUser || !rt.isAdmin || rt.isModeratorOnly || rt.isLoadingUserRoles}
             >
-              Load Roles
+              Manage Roles
             </Button>
           </HStack>
 
@@ -108,109 +93,28 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
           {rt.selectedUser && (
             <Box>
               <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
-                Current Roles for {rt.selectedUser.username}
+                Current Role for {rt.selectedUser.username}
               </Heading>
               {rt.isLoadingUserRoles ? (
                 <Center py={4}>
                   <Spinner size="md" color="blue.500" />
                 </Center>
               ) : rt.selectedUserRoles.length > 0 ? (
-                <VStack spacing={2} align="stretch">
+                <Wrap spacing={2}>
                   {rt.selectedUserRoles.map((roleName) => (
-                    <HStack
-                      key={roleName}
-                      justify="space-between"
-                      p={3}
-                      bg={inputReadOnlyBg}
-                      borderRadius="md"
-                    >
-                      <Badge colorScheme="green" fontSize="sm" p={1}>
+                    <WrapItem key={roleName}>
+                      <Badge colorScheme="green" fontSize="sm" px={2} py={1}>
                         {roleName}
                       </Badge>
-                    </HStack>
+                    </WrapItem>
                   ))}
-                </VStack>
+                </Wrap>
               ) : (
                 <Alert status="info" borderRadius="md">
                   <AlertIcon />
                   <AlertDescription>This user has no roles assigned.</AlertDescription>
                 </Alert>
               )}
-            </Box>
-          )}
-
-          {rt.selectedUser && rt.roles.length > 0 && rt.isAdmin && (
-            <Box>
-              <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
-                Assign Role to {rt.selectedUser.username}
-              </Heading>
-              <VStack spacing={4} align="stretch">
-                <FormControl>
-                  <FormLabel fontWeight="semibold">Select Role</FormLabel>
-                  <Select
-                    value={rt.selectedRole}
-                    onChange={(e) => rt.setSelectedRole(e.target.value)}
-                    placeholder="Select a role to assign to this user"
-                    bg="white"
-                  >
-                    {rt.roles
-                      .filter((role) => !rt.selectedUserRoles.includes(role.name))
-                      .map((role) => (
-                        <option key={role.id} value={role.name}>
-                          {role.name} - {role.description || "No description"}
-                        </option>
-                      ))}
-                  </Select>
-                  {rt.selectedUserRoles.length > 0 && (
-                    <Text fontSize="xs" color="gray.500" mt={1}>
-                      Only showing roles not already assigned to this user
-                    </Text>
-                  )}
-                </FormControl>
-                <Button
-                  colorScheme="green"
-                  onClick={rt.openAssignConfirm}
-                  isLoading={rt.isAssigningRole}
-                  loadingText="Assigning..."
-                  isDisabled={!rt.selectedRole || rt.isModeratorOnly}
-                >
-                  Assign Role
-                </Button>
-              </VStack>
-            </Box>
-          )}
-
-          {rt.roles.length > 0 && (
-            <Box>
-              <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
-                Available Roles
-              </Heading>
-              <TableContainer>
-                <Table variant="simple" size="sm">
-                  <Thead>
-                    <Tr>
-                      <Th>Role Name</Th>
-                      <Th>Description</Th>
-                    </Tr>
-                  </Thead>
-                  <Tbody>
-                    {rt.roles.map((role) => (
-                      <Tr key={role.id}>
-                        <Td>
-                          <Badge colorScheme="blue" fontSize="sm" p={1}>
-                            {role.name}
-                          </Badge>
-                        </Td>
-                        <Td>
-                          <Text fontSize="sm" color="gray.600">
-                            {role.description || "No description"}
-                          </Text>
-                        </Td>
-                      </Tr>
-                    ))}
-                  </Tbody>
-                </Table>
-              </TableContainer>
             </Box>
           )}
 
@@ -223,43 +127,59 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
         </VStack>
       </CardBody>
 
-      <AlertDialog
-        isOpen={rt.isAssignConfirmOpen}
-        leastDestructiveRef={cancelRef}
-        onClose={rt.closeAssignConfirm}
+      <StandardModal
+        isOpen={rt.isManageRolesOpen}
+        onClose={rt.closeManageRoles}
+        size="lg"
+        title={`Manage Roles ${rt.selectedUser ? `for ${rt.selectedUser.username}` : ""}`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={rt.closeManageRoles} isDisabled={rt.isSavingRoles}>
+              Cancel
+            </Button>
+            <Button
+              ml={3}
+              colorScheme="blue"
+              onClick={rt.saveManageRoles}
+              isLoading={rt.isSavingRoles}
+              loadingText="Saving..."
+              isDisabled={!rt.hasDraftChanges || !rt.isAdmin || rt.isModeratorOnly}
+            >
+              Save Changes
+            </Button>
+          </>
+        }
       >
-        <AlertDialogOverlay>
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize="lg" fontWeight="bold">
-              Assign role to user
-            </AlertDialogHeader>
-            <AlertDialogBody>
-              <Text>
-                Are you sure you want to assign the role <strong>{rt.selectedRole}</strong> to{" "}
-                <strong>{rt.selectedUser?.username}</strong>? This will update the user&apos;s permissions.
-              </Text>
-            </AlertDialogBody>
-            <AlertDialogFooter>
-              <Button
-                ref={cancelRef}
-                onClick={rt.closeAssignConfirm}
-                isDisabled={rt.isAssigningRole}
+        {rt.availableRoles.length === 0 ? (
+          <Alert status="info" borderRadius="md">
+            <AlertIcon />
+            <AlertDescription>No roles are available to assign.</AlertDescription>
+          </Alert>
+        ) : (
+          <VStack align="stretch" spacing={3}>
+            <Text fontSize="sm" color="gray.600">
+              Select role for this user.
+            </Text>
+            <FormControl>
+              <FormLabel fontWeight="semibold" fontSize="sm">Role</FormLabel>
+              <Select
+                value={rt.draftRole}
+                onChange={(e) => rt.setDraftRole(e.target.value)}
+                isDisabled={rt.isSavingRoles || !rt.isAdmin || rt.isModeratorOnly}
+                bg="white"
+                size="sm"
               >
-                Cancel
-              </Button>
-              <Button
-                colorScheme="green"
-                onClick={rt.handleConfirmAssignRole}
-                ml={3}
-                isLoading={rt.isAssigningRole}
-                loadingText="Assigning..."
-              >
-                Confirm
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
+                <option value="">Select role</option>
+                {rt.availableRoles.map((roleName) => (
+                  <option key={roleName} value={roleName}>
+                    {roleName}
+                  </option>
+                ))}
+              </Select>
+            </FormControl>
+          </VStack>
+        )}
+      </StandardModal>
     </Card>
   );
 }
