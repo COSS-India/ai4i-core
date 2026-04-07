@@ -9,6 +9,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import require_adopter_admin
 from app.db.session import get_db
 from app.models.schemas import (
     Meta,
@@ -19,7 +20,7 @@ from app.models.schemas import (
 )
 from app.services.tenant_policy_service import TenantPolicyService
 
-router = APIRouter(prefix="/tenants", tags=["Tenant Policy Mapping"])
+router = APIRouter(prefix="/tenants", tags=["Tenant Policy Mapping"], dependencies=[Depends(require_adopter_admin)])
 
 
 def _svc(db: AsyncSession = Depends(get_db)) -> TenantPolicyService:

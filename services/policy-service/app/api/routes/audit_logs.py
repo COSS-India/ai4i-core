@@ -10,11 +10,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import require_adopter_admin
 from app.db.session import get_db
 from app.models.schemas import AuditLogDetailOut, AuditLogListResponse, AuditLogOut, Meta
 from app.services.audit_log_service import AuditLogService
 
-router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
+router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"], dependencies=[Depends(require_adopter_admin)])
 
 
 def _svc(db: AsyncSession = Depends(get_db)) -> AuditLogService:

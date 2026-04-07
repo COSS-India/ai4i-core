@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.core.auth import require_adopter_admin
 from app.models.schemas import (
     Meta,
     PiiTypeCreate,
@@ -22,7 +23,7 @@ from app.models.schemas import (
 )
 from app.services.pii_type_service import PiiTypeService
 
-router = APIRouter(prefix="/pii-types", tags=["PII Types"])
+router = APIRouter(prefix="/pii-types", tags=["PII Types"], dependencies=[Depends(require_adopter_admin)])
 
 
 def _svc(db: AsyncSession = Depends(get_db)) -> PiiTypeService:

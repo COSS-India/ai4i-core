@@ -1158,6 +1158,46 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  policy-service:
+    build:
+      context: .
+      dockerfile: ./services/policy-service/Dockerfile
+    container_name: ai4v-policy-service
+    ports:
+      - "8107:8099"
+    environment:
+      - ENV_FILE=.env
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - JWKS_URL=${JWKS_URL:-http://auth-service:8081/api/v1/auth/.well-known/jwks.json}
+      - MULTI_TENANT_SERVICE_URL=${MULTI_TENANT_SERVICE_URL:-http://multi-tenant-service:8001}
+      - PYTHONPATH=/app:/app/libs/ai4icore_exceptions:/app/libs/ai4icore_auth:/app/libs
+    env_file:
+      - ./services/policy-service/.env
+    volumes:
+      - ./services/policy-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
+      - ./shared:/app/shared
+    command: ["--reload"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    networks:
+      microservices-network:
+        aliases:
+          - policy-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8099/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
   speaker-diarization-service:
     build:
       context: .

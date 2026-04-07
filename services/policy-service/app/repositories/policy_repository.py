@@ -3,6 +3,7 @@ from typing import Optional, Sequence
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -98,9 +99,27 @@ class PolicyRepository:
         existing = (await self.db.execute(stmt)).scalars().all()
         for row in existing:
             await self.db.delete(row)
+        # Ensure deletes are flushed before we insert the replacement set; otherwise
+        # PostgreSQL can raise uq_policy_pii_type conflicts during the same commit.
+        await self.db.flush()
+
+        # De-dupe incoming links by pii_type_id to avoid violating uq_policy_pii_type
+        seen: set[UUID] = set()
+        deduped: list[dict] = []
         for link in links:
-            self.db.add(PolicyPiiType(policy_id=policy_id, **link))
-        await self.db.commit()
+            pid = link.get("pii_type_id")
+            if pid and pid not in seen:
+                seen.add(pid)
+                deduped.append(link)
+
+        try:
+            for link in deduped:
+                self.db.add(PolicyPiiType(policy_id=policy_id, **link))
+            await self.db.commit()
+        except IntegrityError:
+            await self.db.rollback()
+            # Let service layer decide the HTTP response; avoid leaking DB stacktraces as 500s.
+            raise
 
     async def remove_pii_type_link(self, policy_id: UUID, pii_type_id: UUID) -> bool:
         link = await self.get_link(policy_id, pii_type_id)
