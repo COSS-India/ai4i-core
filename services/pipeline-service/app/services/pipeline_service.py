@@ -10,9 +10,9 @@ import json
 import re
 from copy import deepcopy
 from typing import Dict, Any, List, Optional
-from models.pipeline_request import PipelineInferenceRequest, TaskType, PipelineTask
-from models.pipeline_response import PipelineInferenceResponse, PipelineTaskOutput
-from utils.http_client import ServiceClient
+from app.schemas.pipeline_request import PipelineInferenceRequest, TaskType, PipelineTask
+from app.schemas.pipeline_response import PipelineInferenceResponse, PipelineTaskOutput
+from app.clients.http_client import ServiceClient
 from ai4icore_constants.exceptions import (
     PipelineTaskError, 
     ServiceUnavailableError, 
