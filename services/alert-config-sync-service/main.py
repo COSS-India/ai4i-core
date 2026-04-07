@@ -3,6 +3,7 @@ Alert Configuration Sync Service
 Generates Prometheus and Alertmanager YAML files from database and triggers hot reload
 """
 import os
+import re
 import asyncio
 import asyncpg
 import yaml
@@ -52,6 +53,8 @@ DB_NAME = "alerting_db"
 
 # Auth DB (same host/user/password, different database) - for resolving ADMIN emails for default receiver
 AUTH_DB_NAME = app_env.auth_db_name
+if not AUTH_DB_NAME:
+    raise EnvironmentError("AUTH_DB_NAME is required but not set. Set the AUTH_DB_NAME environment variable.")
 
 # Multi-tenant DB (same host/user/password) - for resolving tenant name -> tenant_id and tenant user email. Set via MULTI_TENANT_DB_NAME env.
 MULTI_TENANT_DB_NAME = (app_env.multi_tenant_db_name or os.getenv("MULTI_TENANT_DB_NAME") or "").strip() or None
@@ -341,6 +344,105 @@ def inject_tenant_into_promql(expr: str) -> str:
     return expr
 
 
+def sanitize_promql_service_regex(expr: str) -> str:
+    """
+    Normalize PromQL regex label matchers for `service=~"..."`
+    by removing unnecessary escaped hyphens (`\\-` -> `-`).
+    This keeps generated rules valid even if older DB records contain
+    backslash-escaped hyphens from previous generator behavior.
+    """
+    if not expr:
+        return expr
+
+    def _fix_service_matcher(match):
+        inner = match.group(1).replace(r"\-", "-")
+        return f'service=~"{inner}"'
+
+    return re.sub(r'service=~"([^"]*)"', _fix_service_matcher, expr)
+
+
+def _normalize_service_for_display(svc: Any) -> str:
+    s = (str(svc) or "").strip().lower()
+    if s.endswith("-service"):
+        s = s[: -len("-service")]
+    return s
+
+
+SERVICE_TYPE_MAP = {
+    "asr": {"abbr": "ASR", "full": "ASR (Automatic Speech Recognition)"},
+    "nmt": {"abbr": "NMT", "full": "NMT (Neural Machine Translation)"},
+    "tts": {"abbr": "TTS", "full": "TTS (Text To Speech)"},
+    "ocr": {"abbr": "OCR", "full": "OCR (Optical Character Recognition)"},
+    "ner": {"abbr": "NER", "full": "NER (Named Entity Recognition)"},
+    "transliteration": {"abbr": "Transliteration", "full": "Transliteration"},
+    "language-detection": {"abbr": "LangDetect", "full": "Language Detection"},
+    "audio-lang-detection": {"abbr": "AudioLangDetect", "full": "Audio Language Detection"},
+    "language-diarization": {"abbr": "LangDiarization", "full": "Language Diarization"},
+    "speaker-diarization": {"abbr": "SpeakerDiarization", "full": "Speaker Diarization"},
+    "llm": {"abbr": "LLM", "full": "LLM"},
+    "pipeline": {"abbr": "Pipeline", "full": "Pipeline"},
+}
+
+
+def _signal_display_from_alert(a: Dict[str, Any]) -> str:
+    sm = (str(a.get("signal_metric") or "")).strip().lower()
+    sig = (str(a.get("signal") or "")).strip().lower()
+
+    if sm.startswith("latency_p"):
+        p = sm.replace("latency_p", "").upper()
+        return f"Latency - P{p}"
+    if sm.startswith("latency_"):
+        rest = sm.replace("latency_", "").replace("_", " ").title()
+        return f"Latency - {rest}"
+    if sm.startswith("error_rate_"):
+        rest = sm.replace("error_rate_", "").replace("_", " ").upper()
+        return f"Error Rate - {rest}"
+    if a.get("category") == "infrastructure" and sm:
+        return sm.replace("_", " ").title()
+    if sig and sm:
+        return f"{sig.title()} - {sm.replace('_', ' ').title()}"
+    if sm:
+        return sm.replace("_", " ").title()
+    return str(a.get("alert_type") or sig or "").strip() or "Unknown Signal"
+
+
+def _threshold_display_from_alert(a: Dict[str, Any]) -> tuple[str, str]:
+    """Returns (threshold_display, condition_display)."""
+    cat = (str(a.get("category") or "")).strip().lower()
+    threshold_value = a.get("threshold_value")
+    threshold_unit = (str(a.get("threshold_unit") or "")).strip().lower()
+    cond_op = (str(a.get("condition_operator") or ">") or ">").strip()
+    for_duration = a.get("for_duration") or ""
+
+    is_latency = (str(a.get("signal") or "")).strip().lower() == "latency" or (str(a.get("alert_type") or "")).strip().lower() == "latency"
+    if cat == "application" and is_latency:
+        if threshold_value is None:
+            return "N/A", f"{_signal_display_from_alert(a)} {cond_op} N/A sustained for {for_duration}"
+        if threshold_unit == "ms":
+            threshold_eval_value = float(threshold_value) / 1000.0
+        else:
+            threshold_eval_value = float(threshold_value)
+        val_str = f"{threshold_eval_value:.3f}".rstrip("0").rstrip(".")
+        threshold_display = f"{val_str}s"
+        condition_display = f"{_signal_display_from_alert(a)} {cond_op} {val_str}s sustained for {for_duration}"
+        return threshold_display, condition_display
+
+    is_error_rate = (str(a.get("signal") or "")).strip().lower() == "error_rate" or (str(a.get("alert_type") or "")).strip().lower() == "error_rate"
+    if cat == "application" and is_error_rate:
+        if threshold_value is None:
+            return "N/A", f"{_signal_display_from_alert(a)} {cond_op} N/A sustained for {for_duration}"
+        threshold_eval_value = float(threshold_value) / 100.0 if threshold_unit in {"%", "percent", "percentage"} else float(threshold_value)
+        val_str = f"{threshold_eval_value:.3f}".rstrip("0").rstrip(".")
+        threshold_display = f"{val_str}ratio"
+        condition_display = f"{_signal_display_from_alert(a)} {cond_op} {val_str}ratio sustained for {for_duration}"
+        return threshold_display, condition_display
+
+    val_str = f"{float(threshold_value):.3f}".rstrip("0").rstrip(".") if threshold_value is not None else ""
+    threshold_display = f"{val_str}%" if threshold_unit in {"%", "percent", "percentage", ""} else f"{val_str}{threshold_unit}"
+    condition_display = f"{_signal_display_from_alert(a)} {cond_op} {threshold_display} sustained for {for_duration}"
+    return threshold_display, condition_display
+
+
 def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], category: str = None) -> Dict[str, Any]:
     """
     Generate Prometheus alerts.yml structure from alert definitions.
@@ -367,6 +469,7 @@ def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], cat
         # Build alert rule (no organization in labels; alerts are global)
         # Preserve metric tenant label in expr so Alertmanager can route by tenant
         promql_expr = inject_tenant_into_promql(alert['promql_expr'])
+        promql_expr = sanitize_promql_service_regex(promql_expr)
         alert_rule = {
             'alert': unique_alert_name,
             'expr': promql_expr,
@@ -391,11 +494,49 @@ def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], cat
                 if isinstance(ann, dict):
                     annotations[ann.get('key', '')] = ann.get('value', '')
         
-        # Add default annotations if not present
+        # Add default annotations if not present.
+        # These are used by Alertmanager email templates (current value, threshold, signal display, etc.).
         if 'summary' not in annotations:
             annotations['summary'] = alert_name
         if 'description' not in annotations:
             annotations['description'] = alert.get('description', f"Alert {alert_name} is firing")
+
+        if "signal_display" not in annotations:
+            annotations["signal_display"] = _signal_display_from_alert(alert)
+
+        if "service_type_abbr" not in annotations or "service_type_full" not in annotations:
+            svc_list = alert.get("service") or []
+            if isinstance(svc_list, str):
+                svc_list = [svc_list]
+            svc_list = [x for x in (svc_list or []) if x and str(x).strip()]
+            if len(svc_list) == 1:
+                svc_key = _normalize_service_for_display(svc_list[0])
+                svc_meta = SERVICE_TYPE_MAP.get(svc_key)
+                if svc_meta:
+                    annotations["service_type_abbr"] = annotations.get("service_type_abbr", svc_meta["abbr"])
+                    annotations["service_type_full"] = annotations.get("service_type_full", svc_meta["full"])
+
+        # Category display based on sub_category (when present)
+        if "category_display" not in annotations:
+            sub = (str(alert.get("sub_category") or "")).strip().lower()
+            annotations["category_display"] = {
+                "performance": "Service Performance",
+                "availability": "Service Availability",
+                "compute": "Service Compute",
+                "storage": "Service Storage",
+            }.get(sub, (sub.title() if sub else str(alert_category).title()))
+
+        if "current_value" not in annotations:
+            # Prometheus will replace {{ $value }} with the current firing value.
+            annotations["current_value"] = "{{ $value }}"
+
+        if "threshold_display" not in annotations or "condition_display" not in annotations:
+            threshold_display, condition_display = _threshold_display_from_alert(alert)
+            annotations.setdefault("threshold_display", threshold_display)
+            annotations.setdefault("condition_display", condition_display)
+
+        if "sustained_for" not in annotations:
+            annotations["sustained_for"] = str(alert.get("for_duration") or "")
         
         alert_rule['annotations'] = annotations
         
@@ -415,16 +556,116 @@ def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], cat
     
     return {'groups': groups}
 
-# Default email templates (no organization; route by severity/category only)
-DEFAULT_EMAIL_SUBJECT_TEMPLATE = "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }}{{ with (index .Alerts 0).Labels.endpoint }} - {{ . }}{{ end }}"
-# Plain-text severity labels only (no emoji) for consistent rendering in email clients.
-DEFAULT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{ if eq .GroupLabels.severity \"critical\" }}#d32f2f{{ else if eq .GroupLabels.severity \"warning\" }}#f57c00{{ else }}#1976d2{{ end }};">
-  {{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
-</h2>
-<p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
-<p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
-<p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
+# Note: we intentionally do not keep any "legacy" email template defaults.
+# If a receiver doesn't specify custom templates, we always use the new ones below.
+
+
+def _format_environment_title(env: str) -> str:
+    env_norm = (env or "").strip().lower()
+    if env_norm in {"production", "prod", "live"}:
+        return "Production"
+    if env_norm in {"staging"}:
+        return "Staging"
+    if env_norm in {"dev", "development", "local", "test"}:
+        return "Dev"
+    return env_norm.title() if env_norm else "Dev"
+
+
+ENVIRONMENT_TITLE = _format_environment_title(os.getenv("ENVIRONMENT") or app_env.environment or "dev")
+
+
+# New templates:
+# - "Global" receiver: tenant shown as "Global (All Tenants)"
+# - "Tenant Admin" receiver: tenant shown from alert label `.Labels.tenant`
+GLOBAL_EMAIL_SUBJECT_TEMPLATE = (
+    "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] "
+    "{{ .GroupLabels.alertname }} — "
+    + ENVIRONMENT_TITLE
+    + " - "
+    "{{ if eq .GroupLabels.severity \"critical\" }}Service Impacted{{ else if eq .GroupLabels.severity \"warning\" }}Service Degrading{{ else }}For Your Awareness{{ end }}"
+)
+
+TENANT_EMAIL_SUBJECT_TEMPLATE = GLOBAL_EMAIL_SUBJECT_TEMPLATE
+
+
+GLOBAL_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
+<p>{{ .GroupLabels.alertname }}</p>
+
+<p><strong>Category</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "category_display" }}</p>
+
+<p><strong>Signal</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "signal_display" }}</p>
+
+{{ if index (index .Alerts 0).Annotations "service_type_full" }}<p><strong>Service Type</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "service_type_full" }}</p>
+{{ end }}
+
+<p><strong>Tenant</strong></p>
+<p>Global (All Tenants)</p>
+
+<p><strong>Environment</strong></p>
+<p>__ENVIRONMENT_TITLE__</p>
+
+<p><strong>Condition</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "condition_display" }}</p>
+
+<p><strong>Current Value</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "current_value" }}</p>
+
+<p><strong>Threshold</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "threshold_display" }}</p>
+
+<p><strong>Triggered At</strong></p>
+<p>{{ (index .Alerts 0).StartsAt }}</p>
+
+<p><strong>Sustained For</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "sustained_for" }}</p>
 """
+
+TENANT_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
+<p>{{ .GroupLabels.alertname }}</p>
+
+<p><strong>Category</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "category_display" }}</p>
+
+<p><strong>Signal</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "signal_display" }}</p>
+
+{{ if index (index .Alerts 0).Annotations "service_type_full" }}<p><strong>Service Type</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "service_type_full" }}</p>
+{{ end }}
+
+<p><strong>Tenant</strong></p>
+<p>__TENANT_NAME__</p>
+
+<p><strong>Environment</strong></p>
+<p>__ENVIRONMENT_TITLE__</p>
+
+<p><strong>Condition</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "condition_display" }}</p>
+
+<p><strong>Current Value</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "current_value" }}</p>
+
+<p><strong>Threshold</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "threshold_display" }}</p>
+
+<p><strong>Triggered At</strong></p>
+<p>{{ (index .Alerts 0).StartsAt }}</p>
+
+<p><strong>Sustained For</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "sustained_for" }}</p>
+"""
+
+# Inject environment title without interfering with Alertmanager Go-template braces.
+GLOBAL_EMAIL_BODY_TEMPLATE = GLOBAL_EMAIL_BODY_TEMPLATE.replace("__ENVIRONMENT_TITLE__", ENVIRONMENT_TITLE)
+TENANT_EMAIL_BODY_TEMPLATE = TENANT_EMAIL_BODY_TEMPLATE.replace("__ENVIRONMENT_TITLE__", ENVIRONMENT_TITLE)
+
+
+# Backwards compatible aliases (kept for existing code paths)
+DEFAULT_EMAIL_SUBJECT_TEMPLATE = GLOBAL_EMAIL_SUBJECT_TEMPLATE
+DEFAULT_EMAIL_BODY_TEMPLATE = GLOBAL_EMAIL_BODY_TEMPLATE
 
 def get_global_config_from_env() -> Dict[str, Any]:
     """
@@ -513,7 +754,7 @@ def generate_alertmanager_yaml(
     receivers_config = [
         {
             "name": "alert-history-webhook",
-            "webhook_configs": [{"url": alert_history_webhook_url}],
+            "webhook_configs": [{"url": alert_history_webhook_url, "send_resolved": False}],
         }
     ]
 
@@ -523,7 +764,7 @@ def generate_alertmanager_yaml(
         if email and str(email).strip():
             cfg = {
                 'to': str(email).strip(),
-                'send_resolved': True,
+                'send_resolved': False,
                 'html': DEFAULT_EMAIL_BODY_TEMPLATE,
             }
             # Alertmanager email subject (kept in headers to allow templating).
@@ -564,13 +805,34 @@ def generate_alertmanager_yaml(
                 continue
         
         email_configs = []
-        email_subject_template = receiver.get('email_subject_template') or DEFAULT_EMAIL_SUBJECT_TEMPLATE
-        email_body_template = receiver.get('email_body_template') or DEFAULT_EMAIL_BODY_TEMPLATE
+
+        is_tenant_receiver = bool((receiver.get("tenant") or "").strip())
+        default_subject_template = TENANT_EMAIL_SUBJECT_TEMPLATE if is_tenant_receiver else GLOBAL_EMAIL_SUBJECT_TEMPLATE
+        default_body_template = TENANT_EMAIL_BODY_TEMPLATE if is_tenant_receiver else GLOBAL_EMAIL_BODY_TEMPLATE
+
+        stored_subject = receiver.get("email_subject_template")
+        email_subject_template = (
+            default_subject_template
+            if not stored_subject or not str(stored_subject).strip()
+            else stored_subject
+        )
+    
+        stored_body = receiver.get("email_body_template")
+        email_body_template = (
+            default_body_template
+            if not stored_body or not str(stored_body).strip()
+            else stored_body
+        )
+
+        if is_tenant_receiver:
+            tenant_name = (receiver.get("tenant") or "").strip()
+            email_body_template = email_body_template.replace("__TENANT_NAME__", tenant_name)
+
         for email in email_list:
             if email and str(email).strip():
                 cfg = {
                     'to': str(email).strip(),
-                    'send_resolved': True,
+                    'send_resolved': False,
                     'html': email_body_template,
                 }
                 # Alertmanager email subject (kept in headers to allow templating).
@@ -1155,12 +1417,10 @@ if __name__ == "__main__":
     import uvicorn
     
     logger.info("Starting Alert Configuration Sync Service...")
-    
-    # Start periodic sync in background
-    import threading
-    sync_thread = threading.Thread(target=lambda: asyncio.run(start_background_sync()), daemon=True)
-    sync_thread.start()
-    
+
+    # Background sync is already started by the FastAPI `lifespan()` handler
+    # (runs in the same event loop as the app). No extra thread needed here.
+
     # Start HTTP server for manual triggers
     try:
         port = app_env.port
