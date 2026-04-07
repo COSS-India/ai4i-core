@@ -63,10 +63,11 @@ def setup_tracing(service_name: str, jaeger_endpoint: Optional[str] = None) -> O
             jaeger_endpoint = app_env.jaeger_endpoint or "http://jaeger:4317"
         
         # Create resource with service name
-        resource = Resource.create({
-            "service.name": service_name,
-            "service.version": app_env.service_version or "1.0.0",
-        })
+        # Avoid hardcoded defaults for service.version — only emit it when configured.
+        resource_attrs = {"service.name": service_name}
+        if app_env.service_version:
+            resource_attrs["service.version"] = app_env.service_version
+        resource = Resource.create(resource_attrs)
         
         # Setup tracer provider
         tracer_provider = TracerProvider(resource=resource)
@@ -138,8 +139,9 @@ class OrganizationSpanProcessor(SpanProcessor):
                 span.set_attribute("organization", organization)
             
             # Add tenant_id attribute (primary filter for multi-tenant RBAC)
-            if tenant_id:
-                span.set_attribute("tenant_id", tenant_id)
+            # OTel attributes cannot be null; emit a stable string so traces are filterable.
+            # Keep "unknown" for backward compatibility with existing trace filters.
+            span.set_attribute("tenant_id", str(tenant_id) if tenant_id else "unknown")
         except Exception:
             # Silently fail if context is not available
             pass
