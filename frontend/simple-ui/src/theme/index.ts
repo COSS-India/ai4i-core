@@ -38,26 +38,94 @@ const customTheme = extendTheme({
       },
     },
     Select: {
+      defaultProps: {
+        size: "md",
+        variant: "outline",
+      },
       baseStyle: {
         field: {
-          color: "gray.600",
+          color: "gray.800",
+          bg: "white",
           borderColor: "gray.300",
+          borderRadius: "md",
+          _placeholder: {
+            color: "gray.500",
+          },
           _focus: {
             borderColor: "orange.500",
             boxShadow: "0 0 0 1px orange.500",
+          },
+          _readOnly: {
+            bg: "gray.50",
+            borderColor: "gray.200",
+            cursor: "default",
+          },
+          _disabled: {
+            bg: "gray.50",
+            color: "gray.500",
           },
         },
       },
     },
     Input: {
+      defaultProps: {
+        size: "md",
+        variant: "outline",
+      },
       baseStyle: {
         field: {
+          color: "gray.800",
+          bg: "white",
           borderColor: "gray.300",
+          borderRadius: "md",
+          _placeholder: {
+            color: "gray.500",
+          },
           _focus: {
             borderColor: "orange.500",
             boxShadow: "0 0 0 1px orange.500",
           },
+          _readOnly: {
+            bg: "gray.50",
+            borderColor: "gray.200",
+            cursor: "default",
+          },
+          _disabled: {
+            bg: "gray.50",
+            color: "gray.500",
+          },
         },
+      },
+    },
+    Textarea: {
+      defaultProps: {
+        size: "md",
+        variant: "outline",
+      },
+      baseStyle: {
+        color: "gray.800",
+        bg: "white",
+        borderColor: "gray.300",
+        borderRadius: "md",
+        _placeholder: {
+          color: "gray.500",
+        },
+        _focus: {
+          borderColor: "orange.500",
+          boxShadow: "0 0 0 1px orange.500",
+        },
+        _readOnly: {
+          bg: "gray.50",
+          borderColor: "gray.200",
+          cursor: "default",
+        },
+      },
+    },
+    FormLabel: {
+      baseStyle: {
+        fontWeight: "semibold",
+        color: "gray.700",
+        mb: 1.5,
       },
     },
     Modal: {
@@ -67,6 +135,14 @@ const customTheme = extendTheme({
         },
         content: {
           borderRadius: "lg",
+        },
+        header: {
+          fontWeight: "semibold",
+          color: "gray.800",
+          pb: 3,
+        },
+        body: {
+          pt: 2,
         },
       },
     },
