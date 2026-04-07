@@ -79,6 +79,7 @@ const LLMPage: React.FC = () => {
     !!serviceId?.trim() &&
     !!inputLanguage?.trim() &&
     !!outputLanguage?.trim() &&
+    inputLanguage !== outputLanguage &&
     !!inputText?.trim() &&
     inputText.length <= MAX_LLM_INPUT_LENGTH;
 
