@@ -394,12 +394,7 @@ export function useAlertDefinitions() {
         .filter((d) => {
           if (searchQuery.trim()) {
             const q = searchQuery.toLowerCase();
-            const matchesSearch =
-              d.name.toLowerCase().includes(q) ||
-              (d.description ?? "").toLowerCase().includes(q) ||
-              (d.alert_type ?? "").toLowerCase().includes(q) ||
-              d.promql_expr.toLowerCase().includes(q);
-            if (!matchesSearch) return false;
+            if (!d.name.toLowerCase().includes(q)) return false;
           }
           if (filterSeverity !== "all" && d.severity !== filterSeverity)
             return false;

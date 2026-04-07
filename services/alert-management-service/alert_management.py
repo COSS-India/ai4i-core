@@ -1668,7 +1668,7 @@ GLOBAL_EMAIL_SUBJECT_TEMPLATE = (
     "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] "
     "{{ .GroupLabels.alertname }} — "
     + ENVIRONMENT_TITLE
-    + "- "
+    + " - "
     "{{ if eq .GroupLabels.severity \"critical\" }}Service Impacted{{ else if eq .GroupLabels.severity \"warning\" }}Service Degrading{{ else }}For Your Awareness{{ end }}"
 )
 
@@ -1684,8 +1684,9 @@ GLOBAL_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
 <p><strong>Signal</strong></p>
 <p>{{ index (index .Alerts 0).Annotations "signal_display" }}</p>
 
-<p><strong>Service Type</strong></p>
+{{ if index (index .Alerts 0).Annotations "service_type_full" }}<p><strong>Service Type</strong></p>
 <p>{{ index (index .Alerts 0).Annotations "service_type_full" }}</p>
+{{ end }}
 
 <p><strong>Tenant</strong></p>
 <p>Global (All Tenants)</p>
@@ -1718,8 +1719,9 @@ TENANT_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
 <p><strong>Signal</strong></p>
 <p>{{ index (index .Alerts 0).Annotations "signal_display" }}</p>
 
-<p><strong>Service Type</strong></p>
+{{ if index (index .Alerts 0).Annotations "service_type_full" }}<p><strong>Service Type</strong></p>
 <p>{{ index (index .Alerts 0).Annotations "service_type_full" }}</p>
+{{ end }}
 
 <p><strong>Tenant</strong></p>
 <p>__TENANT_NAME__</p>

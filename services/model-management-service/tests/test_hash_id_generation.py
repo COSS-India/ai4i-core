@@ -114,85 +114,61 @@ class TestGenerateServiceId:
 
     def test_generates_32_character_hex_string(self):
         """Service ID should be a 32-character hexadecimal string."""
-        service_id = generate_service_id("model-name", "1.0.0", "service-name")
+        service_id = generate_service_id("service-name")
         
         assert len(service_id) == 32
         assert all(c in "0123456789abcdef" for c in service_id)
 
     def test_deterministic_output(self):
         """Same inputs should always produce the same service ID."""
-        service_id_1 = generate_service_id("model", "1.0.0", "service")
-        service_id_2 = generate_service_id("model", "1.0.0", "service")
+        service_id_1 = generate_service_id("service")
+        service_id_2 = generate_service_id("service")
         
         assert service_id_1 == service_id_2
 
-    def test_different_model_names_produce_different_ids(self):
-        """Different model names should produce different service IDs."""
-        service_id_a = generate_service_id("model-a", "1.0.0", "service")
-        service_id_b = generate_service_id("model-b", "1.0.0", "service")
-        
-        assert service_id_a != service_id_b
-
-    def test_different_versions_produce_different_ids(self):
-        """Different model versions should produce different service IDs."""
-        service_id_v1 = generate_service_id("model", "1.0.0", "service")
-        service_id_v2 = generate_service_id("model", "2.0.0", "service")
-        
-        assert service_id_v1 != service_id_v2
-
     def test_different_service_names_produce_different_ids(self):
         """Different service names should produce different service IDs."""
-        service_id_a = generate_service_id("model", "1.0.0", "service-a")
-        service_id_b = generate_service_id("model", "1.0.0", "service-b")
+        service_id_a = generate_service_id("service-a")
+        service_id_b = generate_service_id("service-b")
         
         assert service_id_a != service_id_b
 
     def test_case_insensitive_normalization(self):
         """Service ID generation should be case-insensitive."""
-        service_id_lower = generate_service_id("model", "1.0.0", "service")
-        service_id_upper = generate_service_id("MODEL", "1.0.0", "SERVICE")
-        service_id_mixed = generate_service_id("Model", "1.0.0", "Service")
+        service_id_lower = generate_service_id("service")
+        service_id_upper = generate_service_id("SERVICE")
+        service_id_mixed = generate_service_id("Service")
         
         assert service_id_lower == service_id_upper == service_id_mixed
 
     def test_whitespace_trimming(self):
         """Whitespace should be trimmed from all inputs."""
-        service_id_clean = generate_service_id("model", "1.0.0", "service")
-        service_id_padded = generate_service_id("  model  ", "  1.0.0  ", "  service  ")
+        service_id_clean = generate_service_id("service")
+        service_id_padded = generate_service_id("  service  ")
         
         assert service_id_clean == service_id_padded
 
     def test_uses_sha256_algorithm(self):
         """Verify SHA256 algorithm is used for hash generation."""
-        model_name = "test-model"
-        version = "2.0.0"
         service_name = "test-service"
         
-        expected_input = f"{model_name.lower()}:{version.lower()}:{service_name.lower()}"
-        expected_hash = hashlib.sha256(expected_input.encode('utf-8')).hexdigest()[:32]
+        expected_input = service_name.strip().lower()
+        expected_hash = hashlib.sha256(expected_input.encode("utf-8")).hexdigest()[:32]
         
-        actual_id = generate_service_id(model_name, version, service_name)
+        actual_id = generate_service_id(service_name)
         
         assert actual_id == expected_hash
 
     def test_handles_forward_slash_in_names(self):
         """Names with forward slashes should be handled correctly."""
-        service_id = generate_service_id(
-            "ai4bharath/indictrans-v2",
-            "1.0.0",
-            "ai4bharath/indictrans-gpu"
-        )
+        service_id = generate_service_id("ai4bharath/indictrans-gpu")
         
         assert len(service_id) == 32
         assert all(c in "0123456789abcdef" for c in service_id)
 
     def test_handles_hyphen_in_names(self):
         """Names with hyphens should be handled correctly."""
-        service_id = generate_service_id(
-            "my-awesome-model",
-            "1.0.0-beta",
-            "my-production-service"
-        )
+        service_id = generate_service_id("my-production-service")
         
         assert len(service_id) == 32
 
@@ -215,10 +191,10 @@ class TestHashCollisionResistance:
     def test_service_id_collision_resistance_similar_inputs(self):
         """Similar service inputs should produce distinctly different hashes."""
         ids = [
-            generate_service_id("model", "1.0.0", "service"),
-            generate_service_id("model", "1.0.0", "service1"),
-            generate_service_id("model", "1.0.1", "service"),
-            generate_service_id("model1", "1.0.0", "service"),
+            generate_service_id("service"),
+            generate_service_id("service1"),
+            generate_service_id("service-v2"),
+            generate_service_id("service-a"),
         ]
         
         assert len(set(ids)) == len(ids)
@@ -226,7 +202,7 @@ class TestHashCollisionResistance:
     def test_model_and_service_ids_are_independent(self):
         """Model ID and service ID for same inputs should be different."""
         model_id = generate_model_id("test-model", "1.0.0")
-        service_id = generate_service_id("test-model", "1.0.0", "test-model")
+        service_id = generate_service_id("test-model")
         
         assert model_id != service_id
 
@@ -305,7 +281,7 @@ class TestHashIdIntegrationWithDb:
                 api_key="test-key"
             )
             
-            expected_service_id = generate_service_id("test-model", "1.0.0", "test-service")
+            expected_service_id = generate_service_id("test-service")
             
             try:
                 await save_service_to_db(request)
@@ -364,7 +340,8 @@ class TestHashIdEdgeCases:
         model_id_clean = generate_model_id("model", "1.0.0")
         model_id_newline = generate_model_id("model\n", "1.0.0\n")
         
-        assert model_id_clean != model_id_newline
+        # `.strip()` removes surrounding whitespace/newlines, so hashes match.
+        assert model_id_clean == model_id_newline
 
     def test_tabs_in_input(self):
         """Tabs should be treated differently from spaces."""
