@@ -97,4 +97,4 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH="/app"
 
 EXPOSE 8087
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8087", "--no-access-log"]
+ENTRYPOINT ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8087", "--no-access-log"]
