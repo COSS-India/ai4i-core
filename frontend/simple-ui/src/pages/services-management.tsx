@@ -37,7 +37,7 @@ import {
   Tooltip,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import { SearchIcon, ViewIcon, DeleteIcon, TriangleDownIcon, TriangleUpIcon } from "@chakra-ui/icons";
+import { SearchIcon, ViewIcon, DeleteIcon } from "@chakra-ui/icons";
 import { FaUpload } from "react-icons/fa";
 import { useRouter } from "next/router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -57,10 +57,24 @@ import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 import ConfirmDialog from "../components/common/ConfirmDialog";
+import { TableFilterToolbar, TablePaginationBar, TableSortHeader } from "../components/common/TableControls";
+
+type ModelSummary = {
+  modelId?: string;
+  model_id?: string;
+  name?: string;
+  versionStatus?: string;
+  version_status?: string;
+  task?: { type?: string };
+  task_type?: string;
+  taskType?: string;
+  version?: string;
+  modelVersion?: string;
+};
 
 const ServicesManagementPage: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
-  const [models, setModels] = useState<any[]>([]);
+  const [models, setModels] = useState<ModelSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
@@ -211,7 +225,7 @@ const ServicesManagementPage: React.FC = () => {
     }
   }, [user, router, toast]);
   // Model fetched by ID when navigating from a deprecated model's "Create Service" (not in active list)
-  const [preselectedModelFromQuery, setPreselectedModelFromQuery] = useState<any | null>(null);
+  const [preselectedModelFromQuery, setPreselectedModelFromQuery] = useState<ModelSummary | null>(null);
 
   // Fetch services on component mount
   useEffect(() => {
@@ -937,7 +951,11 @@ const ServicesManagementPage: React.FC = () => {
                         ) : (
                           <>
                           <VStack align="stretch" spacing={4} mb={4}>
-                            <HStack flexWrap="wrap" gap={3} align="flex-end">
+                            <TableFilterToolbar
+                              hasActiveFilters={hasActiveFilters}
+                              onClear={clearAllFilters}
+                              align="flex-end"
+                            >
                               <FormControl w={{ base: "full", md: "280px" }}>
                                 <FormLabel fontSize="sm" fontWeight="medium" mb={1}>Search</FormLabel>
                                 <InputGroup>
@@ -981,10 +999,7 @@ const ServicesManagementPage: React.FC = () => {
                                   ))}
                                 </Select>
                               </FormControl>
-                              {hasActiveFilters && (
-                                <Button size="sm" variant="outline" onClick={clearAllFilters}>Clear all</Button>
-                              )}
-                            </HStack>
+                            </TableFilterToolbar>
                             {hasActiveFilters && (
                               <HStack spacing={2} flexWrap="wrap">
                                 {searchQuery.trim() && (
@@ -1019,37 +1034,22 @@ const ServicesManagementPage: React.FC = () => {
                               <Thead bg={tableHeaderBg}>
                                 <Tr>
                                   <Th>
-                                    <HStack spacing={2}>
-                                      <Text>Name</Text>
-                                      <Tooltip label="Sort Name A to Z" hasArrow>
-                                        <IconButton
-                                          aria-label="Sort services by name ascending"
-                                          icon={<TriangleUpIcon />}
-                                          size="xs"
-                                          variant={sortBy === "name" && nameSortDirection === "asc" ? "solid" : "ghost"}
-                                          colorScheme="gray"
-                                          onClick={() => {
-                                            setSortBy("name");
-                                            setNameSortDirection("asc");
-                                            setListPage(1);
-                                          }}
-                                        />
-                                      </Tooltip>
-                                      <Tooltip label="Sort Name Z to A" hasArrow>
-                                        <IconButton
-                                          aria-label="Sort services by name descending"
-                                          icon={<TriangleDownIcon />}
-                                          size="xs"
-                                          variant={sortBy === "name" && nameSortDirection === "desc" ? "solid" : "ghost"}
-                                          colorScheme="gray"
-                                          onClick={() => {
-                                            setSortBy("name");
-                                            setNameSortDirection("desc");
-                                            setListPage(1);
-                                          }}
-                                        />
-                                      </Tooltip>
-                                    </HStack>
+                                    <TableSortHeader
+                                      label="Name"
+                                      direction={nameSortDirection}
+                                      onAsc={() => {
+                                        setSortBy("name");
+                                        setNameSortDirection("asc");
+                                        setListPage(1);
+                                      }}
+                                      onDesc={() => {
+                                        setSortBy("name");
+                                        setNameSortDirection("desc");
+                                        setListPage(1);
+                                      }}
+                                      ascAriaLabel="Sort services by name ascending"
+                                      descAriaLabel="Sort services by name descending"
+                                    />
                                   </Th>
                                   <Th>Task Type</Th>
                                   <Th>Status</Th>
@@ -1160,78 +1160,27 @@ const ServicesManagementPage: React.FC = () => {
                         </>
                         )}
                         {!isLoading && filteredServices.length > 0 && (
-                          <HStack
-                            mt={4}
-                            justify="space-between"
-                            align="center"
-                            flexWrap="wrap"
-                            gap={2}
-                            borderTopWidth="1px"
+                          <TablePaginationBar
+                            startRow={startRow}
+                            endRow={endRow}
+                            totalItems={totalServices}
+                            page={listPage}
+                            totalPages={totalPages}
+                            pageSize={listPageSize}
+                            pageSizeOptions={PAGE_SIZE_OPTIONS}
+                            onPageSizeChange={(value) => {
+                              setListPageSize(value);
+                              setListPage(1);
+                            }}
+                            onFirst={() => setListPage(1)}
+                            onPrev={() => setListPage((p) => Math.max(1, p - 1))}
+                            onNext={() => setListPage((p) => Math.min(totalPages, p + 1))}
+                            onLast={() => setListPage(totalPages)}
+                            canPrev={listPage > 1}
+                            canNext={listPage < totalPages}
                             borderColor={cardBorder}
-                            pt={4}
-                          >
-                            <Text fontSize="sm" color="gray.600">
-                              {startRow}–{endRow} of {totalServices}
-                            </Text>
-                            <HStack spacing={2} align="center" flexWrap="wrap">
-                              <Text fontSize="sm" color="gray.600" whiteSpace="nowrap">Rows per page</Text>
-                              <Select
-                                size="sm"
-                                w="70px"
-                                value={listPageSize}
-                                onChange={(e) => {
-                                  setListPageSize(Number(e.target.value));
-                                  setListPage(1);
-                                }}
-                                bg={cardBg}
-                              >
-                                {PAGE_SIZE_OPTIONS.map((n) => (
-                                  <option key={n} value={n}>{n}</option>
-                                ))}
-                              </Select>
-                              <HStack spacing={1}>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => setListPage(1)}
-                                  isDisabled={listPage <= 1}
-                                  aria-label="First page"
-                                >
-                                  First
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => setListPage((p) => Math.max(1, p - 1))}
-                                  isDisabled={listPage <= 1}
-                                  aria-label="Previous page"
-                                >
-                                  Previous
-                                </Button>
-                                <Text fontSize="sm" color="gray.600" px={2}>
-                                  Page {listPage} of {totalPages}
-                                </Text>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => setListPage((p) => Math.min(totalPages, p + 1))}
-                                  isDisabled={listPage >= totalPages}
-                                  aria-label="Next page"
-                                >
-                                  Next
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => setListPage(totalPages)}
-                                  isDisabled={listPage >= totalPages}
-                                  aria-label="Last page"
-                                >
-                                  Last
-                                </Button>
-                              </HStack>
-                            </HStack>
-                          </HStack>
+                            bg={cardBg}
+                          />
                         )}
                       </CardBody>
                     </Card>

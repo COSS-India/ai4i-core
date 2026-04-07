@@ -30,13 +30,6 @@ import {
   Td,
   Badge,
   TableContainer,
-  Modal,
-  ModalOverlay,
-  ModalContent,
-  ModalHeader,
-  ModalFooter,
-  ModalBody,
-  ModalCloseButton,
   Drawer,
   DrawerOverlay,
   DrawerContent,
@@ -88,8 +81,6 @@ import {
   EditIcon,
   SearchIcon,
   LockIcon,
-  TriangleDownIcon,
-  TriangleUpIcon,
 } from "@chakra-ui/icons";
 import * as multiTenantService from "../../services/multiTenantService";
 import type { TenantView } from "../../types/multiTenant";
@@ -111,6 +102,8 @@ import {
   LATENCY_THRESHOLD_UNITS,
   PERCENTAGE_UNIT,
 } from "../../types/alerting";
+import { TableFilterToolbar, TablePaginationBar, TableSortHeader } from "../common/TableControls";
+import StandardModal from "../common/StandardModal";
 
 const EVAL_INTERVALS = ["30s", "1m", "5m"] as const;
 const FOR_DURATIONS = ["1m", "2m", "5m", "10m"] as const;
@@ -287,9 +280,20 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const rules = useRoutingRules();
   const history = useAlertHistory(isActive && subTabIndex === 2);
 
+  const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+
   const [definitionsNameSortDirection, setDefinitionsNameSortDirection] = useState<"asc" | "desc">("asc");
   const [receiversNameSortDirection, setReceiversNameSortDirection] = useState<"asc" | "desc">("asc");
   const [rulesNameSortDirection, setRulesNameSortDirection] = useState<"asc" | "desc">("asc");
+  const [historyNameSortDirection, setHistoryNameSortDirection] = useState<"asc" | "desc">("asc");
+  const [receiversSearchQuery, setReceiversSearchQuery] = useState("");
+
+  const [definitionsPage, setDefinitionsPage] = useState(1);
+  const [definitionsPageSize, setDefinitionsPageSize] = useState(25);
+  const [receiversPage, setReceiversPage] = useState(1);
+  const [receiversPageSize, setReceiversPageSize] = useState(25);
+  const [rulesPage, setRulesPage] = useState(1);
+  const [rulesPageSize, setRulesPageSize] = useState(25);
 
   const defDeleteRef = useRef<HTMLButtonElement>(null);
   const recvDeleteRef = useRef<HTMLButtonElement>(null);
@@ -321,8 +325,20 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     });
   }, [defs.filteredDefinitions, definitionsNameSortDirection]);
 
+  const filteredReceiversWithSearch = React.useMemo(() => {
+    const q = receiversSearchQuery.trim().toLowerCase();
+    if (!q) return recvs.filteredReceivers;
+    return recvs.filteredReceivers.filter((r) => {
+      const name = (r.receiver_name ?? "").toLowerCase();
+      const org = (r.organization ?? "").toLowerCase();
+      const role = (r.rbac_role ?? "").toLowerCase();
+      const emails = (r.email_to ?? []).join(" ").toLowerCase();
+      return name.includes(q) || org.includes(q) || role.includes(q) || emails.includes(q);
+    });
+  }, [recvs.filteredReceivers, receiversSearchQuery]);
+
   const sortedReceivers = React.useMemo(() => {
-    return [...recvs.filteredReceivers].sort((a, b) => {
+    return [...filteredReceiversWithSearch].sort((a, b) => {
       const aName = a.receiver_name ?? "";
       const bName = b.receiver_name ?? "";
       const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
@@ -333,7 +349,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       const timeB = new Date(b.created_at).getTime();
       return timeB - timeA;
     });
-  }, [recvs.filteredReceivers, receiversNameSortDirection]);
+  }, [filteredReceiversWithSearch, receiversNameSortDirection]);
 
   const sortedRules = React.useMemo(() => {
     return [...rules.filteredRules].sort((a, b) => {
@@ -346,6 +362,58 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       return String(a.id).localeCompare(String(b.id), undefined, { sensitivity: "base" });
     });
   }, [rules.filteredRules, rulesNameSortDirection]);
+
+  const sortedHistoryItems = React.useMemo(() => {
+    const q = history.searchQuery.trim().toLowerCase();
+    const byName = q
+      ? history.items.filter((row) => (row.name ?? "").toLowerCase().includes(q))
+      : history.items;
+    return [...byName].sort((a, b) => {
+      const aName = a.name ?? "";
+      const bName = b.name ?? "";
+      const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
+      if (nameCmp !== 0) return historyNameSortDirection === "asc" ? nameCmp : -nameCmp;
+      const timeA = new Date(a.triggered_at ?? a.created_at ?? "").getTime();
+      const timeB = new Date(b.triggered_at ?? b.created_at ?? "").getTime();
+      return timeB - timeA;
+    });
+  }, [history.items, history.searchQuery, historyNameSortDirection]);
+
+  const definitionsTotal = sortedDefinitions.length;
+  const definitionsTotalPages = Math.max(1, Math.ceil(definitionsTotal / definitionsPageSize));
+  const definitionsStartRow = definitionsTotal === 0 ? 0 : (definitionsPage - 1) * definitionsPageSize + 1;
+  const definitionsEndRow = Math.min(definitionsPage * definitionsPageSize, definitionsTotal);
+  const paginatedDefinitions = sortedDefinitions.slice(
+    (definitionsPage - 1) * definitionsPageSize,
+    definitionsPage * definitionsPageSize
+  );
+
+  const receiversTotal = sortedReceivers.length;
+  const receiversTotalPages = Math.max(1, Math.ceil(receiversTotal / receiversPageSize));
+  const receiversStartRow = receiversTotal === 0 ? 0 : (receiversPage - 1) * receiversPageSize + 1;
+  const receiversEndRow = Math.min(receiversPage * receiversPageSize, receiversTotal);
+  const paginatedReceivers = sortedReceivers.slice(
+    (receiversPage - 1) * receiversPageSize,
+    receiversPage * receiversPageSize
+  );
+
+  const rulesTotal = sortedRules.length;
+  const rulesTotalPages = Math.max(1, Math.ceil(rulesTotal / rulesPageSize));
+  const rulesStartRow = rulesTotal === 0 ? 0 : (rulesPage - 1) * rulesPageSize + 1;
+  const rulesEndRow = Math.min(rulesPage * rulesPageSize, rulesTotal);
+  const paginatedRules = sortedRules.slice((rulesPage - 1) * rulesPageSize, rulesPage * rulesPageSize);
+
+  useEffect(() => {
+    if (definitionsPage > definitionsTotalPages) setDefinitionsPage(definitionsTotalPages);
+  }, [definitionsPage, definitionsTotalPages]);
+
+  useEffect(() => {
+    if (receiversPage > receiversTotalPages) setReceiversPage(receiversTotalPages);
+  }, [receiversPage, receiversTotalPages]);
+
+  useEffect(() => {
+    if (rulesPage > rulesTotalPages) setRulesPage(rulesTotalPages);
+  }, [rulesPage, rulesTotalPages]);
 
   // Re-initialize edit-rule category / severity / linked-def once definitions are available
   // (they may not be loaded yet when the drawer first opens — this effect fires again once they arrive)
@@ -434,7 +502,28 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
              * Keep filter/clear UX consistent with model/service registries:
              * show "Clear all" only when any filter is active.
              */}
-            <HStack spacing={3} align="center" flexWrap="wrap">
+            <TableFilterToolbar
+              hasActiveFilters={
+                !!defs.searchQuery.trim() ||
+                defs.filterSeverity !== "all" ||
+                defs.filterCategory !== "all" ||
+                defs.filterEnabled !== "all"
+              }
+              onClear={() => {
+                defs.resetFilters();
+                setDefinitionsPage(1);
+              }}
+              rightContent={(
+                <Button
+                  size="sm"
+                  colorScheme="orange"
+                  leftIcon={<AddIcon />}
+                  onClick={defs.openCreate}
+                >
+                  Create Alert Definition
+                </Button>
+              )}
+            >
               <InputGroup maxW="260px" size="sm">
                 <InputLeftElement pointerEvents="none">
                   <SearchIcon color="gray.400" />
@@ -442,45 +531,28 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <Input
                   placeholder="Search alerts..."
                   value={defs.searchQuery}
-                  onChange={(e) => defs.setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    defs.setSearchQuery(e.target.value);
+                    setDefinitionsPage(1);
+                  }}
                   bg="white"
                 />
               </InputGroup>
-              <Select size="sm" maxW="130px" value={defs.filterSeverity} onChange={(e) => defs.setFilterSeverity(e.target.value)} bg="white">
+              <Select size="sm" maxW="130px" value={defs.filterSeverity} onChange={(e) => { defs.setFilterSeverity(e.target.value); setDefinitionsPage(1); }} bg="white">
                 <option value="all">Severity</option>
                 {SEVERITIES.map((s) => (<option key={s} value={s}>{titleCase(s)}</option>))}
               </Select>
-              <Select size="sm" maxW="140px" value={defs.filterCategory} onChange={(e) => defs.setFilterCategory(e.target.value)} bg="white">
+              <Select size="sm" maxW="140px" value={defs.filterCategory} onChange={(e) => { defs.setFilterCategory(e.target.value); setDefinitionsPage(1); }} bg="white">
                 <option value="all">Category</option>
                 {CATEGORIES.map((c) => (<option key={c} value={c}>{titleCase(c)}</option>))}
               </Select>
-              <Select size="sm" maxW="120px" value={defs.filterEnabled} onChange={(e) => defs.setFilterEnabled(e.target.value)} bg="white">
+              <Select size="sm" maxW="120px" value={defs.filterEnabled} onChange={(e) => { defs.setFilterEnabled(e.target.value); setDefinitionsPage(1); }} bg="white">
                 <option value="all">Status</option>
                 <option value="enabled">Active</option>
                 <option value="disabled">Inactive</option>
               </Select>
               <Box flex="1" />
-              {(() => {
-                const hasActiveFilters =
-                  !!defs.searchQuery.trim() ||
-                  defs.filterSeverity !== "all" ||
-                  defs.filterCategory !== "all" ||
-                  defs.filterEnabled !== "all";
-                return hasActiveFilters ? (
-                  <Button size="sm" variant="outline" onClick={defs.resetFilters}>
-                    Clear all
-                  </Button>
-                ) : null;
-              })()}
-              <Button
-                size="sm"
-                colorScheme="orange"
-                leftIcon={<AddIcon />}
-                onClick={defs.openCreate}
-              >
-                Create Alert Definition
-              </Button>
-            </HStack>
+            </TableFilterToolbar>
 
             {/* Table */}
             {defs.isLoading ? (
@@ -496,29 +568,14 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   <Thead>
                     <Tr>
                       <Th>
-                        <HStack spacing={2}>
-                          <Text>Name</Text>
-                          <Tooltip label="Sort Name A to Z" hasArrow>
-                            <IconButton
-                              aria-label="Sort definitions by name ascending"
-                              icon={<TriangleUpIcon />}
-                              size="xs"
-                              variant={definitionsNameSortDirection === "asc" ? "solid" : "ghost"}
-                              colorScheme="gray"
-                              onClick={() => setDefinitionsNameSortDirection("asc")}
-                            />
-                          </Tooltip>
-                          <Tooltip label="Sort Name Z to A" hasArrow>
-                            <IconButton
-                              aria-label="Sort definitions by name descending"
-                              icon={<TriangleDownIcon />}
-                              size="xs"
-                              variant={definitionsNameSortDirection === "desc" ? "solid" : "ghost"}
-                              colorScheme="gray"
-                              onClick={() => setDefinitionsNameSortDirection("desc")}
-                            />
-                          </Tooltip>
-                        </HStack>
+                        <TableSortHeader
+                          label="Name"
+                          direction={definitionsNameSortDirection}
+                          onAsc={() => setDefinitionsNameSortDirection("asc")}
+                          onDesc={() => setDefinitionsNameSortDirection("desc")}
+                          ascAriaLabel="Sort definitions by name ascending"
+                          descAriaLabel="Sort definitions by name descending"
+                        />
                       </Th>
                       <Th>Category</Th>
                       <Th>Severity</Th>
@@ -529,7 +586,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     </Tr>
                   </Thead>
                   <Tbody>
-                    {sortedDefinitions.map((d) => (
+                    {paginatedDefinitions.map((d) => (
                       <Tr
                         key={d.id}
                         _hover={{ bg: "gray.50" }}
@@ -598,6 +655,30 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   </Tbody>
                 </Table>
               </TableContainer>
+            ) : null}
+
+            {!defs.isLoading && defs.filteredDefinitions.length > 0 ? (
+              <TablePaginationBar
+                startRow={definitionsStartRow}
+                endRow={definitionsEndRow}
+                totalItems={definitionsTotal}
+                page={definitionsPage}
+                totalPages={definitionsTotalPages}
+                pageSize={definitionsPageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSizeChange={(value) => {
+                  setDefinitionsPageSize(value);
+                  setDefinitionsPage(1);
+                }}
+                onFirst={() => setDefinitionsPage(1)}
+                onPrev={() => setDefinitionsPage((p) => Math.max(1, p - 1))}
+                onNext={() => setDefinitionsPage((p) => Math.min(definitionsTotalPages, p + 1))}
+                onLast={() => setDefinitionsPage(definitionsTotalPages)}
+                canPrev={definitionsPage > 1}
+                canNext={definitionsPage < definitionsTotalPages}
+                borderColor={cardBorder}
+                bg={cardBg}
+              />
             ) : (
               <Alert status="info" borderRadius="md">
                 <AlertIcon />
@@ -1464,16 +1545,41 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         </CardHeader>
         <CardBody>
           <VStack spacing={6} align="stretch">
-            <HStack>
+            <TableFilterToolbar
+              hasActiveFilters={recvs.filterEnabled !== "all" || !!receiversSearchQuery.trim()}
+              onClear={() => {
+                recvs.setFilterEnabled("all");
+                setReceiversSearchQuery("");
+                setReceiversPage(1);
+              }}
+              align="end"
+            >
+              <FormControl maxW="260px">
+                <FormLabel fontWeight="semibold">Search</FormLabel>
+                <InputGroup size="sm">
+                  <InputLeftElement pointerEvents="none">
+                    <SearchIcon color="gray.400" />
+                  </InputLeftElement>
+                  <Input
+                    placeholder="Search receivers..."
+                    value={receiversSearchQuery}
+                    onChange={(e) => {
+                      setReceiversSearchQuery(e.target.value);
+                      setReceiversPage(1);
+                    }}
+                    bg="white"
+                  />
+                </InputGroup>
+              </FormControl>
               <FormControl maxW="200px">
                 <FormLabel fontWeight="semibold">Status</FormLabel>
-                <Select value={recvs.filterEnabled} onChange={(e) => recvs.setFilterEnabled(e.target.value)} bg="white">
+                <Select value={recvs.filterEnabled} onChange={(e) => { recvs.setFilterEnabled(e.target.value); setReceiversPage(1); }} bg="white">
                   <option value="all">All</option>
                   <option value="enabled">Enabled</option>
                   <option value="disabled">Disabled</option>
                 </Select>
               </FormControl>
-            </HStack>
+            </TableFilterToolbar>
 
             {recvs.isLoading ? (
               <Center py={8}>
@@ -1482,35 +1588,20 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   <Text color="gray.600">Loading receivers...</Text>
                 </VStack>
               </Center>
-            ) : recvs.filteredReceivers.length > 0 ? (
+            ) : sortedReceivers.length > 0 ? (
               <TableContainer>
                 <Table variant="simple" size="sm">
                   <Thead>
                     <Tr>
                       <Th>
-                        <HStack spacing={2}>
-                          <Text>Name</Text>
-                          <Tooltip label="Sort Name A to Z" hasArrow>
-                            <IconButton
-                              aria-label="Sort receivers by name ascending"
-                              icon={<TriangleUpIcon />}
-                              size="xs"
-                              variant={receiversNameSortDirection === "asc" ? "solid" : "ghost"}
-                              colorScheme="gray"
-                              onClick={() => setReceiversNameSortDirection("asc")}
-                            />
-                          </Tooltip>
-                          <Tooltip label="Sort Name Z to A" hasArrow>
-                            <IconButton
-                              aria-label="Sort receivers by name descending"
-                              icon={<TriangleDownIcon />}
-                              size="xs"
-                              variant={receiversNameSortDirection === "desc" ? "solid" : "ghost"}
-                              colorScheme="gray"
-                              onClick={() => setReceiversNameSortDirection("desc")}
-                            />
-                          </Tooltip>
-                        </HStack>
+                        <TableSortHeader
+                          label="Name"
+                          direction={receiversNameSortDirection}
+                          onAsc={() => setReceiversNameSortDirection("asc")}
+                          onDesc={() => setReceiversNameSortDirection("desc")}
+                          ascAriaLabel="Sort receivers by name ascending"
+                          descAriaLabel="Sort receivers by name descending"
+                        />
                       </Th>
                       <Th>Recipient</Th>
                       <Th>Status</Th>
@@ -1520,7 +1611,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     </Tr>
                   </Thead>
                   <Tbody>
-                    {sortedReceivers.map((r) => (
+                    {paginatedReceivers.map((r) => (
                       <Tr
                         key={r.id}
                         _hover={{ bg: "gray.50" }}
@@ -1562,6 +1653,30 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   </Tbody>
                 </Table>
               </TableContainer>
+            ) : null}
+
+            {!recvs.isLoading && sortedReceivers.length > 0 ? (
+              <TablePaginationBar
+                startRow={receiversStartRow}
+                endRow={receiversEndRow}
+                totalItems={receiversTotal}
+                page={receiversPage}
+                totalPages={receiversTotalPages}
+                pageSize={receiversPageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSizeChange={(value) => {
+                  setReceiversPageSize(value);
+                  setReceiversPage(1);
+                }}
+                onFirst={() => setReceiversPage(1)}
+                onPrev={() => setReceiversPage((p) => Math.max(1, p - 1))}
+                onNext={() => setReceiversPage((p) => Math.min(receiversTotalPages, p + 1))}
+                onLast={() => setReceiversPage(receiversTotalPages)}
+                canPrev={receiversPage > 1}
+                canNext={receiversPage < receiversTotalPages}
+                borderColor={cardBorder}
+                bg={cardBg}
+              />
             ) : (
               <Alert status="info" borderRadius="md">
                 <AlertIcon />
@@ -1577,13 +1692,20 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       </Card>
 
       {/* ── Create Receiver Modal ── */}
-      <Modal isOpen={recvs.isCreateOpen} onClose={recvs.closeCreate} size="lg" scrollBehavior="inside">
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Create Notification Receiver</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            <VStack spacing={4} align="stretch">
+      <StandardModal
+        isOpen={recvs.isCreateOpen}
+        onClose={recvs.closeCreate}
+        size="lg"
+        title="Create Notification Receiver"
+        modalProps={{ scrollBehavior: "inside" }}
+        footer={
+          <>
+            <Button variant="ghost" mr={3} onClick={recvs.closeCreate} isDisabled={recvs.isCreating}>Cancel</Button>
+            <Button colorScheme="blue" onClick={recvs.handleCreate} isLoading={recvs.isCreating} loadingText="Creating...">Create</Button>
+          </>
+        }
+      >
+        <VStack spacing={4} align="stretch">
               <SimpleGrid columns={2} spacing={4}>
                 <FormControl isRequired>
                   <FormLabel fontWeight="semibold">Category</FormLabel>
@@ -1650,24 +1772,20 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <FormLabel fontWeight="semibold">Email Body Template</FormLabel>
                 <Textarea placeholder="Optional HTML body template" value={recvs.createForm.email_body_template ?? ""} onChange={(e) => recvs.setCreateForm({ ...recvs.createForm, email_body_template: e.target.value || null })} bg="white" rows={3} />
               </FormControl>
-            </VStack>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="ghost" mr={3} onClick={recvs.closeCreate} isDisabled={recvs.isCreating}>Cancel</Button>
-            <Button colorScheme="blue" onClick={recvs.handleCreate} isLoading={recvs.isCreating} loadingText="Creating...">Create</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+        </VStack>
+      </StandardModal>
 
       {/* ── View Receiver Modal ── */}
-      <Modal isOpen={recvs.isViewOpen} onClose={recvs.closeView} size="xl" scrollBehavior="inside">
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Notification Receiver Details</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            {recvs.viewItem && (
-              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+      <StandardModal
+        isOpen={recvs.isViewOpen}
+        onClose={recvs.closeView}
+        size="xl"
+        title="Notification Receiver Details"
+        modalProps={{ scrollBehavior: "inside" }}
+        footer={<Button onClick={recvs.closeView}>Close</Button>}
+      >
+        {recvs.viewItem && (
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Receiver Name</Text><Text fontSize="sm">{recvs.viewItem.receiver_name}</Text></Box>
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Organization</Text><Text>{recvs.viewItem.organization}</Text></Box>
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Status</Text><Badge colorScheme={recvs.viewItem.enabled ? "green" : "red"} fontSize="sm" p={1}>{recvs.viewItem.enabled ? "Enabled" : "Disabled"}</Badge></Box>
@@ -1688,21 +1806,25 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 )}
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Created At</Text><Text fontSize="sm">{new Date(recvs.viewItem.created_at).toLocaleString()}</Text></Box>
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>Updated At</Text><Text fontSize="sm">{new Date(recvs.viewItem.updated_at).toLocaleString()}</Text></Box>
-              </SimpleGrid>
-            )}
-          </ModalBody>
-          <ModalFooter><Button onClick={recvs.closeView}>Close</Button></ModalFooter>
-        </ModalContent>
-      </Modal>
+          </SimpleGrid>
+        )}
+      </StandardModal>
 
       {/* ── Update Receiver Modal ── */}
-      <Modal isOpen={recvs.isUpdateOpen} onClose={recvs.closeUpdate} size="lg" scrollBehavior="inside">
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Update Notification Receiver</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            <VStack spacing={4} align="stretch">
+      <StandardModal
+        isOpen={recvs.isUpdateOpen}
+        onClose={recvs.closeUpdate}
+        size="lg"
+        title="Update Notification Receiver"
+        modalProps={{ scrollBehavior: "inside" }}
+        footer={
+          <>
+            <Button variant="ghost" mr={3} onClick={recvs.closeUpdate} isDisabled={recvs.isUpdating}>Cancel</Button>
+            <Button colorScheme="blue" onClick={recvs.handleUpdate} isLoading={recvs.isUpdating} loadingText="Updating...">Update</Button>
+          </>
+        }
+      >
+        <VStack spacing={4} align="stretch">
               <FormControl>
                 <FormLabel fontWeight="semibold">Receiver Name</FormLabel>
                 <Input value={recvs.updateForm.rule_name ?? ""} onChange={(e) => recvs.setUpdateForm({ ...recvs.updateForm, rule_name: e.target.value })} bg="white" />
@@ -1752,14 +1874,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <FormLabel fontWeight="semibold" mb={0}>Enabled</FormLabel>
                 <Switch isChecked={recvs.updateForm.enabled ?? true} onChange={(e) => recvs.setUpdateForm({ ...recvs.updateForm, enabled: e.target.checked })} colorScheme="green" />
               </FormControl>
-            </VStack>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="ghost" mr={3} onClick={recvs.closeUpdate} isDisabled={recvs.isUpdating}>Cancel</Button>
-            <Button colorScheme="blue" onClick={recvs.handleUpdate} isLoading={recvs.isUpdating} loadingText="Updating...">Update</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+        </VStack>
+      </StandardModal>
 
       {/* ── Delete Receiver Dialog ── */}
       <AlertDialog isOpen={recvs.isDeleteOpen} leastDestructiveRef={recvDeleteRef} onClose={recvs.closeDelete}>
@@ -1785,41 +1901,14 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       <Box bg={cardBg} borderColor={cardBorder} borderWidth="1px" borderRadius="lg" p={4}>
       <VStack spacing={5} align="stretch">
         {/* Search + Filters + Actions */}
-        <HStack spacing={3} justify="space-between" align="center" w="100%">
-          <HStack spacing={3}>
-            <InputGroup maxW="280px" size="sm">
-              <InputLeftElement pointerEvents="none">
-                <SearchIcon color="gray.400" />
-              </InputLeftElement>
-              <Input
-                placeholder="Search routing rules..."
-                value={rules.searchQuery}
-                onChange={(e) => rules.setSearchQuery(e.target.value)}
-                bg="white"
-              />
-            </InputGroup>
-            <Select size="sm" maxW="120px" value={rules.filterEnabled} onChange={(e) => rules.setFilterEnabled(e.target.value)} bg="white">
-              <option value="all">Status</option>
-              <option value="enabled">Active</option>
-              <option value="disabled">Inactive</option>
-            </Select>
-          </HStack>
-          <HStack spacing={3}>
-            {(() => {
-              const hasActiveFilters = !!rules.searchQuery.trim() || rules.filterEnabled !== "all";
-              return hasActiveFilters ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    rules.setSearchQuery("");
-                    rules.setFilterEnabled("all");
-                  }}
-                >
-                  Clear all
-                </Button>
-              ) : null;
-            })()}
+        <TableFilterToolbar
+          hasActiveFilters={!!rules.searchQuery.trim() || rules.filterEnabled !== "all"}
+          onClear={() => {
+            rules.setSearchQuery("");
+            rules.setFilterEnabled("all");
+            setRulesPage(1);
+          }}
+          rightContent={(
             <Button
               size="sm"
               colorScheme="orange"
@@ -1828,8 +1917,31 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             >
               Create Routing Rule
             </Button>
+          )}
+          justify="space-between"
+        >
+          <HStack spacing={3}>
+            <InputGroup maxW="280px" size="sm">
+              <InputLeftElement pointerEvents="none">
+                <SearchIcon color="gray.400" />
+              </InputLeftElement>
+              <Input
+                placeholder="Search routing rules..."
+                value={rules.searchQuery}
+                  onChange={(e) => {
+                    rules.setSearchQuery(e.target.value);
+                    setRulesPage(1);
+                  }}
+                bg="white"
+              />
+            </InputGroup>
+            <Select size="sm" maxW="120px" value={rules.filterEnabled} onChange={(e) => { rules.setFilterEnabled(e.target.value); setRulesPage(1); }} bg="white">
+              <option value="all">Status</option>
+              <option value="enabled">Active</option>
+              <option value="disabled">Inactive</option>
+            </Select>
           </HStack>
-        </HStack>
+        </TableFilterToolbar>
 
         {rules.isLoading ? (
           <Center py={8}>
@@ -1844,29 +1956,14 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Thead>
                 <Tr>
                   <Th>
-                    <HStack spacing={2}>
-                      <Text>Rule Name</Text>
-                      <Tooltip label="Sort Name A to Z" hasArrow>
-                        <IconButton
-                          aria-label="Sort rules by name ascending"
-                          icon={<TriangleUpIcon />}
-                          size="xs"
-                          variant={rulesNameSortDirection === "asc" ? "solid" : "ghost"}
-                          colorScheme="gray"
-                          onClick={() => setRulesNameSortDirection("asc")}
-                        />
-                      </Tooltip>
-                      <Tooltip label="Sort Name Z to A" hasArrow>
-                        <IconButton
-                          aria-label="Sort rules by name descending"
-                          icon={<TriangleDownIcon />}
-                          size="xs"
-                          variant={rulesNameSortDirection === "desc" ? "solid" : "ghost"}
-                          colorScheme="gray"
-                          onClick={() => setRulesNameSortDirection("desc")}
-                        />
-                      </Tooltip>
-                    </HStack>
+                    <TableSortHeader
+                      label="Rule Name"
+                      direction={rulesNameSortDirection}
+                      onAsc={() => setRulesNameSortDirection("asc")}
+                      onDesc={() => setRulesNameSortDirection("desc")}
+                      ascAriaLabel="Sort rules by name ascending"
+                      descAriaLabel="Sort rules by name descending"
+                    />
                   </Th>
                   <Th>Alert Definitions</Th>
                   <Th>Tenant</Th>
@@ -1875,7 +1972,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </Tr>
               </Thead>
               <Tbody>
-                {sortedRules.map((rule) => (
+                {paginatedRules.map((rule) => (
                     <Tr
                       key={rule.id}
                       _hover={{ bg: "gray.50" }}
@@ -1928,6 +2025,30 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </Tbody>
             </Table>
           </TableContainer>
+        ) : null}
+
+        {!rules.isLoading && rules.filteredRules.length > 0 ? (
+          <TablePaginationBar
+            startRow={rulesStartRow}
+            endRow={rulesEndRow}
+            totalItems={rulesTotal}
+            page={rulesPage}
+            totalPages={rulesTotalPages}
+            pageSize={rulesPageSize}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            onPageSizeChange={(value) => {
+              setRulesPageSize(value);
+              setRulesPage(1);
+            }}
+            onFirst={() => setRulesPage(1)}
+            onPrev={() => setRulesPage((p) => Math.max(1, p - 1))}
+            onNext={() => setRulesPage((p) => Math.min(rulesTotalPages, p + 1))}
+            onLast={() => setRulesPage(rulesTotalPages)}
+            canPrev={rulesPage > 1}
+            canNext={rulesPage < rulesTotalPages}
+            borderColor={cardBorder}
+            bg={cardBg}
+          />
         ) : (
           <Alert status="info" borderRadius="md">
             <AlertIcon />
@@ -2655,7 +2776,20 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
         <CardBody>
           <VStack spacing={5} align="stretch">
-            <HStack spacing={3} align="center" flexWrap="wrap" rowGap={3}>
+            <TableFilterToolbar
+              hasActiveFilters={history.hasActiveFilters}
+              onClear={() => history.clearFilters()}
+              rightContent={(
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => history.fetchHistory()}
+                  isLoading={history.isLoading}
+                >
+                  Refresh
+                </Button>
+              )}
+            >
               <InputGroup maxW="260px" size="sm">
                 <InputLeftElement pointerEvents="none">
                   <SearchIcon color="gray.400" />
@@ -2719,35 +2853,27 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 />
               </HStack>
               <Box flex="1" minW={{ base: "100%", sm: 0 }} display={{ base: "none", md: "block" }} />
-              {history.hasActiveFilters ? (
-                <Button size="sm" variant="outline" onClick={() => history.clearFilters()}>
-                  Clear all
-                </Button>
-              ) : null}
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => history.fetchHistory()}
-                isLoading={history.isLoading}
-              >
-                Refresh
-              </Button>
-            </HStack>
+            </TableFilterToolbar>
 
             {!history.isLoading && history.total > 0 ? (
-              <HStack justify="space-between" flexWrap="wrap" spacing={3}>
-                <Text fontSize="sm" color="gray.600" fontWeight="medium">
-                  Showing {history.pageStart}–{history.pageEnd} of {history.total}
-                </Text>
-                <HStack spacing={2}>
-                  <Button size="sm" variant="outline" onClick={() => history.goPrev()} isDisabled={!history.canPrev}>
-                    Previous
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => history.goNext()} isDisabled={!history.canNext}>
-                    Next
-                  </Button>
-                </HStack>
-              </HStack>
+              <TablePaginationBar
+                startRow={history.pageStart}
+                endRow={history.pageEnd}
+                totalItems={history.total}
+                page={history.currentPage}
+                totalPages={history.totalPages}
+                pageSize={history.pageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSizeChange={(value) => history.setPageSize(value)}
+                onFirst={() => history.goFirst()}
+                onPrev={() => history.goPrev()}
+                onNext={() => history.goNext()}
+                onLast={() => history.goLast()}
+                canPrev={history.canPrev}
+                canNext={history.canNext}
+                borderColor={cardBorder}
+                bg={cardBg}
+              />
             ) : null}
 
             {history.isLoading ? (
@@ -2762,7 +2888,16 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <Table variant="simple" size="sm">
                   <Thead>
                     <Tr>
-                      <Th>Name</Th>
+                      <Th>
+                        <TableSortHeader
+                          label="Name"
+                          direction={historyNameSortDirection}
+                          onAsc={() => setHistoryNameSortDirection("asc")}
+                          onDesc={() => setHistoryNameSortDirection("desc")}
+                          ascAriaLabel="Sort alert history by name ascending"
+                          descAriaLabel="Sort alert history by name descending"
+                        />
+                      </Th>
                       <Th>Category</Th>
                       <Th>Severity</Th>
                       <Th>Triggered At</Th>
@@ -2771,7 +2906,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     </Tr>
                   </Thead>
                   <Tbody>
-                    {history.items.map((row) => (
+                    {sortedHistoryItems.map((row) => (
                       <Tr key={row.id} _hover={{ bg: "gray.50" }} transition="background 0.15s">
                         <Td fontWeight="semibold" maxW="260px">
                           <Text noOfLines={2} title={row.name}>{row.name}</Text>
@@ -2824,21 +2959,27 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         </CardBody>
       </Card>
 
-      <Modal isOpen={history.isViewOpen} onClose={history.closeView} size="lg">
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader borderBottomWidth="1px" borderColor="gray.200">
+      <StandardModal
+        isOpen={history.isViewOpen}
+        onClose={history.closeView}
+        size="lg"
+        title={
+          <>
             <Text fontSize="lg" fontWeight="bold">Alert event</Text>
             {history.viewItem ? (
               <Text fontSize="sm" fontWeight="normal" color="gray.600" mt={1} noOfLines={2}>
                 {history.viewItem.name}
               </Text>
             ) : null}
-          </ModalHeader>
-          <ModalCloseButton />
-          <ModalBody py={6}>
-            {history.viewItem ? (
-              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+          </>
+        }
+        headerProps={{ borderBottomWidth: "1px", borderColor: "gray.200" }}
+        bodyProps={{ py: 6 }}
+        footerProps={{ borderTopWidth: "1px", borderColor: "gray.200" }}
+        footer={<Button onClick={history.closeView}>Close</Button>}
+      >
+        {history.viewItem ? (
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                 {[
                   ["Category", titleCase(history.viewItem.category || "—")],
                   ["Severity", titleCase(history.viewItem.severity || "—")],
@@ -2859,14 +3000,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <Text fontSize="sm" mt={1} wordBreak="break-word">{val}</Text>
                   </Box>
                 ))}
-              </SimpleGrid>
-            ) : null}
-          </ModalBody>
-          <ModalFooter borderTopWidth="1px" borderColor="gray.200">
-            <Button onClick={history.closeView}>Close</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </SimpleGrid>
+        ) : null}
+      </StandardModal>
     </>
   );
 
