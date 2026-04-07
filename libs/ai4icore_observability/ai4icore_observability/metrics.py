@@ -357,9 +357,10 @@ class MetricsCollector:
             else:
                 config_orgs = getattr(self.config, "customers", []) or getattr(self.config, "organizations", [])
             
-            # Use default organizations if none in config
-            default_orgs = ["irctc", "kisanmitra", "bashadaan", "beml"]
-            orgs_to_init = config_orgs if config_orgs else default_orgs
+            # Only initialise orgs that are explicitly provided via config.
+            # Do NOT fall back to a hardcoded list — organizations are resolved
+            # dynamically from tenant data at request time.
+            orgs_to_init = config_orgs if config_orgs else []
             
             # Initialize all organization-level metrics to 0
             # This is critical - Prometheus Gauges only appear after they've been set at least once
@@ -462,24 +463,17 @@ class MetricsCollector:
             # Remove "unknown" from the set
             all_orgs.discard("unknown")
             
-            # FALLBACK: If no organizations found anywhere, initialize for common test organizations
-            # This ensures metrics exist even before any requests are made
-            # This is important so Prometheus can see the metrics immediately
+            # If no organizations have been seen yet (e.g. very first scrape before any
+            # requests arrive), use the config-provided list only.  Do NOT fall back to a
+            # hardcoded list — organizations are resolved dynamically from tenant data.
             if not all_orgs:
                 if isinstance(self.config, dict):
                     config_orgs = self.config.get("organizations", []) or self.config.get("customers", [])
                 else:
                     config_orgs = getattr(self.config, "customers", []) or getattr(self.config, "organizations", [])
-                default_orgs = config_orgs if config_orgs else ["irctc", "kisanmitra", "bashadaan", "beml"]
-                for org in default_orgs:
+                for org in (config_orgs or []):
                     if org and org != "unknown":
                         all_orgs.add(org)
-            
-            # CRITICAL: Always ensure at least default organizations are initialized
-            # This guarantees metrics are always exposed in Prometheus
-            if not all_orgs:
-                default_orgs = ["irctc", "kisanmitra", "bashadaan", "beml"]
-                all_orgs.update(default_orgs)
             
             # Calculate and set organization-level CPU usage
             # Based on request processing time proportion
@@ -517,18 +511,8 @@ class MetricsCollector:
                 for org in all_orgs:
                     self.enterprise_org_disk_usage.labels(organization=org).set(0.0)
             
-            # CRITICAL: Final safety check - ensure metrics are always set for at least default orgs
-            # This guarantees metrics appear in Prometheus even if something went wrong above
-            if not all_orgs:
-                default_orgs = ["irctc", "kisanmitra", "bashadaan", "beml"]
-                for org in default_orgs:
-                    try:
-                        self.enterprise_org_cpu_usage.labels(organization=org).set(0.0)
-                        self.enterprise_org_memory_usage.labels(organization=org).set(0.0)
-                        self.enterprise_org_disk_usage.labels(organization=org).set(0.0)
-                    except Exception as metric_error:
-                        # Log but don't fail - metrics might already be set
-                        pass
+            # If still no orgs after all resolution attempts, there is simply nothing to
+            # initialize yet — metrics will appear once the first tenant-based request arrives.
             
             # Debug logging
             debug_enabled = self.config.get("debug", False) if isinstance(self.config, dict) else getattr(self.config, "debug", False)
@@ -546,15 +530,6 @@ class MetricsCollector:
                 print(f"Error updating organization system metrics: {e}")
                 import traceback
                 traceback.print_exc()
-            # Even if there's an error, try to set default metrics
-            try:
-                default_orgs = ["irctc", "kisanmitra", "bashadaan", "beml"]
-                for org in default_orgs:
-                    self.enterprise_org_cpu_usage.labels(organization=org).set(0.0)
-                    self.enterprise_org_memory_usage.labels(organization=org).set(0.0)
-                    self.enterprise_org_disk_usage.labels(organization=org).set(0.0)
-            except:
-                pass  # If this also fails, we can't do anything
 
     def track_request(
         self,
