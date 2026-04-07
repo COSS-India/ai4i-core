@@ -11,6 +11,8 @@ export function TableSortHeader({
   onDesc,
   ascAriaLabel,
   descAriaLabel,
+  ascTooltipLabel,
+  descTooltipLabel,
 }: {
   label: string;
   direction: SortDirection;
@@ -18,11 +20,15 @@ export function TableSortHeader({
   onDesc: () => void;
   ascAriaLabel: string;
   descAriaLabel: string;
+  ascTooltipLabel?: string;
+  descTooltipLabel?: string;
 }) {
+  const ascTooltip = ascTooltipLabel ?? `Sort ${label} ascending`;
+  const descTooltip = descTooltipLabel ?? `Sort ${label} descending`;
   return (
     <HStack spacing={2}>
       <Text>{label}</Text>
-      <Tooltip label="Sort Name A to Z" hasArrow>
+      <Tooltip label={ascTooltip} hasArrow>
         <IconButton
           aria-label={ascAriaLabel}
           icon={<TriangleUpIcon />}
@@ -32,7 +38,7 @@ export function TableSortHeader({
           onClick={onAsc}
         />
       </Tooltip>
-      <Tooltip label="Sort Name Z to A" hasArrow>
+      <Tooltip label={descTooltip} hasArrow>
         <IconButton
           aria-label={descAriaLabel}
           icon={<TriangleDownIcon />}
@@ -93,7 +99,7 @@ export function TablePaginationBar({
       pt={4}
     >
       <Text fontSize="sm" color="gray.600">
-        {startRow}–{endRow} of {totalItems}
+        {totalItems === 0 ? "No items" : `${startRow}–${endRow} of ${totalItems}`}
       </Text>
       <HStack spacing={2} align="center" flexWrap="wrap">
         <Text fontSize="sm" color="gray.600" whiteSpace="nowrap">

@@ -59,9 +59,22 @@ import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { TableFilterToolbar, TablePaginationBar, TableSortHeader } from "../components/common/TableControls";
 
+type ModelSummary = {
+  modelId?: string;
+  model_id?: string;
+  name?: string;
+  versionStatus?: string;
+  version_status?: string;
+  task?: { type?: string };
+  task_type?: string;
+  taskType?: string;
+  version?: string;
+  modelVersion?: string;
+};
+
 const ServicesManagementPage: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
-  const [models, setModels] = useState<any[]>([]);
+  const [models, setModels] = useState<ModelSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
@@ -212,7 +225,7 @@ const ServicesManagementPage: React.FC = () => {
     }
   }, [user, router, toast]);
   // Model fetched by ID when navigating from a deprecated model's "Create Service" (not in active list)
-  const [preselectedModelFromQuery, setPreselectedModelFromQuery] = useState<any | null>(null);
+  const [preselectedModelFromQuery, setPreselectedModelFromQuery] = useState<ModelSummary | null>(null);
 
   // Fetch services on component mount
   useEffect(() => {

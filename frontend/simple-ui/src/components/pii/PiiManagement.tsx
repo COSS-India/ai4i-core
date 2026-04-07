@@ -27,7 +27,7 @@ interface AuditLogRow {
   pii_count: number;
   processing_ms: number;
   trace_json: unknown;
-  created_at: string;
+  created_at: string | null;
 }
 
 export interface PiiManagementProps {
@@ -268,8 +268,8 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
     );
   });
   const sortedAuditLogs = [...filteredAuditLogs].sort((a, b) => {
-    const timeA = new Date(a.created_at ?? "").getTime();
-    const timeB = new Date(b.created_at ?? "").getTime();
+    const timeA = a.created_at ? new Date(a.created_at).getTime() : -Infinity;
+    const timeB = b.created_at ? new Date(b.created_at).getTime() : -Infinity;
     return auditSortDirection === "asc" ? timeA - timeB : timeB - timeA;
   });
   const auditTotal = sortedAuditLogs.length;
