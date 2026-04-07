@@ -185,22 +185,6 @@ class ASRService:
                     exc_info=True,
                 )
 
-                # Try static fallback
-                try:
-                    from ai4icore_constants.static_fallback_responses import (
-                        is_static_fallback_enabled,
-                        get_asr_static_response,
-                    )
-
-                    if is_static_fallback_enabled():
-                        num_inputs = len(request.audio)
-                        static_data = get_asr_static_response(num_inputs)
-                        output = [TranscriptOutput(**o) for o in static_data["output"]]
-                        logger.info("Returning static ASR fallback (Triton unreachable)")
-                        return ASRInferenceResponse(output=output)
-                except Exception:
-                    pass
-
                 raise TritonInferenceError(
                     f"Primary service ({original_service_id}) failed: {primary_error}. "
                     f"Fallback service ({fallback_service_id}) also failed: {fallback_error}"
