@@ -8,6 +8,32 @@ from sqlalchemy.ext.declarative import declarative_base
 Base = declarative_base()
 
 
+# ---------------------------------------------------------------------------
+# Read-only stubs for FK-referenced auth tables (managed by auth-service).
+# These let SQLAlchemy resolve ForeignKey targets without importing the full
+# auth models.  Only the primary key column is needed.
+# ---------------------------------------------------------------------------
+class UserRef(Base):
+    __tablename__ = "users"
+    __table_args__ = {"extend_existing": True}
+    id = Column(Integer, primary_key=True)
+
+
+class APIKeyRef(Base):
+    __tablename__ = "api_keys"
+    __table_args__ = {"extend_existing": True}
+    id = Column(Integer, primary_key=True)
+
+
+class SessionRef(Base):
+    __tablename__ = "sessions"
+    __table_args__ = {"extend_existing": True}
+    id = Column(Integer, primary_key=True)
+
+
+# ---------------------------------------------------------------------------
+# Service models
+# ---------------------------------------------------------------------------
 class TTSRequestDB(Base):
     """TTS request database model."""
     __tablename__ = "tts_requests"
