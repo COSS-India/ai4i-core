@@ -15,6 +15,14 @@ logger = logging.getLogger(__name__)
 class TransliterationTritonClient(TritonClient):
     """Triton client with transliteration-specific I/O preparation."""
 
+    @staticmethod
+    def _flat_string_tensor(values: List[str], name: str) -> InferInput:
+        """Create a string tensor with shape [batch] (flat) as required by the transliteration model."""
+        np_array = np.array(values, dtype=object)
+        tensor = InferInput(name, list(np_array.shape), np_to_triton_dtype(np_array.dtype))
+        tensor.set_data_from_numpy(np_array)
+        return tensor
+
     def get_transliteration_io_for_triton(
         self,
         input_texts: List[str],
@@ -24,11 +32,11 @@ class TransliterationTritonClient(TritonClient):
         top_k: int = 0,
     ) -> Tuple[List[InferInput], List[InferRequestedOutput]]:
         """Prepare transliteration inputs and outputs for Triton inference."""
-        input_text_tensor = self._get_string_tensor(input_texts, "INPUT_TEXT")
-        input_lang_tensor = self._get_string_tensor(
+        input_text_tensor = self._flat_string_tensor(input_texts, "INPUT_TEXT")
+        input_lang_tensor = self._flat_string_tensor(
             [source_lang] * len(input_texts), "INPUT_LANGUAGE_ID"
         )
-        output_lang_tensor = self._get_string_tensor(
+        output_lang_tensor = self._flat_string_tensor(
             [target_lang] * len(input_texts), "OUTPUT_LANGUAGE_ID"
         )
 

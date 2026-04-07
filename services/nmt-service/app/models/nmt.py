@@ -11,30 +11,9 @@ from sqlalchemy.ext.declarative import declarative_base
 Base = declarative_base()
 
 
-# ---------------------------------------------------------------------------
-# Read-only stubs for FK-referenced auth tables (managed by auth-service).
-# ---------------------------------------------------------------------------
-class UserRef(Base):
-    __tablename__ = "users"
-    __table_args__ = {"extend_existing": True}
-    id = Column(Integer, primary_key=True)
 
-
-class APIKeyRef(Base):
-    __tablename__ = "api_keys"
-    __table_args__ = {"extend_existing": True}
-    id = Column(Integer, primary_key=True)
-
-
-class SessionRef(Base):
-    __tablename__ = "sessions"
-    __table_args__ = {"extend_existing": True}
-    id = Column(Integer, primary_key=True)
-
-
-# ---------------------------------------------------------------------------
-# Service models
-# ---------------------------------------------------------------------------
+# NMT has full UserDB/ApiKeyDB/SessionDB models (needed for try-it feature)
+# so no stubs are needed here — they are defined below the request/result models.
 class NMTRequestDB(Base):
     """NMT Request database model"""
     __tablename__ = "nmt_requests"

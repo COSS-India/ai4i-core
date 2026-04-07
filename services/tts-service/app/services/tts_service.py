@@ -157,8 +157,8 @@ class TTSService:
 
                                         triton_response = self.triton_client.send_triton_request(
                                             model_name=model_name,
-                                            input_list=inputs,
-                                            output_list=outputs,
+                                            inputs=inputs,
+                                            outputs=outputs,
                                         )
 
                                         raw_audio = triton_response.as_numpy("OUTPUT_GENERATED_AUDIO")[0]
