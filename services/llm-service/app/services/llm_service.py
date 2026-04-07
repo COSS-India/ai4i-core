@@ -195,18 +195,6 @@ class LLMService:
                     or "connection" in str(e).lower()
                     or "timeout" in str(e).lower()
                 )
-                if is_triton_error:
-                    from ai4icore_constants.static_fallback_responses import (
-                        is_static_fallback_enabled,
-                        get_llm_static_response_batch,
-                    )
-                    if is_static_fallback_enabled():
-                        input_texts = [inp.source for inp in request.input]
-                        static_data = get_llm_static_response_batch(input_texts)
-                        output = [LLMOutput(**o) for o in static_data["output"]]
-                        logger.info("Returning static LLM fallback (Triton unreachable)")
-                        return LLMInferenceResponse(output=output)
-
                 if isinstance(e, TritonInferenceError):
                     raise
                 elif isinstance(e, TextProcessingError):
