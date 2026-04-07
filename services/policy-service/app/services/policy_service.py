@@ -55,7 +55,7 @@ class PolicyService:
 
         # Validate tenant_id (non-global) against active tenants list
         active_tenant_ids = await self._get_active_tenant_ids(auth_header=auth_header)
-        if not data.is_global and data.tenant_id:
+        if (not data.is_global) and data.tenant_id:
             self._validate_tenant_id(data.tenant_id, active_tenant_ids)
 
         # tenant_id is not a column on pii_policy; it is only used for tenant_policy assignment.
@@ -80,7 +80,7 @@ class PolicyService:
         obj = await self.get(policy_id)
         active_tenant_ids = await self._get_active_tenant_ids(auth_header=auth_header)
 
-        if data.is_global is not True and data.tenant_id:
+        if (data.is_global is not True) and data.tenant_id:
             self._validate_tenant_id(data.tenant_id, active_tenant_ids)
 
         # tenant_id is not a column on pii_policy; it is only used for tenant_policy assignment.
@@ -155,12 +155,17 @@ class PolicyService:
                     }
                 },
             )
-        url = f"{base}/api/v1/multi-tenant/admin/list/tenants"
+        # Multi-tenant-feature runs with root-level prefixes (e.g. /admin/...)
+        # Gateway deployments may mount it under /api/v1/multi-tenant.
+        primary_url = f"{base}/admin/list/tenants"
+        gateway_url = f"{base}/api/v1/multi-tenant/admin/list/tenants"
         headers = {}
         if auth_header:
             headers["Authorization"] = auth_header
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, headers=headers)
+            resp = await client.get(primary_url, headers=headers)
+            if resp.status_code == 404:
+                resp = await client.get(gateway_url, headers=headers)
         if resp.status_code >= 400:
             raise HTTPException(
                 status_code=502,

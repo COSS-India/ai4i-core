@@ -12,6 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import require_adopter_admin
 from app.db.session import get_db
 from app.models.schemas import (
     Meta,
@@ -19,12 +20,13 @@ from app.models.schemas import (
     PolicyDetailOut,
     PolicyListResponse,
     PolicyOut,
+    PolicyPiiTypeOut,
     PolicyStatusUpdate,
     PolicyUpdate,
 )
 from app.services.policy_service import PolicyService
 
-router = APIRouter(prefix="/policies", tags=["Policies"])
+router = APIRouter(prefix="/policies", tags=["Policies"], dependencies=[Depends(require_adopter_admin)])
 
 
 def _svc(db: AsyncSession = Depends(get_db)) -> PolicyService:
@@ -41,9 +43,32 @@ async def list_policies(
     svc: PolicyService = Depends(_svc),
 ):
     rows, total = await svc.list(is_global=is_global, is_active=is_active, search=search, page=page, limit=limit)
-    data = [PolicyOut.model_validate(r, from_attributes=True) for r in rows]
-    for i, row in enumerate(rows):
-        data[i].pii_types_count = len(row.pii_types) if row.pii_types is not None else 0
+    # Build list response explicitly (PolicyOut includes pii_types details)
+    data: list[PolicyOut] = []
+    for row in rows:
+        links = row.pii_types or []
+        data.append(
+            PolicyOut(
+                policy_id=row.policy_id,
+                name=row.name,
+                description=row.description,
+                is_active=row.is_active,
+                is_global=row.is_global,
+                supported_languages=row.supported_languages or [],
+                tenant_id=None,
+                pii_types_count=len(links),
+                pii_types=[
+                    PolicyPiiTypeOut(
+                        pii_type_id=link.pii_type_id,
+                        pii_type_label=link.pii_type.pii_type_label,
+                        mask_format=link.pii_type.mask_format,
+                    )
+                    for link in links
+                    if link.pii_type is not None
+                ],
+                created_at=row.created_at,
+            )
+        )
     return PolicyListResponse(data=data, meta=Meta(total=total, page=page, limit=limit))
 
 
@@ -60,11 +85,12 @@ async def get_policy(policy_id: UUID, svc: PolicyService = Depends(_svc)):
     return _build_detail(obj)
 
 
-@router.put("/{policy_id}", response_model=PolicyOut, summary="Update policy metadata")
+@router.put("/{policy_id}", response_model=PolicyDetailOut, summary="Update policy metadata")
 async def update_policy(request: Request, policy_id: UUID, body: PolicyUpdate, svc: PolicyService = Depends(_svc)):
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     obj = await svc.update(policy_id, body, auth_header=auth_header)
-    return PolicyOut.model_validate(obj)
+    # Build explicit output to include linked PII type details (label + mask_format)
+    return _build_detail(obj)
 
 
 @router.patch("/{policy_id}/status", summary="Toggle active / inactive")

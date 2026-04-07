@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi
 
 from app.api.routes.health import router as health_router
 from app.api.routes.pii_types import router as pii_types_router
@@ -33,6 +34,39 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
         lifespan=lifespan,
     )
+
+    def custom_openapi():
+        if application.openapi_schema:
+            return application.openapi_schema
+
+        schema = get_openapi(
+            title=application.title,
+            version=application.version,
+            description=application.description,
+            routes=application.routes,
+        )
+
+        # Add Bearer auth scheme so Swagger UI shows "Authorize" and sends Authorization header.
+        components = schema.setdefault("components", {})
+        security_schemes = components.setdefault("securitySchemes", {})
+        security_schemes["bearerAuth"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+
+        # Apply security to all endpoints except /health (healthcheck must remain unauthenticated).
+        for path, methods in (schema.get("paths") or {}).items():
+            if path == "/health":
+                continue
+            for _method, op in (methods or {}).items():
+                if isinstance(op, dict):
+                    op.setdefault("security", [{"bearerAuth": []}])
+
+        application.openapi_schema = schema
+        return application.openapi_schema
+
+    application.openapi = custom_openapi  # type: ignore[assignment]
 
     # Base URL: /v1
     PREFIX = "/v1"
