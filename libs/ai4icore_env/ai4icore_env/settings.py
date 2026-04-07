@@ -182,6 +182,8 @@ class AppEnv(BaseSettings):
     max_active_versions_per_model: int = 5
     allow_deprecated_model_changes: bool = True
     run_inference_test: bool = True
+    # "lenient" (default): 4xx treated as pass (server reachable); "strict": only <400 passes
+    endpoint_validation_mode: str = "lenient"
 
     # ── Multi-tenant ──
     multi_tenant_enabled: bool = True
