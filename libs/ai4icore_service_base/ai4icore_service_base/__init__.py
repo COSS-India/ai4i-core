@@ -10,9 +10,11 @@ Provides common building blocks that every inference service needs:
 from .service_registry import ServiceRegistryClient
 from .rate_limit import RateLimitMiddleware
 from .health import create_health_router
+from .app_factory import create_inference_app
 
 __all__ = [
     "ServiceRegistryClient",
     "RateLimitMiddleware",
     "create_health_router",
+    "create_inference_app",
 ]
