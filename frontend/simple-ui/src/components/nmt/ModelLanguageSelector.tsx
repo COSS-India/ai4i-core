@@ -1,6 +1,6 @@
 // Enhanced model and language selector component for NMT
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Stack,
   FormControl,
@@ -212,8 +212,12 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
     languagePair.sourceLanguage?.trim() && languageOptionsForDisplay.includes(languagePair.sourceLanguage)
       ? languagePair.sourceLanguage
       : '';
+  const targetLanguageOptionsForDisplay = useMemo(
+    () => languageOptionsForDisplay.filter((langCode) => langCode !== safeSourceValue),
+    [languageOptionsForDisplay, safeSourceValue]
+  );
   const safeTargetValue =
-    languagePair.targetLanguage?.trim() && languageOptionsForDisplay.includes(languagePair.targetLanguage)
+    languagePair.targetLanguage?.trim() && targetLanguageOptionsForDisplay.includes(languagePair.targetLanguage)
       ? languagePair.targetLanguage
       : '';
 
@@ -327,7 +331,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                   onChange={handleTargetLanguageChange}
                   placeholder="Select"
                 >
-                  {languageOptionsForDisplay.map((langCode) => (
+                  {targetLanguageOptionsForDisplay.map((langCode) => (
                     <option key={langCode} value={langCode}>
                       {getLanguageLabel(langCode)}
                     </option>

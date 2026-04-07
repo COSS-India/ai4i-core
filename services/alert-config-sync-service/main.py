@@ -3,6 +3,7 @@ Alert Configuration Sync Service
 Generates Prometheus and Alertmanager YAML files from database and triggers hot reload
 """
 import os
+import re
 import asyncio
 import asyncpg
 import yaml
@@ -353,13 +354,93 @@ def sanitize_promql_service_regex(expr: str) -> str:
     if not expr:
         return expr
 
-    import re
-
     def _fix_service_matcher(match):
         inner = match.group(1).replace(r"\-", "-")
         return f'service=~"{inner}"'
 
     return re.sub(r'service=~"([^"]*)"', _fix_service_matcher, expr)
+
+
+def _normalize_service_for_display(svc: Any) -> str:
+    s = (str(svc) or "").strip().lower()
+    if s.endswith("-service"):
+        s = s[: -len("-service")]
+    return s
+
+
+SERVICE_TYPE_MAP = {
+    "asr": {"abbr": "ASR", "full": "ASR (Automatic Speech Recognition)"},
+    "nmt": {"abbr": "NMT", "full": "NMT (Neural Machine Translation)"},
+    "tts": {"abbr": "TTS", "full": "TTS (Text To Speech)"},
+    "ocr": {"abbr": "OCR", "full": "OCR (Optical Character Recognition)"},
+    "ner": {"abbr": "NER", "full": "NER (Named Entity Recognition)"},
+    "transliteration": {"abbr": "Transliteration", "full": "Transliteration"},
+    "language-detection": {"abbr": "LangDetect", "full": "Language Detection"},
+    "audio-lang-detection": {"abbr": "AudioLangDetect", "full": "Audio Language Detection"},
+    "language-diarization": {"abbr": "LangDiarization", "full": "Language Diarization"},
+    "speaker-diarization": {"abbr": "SpeakerDiarization", "full": "Speaker Diarization"},
+    "llm": {"abbr": "LLM", "full": "LLM"},
+    "pipeline": {"abbr": "Pipeline", "full": "Pipeline"},
+}
+
+
+def _signal_display_from_alert(a: Dict[str, Any]) -> str:
+    sm = (str(a.get("signal_metric") or "")).strip().lower()
+    sig = (str(a.get("signal") or "")).strip().lower()
+
+    if sm.startswith("latency_p"):
+        p = sm.replace("latency_p", "").upper()
+        return f"Latency - P{p}"
+    if sm.startswith("latency_"):
+        rest = sm.replace("latency_", "").replace("_", " ").title()
+        return f"Latency - {rest}"
+    if sm.startswith("error_rate_"):
+        rest = sm.replace("error_rate_", "").replace("_", " ").upper()
+        return f"Error Rate - {rest}"
+    if a.get("category") == "infrastructure" and sm:
+        return sm.replace("_", " ").title()
+    if sig and sm:
+        return f"{sig.title()} - {sm.replace('_', ' ').title()}"
+    if sm:
+        return sm.replace("_", " ").title()
+    return str(a.get("alert_type") or sig or "").strip() or "Unknown Signal"
+
+
+def _threshold_display_from_alert(a: Dict[str, Any]) -> tuple[str, str]:
+    """Returns (threshold_display, condition_display)."""
+    cat = (str(a.get("category") or "")).strip().lower()
+    threshold_value = a.get("threshold_value")
+    threshold_unit = (str(a.get("threshold_unit") or "")).strip().lower()
+    cond_op = (str(a.get("condition_operator") or ">") or ">").strip()
+    for_duration = a.get("for_duration") or ""
+
+    is_latency = (str(a.get("signal") or "")).strip().lower() == "latency" or (str(a.get("alert_type") or "")).strip().lower() == "latency"
+    if cat == "application" and is_latency:
+        if threshold_value is None:
+            return "N/A", f"{_signal_display_from_alert(a)} {cond_op} N/A sustained for {for_duration}"
+        if threshold_unit == "ms":
+            threshold_eval_value = float(threshold_value) / 1000.0
+        else:
+            threshold_eval_value = float(threshold_value)
+        val_str = f"{threshold_eval_value:.3f}".rstrip("0").rstrip(".")
+        threshold_display = f"{val_str}s"
+        condition_display = f"{_signal_display_from_alert(a)} {cond_op} {val_str}s sustained for {for_duration}"
+        return threshold_display, condition_display
+
+    is_error_rate = (str(a.get("signal") or "")).strip().lower() == "error_rate" or (str(a.get("alert_type") or "")).strip().lower() == "error_rate"
+    if cat == "application" and is_error_rate:
+        if threshold_value is None:
+            return "N/A", f"{_signal_display_from_alert(a)} {cond_op} N/A sustained for {for_duration}"
+        threshold_eval_value = float(threshold_value) / 100.0 if threshold_unit in {"%", "percent", "percentage"} else float(threshold_value)
+        val_str = f"{threshold_eval_value:.3f}".rstrip("0").rstrip(".")
+        threshold_display = f"{val_str}ratio"
+        condition_display = f"{_signal_display_from_alert(a)} {cond_op} {val_str}ratio sustained for {for_duration}"
+        return threshold_display, condition_display
+
+    val_str = f"{float(threshold_value):.3f}".rstrip("0").rstrip(".") if threshold_value is not None else ""
+    threshold_display = f"{val_str}%" if threshold_unit in {"%", "percent", "percentage", ""} else f"{val_str}{threshold_unit}"
+    condition_display = f"{_signal_display_from_alert(a)} {cond_op} {threshold_display} sustained for {for_duration}"
+    return threshold_display, condition_display
 
 
 def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], category: str = None) -> Dict[str, Any]:
@@ -419,90 +500,6 @@ def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], cat
             annotations['summary'] = alert_name
         if 'description' not in annotations:
             annotations['description'] = alert.get('description', f"Alert {alert_name} is firing")
-
-        # Helper: parse service -> friendly names (only if the alert targets a single service).
-        def _normalize_service_for_display(svc: Any) -> str:
-            s = (str(svc) or "").strip().lower()
-            if s.endswith("-service"):
-                s = s[: -len("-service")]
-            return s
-
-        SERVICE_TYPE_MAP = {
-            "asr": {"abbr": "ASR", "full": "ASR (Automatic Speech Recognition)"},
-            "nmt": {"abbr": "NMT", "full": "NMT (Neural Machine Translation)"},
-            "tts": {"abbr": "TTS", "full": "TTS (Text To Speech)"},
-            "ocr": {"abbr": "OCR", "full": "OCR (Optical Character Recognition)"},
-            "ner": {"abbr": "NER", "full": "NER (Named Entity Recognition)"},
-            "transliteration": {"abbr": "Transliteration", "full": "Transliteration"},
-            "language-detection": {"abbr": "LangDetect", "full": "Language Detection"},
-            "audio-lang-detection": {"abbr": "AudioLangDetect", "full": "Audio Language Detection"},
-            "language-diarization": {"abbr": "LangDiarization", "full": "Language Diarization"},
-            "speaker-diarization": {"abbr": "SpeakerDiarization", "full": "Speaker Diarization"},
-            "llm": {"abbr": "LLM", "full": "LLM"},
-            "pipeline": {"abbr": "Pipeline", "full": "Pipeline"},
-        }
-
-        # Helper: format signal display for the email templates.
-        def _signal_display_from_alert(a: Dict[str, Any]) -> str:
-            sm = (str(a.get("signal_metric") or "")).strip().lower()
-            sig = (str(a.get("signal") or "")).strip().lower()
-
-            if sm.startswith("latency_p"):
-                p = sm.replace("latency_p", "").upper()
-                return f"Latency - P{p}"
-            if sm.startswith("latency_"):
-                # Fallback: e.g. latency_p95 -> Latency p95
-                rest = sm.replace("latency_", "").replace("_", " ").title()
-                return f"Latency - {rest}"
-            if sm.startswith("error_rate_"):
-                rest = sm.replace("error_rate_", "").replace("_", " ").upper()
-                return f"Error Rate - {rest}"
-            if a.get("category") == "infrastructure" and sm:
-                return sm.replace("_", " ").title()
-            if sig and sm:
-                return f"{sig.title()} - {sm.replace('_', ' ').title()}"
-            if sm:
-                return sm.replace("_", " ").title()
-            return str(a.get("alert_type") or sig or "").strip() or "Unknown Signal"
-
-        # Helper: format threshold/condition display so it matches what PromQL evaluates ($value).
-        def _threshold_display_from_alert(a: Dict[str, Any]) -> tuple[str, str]:
-            # returns (threshold_display, unit_for_display)
-            cat = (str(a.get("category") or "")).strip().lower()
-            threshold_value = a.get("threshold_value")
-            threshold_unit = (str(a.get("threshold_unit") or "")).strip().lower()
-            cond_op = (str(a.get("condition_operator") or ">") or ">").strip()
-            for_duration = a.get("for_duration") or ""
-
-            # Latency PromQL outputs seconds, even if threshold_unit was "ms" (builder converts internally).
-            is_latency = (str(a.get("signal") or "")).strip().lower() == "latency" or (str(a.get("alert_type") or "")).strip().lower() == "latency"
-            if cat == "application" and is_latency:
-                if threshold_unit == "ms":
-                    threshold_eval_value = float(threshold_value) / 1000.0
-                    unit_eval = "s"
-                else:
-                    threshold_eval_value = float(threshold_value)
-                    unit_eval = "s"
-                # Avoid trailing .0
-                val_str = f"{threshold_eval_value:.3f}".rstrip("0").rstrip(".")
-                threshold_display = f"{val_str}{unit_eval}"
-                condition_display = f"{_signal_display_from_alert(a)} {cond_op} {val_str}{unit_eval} sustained for {for_duration}"
-                return threshold_display, condition_display
-
-            # Error rate PromQL returns ratio (0..1) when threshold_unit is '%'.
-            is_error_rate = (str(a.get("signal") or "")).strip().lower() == "error_rate" or (str(a.get("alert_type") or "")).strip().lower() == "error_rate"
-            if cat == "application" and is_error_rate:
-                threshold_eval_value = float(threshold_value) / 100.0 if threshold_unit in {"%", "percent", "percentage"} else float(threshold_value)
-                val_str = f"{threshold_eval_value:.3f}".rstrip("0").rstrip(".")
-                threshold_display = f"{val_str}ratio"
-                condition_display = f"{_signal_display_from_alert(a)} {cond_op} {val_str}ratio sustained for {for_duration}"
-                return threshold_display, condition_display
-
-            # Infrastructure: CPU/Memory/Disk expressions output percentages and compare to threshold_value directly.
-            val_str = f"{float(threshold_value):.3f}".rstrip("0").rstrip(".") if threshold_value is not None else ""
-            threshold_display = f"{val_str}%" if threshold_unit in {"%", "percent", "percentage", ""} else f"{val_str}{threshold_unit}"
-            condition_display = f"{_signal_display_from_alert(a)} {cond_op} {threshold_display} sustained for {for_duration}"
-            return threshold_display, condition_display
 
         if "signal_display" not in annotations:
             annotations["signal_display"] = _signal_display_from_alert(alert)
@@ -584,17 +581,11 @@ GLOBAL_EMAIL_SUBJECT_TEMPLATE = (
     "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] "
     "{{ .GroupLabels.alertname }} — "
     + ENVIRONMENT_TITLE
-    + "- "
+    + " - "
     "{{ if eq .GroupLabels.severity \"critical\" }}Service Impacted{{ else if eq .GroupLabels.severity \"warning\" }}Service Degrading{{ else }}For Your Awareness{{ end }}"
 )
 
-TENANT_EMAIL_SUBJECT_TEMPLATE = (
-    "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] "
-    "{{ .GroupLabels.alertname }} — "
-    + ENVIRONMENT_TITLE
-    + "- "
-    "{{ if eq .GroupLabels.severity \"critical\" }}Service Impacted{{ else if eq .GroupLabels.severity \"warning\" }}Service Degrading{{ else }}For Your Awareness{{ end }}"
-)
+TENANT_EMAIL_SUBJECT_TEMPLATE = GLOBAL_EMAIL_SUBJECT_TEMPLATE
 
 
 GLOBAL_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
@@ -606,8 +597,9 @@ GLOBAL_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
 <p><strong>Signal</strong></p>
 <p>{{ index (index .Alerts 0).Annotations "signal_display" }}</p>
 
-<p><strong>Service Type</strong></p>
+{{ if index (index .Alerts 0).Annotations "service_type_full" }}<p><strong>Service Type</strong></p>
 <p>{{ index (index .Alerts 0).Annotations "service_type_full" }}</p>
+{{ end }}
 
 <p><strong>Tenant</strong></p>
 <p>Global (All Tenants)</p>
@@ -640,8 +632,9 @@ TENANT_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
 <p><strong>Signal</strong></p>
 <p>{{ index (index .Alerts 0).Annotations "signal_display" }}</p>
 
-<p><strong>Service Type</strong></p>
+{{ if index (index .Alerts 0).Annotations "service_type_full" }}<p><strong>Service Type</strong></p>
 <p>{{ index (index .Alerts 0).Annotations "service_type_full" }}</p>
+{{ end }}
 
 <p><strong>Tenant</strong></p>
 <p>__TENANT_NAME__</p>
