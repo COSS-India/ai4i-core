@@ -34,7 +34,7 @@ COPY libs/ai4icore_constants /app/libs/ai4icore_constants
 COPY libs/ai4icore_env /app/libs/ai4icore_env
 COPY libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
 COPY libs/ai4icore_auth /app/libs/ai4icore_auth
-
+COPY libs/ai4icore_service_base /app/libs/ai4icore_service_base
 # Install grpcio first so ai4icore_telemetry's OTLP gRPC exporter resolves without conflicts
 RUN pip install --no-cache-dir --user 'grpcio>=1.63.2,<2.0.0'
 
@@ -48,7 +48,7 @@ RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_constants
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_exceptions
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
-
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_service_base
 # Verify packaging is installed (for debugging)
 RUN python -c "import packaging; print(f'packaging version: {packaging.__version__}')" || (echo "ERROR: packaging not found!" && exit 1)
 
@@ -95,7 +95,7 @@ COPY --from=builder /app/libs/ai4icore_constants /app/libs/ai4icore_constants
 COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
 COPY --from=builder /app/libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
 COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
-
+COPY --from=builder /app/libs/ai4icore_service_base /app/libs/ai4icore_service_base
 # Copy app code
 COPY services/tts-service /app
 
