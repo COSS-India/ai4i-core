@@ -48,6 +48,8 @@ class TritonClient:
             url = url[7:]
         elif url.startswith("https://"):
             url = url[8:]
+        # Strip path — tritonclient expects host:port only
+        url = url.split("/")[0]
         return url
 
     @property
@@ -241,4 +243,5 @@ class TritonClient:
                     "top_scores": []
                 }
             }
+
 

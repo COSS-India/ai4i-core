@@ -25,9 +25,21 @@ class TritonClient:
     
     def __init__(self, triton_url: str, api_key: Optional[str] = None):
         """Initialize Triton client."""
-        self.triton_url = triton_url
+        self.triton_url = self._normalize_url(triton_url)
         self.api_key = api_key
         self._client = None
+
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        """Normalize Triton URL to host:port format."""
+        url = url.strip()
+        if url.startswith("http://"):
+            url = url[7:]
+        elif url.startswith("https://"):
+            url = url[8:]
+        # Strip path — tritonclient expects host:port only
+        url = url.split("/")[0]
+        return url
     
     def _get_client(self):
         """Get or create Triton client (lazy initialization)."""

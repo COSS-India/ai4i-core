@@ -46,6 +46,8 @@ class TritonClient:
             url = url[7:]  # Remove "http://"
         elif url.startswith("https://"):
             url = url[8:]  # Remove "https://"
+        # Strip path — tritonclient expects host:port only
+        url = url.split("/")[0]
         return url
     
     @property
