@@ -24,6 +24,11 @@ def generate_uuid(*parts: str) -> str:
     raw = ":".join(part.strip().lower() for part in parts)
     return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
 
+
+def _sql_lit(value: str) -> str:
+    """Escape single quotes for PostgreSQL string literals in raw SQL."""
+    return value.replace("'", "''")
+
 # Model/service definitions — endpoint comes from app_env at runtime
 MODELS = [
     {
@@ -246,19 +251,21 @@ class ModelManagementDefaultSeeder(BaseSeeder):
             endpoint_url = getattr(app_env, m["endpoint_attr"], "") or ""
             model_id = generate_model_id(name, version)
 
+            ep = _sql_lit(endpoint_url)
+            tn = _sql_lit(triton_model_name)
             adapter.execute(f"""
                 INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
                 VALUES (
                     '{generate_uuid("model", name, version)}',
                     '{model_id}',
-                    '{version}',
-                    '{name}',
-                    '{m["description"]}',
+                    '{_sql_lit(version)}',
+                    '{_sql_lit(name)}',
+                    '{_sql_lit(m["description"])}',
                     '{{"type": "{task_type}"}}'::jsonb,
-                    '{m["languages"]}'::jsonb,
-                    '{m["domain"]}'::jsonb,
-                    '{m["license"]}',
-                    '{{"schema": {{"modelProcessingType": {{"type": "{task_type}"}}, "model_name": "{triton_model_name}", "request": {{}}, "response": {{}}}}, "callbackUrl": "{endpoint_url}"}}'::jsonb,
+                    '{_sql_lit(m["languages"])}'::jsonb,
+                    '{_sql_lit(m["domain"])}'::jsonb,
+                    '{_sql_lit(m["license"])}',
+                    '{{"schema": {{"modelProcessingType": {{"type": "{task_type}"}}, "model_name": "{tn}", "request": {{}}, "response": {{}}}}, "callbackUrl": "{ep}"}}'::jsonb,
                     '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                     {timestamp_ms},
                     'ACTIVE'
@@ -266,7 +273,7 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                     inference_endpoint = jsonb_set(
                         COALESCE(models.inference_endpoint, '{{}}'::jsonb),
                         '{{schema,model_name}}',
-                        '"{triton_model_name}"'::jsonb,
+                        '"{tn}"'::jsonb,
                         true
                     ),
                     updated_at = CURRENT_TIMESTAMP;
@@ -276,26 +283,27 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 svc_name = svc["name"]
                 service_id = generate_service_id(svc_name)
 
+                sn = _sql_lit(svc_name)
                 adapter.execute(f"""
                     INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
                     VALUES (
                         '{generate_uuid("service", name, version, svc_name)}',
                         '{service_id}',
-                        '{svc_name}',
+                        '{sn}',
                         '{model_id}',
-                        '{version}',
-                        '{endpoint_url}',
-                        '{svc["description"]}',
-                        '{svc["hardware"]}',
+                        '{_sql_lit(version)}',
+                        '{ep}',
+                        '{_sql_lit(svc["description"])}',
+                        '{_sql_lit(svc["hardware"])}',
                         {timestamp_ms},
                         false
                     ) ON CONFLICT (name) DO UPDATE SET
                         service_id = '{service_id}',
                         model_id = '{model_id}',
-                        model_version = '{version}',
-                        endpoint = '{endpoint_url}',
-                        service_description = '{svc["description"]}',
-                        hardware_description = '{svc["hardware"]}',
+                        model_version = '{_sql_lit(version)}',
+                        endpoint = '{ep}',
+                        service_description = '{_sql_lit(svc["description"])}',
+                        hardware_description = '{_sql_lit(svc["hardware"])}',
                         updated_at = CURRENT_TIMESTAMP;
                 """)
 
