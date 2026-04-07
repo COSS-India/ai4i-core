@@ -12,6 +12,17 @@ class PiiTypeRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    # Fields that are safe to update via repository update methods.
+    # Keep this strict to avoid mass-assignment of protected columns
+    # (e.g. ids/timestamps) if upstream layers pass unfiltered input.
+    _UPDATABLE_FIELDS: set[str] = {
+        "pii_type_label",
+        "regex_pattern",
+        "mask_format",
+        # NOTE: is_active is intentionally excluded; status changes should be explicit
+        # and can be added later if/when the API exposes it.
+    }
+
     async def get(self, pii_type_id: UUID) -> Optional[PiiType]:
         result = await self.db.get(PiiType, pii_type_id)
         return result
@@ -50,7 +61,8 @@ class PiiTypeRepository:
 
     async def update(self, obj: PiiType, data: dict) -> PiiType:
         for key, value in data.items():
-            setattr(obj, key, value)
+            if key in self._UPDATABLE_FIELDS and hasattr(obj, key):
+                setattr(obj, key, value)
         self.db.add(obj)
         await self.db.commit()
         await self.db.refresh(obj)

@@ -14,6 +14,17 @@ class PolicyRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    # Fields that are safe to update via repository update methods.
+    # NOTE: Keep this tight to prevent mass-assignment of protected columns
+    # (e.g. ids, timestamps) if upstream layers accidentally pass unfiltered input.
+    _UPDATABLE_FIELDS: set[str] = {
+        "name",
+        "description",
+        "is_active",
+        "is_global",
+        "supported_languages",
+    }
+
     async def get(self, policy_id: UUID) -> Optional[PiiPolicy]:
         return await self.db.get(PiiPolicy, policy_id)
 
@@ -65,7 +76,8 @@ class PolicyRepository:
 
     async def update(self, obj: PiiPolicy, data: dict) -> PiiPolicy:
         for key, value in data.items():
-            setattr(obj, key, value)
+            if key in self._UPDATABLE_FIELDS and hasattr(obj, key):
+                setattr(obj, key, value)
         self.db.add(obj)
         await self.db.commit()
         await self.db.refresh(obj)
