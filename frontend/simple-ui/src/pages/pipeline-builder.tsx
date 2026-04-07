@@ -52,6 +52,9 @@ const PipelineBuilderPage: React.FC = () => {
   const [result, setResult] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [rawResponse, setRawResponse] = useState<string>('');
+  const targetLanguageOptions = TTS_SUPPORTED_LANGUAGES.filter(
+    (lang) => lang.code !== sourceLanguage
+  );
 
   useEffect(() => () => {
     if (builderAudioUrlRef.current) {
@@ -59,6 +62,12 @@ const PipelineBuilderPage: React.FC = () => {
       builderAudioUrlRef.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    if (targetLanguage && targetLanguage === sourceLanguage) {
+      setTargetLanguage('');
+    }
+  }, [sourceLanguage, targetLanguage]);
 
   const handleRunPipeline = async () => {
     setIsLoading(true);
@@ -246,7 +255,7 @@ const PipelineBuilderPage: React.FC = () => {
                 <FormControl>
                   <FormLabel>Target Language</FormLabel>
                   <Select value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)}>
-                    {TTS_SUPPORTED_LANGUAGES.map((lang) => (
+                    {targetLanguageOptions.map((lang) => (
                       <option key={lang.code} value={lang.code}>
                         {lang.label}
                       </option>
