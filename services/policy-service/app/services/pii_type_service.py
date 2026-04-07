@@ -11,6 +11,12 @@ from app.models.schemas import PiiTypeCreate, PiiTypeUpdate
 from app.repositories.pii_type_repository import PiiTypeRepository
 from app.utils.constants import ALLOWED_MASK_TYPES
 
+try:
+    # `regex` supports per-operation timeouts; stdlib `re` does not.
+    import regex as safe_regex  # type: ignore
+except Exception:  # pragma: no cover
+    safe_regex = None
+
 
 class PiiTypeService:
     def __init__(self, db: AsyncSession):
@@ -86,14 +92,53 @@ class PiiTypeService:
 
     @staticmethod
     def _validate_regex(pattern: str, examples: Sequence[str]) -> None:
+        # Guard against Regex DoS (catastrophic backtracking) from untrusted patterns.
+        # Prefer `regex` module with a tight timeout; stdlib `re` cannot enforce time limits.
+        if not isinstance(pattern, str) or not pattern.strip():
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": "VALIDATION_ERROR", "message": "regex_pattern must be a non-empty string"}},
+            )
+        if len(pattern) > 1024:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": {"code": "VALIDATION_ERROR", "message": "regex_pattern is too long (max 1024 chars)"}},
+            )
+
         try:
-            compiled = re.compile(pattern)
-        except re.error as exc:
+            if safe_regex is not None:
+                compiled = safe_regex.compile(pattern)
+            else:
+                # Fallback (shouldn't happen in normal deployments since `regex` is pinned in requirements).
+                # Without timeouts, stdlib `re` is susceptible to catastrophic backtracking.
+                compiled = re.compile(pattern)
+        except Exception as exc:
             raise HTTPException(
                 status_code=400,
                 detail={"error": {"code": "VALIDATION_ERROR", "message": f"Invalid regex: {exc}"}},
             ) from exc
-        mismatches = [v for v in examples if not compiled.search(v)]
+
+        mismatches = []
+        if safe_regex is not None:
+            # seconds; keep small to prevent CPU pinning while still allowing typical patterns.
+            timeout_s = 0.05
+            for v in examples:
+                try:
+                    if not compiled.search(v, timeout=timeout_s):
+                        mismatches.append(v)
+                except safe_regex.TimeoutError:  # type: ignore[attr-defined]
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error": {
+                                "code": "VALIDATION_ERROR",
+                                "message": "Regex evaluation timed out (pattern too complex)",
+                            }
+                        },
+                    )
+        else:
+            mismatches = [v for v in examples if not compiled.search(v)]
+
         if mismatches:
             raise HTTPException(
                 status_code=400,
