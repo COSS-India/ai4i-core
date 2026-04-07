@@ -1,6 +1,6 @@
 // Custom Pipeline Builder Page - Configure and test custom pipelines
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Head from 'next/head';
 import {
   Grid,
@@ -33,6 +33,14 @@ import { base64ToAudioObjectUrl } from '../utils/helpers';
 import { ASR_SUPPORTED_LANGUAGES, TTS_SUPPORTED_LANGUAGES } from '../config/constants';
 import { useToastWithDeduplication } from '../hooks/useToastWithDeduplication';
 
+type BuilderPipelineType = 'translation' | 'translation-tts';
+
+type BuilderResult = {
+  sourceText: string;
+  targetText: string;
+  audio: string;
+};
+
 const PipelineBuilderPage: React.FC = () => {
   const toast = useToastWithDeduplication();
   const router = useRouter();
@@ -49,11 +57,12 @@ const PipelineBuilderPage: React.FC = () => {
   const [pipelineType, setPipelineType] = useState<'translation' | 'translation-tts'>('translation-tts');
   
   // Results
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<BuilderResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [rawResponse, setRawResponse] = useState<string>('');
-  const targetLanguageOptions = TTS_SUPPORTED_LANGUAGES.filter(
-    (lang) => lang.code !== sourceLanguage
+  const targetLanguageOptions = useMemo(
+    () => TTS_SUPPORTED_LANGUAGES.filter((lang) => lang.code !== sourceLanguage),
+    [sourceLanguage]
   );
 
   useEffect(() => () => {
@@ -124,7 +133,7 @@ const PipelineBuilderPage: React.FC = () => {
       const response = await runPipelineInference(request);
       
       // Handle different response formats based on pipeline type
-      let displayResult: any = {};
+      let displayResult: BuilderResult;
       
       if (pipelineType === 'translation') {
         // Translation only
@@ -233,7 +242,10 @@ const PipelineBuilderPage: React.FC = () => {
                 {/* Image Type Selection */}
                 <FormControl>
                   <FormLabel>Pipeline Type</FormLabel>
-                  <Select value={pipelineType} onChange={(e) => setPipelineType(e.target.value as any)}>
+                  <Select
+                    value={pipelineType}
+                    onChange={(e) => setPipelineType(e.target.value as BuilderPipelineType)}
+                  >
                     <option value="translation">Translation Only</option>
                     <option value="translation-tts">Translation → TTS</option>
                   </Select>
