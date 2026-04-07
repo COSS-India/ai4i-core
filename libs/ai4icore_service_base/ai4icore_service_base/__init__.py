@@ -10,7 +10,14 @@ Provides common building blocks that every inference service needs:
 from .service_registry import ServiceRegistryClient
 from .rate_limit import RateLimitMiddleware
 from .health import create_health_router
-from .app_factory import create_inference_app
+
+# Lazy import: create_inference_app depends on ai4icore_model_management
+# which is not installed in non-inference services (e.g. pipeline-service).
+def __getattr__(name):
+    if name == "create_inference_app":
+        from .app_factory import create_inference_app
+        return create_inference_app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "ServiceRegistryClient",

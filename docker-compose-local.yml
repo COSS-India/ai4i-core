@@ -896,28 +896,6 @@ services:
           - model-management-service
     restart: unless-stopped
 
-  # Policy Engine
-  policy-engine:
-    build:
-      context: .
-      dockerfile: ./services/policy-engine/Dockerfile
-    container_name: ai4v-policy-engine
-    ports:
-      - "8102:8095"
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-    volumes:
-      - ./services/policy-engine:/app
-      - ./libs/ai4icore_env:/app/libs/ai4icore_env
-    command: ["sh", "-c", "pip install --no-cache-dir -e /app/libs/ai4icore_env && uvicorn main:app --host 0.0.0.0 --port 8095 --workers 1 --reload"]
-    networks:
-      - microservices-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
-      interval: 30s
-      timeout: 5s
-
   smr-service:
     build:
       context: .
@@ -932,7 +910,6 @@ services:
       - APP_DB_HOST=postgres
       - APP_DB_PORT=5432
       - APP_DB_NAME=model_management_db
-      - POLICY_ENGINE_URL=http://policy-engine:8095
       - REQUEST_PROFILER_SERVICE_URL=http://request-profiler-service:8000
     env_file:
       - ./services/smr-service/.env
@@ -940,8 +917,6 @@ services:
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
     depends_on:
-      policy-engine:
-        condition: service_started
       model-management-service:
         condition: service_started
       postgres:
@@ -1102,6 +1077,46 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/language-detection/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  policy-service:
+    build:
+      context: .
+      dockerfile: ./services/policy-service/Dockerfile
+    container_name: ai4v-policy-service
+    ports:
+      - "8107:8099"
+    environment:
+      - ENV_FILE=.env
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - JWKS_URL=${JWKS_URL:-http://auth-service:8081/api/v1/auth/.well-known/jwks.json}
+      - MULTI_TENANT_SERVICE_URL=${MULTI_TENANT_SERVICE_URL:-http://multi-tenant-service:8001}
+      - PYTHONPATH=/app:/app/libs/ai4icore_exceptions:/app/libs/ai4icore_auth:/app/libs
+    env_file:
+      - ./services/policy-service/.env
+    volumes:
+      - ./services/policy-service:/app
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
+      - ./shared:/app/shared
+    command: ["--reload"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    networks:
+      microservices-network:
+        aliases:
+          - policy-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8099/health"]
       interval: 10s
       timeout: 10s
       retries: 3
