@@ -8,6 +8,7 @@ Create Date: 2026-04-02
 from typing import Sequence, Union
 
 from alembic import op
+from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision: str = "a4b5c6d7e8f9"
@@ -17,6 +18,18 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    dupes = conn.execute(
+        text("SELECT name, COUNT(*)::int FROM services GROUP BY name HAVING COUNT(*) > 1")
+    ).fetchall()
+    if dupes:
+        detail = "; ".join(f"{name!r} ({count} rows)" for name, count in dupes)
+        raise RuntimeError(
+            "Cannot add uq_service_name: duplicate values in services.name. "
+            "Resolve duplicates (rename services so each name is unique, update service_id to "
+            "match hash(new_name), and fix referencing rows), then re-run this migration. "
+            f"Found: {detail}"
+        )
     op.create_unique_constraint("uq_service_name", "services", ["name"])
 
 
