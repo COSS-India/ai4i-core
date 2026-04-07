@@ -47,6 +47,18 @@ async def redact_for_storage(
     if tenant_id:
         headers["X-Tenant-Id"] = tenant_id
 
+    # Propagate W3C trace context so NMT → PII spans correlate in Jaeger
+    try:
+        from opentelemetry.propagate import inject
+
+        carrier: Dict[str, str] = {}
+        inject(carrier)
+        for k, v in carrier.items():
+            if v is not None:
+                headers[k] = str(v)
+    except Exception:
+        pass
+
     if client is not None:
         response = await client.post(url, json={"text": text}, headers=headers, timeout=timeout)
     else:
