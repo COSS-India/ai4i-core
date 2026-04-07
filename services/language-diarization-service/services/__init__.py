@@ -1,2 +1,0 @@
-"""Language Diarization Services Package"""
-

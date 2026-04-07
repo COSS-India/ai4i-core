@@ -101,5 +101,5 @@ EXPOSE 9001
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD curl -f http://localhost:9001/health || exit 1
 
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9001"]
+ENTRYPOINT ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9001", "--no-access-log"]
 

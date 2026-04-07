@@ -101,4 +101,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 
 # Run the application
 # Disable uvicorn access logs since we use RequestLoggingMiddleware with trace_id
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8089", "--no-access-log"]
+ENTRYPOINT ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8089", "--no-access-log"]

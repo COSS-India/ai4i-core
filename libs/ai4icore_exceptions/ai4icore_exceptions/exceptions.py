@@ -264,8 +264,13 @@ class PipelineTaskError(PipelineError):
 class ErrorDetail(BaseModel):
     message: str
     code: Optional[str] = None
-    timestamp: float = time.time()
+    timestamp: float = 0.0
     details: Optional[str] = None
+
+    def __init__(self, **data):
+        if "timestamp" not in data or data["timestamp"] == 0.0:
+            data["timestamp"] = time.time()
+        super().__init__(**data)
 
 
 class ErrorResponse(BaseModel):
