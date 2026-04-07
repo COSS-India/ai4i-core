@@ -13,8 +13,8 @@ COPY services/policy-service/requirements.txt /app/requirements.txt
 
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir --user -r /app/requirements.txt
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging || true
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env || true
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
 
 
 FROM python:3.11-slim
@@ -37,8 +37,8 @@ ENV PYTHONPATH="/app:/app/libs"
 ENV PYTHONUNBUFFERED=1
 
 USER app
-RUN pip install --no-cache-dir --user /app/libs/ai4icore_logging || true
-RUN pip install --no-cache-dir --user /app/libs/ai4icore_env || true
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_logging
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_env
 
 EXPOSE 8099
 

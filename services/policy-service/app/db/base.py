@@ -1,6 +1,6 @@
 try:
     from sqlalchemy.orm import declarative_base  # type: ignore
-except Exception:  # pragma: no cover - placeholder if SQLAlchemy not installed yet
+except (ImportError, ModuleNotFoundError):  # pragma: no cover - placeholder if SQLAlchemy not installed yet
     declarative_base = lambda: object  # type: ignore
 
 # Align naming with other services (e.g., smr-service)
@@ -16,7 +16,7 @@ try:  # noqa: F401
         TenantPolicy,
         PiiAuditLog,
     )
-except Exception:
+except (ImportError, ModuleNotFoundError):
     # Allow repo to install without SQLAlchemy initially.
     pass
 

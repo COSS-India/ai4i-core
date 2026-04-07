@@ -192,6 +192,7 @@ class AppEnv(BaseSettings):
     # ── HTTP Timeouts ──
     pipeline_http_timeout: float = 120.0
     api_gateway_timeout: float = 10.0
+    policy_service_http_timeout: float = 10.0
 
     # ── Auth / API key ──
     auth_enabled: Optional[str] = None
