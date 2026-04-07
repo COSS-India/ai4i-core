@@ -204,20 +204,31 @@ def build_inference_payload(
     return fallback
 
 
+_VALIDATION_MODE_THRESHOLDS: Dict[str, int] = {
+    "lenient": 500,   # 4xx treated as pass (server reachable)
+    "strict":  400,   # only 2xx/3xx pass; 4xx is a failure
+}
+
+
 async def test_inference(
     endpoint: str,
     task_type: str,
     request_schema: Optional[Dict[str, Any]] = None,
     api_key: Optional[str] = None,
     timeout: float = 15.0,
+    validation_mode: str = "lenient",
 ) -> ValidationDetail:
     """
-    POST a dummy payload to *endpoint* and check for a non-5xx response.
+    POST a dummy payload to *endpoint* and check the response status.
 
-    A 4xx response is treated as *passed* because it proves the server is
-    reachable and responding (a dummy payload is unlikely to be semantically
-    correct for every model).
+    *validation_mode* controls which HTTP codes are acceptable:
+      - ``"lenient"`` (default): status < 500 passes (4xx = reachable).
+      - ``"strict"``:  status < 400 passes (4xx = client error → fail).
     """
+    fail_threshold = _VALIDATION_MODE_THRESHOLDS.get(
+        validation_mode, _VALIDATION_MODE_THRESHOLDS["lenient"]
+    )
+
     payload = build_inference_payload(task_type, request_schema)
 
     headers: Dict[str, str] = {"Content-Type": "application/json"}
@@ -226,7 +237,7 @@ async def test_inference(
 
     logger.info(
         f"Inference test request to {endpoint}: "
-        f"task_type={task_type}, payload={payload}"
+        f"task_type={task_type}, validation_mode={validation_mode}, payload={payload}"
     )
 
     try:
@@ -243,7 +254,7 @@ async def test_inference(
             f"status={response.status_code}, body={body}"
         )
 
-        if response.status_code < 500:
+        if response.status_code < fail_threshold:
             return ValidationDetail(
                 level=ValidationLevel.INFERENCE,
                 status=ValidationStatus.PASSED,
@@ -257,8 +268,8 @@ async def test_inference(
             level=ValidationLevel.INFERENCE,
             status=ValidationStatus.FAILED,
             message=(
-                f"Inference endpoint returned a server error "
-                f"(HTTP {response.status_code}): {body}"
+                f"Inference endpoint returned HTTP {response.status_code} "
+                f"(validation_mode={validation_mode}): {body}"
             ),
         )
 
@@ -293,6 +304,7 @@ async def validate_endpoint(
     api_key: Optional[str] = None,
     run_inference_test: bool = True,
     timeout: float = 15.0,
+    validation_mode: str = "lenient",
 ) -> EndpointValidationResult:
     """
     Run all applicable validation levels against an inference *endpoint*.
@@ -311,6 +323,8 @@ async def validate_endpoint(
         Whether to execute the Level 2 live inference test.
     timeout : float
         HTTP timeout (seconds) for the inference request.
+    validation_mode : str
+        ``"lenient"`` (4xx=pass) or ``"strict"`` (4xx=fail).
 
     Returns
     -------
@@ -338,6 +352,7 @@ async def validate_endpoint(
             request_schema=request_schema,
             api_key=api_key,
             timeout=timeout,
+            validation_mode=validation_mode,
         )
         details.append(inference_result)
         logger.info(

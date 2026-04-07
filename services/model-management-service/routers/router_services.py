@@ -51,6 +51,7 @@ async def _validate_service_endpoint(
         request_schema=request_schema or None,
         api_key=api_key or None,
         run_inference_test=app_env.run_inference_test,
+        validation_mode=app_env.endpoint_validation_mode,
     )
     if not validation.is_valid:
         failed = [d for d in validation.details if d.status == ValidationStatus.FAILED]
