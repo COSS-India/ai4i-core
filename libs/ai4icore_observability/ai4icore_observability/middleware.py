@@ -23,6 +23,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+_CACHE_MISS = object()
+
 
 class ObservabilityMiddleware(BaseHTTPMiddleware):
     """Middleware for tracking requests and collecting metrics."""
@@ -67,18 +69,19 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         return self._http
 
     @staticmethod
-    def _cache_get(cache: "OrderedDict[Any, tuple[Any, float]]", key: Any, now: float) -> Optional[Any]:
+    def _cache_get(cache: "OrderedDict[Any, tuple[Any, float]]", key: Any, now: float):
         """LRU + TTL cache get.
 
-        Returns cached value if present and not expired, otherwise None.
+        Returns cached value (including None) if present and not expired,
+        otherwise returns the _CACHE_MISS sentinel.
         """
         entry = cache.get(key)
-        if not entry:
-            return None
+        if entry is None:
+            return _CACHE_MISS
         value, expires_at = entry
         if expires_at <= now:
             cache.pop(key, None)
-            return None
+            return _CACHE_MISS
         cache.move_to_end(key)
         return value
 
@@ -469,9 +472,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         """
         try:
             now = time.time()
-            tenant_info = self._cache_get(self._user_tenant_cache, user_id, now)
-            if tenant_info is not None:
-                return tenant_info
+            cached = self._cache_get(self._user_tenant_cache, user_id, now)
+            if cached is not _CACHE_MISS:
+                return cached
 
             # Resolve multi-tenant service URL from config or environment / service discovery
             multi_tenant_service_url = self._get_multi_tenant_service_url()
@@ -587,9 +590,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         try:
             tenant_id_str = str(tenant_id)
             now = time.time()
-            cached_org = self._cache_get(self._tenant_org_cache, tenant_id_str, now)
-            if cached_org is not None:
-                return cached_org
+            cached = self._cache_get(self._tenant_org_cache, tenant_id_str, now)
+            if cached is not _CACHE_MISS:
+                return cached
 
             multi_tenant_service_url = self._get_multi_tenant_service_url()
 
@@ -669,7 +672,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 )
             return None
     
-    def _extract_customer_app(self, request: Request) -> tuple:
+    def _extract_customer_app(self, request: Request) -> tuple[Optional[str], Optional[str]]:
         """Extract organization and app from request headers and JWT token.
 
         Priority order:
