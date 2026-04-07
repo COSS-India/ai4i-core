@@ -25,7 +25,7 @@ class ServiceStatus(BaseModel):
     lastUpdated: str = None
 
 class ServiceCreateRequest(BaseModel):
-    # Note: serviceId is auto-generated as hash of (model_name, model_version, service_name)
+    # Note: serviceId is auto-generated as hash of service name only.
     name: str
     serviceDescription: str
     hardwareDescription: str
