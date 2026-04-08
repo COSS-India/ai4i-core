@@ -5,6 +5,7 @@ Seeds default AI models and services for all task types in model_management_db.
 from infrastructure.databases.core.base_seeder import BaseSeeder
 from ai4icore_env import app_env
 import hashlib
+import json
 import time
 import uuid
 
@@ -41,6 +42,17 @@ MODELS = [
         "domain": '["general"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_langdetect",
+        "request_schema": {
+            "inputs": [
+                {
+                    "name": "INPUT_TEXT",
+                    "datatype": "BYTES",
+                    "shape": [1, 1],
+                    "data": ["नमस्ते, यह एक उदाहरण वाक्य है।"],
+                }
+            ],
+            "outputs": [{"name": "OUTPUT_TEXT"}],
+        },
         "services": [
             {
                 "name": "indiclid-gpu",
@@ -59,6 +71,7 @@ MODELS = [
         "domain": '["general"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_audio_langdetect",
+        "request_schema": {"audio": [{"audioContent": ""}], "config": {}},
         "services": [
             {
                 "name": "ald-gpu",
@@ -77,6 +90,10 @@ MODELS = [
         "domain": '["documents", "handwritten", "printed"]',
         "license": "Apache-2.0",
         "endpoint_attr": "triton_endpoint_ocr",
+        "request_schema": {
+            "image": [{"imageContent": ""}],
+            "config": {"language": {"sourceLanguage": "hi"}},
+        },
         "services": [
             {
                 "name": "surya-ocr-gpu",
@@ -95,6 +112,10 @@ MODELS = [
         "domain": '["general", "news", "legal"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_ner",
+        "request_schema": {
+            "input": [{"source": "राम दिल्ली गए।"}],
+            "config": {"language": {"sourceLanguage": "hi"}},
+        },
         "services": [
             {
                 "name": "ner-gpu",
@@ -113,6 +134,7 @@ MODELS = [
         "domain": '["general", "meetings", "podcasts"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_speaker_diarization",
+        "request_schema": {"audio": [{"audioContent": ""}], "config": {}},
         "services": [
             {
                 "name": "sd-gpu",
@@ -131,6 +153,7 @@ MODELS = [
         "domain": '["code-switching", "multilingual"]',
         "license": "Apache-2.0",
         "endpoint_attr": "triton_endpoint_lang_diarization",
+        "request_schema": {"audio": [{"audioContent": ""}], "config": {}},
         "services": [
             {
                 "name": "lang-diarization-gpu",
@@ -149,6 +172,10 @@ MODELS = [
         "domain": '["general"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_transliteration",
+        "request_schema": {
+            "input": [{"source": "namaste"}],
+            "config": {"language": {"sourceLanguage": "hi", "targetLanguage": "en"}},
+        },
         "services": [
             {
                 "name": "indic-xlit-cpu",
@@ -167,6 +194,10 @@ MODELS = [
         "domain": '["general", "conversational"]',
         "license": "Apache-2.0",
         "endpoint_attr": "triton_endpoint_asr",
+        "request_schema": {
+            "audio": [{"audioContent": ""}],
+            "config": {"language": {"sourceLanguage": "hi"}},
+        },
         "services": [
             {
                 "name": "asr-gpu",
@@ -185,6 +216,10 @@ MODELS = [
         "domain": '["general"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_tts",
+        "request_schema": {
+            "input": [{"source": "नमस्ते"}],
+            "config": {"language": {"sourceLanguage": "hi"}, "gender": "female"},
+        },
         "services": [
             {
                 "name": "indo-aryan-tts-gpu",
@@ -203,6 +238,10 @@ MODELS = [
         "domain": '["general", "news", "conversational"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_nmt",
+        "request_schema": {
+            "input": [{"source": "Hello, how are you?"}],
+            "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+        },
         "services": [
             {
                 "name": "indictrans-gpu-t4",
@@ -221,6 +260,7 @@ MODELS = [
         "domain": '["general", "conversational", "qa"]',
         "license": "Apache-2.0",
         "endpoint_attr": "triton_endpoint_llm",
+        "request_schema": {"input": [{"source": "Hello"}], "config": {}},
         "services": [
             {
                 "name": "llm-indic-prod",
@@ -251,8 +291,24 @@ class ModelManagementDefaultSeeder(BaseSeeder):
             endpoint_url = getattr(app_env, m["endpoint_attr"], "") or ""
             model_id = generate_model_id(name, version)
 
-            ep = _sql_lit(endpoint_url)
-            tn = _sql_lit(triton_model_name)
+            ep = endpoint_url
+            tn = triton_model_name
+            request_schema = m.get("request_schema", {})
+            inference_endpoint = {
+                "schema": {
+                    "modelProcessingType": {"type": task_type},
+                    "model_name": tn,
+                    "request": request_schema,
+                    "response": {},
+                },
+                "callbackUrl": ep,
+            }
+
+            ep_lit = _sql_lit(ep)
+            tn_lit = _sql_lit(tn)
+            inference_endpoint_lit = _sql_lit(
+                json.dumps(inference_endpoint, ensure_ascii=False, separators=(",", ":"))
+            )
             adapter.execute(f"""
                 INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
                 VALUES (
@@ -265,17 +321,12 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                     '{_sql_lit(m["languages"])}'::jsonb,
                     '{_sql_lit(m["domain"])}'::jsonb,
                     '{_sql_lit(m["license"])}',
-                    '{{"schema": {{"modelProcessingType": {{"type": "{task_type}"}}, "model_name": "{tn}", "request": {{}}, "response": {{}}}}, "callbackUrl": "{ep}"}}'::jsonb,
+                    '{inference_endpoint_lit}'::jsonb,
                     '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                     {timestamp_ms},
                     'ACTIVE'
                 ) ON CONFLICT (name, version) DO UPDATE SET
-                    inference_endpoint = jsonb_set(
-                        COALESCE(models.inference_endpoint, '{{}}'::jsonb),
-                        '{{schema,model_name}}',
-                        '"{tn}"'::jsonb,
-                        true
-                    ),
+                    inference_endpoint = '{inference_endpoint_lit}'::jsonb,
                     updated_at = CURRENT_TIMESTAMP;
             """)
 
@@ -292,18 +343,19 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                         '{sn}',
                         '{model_id}',
                         '{_sql_lit(version)}',
-                        '{ep}',
+                        '{ep_lit}',
                         '{_sql_lit(svc["description"])}',
                         '{_sql_lit(svc["hardware"])}',
                         {timestamp_ms},
-                        false
+                        true
                     ) ON CONFLICT (name) DO UPDATE SET
                         service_id = '{service_id}',
                         model_id = '{model_id}',
                         model_version = '{_sql_lit(version)}',
-                        endpoint = '{ep}',
+                        endpoint = '{ep_lit}',
                         service_description = '{_sql_lit(svc["description"])}',
                         hardware_description = '{_sql_lit(svc["hardware"])}',
+                        is_published = true,
                         updated_at = CURRENT_TIMESTAMP;
                 """)
 
