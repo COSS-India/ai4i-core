@@ -758,6 +758,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     sub_category: e.target.value || null,
                     signal: null,
                     signal_metric: null,
+                    threshold_value: null,
                     threshold_unit: undefined,
                   })}
                   bg="white"
@@ -783,6 +784,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       ...defs.createForm,
                       signal: sig,
                       signal_metric: null,
+                      threshold_value: null,
                       threshold_unit: sig === "latency" ? "ms" : sig ? PERCENTAGE_UNIT : undefined,
                     });
                   }}
@@ -930,8 +932,16 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   </Select>
                   <NumberInput
                     value={defs.createForm.threshold_value ?? ""}
-                    onChange={(_s, val) => defs.setCreateForm({ ...defs.createForm, threshold_value: Number.isNaN(val) ? null : val })}
+                    onChange={(_s, val) => {
+                      const next = Number.isNaN(val) ? null : val;
+                      const capped =
+                        defs.createForm.signal && defs.createForm.signal !== "latency" && typeof next === "number"
+                          ? Math.min(100, next)
+                          : next;
+                      defs.setCreateForm({ ...defs.createForm, threshold_value: capped });
+                    }}
                     min={0}
+                    max={defs.createForm.signal && defs.createForm.signal !== "latency" ? 100 : undefined}
                     bg="white"
                   >
                     <NumberInputField placeholder="Enter value" />
@@ -1211,6 +1221,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     sub_category: e.target.value || undefined,
                     signal: undefined,
                     signal_metric: undefined,
+                    threshold_value: undefined,
                     threshold_unit: undefined,
                   })}
                   bg="white"
@@ -1234,6 +1245,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       ...defs.updateForm,
                       signal: sig,
                       signal_metric: undefined,
+                      threshold_value: undefined,
                       threshold_unit: sig === "latency" ? "ms" : sig ? PERCENTAGE_UNIT : undefined,
                     });
                   }}
@@ -1296,7 +1308,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       rightIcon={<Text fontSize="xs" color="gray.500">▾</Text>}
                     >
                       {(() => {
-                        const sel = defs.updateForm.service ?? [];
+                        const raw = defs.updateForm.service ?? [];
+                        const sel = raw.includes("all") ? TARGET_SERVICES.map((t) => t.value) : raw;
                         if (sel.length === 0) {
                           return <Text color="gray.400">Select targets...</Text>;
                         }
@@ -1313,15 +1326,24 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <MenuList w="100%" maxH="300px" overflowY="auto">
                       <MenuItem closeOnSelect={false} px={4} py={2}>
                         <Checkbox
-                          isChecked={(defs.updateForm.service ?? []).length === TARGET_SERVICES.length}
+                          isChecked={
+                            (() => {
+                              const raw = defs.updateForm.service ?? [];
+                              const sel = raw.includes("all") ? TARGET_SERVICES.map((t) => t.value) : raw;
+                              return sel.length === TARGET_SERVICES.length;
+                            })()
+                          }
                           isIndeterminate={
-                            (defs.updateForm.service ?? []).length > 0 &&
-                            (defs.updateForm.service ?? []).length < TARGET_SERVICES.length
+                            (() => {
+                              const raw = defs.updateForm.service ?? [];
+                              const sel = raw.includes("all") ? TARGET_SERVICES.map((t) => t.value) : raw;
+                              return sel.length > 0 && sel.length < TARGET_SERVICES.length;
+                            })()
                           }
                           onChange={(e) => {
                             defs.setUpdateForm({
                               ...defs.updateForm,
-                              service: e.target.checked ? TARGET_SERVICES.map((t) => t.value) : [],
+                              service: e.target.checked ? ["all"] : [],
                             });
                           }}
                           fontWeight="semibold"
@@ -1333,11 +1355,19 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       {TARGET_SERVICES.map((opt) => (
                         <MenuItem key={opt.value} closeOnSelect={false} px={4} py={2}>
                           <Checkbox
-                            isChecked={(defs.updateForm.service ?? []).includes(opt.value)}
+                            isChecked={
+                              (() => {
+                                const raw = defs.updateForm.service ?? [];
+                                const sel = raw.includes("all") ? TARGET_SERVICES.map((t) => t.value) : raw;
+                                return sel.includes(opt.value);
+                              })()
+                            }
                             onChange={(e) => {
-                              const current = defs.updateForm.service ?? [];
+                              const currentRaw = defs.updateForm.service ?? [];
+                              const current = currentRaw.includes("all") ? TARGET_SERVICES.map((t) => t.value) : currentRaw;
                               defs.setUpdateForm({
                                 ...defs.updateForm,
+                                // Once user makes an explicit selection, drop the "all" sentinel.
                                 service: e.target.checked
                                   ? [...current, opt.value]
                                   : current.filter((s) => s !== opt.value),
@@ -1374,8 +1404,16 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   </Select>
                   <NumberInput
                     value={defs.updateForm.threshold_value ?? ""}
-                    onChange={(_s, val) => defs.setUpdateForm({ ...defs.updateForm, threshold_value: Number.isNaN(val) ? undefined : val })}
+                    onChange={(_s, val) => {
+                      const next = Number.isNaN(val) ? undefined : val;
+                      const capped =
+                        defs.updateForm.signal && defs.updateForm.signal !== "latency" && typeof next === "number"
+                          ? Math.min(100, next)
+                          : next;
+                      defs.setUpdateForm({ ...defs.updateForm, threshold_value: capped });
+                    }}
                     min={0}
+                    max={defs.updateForm.signal && defs.updateForm.signal !== "latency" ? 100 : undefined}
                     bg="white"
                   >
                     <NumberInputField placeholder="Value" />
