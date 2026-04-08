@@ -2,11 +2,12 @@
 
 import json
 import logging
+import time
 from typing import Dict, List, Tuple
 
 from tritonclient.http import InferInput, InferRequestedOutput
 
-from ai4icore_model_management import TritonClient
+from ai4icore_model_management import TritonClient, _accumulate_inference_time
 from ai4icore_exceptions import TritonInferenceError
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ class OCRTritonClient(TritonClient):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
+        _start = time.perf_counter()
         try:
             response = self.client.infer(
                 model_name=self.model_name,
@@ -70,6 +72,8 @@ class OCRTritonClient(TritonClient):
         except Exception as exc:
             logger.error("Triton OCR inference failed: %s", exc, exc_info=True)
             raise TritonInferenceError(f"Triton OCR inference failed: {exc}") from exc
+        finally:
+            _accumulate_inference_time((time.perf_counter() - _start) * 1000)
 
         result = response.as_numpy("OUTPUT_TEXT")
         if result is None:

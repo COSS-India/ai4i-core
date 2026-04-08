@@ -2,13 +2,14 @@
 
 import json
 import logging
+import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import tritonclient.http as http_client
 from tritonclient.utils import np_to_triton_dtype
 
-from ai4icore_model_management import TritonClient
+from ai4icore_model_management import TritonClient, _accumulate_inference_time
 from ai4icore_exceptions import TritonInferenceError
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ class LanguageDiarizationTritonClient(TritonClient):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
+        _start = time.perf_counter()
         try:
             response = self.client.infer(
                 model_name="lang_diarization",
@@ -75,6 +77,8 @@ class LanguageDiarizationTritonClient(TritonClient):
             raise TritonInferenceError(
                 f"Triton Language Diarization inference failed: {exc}"
             ) from exc
+        finally:
+            _accumulate_inference_time((time.perf_counter() - _start) * 1000)
 
         result = response.as_numpy("DIARIZATION_RESULT")
         if result is None or len(result) == 0:
