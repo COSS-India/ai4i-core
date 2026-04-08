@@ -18,6 +18,8 @@ Usage:
 """
 
 import logging
+import time
+from contextvars import ContextVar
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -28,6 +30,19 @@ from tritonclient.utils import np_to_triton_dtype
 from ai4icore_exceptions import TritonInferenceError
 
 logger = logging.getLogger(__name__)
+
+# Reference to the current ASGI scope dict, set by InferenceHeadersMiddleware.
+# TritonClient accumulates inference timing into scope["_inference_model_time_ms"].
+_current_scope: ContextVar[dict] = ContextVar("_current_scope", default=None)
+
+SCOPE_KEY = "_inference_model_time_ms"
+
+
+def _accumulate_inference_time(elapsed_ms: float) -> None:
+    """Add elapsed_ms to the running total in the current request's ASGI scope."""
+    scope = _current_scope.get()
+    if scope is not None:
+        scope[SCOPE_KEY] = scope.get(SCOPE_KEY, 0.0) + elapsed_ms
 
 # Optional OpenTelemetry support
 try:
@@ -96,9 +111,13 @@ class TritonClient:
         Returns the raw Triton inference result.
         Raises TritonInferenceError on any failure.
         """
-        if _OTEL_AVAILABLE:
-            return self._send_traced(model_name, inputs, outputs, headers, model_version)
-        return self._send_impl(model_name, inputs, outputs, headers, model_version)
+        start = time.perf_counter()
+        try:
+            if _OTEL_AVAILABLE:
+                return self._send_traced(model_name, inputs, outputs, headers, model_version)
+            return self._send_impl(model_name, inputs, outputs, headers, model_version)
+        finally:
+            _accumulate_inference_time((time.perf_counter() - start) * 1000)
 
     def _send_traced(
         self,
