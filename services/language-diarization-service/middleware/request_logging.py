@@ -15,7 +15,7 @@ def _extra_context(request: Request, response: Response):
     status_code = response.status_code
     if path.endswith("/inference") and 200 <= status_code < 300:
         return {
-            "operation": "language_diarization.inference",
+            "operation": "language-diarization.inference",
             "success": True,
         }
     return {}

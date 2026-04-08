@@ -55,7 +55,7 @@ class SpeakerDiarizationService:
         - Else, download from audioUri and base64-encode it
         """
         try:
-            with tracer.start_as_current_span("speaker_diarization.resolve_audio") as span:
+            with tracer.start_as_current_span("speaker-diarization.resolve_audio") as span:
                 span.set_attribute("audio.index", audio_idx)
                 
                 if audio.audioContent:
@@ -198,7 +198,7 @@ class SpeakerDiarizationService:
 
                 # Map the response to output format with detailed tracing
                 try:
-                    with tracer.start_as_current_span("speaker_diarization.process_results") as result_span:
+                    with tracer.start_as_current_span("speaker-diarization.process_results") as result_span:
                         result_span.set_attribute("audio.index", audio_idx)
                         result_span.add_event("processing.start")
                         
@@ -285,7 +285,7 @@ class SpeakerDiarizationService:
                 # Persist result if repository is available
                 if self.repository and request_id:
                     try:
-                        with tracer.start_as_current_span("speaker_diarization.store_result") as store_span:
+                        with tracer.start_as_current_span("speaker-diarization.store_result") as store_span:
                             store_span.set_attribute("audio.index", audio_idx)
                             store_span.set_attribute("request_id", str(request_id))
                             store_span.set_attribute("num_segments", len(segments_list))
