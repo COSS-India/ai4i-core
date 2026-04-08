@@ -327,6 +327,37 @@ async def _assign_role_in_auth(user_id: int, role_name: str, auth_header: Option
         return False
 
 
+async def _revoke_tenant_sessions_in_auth(user_ids: list[int], auth_header: Optional[str]) -> bool:
+    """
+    Best-effort call to auth-service to revoke all active sessions for a tenant.
+    Returns True when auth-service confirms success, otherwise False.
+    """
+    if not auth_header:
+        logger.warning("Skipping tenant session revocation: missing Authorization header")
+        return False
+    if not user_ids:
+        logger.info("Skipping tenant session revocation: no user IDs to revoke")
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
+            r = await client.post(
+                f"{API_GATEWAY_URL}/api/v1/auth/sessions/revoke-by-users",
+                json={"user_ids": user_ids},
+                headers={"Authorization": auth_header},
+            )
+            if r.status_code in (200, 201):
+                return True
+            logger.warning(
+                "Auth session revocation by users failed status=%s body=%s",
+                r.status_code,
+                r.text,
+            )
+            return False
+    except Exception as e:
+        logger.warning("Failed to revoke tenant sessions in auth: %s", e)
+        return False
+
+
 # Service to table mapping - maps service names to their corresponding table names (__tablename__)
 # These are the actual table names as defined in the models, not the class names
 SERVICE_TABLE_MAPPING = {
@@ -2050,7 +2081,11 @@ async def register_user(
     return response
 
 
-async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSession) -> TenantStatusUpdateResponse:
+async def update_tenant_status(
+    payload: TenantStatusUpdateRequest,
+    db: AsyncSession,
+    auth_header: Optional[str] = None,
+) -> TenantStatusUpdateResponse:
     """
     Update tenant status and cascade status changes to tenant users and billing records.
     
@@ -2143,6 +2178,19 @@ async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
         logger.exception(f"Error committing tenant status update to database | tenant={payload.tenant_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to update tenant status")
     
+    # Immediately revoke active auth sessions when tenant is suspended/deactivated.
+    # This is best-effort; auth enforcement on subsequent requests still blocks access.
+    if new_status in {TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED}:
+        tenant_user_ids_result = await db.execute(
+            select(TenantUser.user_id).where(
+                TenantUser.tenant_id == tenant.tenant_id,
+                TenantUser.user_id.is_not(None),
+            )
+        )
+        tenant_user_ids = [row[0] for row in tenant_user_ids_result.all() if row[0] is not None]
+        affected_user_ids = list(set([tenant.user_id] + tenant_user_ids)) if tenant.user_id else tenant_user_ids
+        await _revoke_tenant_sessions_in_auth(affected_user_ids, auth_header)
+
     response = TenantStatusUpdateResponse(
         tenant_id=tenant.tenant_id,
         old_status=old_status,

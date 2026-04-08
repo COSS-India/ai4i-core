@@ -117,9 +117,14 @@ async def register_user_request(
               status_code=status.HTTP_200_OK,
               dependencies=[Depends(require_admin)]
               )
-async def change_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSession = Depends(get_tenant_db_session),):
+async def change_tenant_status(
+    request: Request,
+    payload: TenantStatusUpdateRequest,
+    db: AsyncSession = Depends(get_tenant_db_session),
+):
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        return await update_tenant_status(payload, db)
+        return await update_tenant_status(payload, db, auth_header=auth_header)
 
     except HTTPException:
         raise

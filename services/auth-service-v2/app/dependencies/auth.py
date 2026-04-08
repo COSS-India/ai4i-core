@@ -9,7 +9,7 @@ of the shared lib, not a parallel implementation.
 import logging
 from datetime import datetime, timezone
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +21,7 @@ from ai4icore_auth.jwt_verifier import (
 
 from app.core.database import get_db
 from app.core.exceptions import (
+    AuthorizationError,
     AuthenticationRequiredError,
     TokenExpiredError,
     TokenInvalidError,
@@ -34,6 +35,7 @@ from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.cache_service import CacheService
+from app.services.tenant_service import TenantService
 from app.services.token_service import TokenPayload, TokenService
 
 logger = logging.getLogger(__name__)
@@ -174,6 +176,7 @@ async def _check_token_revocation(
 
 
 async def get_current_user(
+    request: Request,
     payload: TokenPayload = Depends(get_current_token),
     db: AsyncSession = Depends(get_db),
 ) -> User:
@@ -184,6 +187,41 @@ async def get_current_user(
         raise UserNotFoundError()
     if not user.is_active:
         raise UserInactiveError()
+
+    mt_factory = getattr(request.app.state, "multi_tenant_session_factory", None)
+    if mt_factory:
+        tenant_service = TenantService(mt_factory)
+
+        def _is_suspended_or_deactivated(status_val: str | None) -> bool:
+            if not status_val:
+                return False
+            status = str(status_val).strip().upper()
+            if "." in status:
+                status = status.split(".")[-1]
+            return status in {"SUSPENDED", "DEACTIVATED"}
+
+        tenant_id = user.tenant_id_cached or payload.tenant_id
+        is_tenant_user = bool(user.is_tenant)
+        if not tenant_id:
+            tenant_id = await tenant_service.resolve_and_cache_tenant_id(user.id, is_tenant_user)
+
+        if tenant_id:
+            tenant_status = await tenant_service.get_tenant_status(tenant_id)
+            if tenant_status is None:
+                tenant_status = await tenant_service.get_tenant_status_by_user_id(user.id, is_tenant_user)
+            if _is_suspended_or_deactivated(tenant_status):
+                raise AuthorizationError(
+                    message=f"tenant is {str(tenant_status).lower()} , please contact your platform admin",
+                    code="TENANT_INACTIVE",
+                )
+
+            if not is_tenant_user:
+                tenant_user_status = await tenant_service.get_tenant_user_status(tenant_id, user.id)
+                if _is_suspended_or_deactivated(tenant_user_status):
+                    raise AuthorizationError(
+                        message=f"User is {str(tenant_user_status).lower()} , please contact your admin",
+                        code="TENANT_USER_INACTIVE",
+                    )
     return user
 
 
