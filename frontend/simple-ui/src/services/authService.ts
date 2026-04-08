@@ -108,11 +108,15 @@ class AuthService {
           errorMessage = errorData.map((err: any) => err.detail?.message ?? err.detail ?? err.message ?? String(err)).join(', ');
         }
         
-        // Check if error is "Invalid authentication credentials" (session expiry)
+        // Only treat explicit auth failures as hard session end — not every 401 containing "invalid"
+        // (e.g. "Invalid email format" or gateway wording would wrongly wipe tokens).
         const errorMessageLower = errorMessage.toLowerCase();
-        const isInvalidAuth = errorMessageLower.includes('invalid authentication credentials') ||
-                            (response.status === 401 && errorMessageLower.includes('invalid'));
-        
+        const isInvalidAuth =
+          errorMessageLower.includes('invalid authentication credentials') ||
+          errorMessageLower.includes('could not validate credentials') ||
+          errorMessageLower.includes('not authenticated') ||
+          errorMessageLower.includes('credentials could not be validated');
+
         if (isInvalidAuth && typeof window !== 'undefined') {
           // Clear tokens and redirect to login
           this.clearAuthTokens();
@@ -620,15 +624,17 @@ class AuthService {
    */
   private decodeToken(token: string): any | null {
     try {
-      // JWT has 3 parts: header.payload.signature
+      // JWT has 3 parts: header.payload.signature (payload is base64url, not raw base64)
       const parts = token.split('.');
       if (parts.length !== 3) {
         return null;
       }
-      
-      // Decode the payload (second part)
+
       const payload = parts[1];
-      const decoded = atob(payload);
+      const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+      const pad = base64.length % 4;
+      const padded = pad ? base64 + '='.repeat(4 - pad) : base64;
+      const decoded = atob(padded);
       return JSON.parse(decoded);
     } catch (error) {
       console.error('Failed to decode token:', error);

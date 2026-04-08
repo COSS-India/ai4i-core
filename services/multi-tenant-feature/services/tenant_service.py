@@ -1,7 +1,8 @@
 from fastapi import BackgroundTasks, HTTPException
 from datetime import datetime, timezone , timedelta , date
+from decimal import Decimal
 
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 from sqlalchemy import insert , select , update , delete , text , MetaData , func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError , NoResultFound
@@ -26,13 +27,14 @@ from utils.utils import (
     DecryptionError,
 )
 from models.db_models import (
-    Tenant, 
-    BillingRecord, 
-    AuditLog , 
-    TenantEmailVerification , 
+    Tenant,
+    BillingRecord,
+    AuditLog,
+    TenantEmailVerification,
     ServiceConfig,
     TenantUser,
     UserBillingRecord,
+    TenantPlan,
 )
 from models.auth_models import Role, UserRole, UserDB
 
@@ -87,6 +89,249 @@ EMAIL_VERIFICATION_RESEND_MAX_PER_DAY = app_env.email_verification_resend_max_pe
 DB_NAME                 = str(app_env.app_db_name)
 API_GATEWAY_URL        = app_env.api_gateway_url
 API_GATEWAY_TIMEOUT       = app_env.api_gateway_timeout
+POLICY_ENGINE_URL = (app_env.policy_engine_url or "").rstrip("/")
+
+
+async def assign_plan_to_tenant(
+    tenant_internal_uuid: UUID,
+    plan_id: UUID,
+    db: AsyncSession,
+) -> None:
+    """
+    Fetch full plan from policy-engine and persist a TenantPlan snapshot.
+    """
+    if not POLICY_ENGINE_URL:
+        logger.warning("policy_engine_url is not set; skipping plan assignment for tenant %s", tenant_internal_uuid)
+        return
+    url = f"{POLICY_ENGINE_URL}/policies/{plan_id}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.get(url)
+        if r.status_code != 200:
+            logger.error(
+                "Policy engine GET %s failed: %s %s",
+                url,
+                r.status_code,
+                r.text,
+            )
+            return
+        data = r.json()
+    except Exception as e:
+        logger.exception("assign_plan_to_tenant HTTP error: %s", e)
+        return
+
+    plan_name = str(data.get("plan_name") or data.get("name") or "")
+    plan_cost: Optional[Decimal] = None
+    raw_cost = data.get("cost")
+    if raw_cost is not None:
+        try:
+            plan_cost = Decimal(str(raw_cost))
+        except Exception:
+            plan_cost = None
+
+    allowed_services = data.get("allowed_services")
+    if not isinstance(allowed_services, list) or len(allowed_services) == 0:
+        allowed_services = []
+        try:
+            su = f"{POLICY_ENGINE_URL}/policies/{plan_id}/services"
+            async with httpx.AsyncClient(timeout=30.0) as c2:
+                r2 = await c2.get(su)
+            if r2.status_code == 200:
+                allowed_services = r2.json()
+        except Exception as ex:
+            logger.warning("assign_plan_to_tenant: could not load plan services: %s", ex)
+            allowed_services = []
+
+    row = TenantPlan(
+        tenant_id=tenant_internal_uuid,
+        plan_id=plan_id,
+        plan_name=plan_name,
+        tier=str(data.get("tier", "")),
+        plan_cost=plan_cost,
+        quota_config=data.get("quota_config") if isinstance(data.get("quota_config"), dict) else {},
+        rate_limit_config=data.get("rate_limit_config") if isinstance(data.get("rate_limit_config"), dict) else {},
+        allowed_services=allowed_services if isinstance(allowed_services, list) else [],
+    )
+    db.add(row)
+    await db.commit()
+
+
+_TIER_LABEL_ORDER = ("Tier-1", "Tier-2", "Tier-3")
+
+
+def _tier_sort_key(tier: str) -> int:
+    try:
+        return _TIER_LABEL_ORDER.index(tier)
+    except ValueError:
+        return 99
+
+
+def _as_int(v: Any, default: int = 0) -> int:
+    if v is None:
+        return default
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return default
+
+
+def _merge_policy_engine_plans(plan_payloads: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge multiple GET /policies/{id} JSON bodies: union services, max quota and rate limits."""
+    if not plan_payloads:
+        raise ValueError("plan_payloads must not be empty")
+    name = str(
+        plan_payloads[0].get("plan_name")
+        or plan_payloads[0].get("name")
+        or ""
+    )
+    tier_set = {str(p.get("tier") or "").strip() for p in plan_payloads}
+    tier_set.discard("")
+    tiers_sorted = sorted(tier_set, key=_tier_sort_key)
+    tier_label = ", ".join(tiers_sorted)
+
+    quotas = [p.get("quota_config") or {} for p in plan_payloads]
+    rh = max((_as_int(q.get("requests_per_hour")) for q in quotas), default=0)
+    sl_merged: Dict[str, Dict[str, Any]] = {}
+    for q in quotas:
+        raw = q.get("service_limits")
+        if isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                st = str(item.get("service_type") or "").strip()
+                if not st:
+                    continue
+                lv = _as_int(item.get("limit_value"))
+                ut = str(item.get("unit_type") or "")
+                prev = sl_merged.get(st)
+                if not prev or lv > _as_int(prev.get("limit_value")):
+                    sl_merged[st] = {"service_type": st, "unit_type": ut, "limit_value": lv}
+        elif isinstance(raw, dict):
+            for k, v in raw.items():
+                key = str(k)
+                lv = _as_int(v)
+                prev = sl_merged.get(key)
+                if not prev or lv > _as_int(prev.get("limit_value")):
+                    sl_merged[key] = {"service_type": key, "unit_type": "", "limit_value": lv}
+
+    merged_q: Dict[str, Any] = {
+        "name": name,
+        "requests_per_hour": rh,
+        "service_limits": list(sl_merged.values()),
+    }
+
+    rates = [p.get("rate_limit_config") or {} for p in plan_payloads]
+    rk = max((_as_int(r.get("requests_per_hour_per_api_key")) for r in rates), default=0)
+    rt = max((_as_int(r.get("requests_per_hour_per_tenant")) for r in rates), default=0)
+    merged_r = {
+        "requests_per_hour_per_api_key": rk,
+        "requests_per_hour_per_tenant": rt,
+    }
+
+    seen: set[str] = set()
+    merged_svcs: List[Dict[str, Any]] = []
+    for p in plan_payloads:
+        sv = p.get("allowed_services")
+        if not isinstance(sv, list):
+            continue
+        for s in sv:
+            if not isinstance(s, dict):
+                continue
+            sid = str(s.get("service_id") or s.get("serviceId") or "").strip()
+            key = sid if sid else str(sorted(s.items()))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged_svcs.append(s)
+
+    ids: List[UUID] = []
+    for p in plan_payloads:
+        pid = p.get("id")
+        if pid is None:
+            continue
+        try:
+            ids.append(UUID(str(pid)))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        raise ValueError("policy payloads missing id")
+    primary = min(ids)
+
+    costs = []
+    for p in plan_payloads:
+        c = p.get("cost")
+        if c is not None:
+            try:
+                costs.append(Decimal(str(c)))
+            except Exception:
+                pass
+    merged_cost = max(costs) if costs else None
+
+    return {
+        "plan_id": primary,
+        "plan_name": name,
+        "tier": tier_label,
+        "plan_cost": merged_cost,
+        "quota_config": merged_q,
+        "rate_limit_config": merged_r,
+        "allowed_services": merged_svcs,
+    }
+
+
+async def assign_plans_bundle_to_tenant(
+    tenant_internal_uuid: UUID,
+    plan_ids: List[UUID],
+    db: AsyncSession,
+) -> None:
+    """Fetch multiple plans from policy-engine and persist one merged TenantPlan snapshot."""
+    if not POLICY_ENGINE_URL:
+        logger.warning(
+            "policy_engine_url is not set; skipping plan bundle assignment for tenant %s",
+            tenant_internal_uuid,
+        )
+        return
+    if not plan_ids:
+        return
+    payloads: List[Dict[str, Any]] = []
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for pid in plan_ids:
+                url = f"{POLICY_ENGINE_URL}/policies/{pid}"
+                r = await client.get(url)
+                if r.status_code != 200:
+                    logger.error(
+                        "Policy engine GET %s failed: %s %s",
+                        url,
+                        r.status_code,
+                        r.text,
+                    )
+                    return
+                payloads.append(r.json())
+    except Exception as e:
+        logger.exception("assign_plans_bundle_to_tenant HTTP error: %s", e)
+        return
+
+    try:
+        merged = _merge_policy_engine_plans(payloads)
+    except Exception as e:
+        logger.exception("assign_plans_bundle_to_tenant merge failed: %s", e)
+        return
+
+    row = TenantPlan(
+        tenant_id=tenant_internal_uuid,
+        plan_id=merged["plan_id"],
+        plan_name=str(merged["plan_name"]),
+        tier=str(merged["tier"]),
+        plan_cost=merged.get("plan_cost") if isinstance(merged.get("plan_cost"), Decimal) else None,
+        quota_config=merged["quota_config"] if isinstance(merged["quota_config"], dict) else {},
+        rate_limit_config=merged["rate_limit_config"] if isinstance(merged["rate_limit_config"], dict) else {},
+        allowed_services=merged["allowed_services"] if isinstance(merged["allowed_services"], list) else [],
+    )
+    db.add(row)
+    await db.commit()
 
 
 async def invalidate_pending_verification_tokens(
@@ -906,7 +1151,9 @@ async def create_new_tenant(
             if existing_domain_norm.domain == requested_domain_norm:
                 raise ValueError("Domain already registered")
             if _domains_similar(existing_domain_norm.domain, requested_domain_norm):
-                raise ValueError(f"Domain '{payload.domain}' is too similar to existing registered domain '{tenant.domain}'")
+                raise ValueError(
+                    f"Domain '{payload.domain}' is too similar to existing registered domain '{existing_domain_norm.domain}'"
+                )
 
     if not payload.requested_subscriptions:
         raise HTTPException(
@@ -1015,6 +1262,18 @@ async def create_new_tenant(
         logger.exception(f"Error committing tenant creation to database: {e}")
         await db.rollback()
         raise HTTPException(status_code=500,detail="Failed to create tenant")
+
+    plan_ids_payload = getattr(payload, "plan_ids", None)
+    if plan_ids_payload:
+        try:
+            await assign_plans_bundle_to_tenant(created.id, list(plan_ids_payload), db)
+        except Exception as e:
+            logger.exception("Plan bundle assignment after tenant creation failed (tenant was created): %s", e)
+    elif getattr(payload, "plan_id", None):
+        try:
+            await assign_plan_to_tenant(created.id, payload.plan_id, db)
+        except Exception as e:
+            logger.exception("Plan assignment after tenant creation failed (tenant was created): %s", e)
 
     # Snapshot ORM fields before verification send: it rolls back the session and expires instances.
     register_id = created.id
@@ -1299,6 +1558,14 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     admin_username_str = str(tenant.temp_admin_username) if tenant.temp_admin_username else admin_username
     password_str = str(plain_password)
 
+    if getattr(app_env, "log_tenant_generated_passwords", False):
+        logger.warning(
+            "Tenant admin credentials (LOG_TENANT_GENERATED_PASSWORDS=true): tenant_id=%s username=%s password=%s",
+            tenant.tenant_id,
+            admin_username_str,
+            password_str,
+        )
+
     background_tasks.add_task(
         send_welcome_email,
         tenant_id_str,
@@ -1425,12 +1692,19 @@ async def create_service(payload: ServiceCreateRequest,db: AsyncSession,) -> Ser
     else:
         raise HTTPException(status_code=500, detail="Failed to generate unique service ID")
 
+    cost_val = payload.cost_per_unit if payload.cost_per_unit is not None else payload.price_per_unit
+    tier_val = payload.tier.value if payload.tier else None
+    billing_ut = payload.billing_unit_type.value if payload.billing_unit_type else None
+
     service = ServiceConfig(
         id=service_id,
         service_name=payload.service_name,
         unit_type=payload.unit_type,
         price_per_unit=payload.price_per_unit,
         currency=payload.currency,
+        cost_per_unit=cost_val,
+        tier=tier_val,
+        billing_unit_type=billing_ut,
     )
 
     db.add(service)
@@ -1447,16 +1721,19 @@ async def create_service(payload: ServiceCreateRequest,db: AsyncSession,) -> Ser
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to create service")
 
-    response  = ServiceResponse(
-            id=service.id,
-            service_name=service.service_name,
-            unit_type=service.unit_type.value,
-            price_per_unit=service.price_per_unit,
-            currency=service.currency,
-            is_active=service.is_active,
-            created_at=service.created_at,
-            updated_at=service.updated_at,
-        )
+    response = ServiceResponse(
+        id=service.id,
+        service_name=service.service_name,
+        unit_type=service.unit_type,
+        price_per_unit=service.price_per_unit,
+        currency=service.currency,
+        is_active=service.is_active,
+        cost_per_unit=service.cost_per_unit,
+        tier=service.tier,
+        billing_unit_type=service.billing_unit_type,
+        created_at=service.created_at,
+        updated_at=service.updated_at,
+    )
 
     return response
 
@@ -1520,10 +1797,13 @@ async def update_service(payload: ServiceUpdateRequest,db: AsyncSession,) -> Ser
         service=ServiceResponse(
             id=service.id,
             service_name=service.service_name,
-            unit_type=service.unit_type.value,
-            price_per_unit=float(service.price_per_unit),
+            unit_type=service.unit_type,
+            price_per_unit=service.price_per_unit,
             currency=service.currency,
             is_active=service.is_active,
+            cost_per_unit=service.cost_per_unit,
+            tier=service.tier,
+            billing_unit_type=service.billing_unit_type,
             created_at=service.created_at,
             updated_at=service.updated_at,
         ),
@@ -1601,9 +1881,12 @@ async def list_service(db: AsyncSession) -> ListServicesResponse:
                 id=s.id,
                 service_name=s.service_name,
                 unit_type=s.unit_type,
-                price_per_unit=float(s.price_per_unit),
+                price_per_unit=s.price_per_unit,
                 currency=s.currency,
                 is_active=s.is_active,
+                cost_per_unit=s.cost_per_unit,
+                tier=s.tier,
+                billing_unit_type=s.billing_unit_type,
                 created_at=s.created_at,
                 updated_at=s.updated_at,
             )
@@ -2031,6 +2314,14 @@ async def register_user(
     logger.info(
         f"User registered successfully | tenant={tenant.tenant_id} | user={payload.username}"
     )
+
+    if getattr(app_env, "log_tenant_generated_passwords", False):
+        logger.warning(
+            "Tenant user credentials (LOG_TENANT_GENERATED_PASSWORDS=true): tenant_id=%s username=%s password=%s",
+            tenant.tenant_id,
+            payload.username,
+            user_password,
+        )
 
     # Determine final role for response: prefer value from auth, fallback to requested or USER
     auth_roles = await _get_roles_from_auth(user_id, auth_header)

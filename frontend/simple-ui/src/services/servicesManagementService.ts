@@ -43,6 +43,11 @@ export interface Service {
   updated_at?: string;
   /** ISO timestamp when status was last updated; used for list ordering */
   versionStatusUpdatedAt?: string;
+  /** Billing: API list/detail returns unit_type (DB billing_unit_type) */
+  unit_type?: string;
+  billing_unit_type?: string;
+  cost_per_unit?: number | string;
+  tier?: string;
   [key: string]: any;
 }
 
@@ -115,6 +120,18 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
         lastUpdated: new Date().toISOString(),
       };
     }
+    if (
+      serviceData.cost_per_unit != null &&
+      String(serviceData.cost_per_unit).trim() !== ""
+    ) {
+      apiPayload.cost_per_unit = Number(serviceData.cost_per_unit);
+    }
+    if (serviceData.unit_type) {
+      apiPayload.unit_type = serviceData.unit_type;
+    }
+    if (serviceData.tier) {
+      apiPayload.tier = serviceData.tier;
+    }
     
     // The apiClient interceptor will automatically add:
     // - Content-Type: application/json
@@ -179,6 +196,19 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
       // Add isPublished if provided
       if (serviceData.hasOwnProperty('isPublished')) {
         apiPayload.isPublished = serviceData.isPublished;
+      }
+
+      if (
+        serviceData.cost_per_unit != null &&
+        String(serviceData.cost_per_unit).trim() !== ''
+      ) {
+        apiPayload.cost_per_unit = Number(serviceData.cost_per_unit);
+      }
+      if (serviceData.unit_type) {
+        apiPayload.unit_type = serviceData.unit_type;
+      }
+      if (serviceData.tier) {
+        apiPayload.tier = serviceData.tier;
       }
     }
     

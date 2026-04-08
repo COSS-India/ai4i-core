@@ -16,6 +16,7 @@ from .tenant_scope import enforce_tenant_scope
 from .tenant_schema_router import TenantSchemaRouter
 from .tenant_middleware import TenantMiddleware
 from .tenant_db_dependency import get_tenant_db_session_factory
+from .pay_per_use_client import PayPerUseClient, ppu_actor_key
 
 __all__ = [
     "MultiTenantConfig",
@@ -31,4 +32,6 @@ __all__ = [
     "Tenant",
     "TenantUser",
     "TenantDBBase",
+    "PayPerUseClient",
+    "ppu_actor_key",
 ]

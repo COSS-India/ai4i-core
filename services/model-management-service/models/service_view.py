@@ -25,6 +25,10 @@ class ServiceResponse(BaseModel):
     unpublishedAt: Optional[str] = None
     createdBy: Optional[str] = None  # User ID (string) who created this service
     updatedBy: Optional[str] = None  # User ID (string) who last updated this service
+    # Pay-per-use / billing (persisted on services table)
+    cost_per_unit: Optional[float] = None
+    unit_type: Optional[str] = None  # Same as create request; maps to billing_unit_type in DB
+    tier: Optional[str] = None
 
 
 class _ServiceUsage(BaseModel):

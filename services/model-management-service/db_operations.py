@@ -1,9 +1,10 @@
+from collections import defaultdict
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select, delete, update, func as sql_func, and_, case, desc, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 import hashlib
 
 from models.db_models import Model , Service, VersionStatus, Experiment, ExperimentVariant, ExperimentMetrics, ExperimentStatus
@@ -949,12 +950,15 @@ async def save_service_to_db(payload: ServiceCreateRequest, created_by: str = No
             model_id=payload_dict.get("modelId"),
             model_version=payload_dict.get("modelVersion"),
             endpoint=payload_dict.get("endpoint"),
-            api_key=payload_dict.get("apiKey"),
+            api_key=payload_dict.get("api_key") or payload_dict.get("apiKey"),
             health_status=payload_dict.get("healthStatus", {}),
             benchmarks=payload_dict.get("benchmarks", []),
             is_published=is_published,
             published_at=published_at,
             created_by=created_by,
+            cost_per_unit=payload_dict.get("cost_per_unit"),
+            billing_unit_type=payload_dict.get("unit_type"),
+            tier=payload_dict.get("tier"),
         )
         db.add(new_service)
         await db.commit()
@@ -1022,6 +1026,12 @@ async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
             db_update["health_status"] = _json_safe(request_dict["healthStatus"])
         if "benchmarks" in request_dict:
             db_update["benchmarks"] = _json_safe(request_dict["benchmarks"])
+        if "cost_per_unit" in request_dict and request_dict["cost_per_unit"] is not None:
+            db_update["cost_per_unit"] = request_dict["cost_per_unit"]
+        if "unit_type" in request_dict and request_dict["unit_type"] is not None:
+            db_update["billing_unit_type"] = request_dict["unit_type"]
+        if "tier" in request_dict and request_dict["tier"] is not None:
+            db_update["tier"] = request_dict["tier"]
         # languagePair is not persisted on services table; skip
         
         # Handle isPublished - automatically set published_at/unpublished_at timestamps
@@ -1049,7 +1059,11 @@ async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
             return 0  # Service not found
 
         if not db_update:
-            logger.warning("No valid update fields provided for service update. Valid fields: serviceDescription, hardwareDescription, endpoint, api_key, healthStatus, benchmarks, isPublished. Note: name, modelId, modelVersion are not updatable.")
+            logger.warning(
+                "No valid update fields provided for service update. Valid fields: serviceDescription, hardwareDescription, "
+                "endpoint, api_key, healthStatus, benchmarks, isPublished, cost_per_unit, unit_type, tier. "
+                "Note: name, modelId, modelVersion are not updatable."
+            )
             return -1  # No valid fields provided
         
         stmt_update = (
@@ -1094,6 +1108,11 @@ async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
                     "apiKey": db_service.api_key,
                     "healthStatus": db_service.health_status or {},
                     "benchmarks": db_service.benchmarks or {},
+                    "cost_per_unit": float(db_service.cost_per_unit)
+                    if db_service.cost_per_unit is not None
+                    else None,
+                    "unit_type": db_service.billing_unit_type,
+                    "tier": db_service.tier,
                 })
                 
                 # Apply updates to the fetched data
@@ -1226,6 +1245,7 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
             raise HTTPException(status_code=404, detail="Service not found")
 
         # Convert service SQLAlchemy → dict
+        cpu = service.cost_per_unit
         service_dict = {
             "serviceId": service.service_id,
             "uuid": str(service.id),
@@ -1244,6 +1264,9 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
             "unpublishedAt": datetime.fromtimestamp(service.unpublished_at).isoformat() if service.unpublished_at else None,
             "createdBy": service.created_by,
             "updatedBy": service.updated_by,
+            "cost_per_unit": float(cpu) if cpu is not None else None,
+            "unit_type": service.billing_unit_type,
+            "tier": service.tier,
         }
 
         result = await db.execute(
@@ -1355,6 +1378,121 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
 
 
 
+def _normalize_tier_label(raw: Optional[str]) -> Optional[str]:
+    if not raw:
+        return None
+    x = str(raw).strip().lower().replace("_", "-")
+    if x in ("tier-1", "tier1"):
+        return "Tier-1"
+    if x in ("tier-2", "tier2"):
+        return "Tier-2"
+    return None
+
+
+def _task_type_upper_from_model(model: Model) -> str:
+    t = model.task if isinstance(model.task, dict) else {}
+    ty = (t.get("type") or "").strip()
+    return ty.upper() if ty else "UNKNOWN"
+
+
+def _service_pick_rank(service: Service) -> Tuple[int, float]:
+    pub = 1 if service.is_published else 0
+    ts = service.updated_at or service.created_at
+    if ts is not None:
+        try:
+            ts_val = ts.timestamp()
+        except Exception:
+            ts_val = 0.0
+    else:
+        ts_val = 0.0
+    return (pub, ts_val)
+
+
+async def fetch_pricing_summary() -> List[Dict[str, Any]]:
+    """
+    Join services with models on (model_id, model_version); keep Tier-1 / Tier-2 rows;
+    group by model task type (JSON task.type); pick one service per (task, tier) — published first, then newest.
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        tier_norm = sql_func.lower(sql_func.replace(Service.tier, "_", "-"))
+        query = (
+            select(Service, Model)
+            .join(
+                Model,
+                and_(
+                    Model.model_id == Service.model_id,
+                    Model.version == Service.model_version,
+                ),
+            )
+            .where(tier_norm.in_(["tier-1", "tier-2"]))
+        )
+        result = await db.execute(query)
+        pairs = result.fetchall()
+    except Exception:
+        logger.exception("fetch_pricing_summary: query failed")
+        raise
+    finally:
+        await db.close()
+
+    winners: Dict[Tuple[str, str], Tuple[Service, Model]] = {}
+    for service, model in pairs:
+        tier = _normalize_tier_label(service.tier)
+        if not tier:
+            continue
+        tt = _task_type_upper_from_model(model)
+        key = (tt, tier)
+        cur = winners.get(key)
+        if cur is None or _service_pick_rank(service) > _service_pick_rank(cur[0]):
+            winners[key] = (service, model)
+
+    by_task: Dict[str, Dict[str, Tuple[Service, Model]]] = defaultdict(dict)
+    for (tt, tier), pair in winners.items():
+        by_task[tt][tier] = pair
+
+    def tier_detail(pair: Optional[Tuple[Service, Model]]) -> Optional[Dict[str, Any]]:
+        if not pair:
+            return None
+        s, _m = pair
+        ut = (s.billing_unit_type or "").strip() or "units"
+        cpu = s.cost_per_unit
+        cost_f = float(cpu) if cpu is not None else 0.0
+        return {
+            "service_id": str(s.id),
+            "service_name": s.name or "",
+            "cost_per_unit": cost_f,
+            "unit_type": ut,
+        }
+
+    order = ["ASR", "NMT", "LLM", "TTS", "TRANSLITERATION", "LANGUAGE-DETECTION", "OCR", "NER"]
+    task_types = list(by_task.keys())
+    task_types.sort(key=lambda t: (order.index(t) if t in order else len(order), t))
+
+    out: List[Dict[str, Any]] = []
+    for tt in task_types:
+        tmap = by_task[tt]
+        p1 = tmap.get("Tier-1")
+        p2 = tmap.get("Tier-2")
+        d1 = tier_detail(p1)
+        d2 = tier_detail(p2)
+        if tt == "UNKNOWN" and d1 is None and d2 is None:
+            continue
+        ut = "units"
+        if p1:
+            ut = (p1[0].billing_unit_type or "").strip() or ut
+        elif p2:
+            ut = (p2[0].billing_unit_type or "").strip() or ut
+        out.append(
+            {
+                "task_type": tt,
+                "unit_type": ut,
+                "tier_1": d1,
+                "tier_2": d2,
+            }
+        )
+    return out
+
+
 async def list_all_services(
     task_type: TaskTypeEnum | None, 
     is_published: bool | None = None,
@@ -1458,6 +1596,7 @@ async def list_all_services(
             hardware_description = getattr(service, "hardware_description", None) or ""
             published_on = getattr(service, "published_on", None) or 0
             
+            cpu = getattr(service, "cost_per_unit", None)
             services_list.append(
                 ServiceListResponse(
                     serviceId=str(service.service_id),
@@ -1479,6 +1618,9 @@ async def list_all_services(
                     # User tracking fields
                     createdBy=getattr(service, "created_by", None),
                     updatedBy=getattr(service, "updated_by", None),
+                    cost_per_unit=float(cpu) if cpu is not None else None,
+                    unit_type=getattr(service, "billing_unit_type", None),
+                    tier=getattr(service, "tier", None),
                     # From MODEL table
                     task=task,
                     languages=languages,

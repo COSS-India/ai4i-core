@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String,BigInteger, Text, DateTime, ForeignKey , Boolean, UniqueConstraint, Enum as SQLEnum, and_
+from sqlalchemy import Column, String, BigInteger, Text, DateTime, ForeignKey, Boolean, UniqueConstraint, Enum as SQLEnum, and_, Numeric
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship, foreign
 from sqlalchemy.sql import func
@@ -78,6 +78,9 @@ class Service(AppDBBase):
     is_published = Column(Boolean, nullable=False, default=False)
     published_at = Column(BigInteger, default=None)
     unpublished_at = Column(BigInteger, default=None)
+    cost_per_unit = Column(Numeric(10, 4), nullable=True)
+    billing_unit_type = Column(String(32), nullable=True)
+    tier = Column(String(20), nullable=True)
     created_by = Column(String(255), nullable=True)  
     updated_by = Column(String(255), nullable=True) 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

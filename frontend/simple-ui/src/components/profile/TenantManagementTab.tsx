@@ -36,6 +36,9 @@ import {
   TableContainer,
   Checkbox,
   CheckboxGroup,
+  Radio,
+  RadioGroup,
+  Stack,
   SimpleGrid,
   Tabs,
   TabList,
@@ -895,17 +898,61 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   <FormLabel>Description (optional)</FormLabel>
                   <Input placeholder="Brief description of the tenant organization" value={tm.tenantForm.description} onChange={(e) => tm.setTenantForm((f) => ({ ...f, description: e.target.value }))} bg="white" />
                 </FormControl>
+                <FormControl>
+                  <FormLabel fontWeight="semibold">Plan (optional)</FormLabel>
+                  {tm.isLoadingTenantPlans ? (
+                    <Spinner size="sm" />
+                  ) : tm.tenantPlansForCreate.length === 0 ? (
+                    <Text fontSize="sm" color="gray.600">
+                      No plans loaded. Create a plan under Admin → Plans, or continue without a plan.
+                    </Text>
+                  ) : (
+                    <RadioGroup
+                      value={tm.selectedPlanId ?? "none"}
+                      onChange={(v) => tm.setSelectedPlanId(v === "none" ? null : v)}
+                    >
+                      <Stack spacing={3} align="stretch">
+                        <Radio value="none" colorScheme="blue">
+                          <Text fontSize="sm">No plan</Text>
+                        </Radio>
+                        {tm.tenantPlansForCreate.map((p) => (
+                          <Radio key={p.id} value={p.id} colorScheme="blue">
+                            <Text fontSize="sm">
+                              <strong>{p.plan_name}</strong> — {p.tier} (₹{Number(p.cost).toFixed(2)})
+                            </Text>
+                          </Radio>
+                        ))}
+                      </Stack>
+                    </RadioGroup>
+                  )}
+                </FormControl>
                 <FormControl isRequired>
                   <FormLabel>Requested subscriptions</FormLabel>
-                  {tm.isLoadingServicesForCreate ? (
+                  {tm.selectedPlanId && tm.isLoadingPlanServices ? (
+                    <Box borderWidth="1px" borderRadius="md" p={4} bg="white">
+                      <Spinner size="sm" mr={2} />
+                      <Text as="span" fontSize="sm" color="gray.600">Loading services for selected plan…</Text>
+                    </Box>
+                  ) : !tm.selectedPlanId && tm.isLoadingServicesForCreate ? (
                     <Box borderWidth="1px" borderRadius="md" p={4} bg="white">
                       <Spinner size="sm" mr={2} />
                       <Text as="span" fontSize="sm" color="gray.600">Loading services…</Text>
                     </Box>
-                  ) : tm.availableServicesForCreate && tm.availableServicesForCreate.length > 0 ? (
+                  ) : (() => {
+                    const subsSource =
+                      tm.selectedPlanId && tm.planServicesForCreate.length > 0
+                        ? tm.planServicesForCreate.map((s) => ({
+                            id: String(s.service_id),
+                            service_name: String(s.service_name || "").toLowerCase(),
+                          }))
+                        : (tm.availableServicesForCreate || []).map((svc) => ({
+                            id: String(svc.id),
+                            service_name: String(svc.service_name || "").toLowerCase(),
+                          }));
+                    return subsSource.length > 0 ? (
                     <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="200px" overflowY="auto">
                       {(() => {
-                        const allServiceNames = tm.availableServicesForCreate.map((svc) => svc.service_name);
+                        const allServiceNames = subsSource.map((svc) => svc.service_name);
                         const allSelected =
                           allServiceNames.length > 0 &&
                           allServiceNames.every((name) => tm.tenantForm.requested_subscriptions?.includes(name));
@@ -939,7 +986,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                               }
                             >
                               <VStack align="stretch" spacing={2}>
-                                {tm.availableServicesForCreate.map((svc) => (
+                                {subsSource.map((svc) => (
                                   <Checkbox key={svc.id} value={svc.service_name} colorScheme="blue" size="sm">
                                     <Text fontSize="sm">{(svc.service_name ?? "").toUpperCase()}</Text>
                                   </Checkbox>
@@ -950,18 +997,23 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                         );
                       })()}
                     </Box>
-                  ) : (
+                    ) : (
                     <Box borderWidth="1px" borderRadius="md" p={3} bg="white">
                       <Text fontSize="sm" color="gray.600" mb={2}>
-                        {tm.availableServicesForCreate && tm.availableServicesForCreate.length === 0
-                          ? "No services available from the server."
-                          : "Could not load services."}
+                        {tm.selectedPlanId
+                          ? "No services returned for this plan tier. Check service registration."
+                          : tm.availableServicesForCreate && tm.availableServicesForCreate.length === 0
+                            ? "No services available from the server."
+                            : "Could not load services."}
                       </Text>
+                      {!tm.selectedPlanId && (
                       <Button size="sm" colorScheme="blue" variant="outline" onClick={tm.loadServicesForCreateTenant} isLoading={tm.isLoadingServicesForCreate} loadingText="Loading...">
                         Load services
                       </Button>
+                      )}
                     </Box>
-                  )}
+                    );
+                  })()}
                   </FormControl>
                 <Text fontSize="sm" color="gray.500">Tenant ID will be auto-generated (e.g. TNT_xxxx).</Text>
               </VStack>
@@ -979,6 +1031,15 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     <Text><strong>Tenant ID:</strong></Text><Text>TNT_xxxx (auto-generated)</Text>
                     <Text><strong>Subscriptions:</strong></Text>
                     <Text>{tm.tenantForm.requested_subscriptions?.length ? tm.tenantForm.requested_subscriptions.join(", ") : "None"}</Text>
+                    <Text><strong>Plan:</strong></Text>
+                    <Text>
+                      {tm.selectedPlanId
+                        ? (() => {
+                            const p = tm.tenantPlansForCreate.find((x) => x.id === tm.selectedPlanId);
+                            return p ? `${p.plan_name} — ${p.tier}` : "—";
+                          })()
+                        : "No plan"}
+                    </Text>
                   </SimpleGrid>
                 </Box>
                 <Alert status="info" borderRadius="md">

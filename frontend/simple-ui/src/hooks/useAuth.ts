@@ -27,7 +27,11 @@ function runAuthInitOnce(): Promise<void> {
       } catch (error: any) {
         const errorMessage = error?.message || 'Token validation failed';
         if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
-          console.warn('Auth service timeout during initialization - clearing auth state silently');
+          console.warn(
+            'Auth service timeout during initialization — keeping tokens; user stays signed in until /me succeeds or APIs return 401'
+          );
+          authInitPromise = null;
+          return;
         }
         authService.clearAuthTokens();
         authService.clearStoredUser();
@@ -174,17 +178,26 @@ export const useAuth = () => {
           hasToken: !!authService.getAccessToken(),
           tokenLength: authService.getAccessToken()?.length || 0,
         });
-        
+
+        if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+          setAuthState(prev => ({
+            ...prev,
+            isLoading: false,
+            error:
+              'Request timeout. You stay signed in — try again or refresh the page if the profile does not load.',
+          }));
+          throw new Error(errorMessage);
+        }
+
         // Clear tokens if /me fails (token is invalid or expired)
         authService.clearAuthTokens();
         setAuthState(prev => ({
           ...prev,
           isLoading: false,
-          error: errorMessage.includes('timeout') 
-            ? 'Request timeout. The server is taking too long to respond. Please try again.'
-            : errorMessage.includes('401') || errorMessage.includes('Unauthorized')
-            ? 'Invalid credentials. Please check your username and password.'
-            : `Token validation failed: ${errorMessage}. Please try logging in again.`,
+          error:
+            errorMessage.includes('401') || errorMessage.includes('Unauthorized')
+              ? 'Invalid credentials. Please check your username and password.'
+              : `Token validation failed: ${errorMessage}. Please try logging in again.`,
         }));
         throw new Error(errorMessage);
       }

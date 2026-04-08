@@ -56,6 +56,8 @@ from ai4icore_multi_tenant import (
     get_tenant_db_session_factory,
     try_get_tenant_context,
     enforce_tenant_and_service_checks,
+    PayPerUseClient,
+    ppu_actor_key,
 )
 
 get_tenant_db_session = get_tenant_db_session_factory()
@@ -112,6 +114,42 @@ logger = logging.getLogger(__name__)
 
 #Tenant routing and service checks
 API_GATEWAY_URL = app_env.api_gateway_url
+
+
+async def _ppu_tenant_id_asr(http_request: Request) -> Optional[str]:
+    ctx = await try_get_tenant_context(http_request, API_GATEWAY_URL)
+    if ctx and ctx.get("tenant_id"):
+        return str(ctx["tenant_id"])
+    tid = getattr(http_request.state, "tenant_id", None)
+    return str(tid) if tid else None
+
+
+async def _asr_ppu_check_minutes(
+    http_request: Request, service_id: str, audio_minutes: float
+) -> None:
+    tenant_id = await _ppu_tenant_id_asr(http_request)
+    actor = ppu_actor_key(http_request)
+    if not tenant_id or actor is None or not service_id:
+        return
+    units = max(float(audio_minutes), 1.0 / 60.0)
+    ok = await PayPerUseClient().check(tenant_id, actor, str(service_id), units)
+    if not ok:
+        raise HTTPException(status_code=429, detail="Pay-per-use check failed")
+
+
+async def _asr_ppu_record_minutes(
+    http_request: Request, service_id: str, audio_minutes: float
+) -> None:
+    tenant_id = await _ppu_tenant_id_asr(http_request)
+    actor = ppu_actor_key(http_request)
+    if not tenant_id or actor is None or not service_id:
+        return
+    units = max(float(audio_minutes), 1.0 / 60.0)
+    try:
+        await PayPerUseClient().record(tenant_id, actor, str(service_id), units)
+    except Exception as e:
+        logger.warning("pay_per_use record failed: %s", e)
+
 
 # SMR Service Configuration
 SMR_ENABLED = app_env.smr_enabled
@@ -1124,6 +1162,10 @@ async def _run_asr_inference_internal(
                 "source_language": request.config.language.sourceLanguage if request.config and request.config.language else None,
             }
         )
+
+        audio_minutes = max(total_input_audio_duration / 60.0, 1.0 / 60.0)
+        sid = str(request.config.serviceId) if request.config and request.config.serviceId else ""
+        await _asr_ppu_check_minutes(http_request, sid, audio_minutes)
         
         # Get fallback service ID from request state
         fallback_service_id = getattr(http_request.state, "fallback_service_id", None)
@@ -1461,6 +1503,8 @@ async def _run_asr_inference_internal(
                     preview,
                     "..." if len(transcript.source) > 100 else "",
                 )
+
+        await _asr_ppu_record_minutes(http_request, sid, audio_minutes)
         
         return response
         

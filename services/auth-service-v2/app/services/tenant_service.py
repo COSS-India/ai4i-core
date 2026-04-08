@@ -10,6 +10,7 @@ import logging
 from typing import Any, Optional
 
 from sqlalchemy import select, func
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -114,7 +115,7 @@ class TenantService:
         except asyncio.TimeoutError:
             logger.warning("Timeout getting tenant info for user %d", user_id)
             return None
-        except (ImportError, OSError) as exc:
+        except (ImportError, OSError, SQLAlchemyError) as exc:
             logger.warning("Error getting tenant info for user %d: %s", user_id, exc)
             return None
         finally:
@@ -165,7 +166,7 @@ class TenantService:
         except asyncio.TimeoutError:
             logger.warning("Timeout getting tenant user IDs for %s", tenant_id)
             return None
-        except (ImportError, OSError) as exc:
+        except (ImportError, OSError, SQLAlchemyError) as exc:
             logger.warning("Error getting tenant user IDs for %s: %s", tenant_id, exc)
             return None
         finally:
@@ -222,6 +223,13 @@ class TenantService:
         except asyncio.TimeoutError:
             logger.warning("Timeout getting tenant status for tenant_id=%s", tenant_id)
             return None
+        except SQLAlchemyError as exc:
+            logger.warning(
+                "Multi-tenant DB error getting tenant status (tenant_id=%s): %s",
+                tenant_id,
+                exc,
+            )
+            return None
         except ImportError:
             try:
                 from libs.ai4icore_multi_tenant.ai4icore_multi_tenant.models import Tenant
@@ -239,6 +247,16 @@ class TenantService:
                 return status
             except ImportError:
                 logger.debug("Multi-tenant library not available.")
+                return None
+            except asyncio.TimeoutError:
+                logger.warning("Timeout getting tenant status (fallback path) tenant_id=%s", tenant_id)
+                return None
+            except SQLAlchemyError as exc:
+                logger.warning(
+                    "Multi-tenant DB error getting tenant status (fallback path, tenant_id=%s): %s",
+                    tenant_id,
+                    exc,
+                )
                 return None
         finally:
             if callable(self._session_or_factory):
@@ -292,6 +310,14 @@ class TenantService:
         except asyncio.TimeoutError:
             logger.warning("Timeout getting tenant user status for tenant_id=%s user_id=%s", tenant_id, user_id)
             return None
+        except SQLAlchemyError as exc:
+            logger.warning(
+                "Multi-tenant DB error getting tenant user status (tenant_id=%s user_id=%s): %s",
+                tenant_id,
+                user_id,
+                exc,
+            )
+            return None
         except ImportError:
             try:
                 from libs.ai4icore_multi_tenant.ai4icore_multi_tenant.models import TenantUser
@@ -312,6 +338,21 @@ class TenantService:
                 return status
             except ImportError:
                 logger.debug("Multi-tenant library not available.")
+                return None
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Timeout getting tenant user status (fallback path) tenant_id=%s user_id=%s",
+                    tenant_id,
+                    user_id,
+                )
+                return None
+            except SQLAlchemyError as exc:
+                logger.warning(
+                    "Multi-tenant DB error getting tenant user status (fallback path, tenant_id=%s user_id=%s): %s",
+                    tenant_id,
+                    user_id,
+                    exc,
+                )
                 return None
         finally:
             if callable(self._session_or_factory):
@@ -375,6 +416,14 @@ class TenantService:
                 "Timeout getting tenant status by user_id=%s is_tenant=%s", user_id, is_tenant
             )
             return None
+        except SQLAlchemyError as exc:
+            logger.warning(
+                "Multi-tenant DB error getting tenant status by user_id=%s is_tenant=%s: %s",
+                user_id,
+                is_tenant,
+                exc,
+            )
+            return None
         except ImportError:
             try:
                 from libs.ai4icore_multi_tenant.ai4icore_multi_tenant.models import Tenant, TenantUser
@@ -406,6 +455,20 @@ class TenantService:
                 result = await asyncio.wait_for(db.execute(stmt_user), timeout=_TENANT_QUERY_TIMEOUT)
                 return self._normalize_status(result.scalar_one_or_none())
             except ImportError:
+                return None
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Timeout getting tenant status by user_id (fallback path) user_id=%s is_tenant=%s",
+                    user_id,
+                    is_tenant,
+                )
+                return None
+            except SQLAlchemyError as exc:
+                logger.warning(
+                    "Multi-tenant DB error getting tenant status by user_id (fallback path) user_id=%s: %s",
+                    user_id,
+                    exc,
+                )
                 return None
         finally:
             if callable(self._session_or_factory):
@@ -484,6 +547,8 @@ class TenantService:
 
         except asyncio.TimeoutError:
             return {**out, "debug_timeout": True}
+        except SQLAlchemyError as exc:
+            return {**out, "debug_db_error": str(exc)}
         except ImportError:
             return {**out, "debug_import_error": True}
         finally:

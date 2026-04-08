@@ -3,11 +3,13 @@
 import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { getStoredAccessToken } from '../utils/tokenStorage';
 
-// API Base URL from environment.
-// For production this should be set to the browser-facing API gateway URL
-// (for example, https://dev.ai4inclusion.org or a dedicated API domain).
-// Default to localhost:9000 for local development (docker-compose-local.yml) if not set.
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ;
+// API Base URL from environment (inlined at `next build` for NEXT_PUBLIC_*).
+// If the image was built without NEXT_PUBLIC_API_URL, axios/auth would use relative
+// URLs and the browser would call localhost:3000 — wrong. Browser fallback: gateway 8080.
+const _raw = (process.env.NEXT_PUBLIC_API_URL ?? "").trim();
+const API_BASE_URL =
+  _raw ||
+  (typeof window !== "undefined" ? "http://localhost:8080" : "");
 
 // Debug: Log the API base URL in development
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
@@ -274,10 +276,12 @@ apiClient.interceptors.request.use(
     const isObservabilityEndpoint = url.includes('/api/v1/telemetry');
     const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
     const isFeatureFlagsEndpoint = url.includes('/api/v1/feature-flags');
+    const isPolicyEngineEndpoint = url.includes('/api/v1/policy-engine');
+    const isPayPerUseEndpoint = url.includes('/api/v1/pay-per-use');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
     
-    // Services that require JWT tokens (routed via Kong with token-validator)
+    // Services that require JWT tokens (gateway forward-auth validates Bearer / API key)
     const requiresJWT = isModelManagementEndpoint || isASREndpoint || isNMSEndpoint || 
                         isTTSEndpoint || isLLMEndpoint || isPipelineEndpoint ||
                         isAudioLangDetectionEndpoint || isLanguageDetectionEndpoint ||
@@ -285,7 +289,9 @@ apiClient.interceptors.request.use(
                         isNEREndpoint || isOCREndpoint || isTransliterationEndpoint ||
                         isObservabilityEndpoint ||
                         isMultiTenantEndpoint ||
-                        isFeatureFlagsEndpoint;
+                        isFeatureFlagsEndpoint ||
+                        isPolicyEngineEndpoint ||
+                        isPayPerUseEndpoint;
     
     // Proactively refresh token if it's expiring soon (skip for refresh and login endpoints)
     if ((requiresJWT || (isAuthEndpoint && !isAuthRefreshEndpoint)) && !isAuthRefreshEndpoint) {
@@ -441,13 +447,20 @@ apiClient.interceptors.response.use(
                     return apiClient(originalRequest);
                   }
                 } catch (refreshError: any) {
-                  // Refresh failed - check if it's because token expired
+                  // Refresh failed — only log out on clear token/session failures (not any message with "invalid")
                   const refreshErrorMsg = (refreshError?.message || '').toLowerCase();
-                  const refreshFailedDueToExpiration = refreshErrorMsg.includes('expired') ||
-                                                      refreshErrorMsg.includes('invalid') ||
-                                                      refreshErrorMsg.includes('401') ||
-                                                      refreshErrorMsg.includes('unauthorized');
-                  
+                  const refreshFailedDueToExpiration =
+                    refreshErrorMsg.includes('expired') ||
+                    refreshErrorMsg.includes('401') ||
+                    refreshErrorMsg.includes('unauthorized') ||
+                    refreshErrorMsg.includes('invalid token') ||
+                    refreshErrorMsg.includes('token invalid') ||
+                    refreshErrorMsg.includes('jwt expired') ||
+                    refreshErrorMsg.includes('refresh token') ||
+                    refreshErrorMsg.includes('revoked') ||
+                    refreshErrorMsg.includes('invalid authentication credentials') ||
+                    refreshErrorMsg.includes('no refresh token');
+
                   if (refreshFailedDueToExpiration || isTokenExpired) {
                     // Token expired or invalid credentials - redirect to sign-in page
                     console.warn(`Authentication failed for ${endpointType} endpoint - redirecting to sign-in`);
@@ -532,13 +545,19 @@ apiClient.interceptors.response.use(
                     return apiClient(originalRequest);
                   }
                 } catch (refreshError: any) {
-                  // Refresh failed - check if it's due to expiration
                   const refreshErrorMsg = (refreshError?.message || '').toLowerCase();
-                  const refreshFailedDueToExpiration = refreshErrorMsg.includes('expired') ||
-                                                      refreshErrorMsg.includes('invalid') ||
-                                                      refreshErrorMsg.includes('401') ||
-                                                      refreshErrorMsg.includes('unauthorized');
-                  
+                  const refreshFailedDueToExpiration =
+                    refreshErrorMsg.includes('expired') ||
+                    refreshErrorMsg.includes('401') ||
+                    refreshErrorMsg.includes('unauthorized') ||
+                    refreshErrorMsg.includes('invalid token') ||
+                    refreshErrorMsg.includes('token invalid') ||
+                    refreshErrorMsg.includes('jwt expired') ||
+                    refreshErrorMsg.includes('refresh token') ||
+                    refreshErrorMsg.includes('revoked') ||
+                    refreshErrorMsg.includes('invalid authentication credentials') ||
+                    refreshErrorMsg.includes('no refresh token');
+
                   if (refreshFailedDueToExpiration || isTokenExpired) {
                     // Token expired - redirect to sign-in
                     console.warn('Token expired for auth endpoint - redirecting to sign-in');
@@ -551,15 +570,9 @@ apiClient.interceptors.response.use(
                     }
                     return Promise.reject(new Error('Session expired. Please sign in again.'));
                   } else {
-                    // Other refresh error - logout
-                    console.error('Token refresh failed for auth endpoint:', refreshError);
-                    const { default: authService } = await import('./authService');
-                    authService.clearAuthTokens();
-                    authService.clearStoredUser();
-                    
-                    if (typeof window !== 'undefined') {
-                      window.location.href = '/';
-                    }
+                    // Network / transient refresh failure — keep session; user can retry
+                    console.warn('Token refresh failed for auth endpoint (non-fatal):', refreshError);
+                    return Promise.reject(refreshError);
                   }
                 }
               } else {

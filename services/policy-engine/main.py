@@ -14,6 +14,7 @@ from app.models import (
 )
 from app.repository import get_tenant_policy
 from app.database import init_database
+from app.billing_routes import router as billing_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("policy-engine")
@@ -35,6 +36,8 @@ app.add_middleware(
 )
 
 app.mount("/metrics", make_asgi_app())
+
+app.include_router(billing_router)
 
 # Define current version constant
 CURRENT_POLICY_VERSION = "v2.0"

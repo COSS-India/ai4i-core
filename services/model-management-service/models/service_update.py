@@ -1,3 +1,4 @@
+from decimal import Decimal
 from pydantic import BaseModel
 from typing import Optional , Dict , List
 
@@ -24,5 +25,7 @@ class ServiceUpdateRequest(BaseModel):
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
-    
+    cost_per_unit: Optional[Decimal] = None
+    unit_type: Optional[str] = None
+    tier: Optional[str] = None
 

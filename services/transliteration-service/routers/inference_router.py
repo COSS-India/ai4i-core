@@ -27,7 +27,6 @@ from utils.validation_utils import (
 from middleware.auth_provider import AuthProvider
 from ai4icore_multi_tenant import (
     get_tenant_db_session_factory,
-    try_get_tenant_context,
     enforce_tenant_and_service_checks,
 )
 
@@ -42,7 +41,6 @@ from ai4icore_constants.exceptions import (
     ErrorDetail
 )
 import httpx
-from ai4icore_env import app_env
 
 from ai4icore_constants.error_messages import (
     NO_TEXT_INPUT,
@@ -68,12 +66,10 @@ from ai4icore_constants.error_messages import (
 )
 
 
-API_GATEWAY_URL = app_env.api_gateway_url
-
-
 logger = logging.getLogger(__name__)
 # Use service name to get the same tracer instance as main.py
 tracer = trace.get_tracer("transliteration-service")
+
 
 # Create router
 inference_router = APIRouter(

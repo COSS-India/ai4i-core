@@ -56,6 +56,7 @@ function getConnectOrigins(): string {
     }
   }
   if (origins.size <= 1) {
+    origins.add('http://localhost:8080');
     origins.add('http://localhost:9000');
     origins.add('http://localhost:8084');
     origins.add('http://localhost:16686');

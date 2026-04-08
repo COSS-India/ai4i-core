@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import * as multiTenantService from "../../../services/multiTenantService";
+import * as policyService from "../../../services/policyService";
+import type { PlanPolicy, PlanService } from "../../../services/policyService";
 import { extractErrorInfo } from "../../../utils/errorHandler";
 import type { TenantView, TenantUserView, ServiceView } from "../../../types/multiTenant";
 import type {
@@ -85,6 +87,11 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   });
   const [tenantFormErrors, setTenantFormErrors] = useState<Record<string, string>>({});
   const [isSubmittingTenant, setIsSubmittingTenant] = useState(false);
+  const [tenantPlansForCreate, setTenantPlansForCreate] = useState<PlanPolicy[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [planServicesForCreate, setPlanServicesForCreate] = useState<PlanService[]>([]);
+  const [isLoadingPlanServices, setIsLoadingPlanServices] = useState(false);
+  const [isLoadingTenantPlans, setIsLoadingTenantPlans] = useState(false);
 
   // Add New User modal
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
@@ -268,6 +275,44 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setUserSearch("");
   };
 
+  const loadPoliciesForTenantModal = async () => {
+    setIsLoadingTenantPlans(true);
+    try {
+      const plans = await policyService.getPolicies();
+      setTenantPlansForCreate(plans);
+    } catch {
+      setTenantPlansForCreate([]);
+    } finally {
+      setIsLoadingTenantPlans(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedPlanId) {
+      setPlanServicesForCreate([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setIsLoadingPlanServices(true);
+      try {
+        const sv = await policyService.getPlanServices(selectedPlanId);
+        if (!cancelled) setPlanServicesForCreate(sv);
+      } catch {
+        if (!cancelled) setPlanServicesForCreate([]);
+      } finally {
+        if (!cancelled) setIsLoadingPlanServices(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPlanId]);
+
+  useEffect(() => {
+    setTenantForm((f) => ({ ...f, requested_subscriptions: [] }));
+  }, [selectedPlanId]);
+
   const openTenantModal = () => {
     setTenantForm({
     organization_name: "",
@@ -280,9 +325,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   });
     setTenantFormErrors({});
     setAvailableServicesForCreate(null);
+    setSelectedPlanId(null);
+    setPlanServicesForCreate([]);
     setTenantModalStep(1);
     setIsTenantModalOpen(true);
     loadServicesForCreateTenant();
+    void loadPoliciesForTenantModal();
   };
 
   const closeTenantModal = () => {
@@ -345,6 +393,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         domain: tenantForm.domain.trim(),
         contact_email: tenantForm.contact_email.trim(),
         requested_subscriptions: tenantForm.requested_subscriptions,
+        ...(selectedPlanId ? { plan_id: selectedPlanId } : {}),
       });
 
       // -------------------------------------------------------------------------
@@ -1055,6 +1104,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     availableServicesForCreate,
     isLoadingServicesForCreate,
     loadServicesForCreateTenant,
+    tenantPlansForCreate,
+    selectedPlanId,
+    setSelectedPlanId,
+    planServicesForCreate,
+    isLoadingPlanServices,
+    isLoadingTenantPlans,
     // Manage Services modal (tenant)
     isManageServicesModalOpen,
     manageServicesTenant,

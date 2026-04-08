@@ -25,6 +25,7 @@ function getAllowedConnectOrigins() {
   // Dev fallbacks when env vars are not set (e.g. next dev without .env)
   if (origins.size <= 1) {
     [
+      "http://localhost:8080",
       "http://localhost:9000",
       "http://localhost:8084",
       "http://localhost:16686",

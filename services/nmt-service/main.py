@@ -9,6 +9,10 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from dotenv import load_dotenv
+
+# Apply .env before AppEnv is constructed so PAY_PER_USE_*, API_GATEWAY_URL, etc. resolve correctly.
+load_dotenv()
+
 import httpx
 import redis.asyncio as redis
 import uvicorn
@@ -26,9 +30,6 @@ from ai4icore_logging import (
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from ai4icore_env import app_env
-
-# Load environment variables from .env file if it exists
-load_dotenv()
 
 from routers import health_router, inference_router, try_it_router
 from utils.service_registry_client import ServiceRegistryHttpClient

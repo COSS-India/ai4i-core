@@ -39,6 +39,11 @@ const layoutRoutes = [
   '/traces',
   '/alerts-management',
   '/pii-management',
+  // Admin / usage (also matched by /admin/* and /dashboard/* below)
+  '/admin/quota-configs',
+  '/admin/rate-limit-configs',
+  '/admin/policies',
+  '/dashboard/usage',
 ];
 
 export default function App({ Component, pageProps }: AppProps) {
@@ -59,8 +64,19 @@ export default function App({ Component, pageProps }: AppProps) {
       })
   );
 
-  // Check if current route needs layout (exclude auth page)
-  const needsLayout = layoutRoutes.includes(router.pathname) && router.pathname !== '/auth';
+  // Prefer router.pathname; fallback to window during early client render so we don't skip Layout
+  const path =
+    router.pathname ||
+    (typeof window !== 'undefined' ? window.location.pathname : '') ||
+    '';
+  const isAuthRoute = path === '/auth' || path.startsWith('/auth/');
+  const needsLayout =
+    (layoutRoutes.includes(path) ||
+      path === '/admin' ||
+      path.startsWith('/admin/') ||
+      path === '/dashboard' ||
+      path.startsWith('/dashboard/')) &&
+    !isAuthRoute;
 
   return (
     <ChakraProvider theme={customTheme}>

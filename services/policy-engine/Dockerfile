@@ -10,7 +10,8 @@ COPY services/policy-engine/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_env
 
-ENV PYTHONPATH="/app:/app/libs"
+# Package lives at /app/libs/ai4icore_env/ai4icore_env/ — parent dir must be on PYTHONPATH
+ENV PYTHONPATH="/app:/app/libs/ai4icore_env"
 
 # Copy code
 COPY services/policy-engine/ .
