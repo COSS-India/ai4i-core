@@ -184,6 +184,8 @@ class AppEnv(BaseSettings):
     run_inference_test: bool = True
     # "lenient" (default): 4xx treated as pass (server reachable); "strict": only <400 passes
     endpoint_validation_mode: str = "lenient"
+    # Live inference probe timeout (seconds) used by Model Management endpoint validation
+    endpoint_validation_timeout_seconds: float = 30.0
 
     # ── Multi-tenant ──
     multi_tenant_enabled: bool = True

@@ -132,6 +132,29 @@ def _dummy_data_for_input(name: str, datatype: str, shape: List[int]) -> list:
     return unit * total
 
 
+def _coerce_explicit_data(explicit, total: int) -> list:
+    """Normalize an explicit input 'data' field to match the flattened size.
+
+    The model schema may provide a single representative value (e.g. ["hi"]) for a
+    dynamic/batched tensor; for validation probes we repeat or trim values to fit.
+    """
+    if explicit is None:
+        return []
+    data = explicit if isinstance(explicit, list) else [explicit]
+    if total <= 0:
+        return data
+    if len(data) == 0:
+        return data
+    if len(data) == total:
+        return data
+    if len(data) == 1:
+        return data * total
+    # Mismatch: trim or pad by repeating last element
+    if len(data) > total:
+        return data[:total]
+    return data + [data[-1]] * (total - len(data))
+
+
 def build_triton_v2_payload(
     triton_schema: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
@@ -151,11 +174,18 @@ def build_triton_v2_payload(
         name = inp.get("name", "")
         datatype = inp.get("datatype", "BYTES")
         shape = _parse_shape(inp.get("shape", "[1]"))
+        total = 1
+        for dim in shape:
+            total *= max(dim, 1)
+        if "data" in inp and inp.get("data") is not None:
+            data = _coerce_explicit_data(inp.get("data"), total)
+        else:
+            data = _dummy_data_for_input(name, datatype, shape)
         inputs.append({
             "name": name,
             "datatype": datatype,
             "shape": shape,
-            "data": _dummy_data_for_input(name, datatype, shape),
+            "data": data,
         })
 
     payload: Dict[str, Any] = {"inputs": inputs}

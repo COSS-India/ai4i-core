@@ -8,6 +8,7 @@ The model management service can validate inference URLs with a **URL format che
 |--------|------------------------|---------|-------------|
 | `run_inference_test` | `RUN_INFERENCE_TEST` (`AppEnv` in [`ai4icore_env`](../../../libs/ai4icore_env/ai4icore_env/settings.py)) | `true` | When `true`, runs the live probe after the URL check. When `false`, only URL format is validated. |
 | `endpoint_validation_mode` | `ENDPOINT_VALIDATION_MODE` (`AppEnv`) | `lenient` | **`lenient`**: HTTP status **&lt; 500** counts as pass (4xx = reachable). **`strict`**: only **&lt; 400** passes (4xx = failure). |
+| `endpoint_validation_timeout_seconds` | `ENDPOINT_VALIDATION_TIMEOUT_SECONDS` (`AppEnv`) | `30.0` | Timeout (seconds) for the live inference probe HTTP request. |
 
 Set `RUN_INFERENCE_TEST=false` to skip the live probe (e.g. Triton not reachable from the management network). Use `ENDPOINT_VALIDATION_MODE=strict` when you want registration to **fail on any HTTP 4xx** from the probe (only status **&lt; 400** passes). This is stricter than “reachable” (lenient): it does not inspect the body or require a particular success family such as 2xx—e.g. a **3xx** still passes strict mode because **&lt; 400** is satisfied.
 

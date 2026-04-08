@@ -29,6 +29,7 @@ async def validate_endpoint_or_raise(
         request_schema=request_schema or None,
         api_key=api_key or None,
         run_inference_test=app_env.run_inference_test,
+        timeout=app_env.endpoint_validation_timeout_seconds,
         validation_mode=app_env.endpoint_validation_mode,
         triton_schema=triton_schema or None,
     )
