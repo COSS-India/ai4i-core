@@ -45,8 +45,19 @@ def _make_silent_wav_b64(duration_s: float = 0.1, sample_rate: int = 16000) -> s
 
 MINIMAL_WAV_B64: str = _make_silent_wav_b64()
 
+# 1×1 white RGB PNG (69 bytes) — decodable by PIL/OpenCV and typical OCR pipelines
+MINIMAL_PNG_B64: str = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/"
+    "AAX+Av4N70a4AAAAAElFTkSuQmCC"
+)
+
 AUDIO_INPUT_NAMES = frozenset({
     "audio", "audio_data", "wav", "wav_data", "audio_content", "raw_audio",
+})
+
+IMAGE_INPUT_NAMES = frozenset({
+    "image", "image_data", "image_content", "raw_image", "img", "pixels",
+    "input_image", "image_bytes", "photo", "picture",
 })
 
 # ---------------------------------------------------------------------------
@@ -103,13 +114,18 @@ def _parse_shape(shape_raw) -> List[int]:
 
 
 def _dummy_data_for_input(name: str, datatype: str, shape: List[int]) -> list:
-    """Pick appropriate dummy values, using a silent WAV for audio BYTES inputs."""
-    is_audio = (
-        datatype == "BYTES"
-        and name
-        and name.lower().replace("-", "_") in AUDIO_INPUT_NAMES
-    )
-    unit = [MINIMAL_WAV_B64] if is_audio else _TRITON_DTYPE_DEFAULTS.get(datatype, [""])
+    """Pick dummy tensor data: minimal WAV for audio BYTES, 1×1 PNG for image BYTES."""
+    unit: List[Any]
+    if datatype == "BYTES" and name:
+        norm = name.lower().replace("-", "_")
+        if norm in AUDIO_INPUT_NAMES:
+            unit = [MINIMAL_WAV_B64]
+        elif norm in IMAGE_INPUT_NAMES:
+            unit = [MINIMAL_PNG_B64]
+        else:
+            unit = _TRITON_DTYPE_DEFAULTS.get(datatype, [""])
+    else:
+        unit = _TRITON_DTYPE_DEFAULTS.get(datatype, [""])
     total = 1
     for dim in shape:
         total *= max(dim, 1)
