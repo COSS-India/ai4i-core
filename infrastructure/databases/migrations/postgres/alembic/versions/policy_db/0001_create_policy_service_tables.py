@@ -28,7 +28,6 @@ def upgrade() -> None:
         sa.Column(
             "supported_languages",
             postgresql.JSONB(astext_type=sa.Text()),
-            server_default=sa.text("'[]'::jsonb"),
             nullable=False,
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -39,9 +38,8 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("policy_id"),
-        sa.UniqueConstraint("name"),
     )
-    op.create_index(op.f("ix_pii_policy_name"), "pii_policy", ["name"], unique=False)
+    op.create_index(op.f("ix_pii_policy_name"), "pii_policy", ["name"], unique=True)
 
     op.create_table(
         "pii_types",
