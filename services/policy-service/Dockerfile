@@ -4,9 +4,10 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y gcc g++ curl && rm -rf /var/lib/apt/lists/*
 
-# Copy shared libs if present in monorepo (kept consistent with other services)
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_env /app/libs/ai4icore_env
+COPY libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
+COPY libs/ai4icore_auth /app/libs/ai4icore_auth
 
 # Service requirements
 COPY services/policy-service/requirements.txt /app/requirements.txt
@@ -15,6 +16,8 @@ RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir --user -r /app/requirements.txt
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_exceptions
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
 
 
 FROM python:3.11-slim
@@ -39,6 +42,8 @@ ENV PYTHONUNBUFFERED=1
 USER app
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_env
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_exceptions
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_auth
 
 EXPOSE 8099
 
