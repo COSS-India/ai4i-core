@@ -79,6 +79,7 @@ class Tenant(TenantDBBase):
     tenant_email_verifications = relationship("TenantEmailVerification", back_populates="tenant", cascade="all, delete-orphan")
     user_billing_records = relationship("UserBillingRecord", back_populates="tenant", cascade="all, delete-orphan")
     tenant_users = relationship("TenantUser", back_populates="tenant",foreign_keys="TenantUser.tenant_uuid", cascade="all, delete-orphan")
+    tenant_plans = relationship("TenantPlan", back_populates="tenant", cascade="all, delete-orphan")
 
     
     def __repr__(self):
@@ -136,6 +137,25 @@ class TenantEmailVerification(TenantDBBase):
     
 
 
+class TenantPlan(TenantDBBase):
+    __tablename__ = "tenant_plans"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    plan_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    plan_name = Column(String(128), nullable=False)
+    tier = Column(String(32), nullable=False)
+    plan_cost = Column(Numeric(12, 2), nullable=True)
+    quota_config = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    rate_limit_config = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    allowed_services = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    assigned_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    tenant = relationship("Tenant", back_populates="tenant_plans")
+
+
 class ServiceConfig(TenantDBBase):
     __tablename__ = "service_config"
 
@@ -144,6 +164,9 @@ class ServiceConfig(TenantDBBase):
     unit_type = Column(ServiceUnitTypeEnum, nullable=False) # char, second, request
     price_per_unit = Column(Numeric(10, 6), nullable=False)         # 0.010
     currency = Column(String(10), default="INR")
+    cost_per_unit = Column(Numeric(10, 4), nullable=True)
+    tier = Column(String(20), nullable=True, index=True)
+    billing_unit_type = Column(String(32), nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

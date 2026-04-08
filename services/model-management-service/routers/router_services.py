@@ -236,7 +236,7 @@ async def update_service_endpoint(
             logger.warning(f"No valid update fields provided for service {payload.serviceId}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No valid update fields provided. Valid fields: serviceDescription, hardwareDescription, endpoint, api_key, healthStatus, benchmarks, isPublished. Note: name, modelId, modelVersion are not updatable."
+                detail="No valid update fields provided. Valid fields: serviceDescription, hardwareDescription, endpoint, api_key, healthStatus, benchmarks, isPublished, cost_per_unit, unit_type, tier. Note: name, modelId, modelVersion are not updatable."
             )
 
         return f"Service '{payload.serviceId}' updated successfully."

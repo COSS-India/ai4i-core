@@ -1,4 +1,5 @@
 from typing import Dict, List, Optional
+from decimal import Decimal
 from pydantic import BaseModel , Field, field_validator
 from datetime import datetime
 import re
@@ -37,6 +38,11 @@ class ServiceCreateRequest(BaseModel):
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = False
+    cost_per_unit: Optional[Decimal] = Field(None, description="Pay-per-use cost per billing unit")
+    unit_type: Optional[str] = Field(
+        None, description="Billing unit: minutes | characters | requests"
+    )
+    tier: Optional[str] = Field(None, description="Tier-1 | Tier-2 | Tier-3")
 
     @field_validator("name")
     def validate_name(cls, v):

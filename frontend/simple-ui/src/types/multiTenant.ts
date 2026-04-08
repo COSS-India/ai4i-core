@@ -45,6 +45,10 @@ export interface TenantRegisterRequest {
   domain: string;
   contact_email: string;
   requested_subscriptions?: string[];
+  /** Optional policy-engine plan UUID (GET /policies) */
+  plan_id?: string;
+  /** All policy rows for one product name (e.g. Premium Tier-1 + Tier-2); server merges into one snapshot */
+  plan_ids?: string[];
 }
 
 export interface TenantRegisterResponse {

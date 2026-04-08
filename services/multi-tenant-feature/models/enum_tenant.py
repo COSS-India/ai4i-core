@@ -90,5 +90,18 @@ class ServiceUnitType(str, Enum):
     REQUEST = "request"
 
 
+class BillingUnitType(str, Enum):
+    """Pay-per-use / plan billing unit (minutes, characters, requests)."""
+    MINUTES = "minutes"
+    CHARACTERS = "characters"
+    REQUESTS = "requests"
+
+
+class ServiceTier(str, Enum):
+    TIER_1 = "Tier-1"
+    TIER_2 = "Tier-2"
+    TIER_3 = "Tier-3"
+
+
 class ServiceCurrencyType(str,Enum):
     INR ="INR"

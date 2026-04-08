@@ -75,6 +75,9 @@ const ServicesManagementPage: React.FC = () => {
     endpoint: "",
     task_type: "",
     modelVersion: "1.0",
+    cost_per_unit: undefined,
+    unit_type: "",
+    tier: "",
   });
   const [updateFormData, setUpdateFormData] = useState<Partial<Service>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -388,7 +391,7 @@ const ServicesManagementPage: React.FC = () => {
 
   const handleInputChange = (
     field: keyof Service,
-    value: string
+    value: string | number | undefined
   ) => {
     setFormData((prev) => ({
       ...prev,
@@ -466,6 +469,9 @@ const ServicesManagementPage: React.FC = () => {
         hardwareDescription: 'Default hardware', // Default value since field is removed
         api_key: '', // Default empty since field is removed
         status: 'active', // Default status
+        cost_per_unit: formData.cost_per_unit,
+        unit_type: formData.unit_type || undefined,
+        tier: formData.tier || undefined,
       };
 
       const createdService = await createService(serviceData);
@@ -501,6 +507,9 @@ const ServicesManagementPage: React.FC = () => {
         endpoint: "",
         task_type: "",
         modelVersion: "1.0",
+        cost_per_unit: undefined,
+        unit_type: "",
+        tier: "",
       });
       setPreselectedModelFromQuery(null);
 
@@ -1278,6 +1287,51 @@ const ServicesManagementPage: React.FC = () => {
                               />
                             </FormControl>
 
+                            <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                              <FormControl>
+                                <FormLabel fontWeight="semibold">Cost per unit</FormLabel>
+                                <Input
+                                  type="number"
+                                  step="0.0001"
+                                  value={formData.cost_per_unit ?? ""}
+                                  onChange={(e) =>
+                                    handleInputChange(
+                                      "cost_per_unit",
+                                      e.target.value === "" ? undefined : Number(e.target.value)
+                                    )
+                                  }
+                                  placeholder="e.g. 10.00"
+                                  bg="white"
+                                />
+                              </FormControl>
+                              <FormControl>
+                                <FormLabel fontWeight="semibold">Unit type</FormLabel>
+                                <Select
+                                  value={formData.unit_type || ""}
+                                  onChange={(e) => handleInputChange("unit_type", e.target.value)}
+                                  placeholder="Select unit"
+                                  bg="white"
+                                >
+                                  <option value="minutes">minutes</option>
+                                  <option value="characters">characters</option>
+                                  <option value="requests">requests</option>
+                                </Select>
+                              </FormControl>
+                              <FormControl>
+                                <FormLabel fontWeight="semibold">Tier</FormLabel>
+                                <Select
+                                  value={formData.tier || ""}
+                                  onChange={(e) => handleInputChange("tier", e.target.value)}
+                                  placeholder="Select tier"
+                                  bg="white"
+                                >
+                                  <option value="Tier-1">Tier-1</option>
+                                  <option value="Tier-2">Tier-2</option>
+                                  <option value="Tier-3">Tier-3</option>
+                                </Select>
+                              </FormControl>
+                            </SimpleGrid>
+
                             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                               <FormControl isRequired>
                                 <FormLabel fontWeight="semibold">
@@ -1361,6 +1415,9 @@ const ServicesManagementPage: React.FC = () => {
                                     endpoint: "",
                                     task_type: "",
                                     modelVersion: "1.0",
+                                    cost_per_unit: undefined,
+                                    unit_type: "",
+                                    tier: "",
                                   });
                                   setPreselectedModelFromQuery(null);
                                 }}

@@ -14,7 +14,9 @@ export const useSessionExpiry = () => {
 
   /**
    * Check if session has expired and handle accordingly.
-   * Uses JWT exp and refresh token presence; server enforces refresh token expiry.
+   * Uses access token presence only. Do not use a client wall-clock window (e.g. 24h when
+   * remember_me is false) — that fought the server's JWT + refresh-token lifetime and logged
+   * everyone out after one day. Logout on 401 / failed refresh is handled in api.ts / authService.
    * @returns true if session is valid, false if expired or not authenticated
    */
   const checkSessionExpiry = useCallback((): boolean => {
@@ -24,21 +26,6 @@ export const useSessionExpiry = () => {
       toast({
         title: 'Session expired',
         description: 'Please log in to continue.',
-        status: 'warning',
-        duration: 5000,
-        isClosable: true,
-        position: 'top',
-      });
-      router.push('/auth');
-      return false;
-    }
-
-    if (authService.isSessionExpired()) {
-      authService.clearAuthTokens();
-      authService.clearStoredUser();
-      toast({
-        title: 'Session expired',
-        description: 'Your session has expired. Please sign in again.',
         status: 'warning',
         duration: 5000,
         isClosable: true,

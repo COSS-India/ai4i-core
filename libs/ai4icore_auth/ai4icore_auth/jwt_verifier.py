@@ -170,10 +170,12 @@ class JWTVerifier:
         """
         Verify a JWT token using RS256.
         Returns AuthClaims on success, raises JWTVerificationError on failure.
-        """
-        if not self._public_keys:
-            raise JWTVerificationError("No verification keys available.")
 
+        When JWKS_URL is configured, failed verification (unknown ``kid`` or signature
+        mismatch) triggers **one** JWKS refresh and retry. Auth-service key rotation
+        otherwise left stale keys in memory and every downstream service returned 401
+        until each process was restarted.
+        """
         try:
             header = jwt.get_unverified_header(token)
         except JWTError:
@@ -187,10 +189,6 @@ class JWTVerifier:
         if alg is not None and alg != "RS256":
             raise JWTVerificationError(f"Unsupported algorithm '{alg}'. Expected RS256.")
 
-        pem = self._public_keys.get(kid)
-        if not pem:
-            raise JWTVerificationError(f"Unknown key ID '{kid}'.")
-
         decode_kwargs: dict[str, Any] = {
             "algorithms": ["RS256"],
             "options": {"verify_exp": True},
@@ -200,15 +198,42 @@ class JWTVerifier:
         if self._audience:
             decode_kwargs["audience"] = self._audience
 
-        try:
-            payload = jwt.decode(token, pem, **decode_kwargs)
-        except ExpiredSignatureError:
-            raise JWTExpiredError()
-        except JWTError as exc:
-            logger.debug("RS256 verification failed: %s", exc)
-            raise JWTVerificationError("Token verification failed.")
+        for attempt in range(2):
+            if not self._public_keys and self._jwks_url:
+                await self._refresh_jwks()
+            if not self._public_keys:
+                raise JWTVerificationError("No verification keys available.")
 
-        return self._payload_to_claims(payload)
+            pem = self._public_keys.get(kid)
+            if not pem:
+                if self._jwks_url and attempt == 0:
+                    logger.info(
+                        "JWT kid=%s not in local JWKS; refreshing from %s",
+                        kid,
+                        self._jwks_url,
+                    )
+                    await self._refresh_jwks()
+                    continue
+                raise JWTVerificationError(f"Unknown key ID '{kid}'.")
+
+            try:
+                payload = jwt.decode(token, pem, **decode_kwargs)
+                return self._payload_to_claims(payload)
+            except ExpiredSignatureError:
+                raise JWTExpiredError()
+            except JWTError as exc:
+                if self._jwks_url and attempt == 0:
+                    logger.info(
+                        "JWT verify failed for kid=%s; refreshing JWKS once (%s)",
+                        kid,
+                        exc,
+                    )
+                    await self._refresh_jwks()
+                    continue
+                logger.debug("RS256 verification failed: %s", exc)
+                raise JWTVerificationError("Token verification failed.")
+
+        raise JWTVerificationError("Token verification failed.")
 
     @staticmethod
     def _payload_to_claims(payload: dict[str, Any]) -> AuthClaims:

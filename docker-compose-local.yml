@@ -484,6 +484,8 @@ services:
       - ALLOW_ANONYMOUS_ACCESS=false
       - TRITON_ENDPOINT=${TRITON_ENDPOINT}
       - TRITON_TIMEOUT=120
+      - PAY_PER_USE_URL=http://pay-per-use-service:8006
+      - PAY_PER_USE_SERVICE_URL=http://pay-per-use-service:8006
     env_file:
       - ./services/asr-service/.env
     volumes:
@@ -508,6 +510,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      pay-per-use-service:
+        condition: service_started
     networks:
       microservices-network:
         aliases:
@@ -530,6 +534,8 @@ services:
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=${TRITON_ENDPOINT}
+      - PAY_PER_USE_URL=http://pay-per-use-service:8006
+      - PAY_PER_USE_SERVICE_URL=http://pay-per-use-service:8006
     env_file:
       - ./services/tts-service/.env
     volumes:
@@ -553,6 +559,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      pay-per-use-service:
+        condition: service_started
     networks:
       microservices-network:
         aliases:
@@ -577,6 +585,8 @@ services:
       - API_GATEWAY_URL=http://api-gateway-service:8080
       - MODEL_MANAGEMENT_SERVICE_URL=http://model-management-service:8091
       - MODEL_MANAGEMENT_TIMEOUT=20
+      - PAY_PER_USE_URL=http://pay-per-use-service:8006
+      - PAY_PER_USE_SERVICE_URL=http://pay-per-use-service:8006
       - PYTHONPATH=/app:/app/libs/ai4icore_multi_tenant:/app/libs/ai4icore_observability:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry:/app/libs/ai4icore_model_management:/home/app/.local/lib/python3.11/site-packages
     env_file:
       - ./services/nmt-service/.env
@@ -605,6 +615,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      pay-per-use-service:
+        condition: service_started
     networks:
       microservices-network:
         aliases:
@@ -906,6 +918,7 @@ services:
       - "8102:8095"
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - MULTI_TENANT_SERVICE_URL=http://multi-tenant-service:8001
     volumes:
       - ./services/policy-engine:/app
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
@@ -917,6 +930,44 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
       interval: 30s
       timeout: 5s
+
+  pay-per-use-service:
+    build:
+      context: .
+      dockerfile: ./services/pay-per-use-service/Dockerfile
+    container_name: ai4v-pay-per-use-service
+    ports:
+      - "8006:8006"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${PAY_PER_USE_DB_NAME:-pay_per_use_db}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - POLICY_ENGINE_URL=http://policy-engine:8095
+      - MULTI_TENANT_URL=http://multi-tenant-service:8001
+      - MODEL_MANAGEMENT_URL=http://model-management-service:8091
+    volumes:
+      - ./services/pay-per-use-service:/app
+    user: root
+    command: ["sh", "-c", "pip install --no-cache-dir -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8006 --workers 1 --reload"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      policy-engine:
+        condition: service_started
+      multi-tenant-service:
+        condition: service_started
+      model-management-service:
+        condition: service_started
+    networks:
+      microservices-network:
+        aliases:
+          - pay-per-use-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 30s
+      timeout: 5s
+    restart: unless-stopped
 
   smr-service:
     build:
@@ -1004,6 +1055,7 @@ services:
       - "8100:8001"
     environment:
       - ENV_FILE=.env
+      - POLICY_ENGINE_URL=http://policy-engine:8095
     env_file:
       - ./services/multi-tenant-feature/.env
     volumes:

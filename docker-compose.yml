@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Infrastructure Services
   postgres:
@@ -325,6 +323,10 @@ services:
       context: .
       dockerfile: ./services/auth-service-v2/Dockerfile
     container_name: ai4v-auth-service
+    # Persist RS256 signing keys — without this, each recreate generates new keys and every
+    # existing JWT (/me, /validate, gateway forward-auth) returns 401 until users log in again.
+    volumes:
+      - auth-rs256-keys:/app/keys
     ports:
       - "8081:8081"
     environment:
@@ -519,6 +521,8 @@ services:
       - ALLOW_ANONYMOUS_ACCESS=false
       - TRITON_ENDPOINT=${TRITON_ENDPOINT}
       - TRITON_TIMEOUT=120
+      - PAY_PER_USE_URL=http://pay-per-use-service:8006
+      - PAY_PER_USE_SERVICE_URL=http://pay-per-use-service:8006
     depends_on:
       config-service:
         condition: service_healthy
@@ -526,6 +530,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      pay-per-use-service:
+        condition: service_started
     networks:
       microservices-network:
         aliases:
@@ -548,6 +554,8 @@ services:
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=${TRITON_ENDPOINT}
+      - PAY_PER_USE_URL=http://pay-per-use-service:8006
+      - PAY_PER_USE_SERVICE_URL=http://pay-per-use-service:8006
     env_file:
       - ./services/tts-service/.env
     depends_on:
@@ -557,6 +565,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      pay-per-use-service:
+        condition: service_started
     networks:
       microservices-network:
         aliases:
@@ -580,6 +590,8 @@ services:
       - ENV_FILE=.env
       - SMR_ENABLED=${SMR_ENABLED:-false}
       - SMR_SERVICE_URL=http://smr-service:8097
+      - PAY_PER_USE_URL=http://pay-per-use-service:8006
+      - PAY_PER_USE_SERVICE_URL=http://pay-per-use-service:8006
     env_file:
       - ./services/nmt-service/.env
     depends_on:
@@ -589,6 +601,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      pay-per-use-service:
+        condition: service_started
     networks:
       microservices-network:
         aliases:
@@ -775,8 +789,8 @@ services:
 
   model-management-service:
     build:
-      context: ./services/model-management-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/model-management-service/Dockerfile
     container_name: ai4v-model-management-service
     ports:
       - "8094:8091"
@@ -820,13 +834,16 @@ services:
   
   multi-tenant-service:
     build:
-      context: ./services/multi-tenant-feature
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/multi-tenant-feature/dockerfile
     container_name: ai4v-multi-tenant-service
     ports:
       - "8100:8001"
     environment:
       - ENV_FILE=.env
+      - POLICY_ENGINE_URL=http://policy-engine:8095
+      # Set to true in .env for POC only — logs generated tenant admin / user passwords in plaintext.
+      - LOG_TENANT_GENERATED_PASSWORDS=${LOG_TENANT_GENERATED_PASSWORDS:-false}
     env_file:
       - ./services/multi-tenant-feature/.env
     depends_on:
@@ -986,18 +1003,24 @@ services:
     build:
       context: ./frontend/simple-ui
       dockerfile: Dockerfile
+      args:
+        # Baked in at `next build` — must be set here (runtime env alone is not enough).
+        NEXT_PUBLIC_API_URL: ${SIMPLE_UI_NEXT_PUBLIC_API_URL:-http://localhost:8080}
+        NEXT_PUBLIC_TELEMETRY_SERVICE_URL: ${SIMPLE_UI_NEXT_PUBLIC_TELEMETRY_SERVICE_URL:-http://localhost:8084}
+        NEXT_PUBLIC_ASR_STREAM_URL: ${SIMPLE_UI_NEXT_PUBLIC_ASR_STREAM_URL:-ws://localhost:8087/socket.io/asr}
+        NEXT_PUBLIC_TTS_STREAM_URL: ${SIMPLE_UI_NEXT_PUBLIC_TTS_STREAM_URL:-ws://localhost:8088/socket.io/tts}
+        NEXT_PUBLIC_JAEGER_URL: ${SIMPLE_UI_NEXT_PUBLIC_JAEGER_URL:-http://localhost:16686}
     container_name: ai4v-simple-ui
     ports:
       - "3000:3000"
     environment:
       # HOSTNAME=0.0.0.0 tells Next.js standalone server to listen on all interfaces
       - HOSTNAME=0.0.0.0
-      # Route all frontend API calls through the API Gateway on host
-      - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
-      # Telemetry/Observability service URL (logs and traces) - routed through API Gateway
-      - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://core-v1.ai4inclusion.org
-      - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
-      - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
+      # Note: NEXT_PUBLIC_* below does not change already-built JS; use build.args above.
+      - NEXT_PUBLIC_API_URL=${SIMPLE_UI_NEXT_PUBLIC_API_URL:-http://localhost:8080}
+      - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=${SIMPLE_UI_NEXT_PUBLIC_TELEMETRY_SERVICE_URL:-http://localhost:8084}
+      - NEXT_PUBLIC_ASR_STREAM_URL=${SIMPLE_UI_NEXT_PUBLIC_ASR_STREAM_URL:-ws://localhost:8087/socket.io/asr}
+      - NEXT_PUBLIC_TTS_STREAM_URL=${SIMPLE_UI_NEXT_PUBLIC_TTS_STREAM_URL:-ws://localhost:8088/socket.io/tts}
     networks:
       - microservices-network
     # healthcheck:
@@ -1296,13 +1319,14 @@ services:
 # Policy Engine
   policy-engine:
     build:
-      context: ./services/policy-engine
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/policy-engine/Dockerfile
     container_name: ai4v-policy-engine
     ports:
       - "8102:8095"
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - MULTI_TENANT_SERVICE_URL=http://multi-tenant-service:8001
     networks:
       - microservices-network
     restart: unless-stopped
@@ -1310,6 +1334,40 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
       interval: 30s
       timeout: 5s
+
+  pay-per-use-service:
+    build:
+      context: .
+      dockerfile: ./services/pay-per-use-service/Dockerfile
+    container_name: ai4v-pay-per-use-service
+    ports:
+      - "8006:8006"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${PAY_PER_USE_DB_NAME:-pay_per_use_db}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - POLICY_ENGINE_URL=http://policy-engine:8095
+      - MULTI_TENANT_URL=http://multi-tenant-service:8001
+      - MODEL_MANAGEMENT_URL=http://model-management-service:8091
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      policy-engine:
+        condition: service_started
+      multi-tenant-service:
+        condition: service_started
+      model-management-service:
+        condition: service_started
+    networks:
+      microservices-network:
+        aliases:
+          - pay-per-use-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 30s
+      timeout: 5s
+    restart: unless-stopped
 
   smr-service:
     build:
@@ -1376,6 +1434,8 @@ services:
 
 
 volumes:
+  auth-rs256-keys:
+    driver: local
   postgres-data:
     driver: local
     # Use Docker-managed volume by default (portable across environments).
@@ -1405,7 +1465,7 @@ volumes:
 
 networks:
   microservices-network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.31.0.0/16
+    # External: Compose must not create/remove this network (partial `up` was deleting it while
+    # other containers were still attached). Create once: scripts/ensure-microservices-network.sh
+    name: ${COMPOSE_PROJECT_NAME:-ai4i-orchestrate}_microservices-network
+    external: true

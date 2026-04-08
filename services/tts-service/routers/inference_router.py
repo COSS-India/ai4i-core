@@ -85,6 +85,8 @@ from ai4icore_multi_tenant import (
     get_tenant_db_session_factory,
     try_get_tenant_context,
     enforce_tenant_and_service_checks,
+    PayPerUseClient,
+    ppu_actor_key,
 )
 
 get_tenant_db_session = get_tenant_db_session_factory()
@@ -104,6 +106,37 @@ tracer = trace.get_tracer("tts-service")
 
 #Tenant routing and service checks
 API_GATEWAY_URL = app_env.api_gateway_url
+
+
+async def _ppu_tenant_id_tts(http_request: Request) -> Optional[str]:
+    ctx = await try_get_tenant_context(http_request, API_GATEWAY_URL)
+    if ctx and ctx.get("tenant_id"):
+        return str(ctx["tenant_id"])
+    tid = getattr(http_request.state, "tenant_id", None)
+    return str(tid) if tid else None
+
+
+async def _tts_ppu_check(http_request: Request, service_id: str, units: float) -> None:
+    tenant_id = await _ppu_tenant_id_tts(http_request)
+    actor = ppu_actor_key(http_request)
+    if not tenant_id or actor is None or not service_id:
+        return
+    u = max(float(units), 1.0)
+    ok = await PayPerUseClient().check(tenant_id, actor, str(service_id), u)
+    if not ok:
+        raise HTTPException(status_code=429, detail="Pay-per-use check failed")
+
+
+async def _tts_ppu_record(http_request: Request, service_id: str, units: float) -> None:
+    tenant_id = await _ppu_tenant_id_tts(http_request)
+    actor = ppu_actor_key(http_request)
+    if not tenant_id or actor is None or not service_id:
+        return
+    u = max(float(units), 1.0)
+    try:
+        await PayPerUseClient().record(tenant_id, actor, str(service_id), u)
+    except Exception as e:
+        logger.warning("pay_per_use record failed: %s", e)
 
 
 # Create router
@@ -1336,6 +1369,12 @@ async def run_inference(
                 "word_count": total_input_words,
                 "input_count": len(request.input)
             }
+
+            await _tts_ppu_check(
+                http_request,
+                str(request.config.serviceId),
+                float(max(total_input_characters, 1)),
+            )
             
             # Log removed - middleware handles request/response logging
 
@@ -1650,6 +1689,12 @@ async def run_inference(
                     "smr_service_id": response.smr_response.get("serviceId") if response.smr_response else None,
                 },
             )
+
+            await _tts_ppu_record(
+                http_request,
+                str(request.config.serviceId),
+                float(max(total_input_characters, 1)),
+            )
             
             return response
 
@@ -1764,6 +1809,13 @@ async def _run_tts_inference_impl(
     user_id = getattr(http_request.state, 'user_id', None)
     api_key_id = getattr(http_request.state, 'api_key_id', None)
     session_id = getattr(http_request.state, 'session_id', None)
+
+    total_input_characters = sum(len(ti.source or "") for ti in request.input)
+    await _tts_ppu_check(
+        http_request,
+        str(request.config.serviceId),
+        float(max(total_input_characters, 1)),
+    )
     
     # Log removed - middleware handles request/response logging
 
@@ -1772,6 +1824,12 @@ async def _run_tts_inference_impl(
         user_id=user_id,
         api_key_id=api_key_id,
         session_id=session_id
+    )
+
+    await _tts_ppu_record(
+        http_request,
+        str(request.config.serviceId),
+        float(max(total_input_characters, 1)),
     )
     
     # Log removed - middleware handles request/response logging

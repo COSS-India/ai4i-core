@@ -167,6 +167,8 @@ from routers.router_models import router_models
 from routers.router_services import router_services
 from routers.router_health import router_health
 from routers.router_experiments import router_experiments, router_experiments_public
+from routers.router_pricing import router_pricing
+from routers.router_internal_billing import router as router_internal_billing
 from cache.app_cache import get_cache_connection, get_async_cache_connection
 
 import uvicorn
@@ -297,6 +299,8 @@ app.include_router(router_services, prefix=API_PREFIX)
 app.include_router(router_health)
 app.include_router(router_experiments, prefix=API_PREFIX)
 app.include_router(router_experiments_public, prefix=API_PREFIX)
+app.include_router(router_pricing, prefix=API_PREFIX)
+app.include_router(router_internal_billing)
 
 
 @app.get("/")

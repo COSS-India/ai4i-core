@@ -115,6 +115,8 @@ class AppEnv(BaseSettings):
     env: Optional[str] = None
     log_level: str = "INFO"
     root_log_level: Optional[str] = None
+    # When True, multi-tenant logs generated tenant-admin / tenant-user passwords (insecure; POC/debug only).
+    log_tenant_generated_passwords: bool = False
 
     # ── Rate limiting ──
     rate_limit_per_minute: int = 60
@@ -169,6 +171,7 @@ class AppEnv(BaseSettings):
     smr_service_url: str = ""
     llm_service_url: str = ""
     policy_engine_url: str = ""
+    pay_per_use_service_url: str = ""
     request_profiler_service_url: str = ""
     simple_ui_url: str = ""
     frontend_url: str = ""

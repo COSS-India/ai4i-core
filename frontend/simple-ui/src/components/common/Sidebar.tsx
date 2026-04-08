@@ -36,6 +36,7 @@ import {
   IoPulseOutline,
   IoNotificationsOutline,
   IoShieldCheckmarkOutline,
+  IoSettingsOutline,
 } from "react-icons/io5";
 import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
@@ -176,6 +177,30 @@ const safeColorMap = {
     400: "#7986CB",
     600: "#5C6BC0",
   },
+  "admin-quota-configs": {
+    50:  "#ECEFF1",
+    300: "#90A4AE",
+    400: "#78909C",
+    600: "#546E7A",
+  },
+  "admin-rate-limit-configs": {
+    50:  "#ECEFF1",
+    300: "#90A4AE",
+    400: "#78909C",
+    600: "#546E7A",
+  },
+  "admin-policies": {
+    50:  "#ECEFF1",
+    300: "#90A4AE",
+    400: "#78909C",
+    600: "#546E7A",
+  },
+  "usage-billing": {
+    50:  "#E8F5E9",
+    300: "#A5D6A7",
+    400: "#81C784",
+    600: "#43A047",
+  },
 };
 
 const getColor = (serviceId: string, shade: 50 | 300 | 400 | 600) => {
@@ -282,6 +307,42 @@ const topNavItems: NavItem[] = [
     label: "PII Guardrail",
     path: "/pii-management",
     icon: IoShieldCheckmarkOutline,
+    iconSize: 10,
+    iconColor: "",
+    requiresAuth: true,
+  },
+  {
+    id: "admin-quota-configs",
+    label: "Quota Configs",
+    path: "/admin/quota-configs",
+    icon: IoSettingsOutline,
+    iconSize: 10,
+    iconColor: "",
+    requiresAuth: true,
+  },
+  {
+    id: "admin-rate-limit-configs",
+    label: "Rate Limit Configs",
+    path: "/admin/rate-limit-configs",
+    icon: IoSettingsOutline,
+    iconSize: 10,
+    iconColor: "",
+    requiresAuth: true,
+  },
+  {
+    id: "admin-policies",
+    label: "Plans / Policies",
+    path: "/admin/policies",
+    icon: IoAnalyticsOutline,
+    iconSize: 10,
+    iconColor: "",
+    requiresAuth: true,
+  },
+  {
+    id: "usage-billing",
+    label: "Usage & Billing",
+    path: "/dashboard/usage",
+    icon: IoAnalyticsOutline,
     iconSize: 10,
     iconColor: "",
     requiresAuth: true,
@@ -478,6 +539,19 @@ const Sidebar: React.FC = () => {
       return false;
     }
     if (item.id === "pii-management" && isGuest) {
+      return false;
+    }
+
+    if (
+      (item.id === "admin-quota-configs" ||
+        item.id === "admin-rate-limit-configs" ||
+        item.id === "admin-policies") &&
+      !isAdmin
+    ) {
+      return false;
+    }
+
+    if (item.id === "usage-billing" && !(isAdmin || tenantId)) {
       return false;
     }
 

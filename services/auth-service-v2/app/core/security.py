@@ -7,6 +7,11 @@ import logging
 import secrets
 from pathlib import Path
 
+try:
+    import fcntl
+except ImportError:  # Windows / minimal builds
+    fcntl = None  # type: ignore[misc, assignment]
+
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
@@ -48,11 +53,32 @@ class RS256KeyManager:
         """
         Load keys from disk. In production, FAIL FAST if keys are missing.
         Auto-generation is only allowed in development/testing.
+
+        Uses a cross-process lock so multiple uvicorn workers do not race to auto-generate
+        different key material (which caused intermittent 401 TOKEN_INVALID: one worker
+        signed the JWT, another verified with a different in-memory key set).
         """
         key_dir = settings.get_rs256_key_path()
         is_production = settings.environment in ("production", "staging")
+        key_dir.mkdir(parents=True, exist_ok=True)
 
-        if key_dir.exists() and any(key_dir.glob("*.pem")):
+        lock_path = key_dir / ".rs256_init.lock"
+        lock_path.touch(exist_ok=True)
+
+        with open(lock_path, "rb+") as lock_file:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                self._initialize_keys_after_lock(key_dir, is_production)
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _initialize_keys_after_lock(self, key_dir: Path, is_production: bool) -> None:
+        """Load or generate keys; caller must hold .rs256_init.lock when generating."""
+        has_private = any(key_dir.glob("*_private.pem"))
+
+        if has_private:
             self._load_from_directory(key_dir)
         elif is_production:
             raise RuntimeError(
@@ -65,9 +91,9 @@ class RS256KeyManager:
         else:
             logger.warning(
                 "No RSA keys found at %s — generating %d key pairs for development.",
-                key_dir, settings.rs256_min_key_count,
+                key_dir,
+                settings.rs256_min_key_count,
             )
-            key_dir.mkdir(parents=True, exist_ok=True)
             self._generate_keys(key_dir, settings.rs256_min_key_count)
 
         if len(self._keys) < settings.rs256_min_key_count:
@@ -79,7 +105,8 @@ class RS256KeyManager:
                 )
             logger.warning(
                 "Only %d key pair(s) found, minimum is %d. Generating additional keys.",
-                len(self._keys), settings.rs256_min_key_count,
+                len(self._keys),
+                settings.rs256_min_key_count,
             )
             self._generate_keys(key_dir, settings.rs256_min_key_count - len(self._keys))
 

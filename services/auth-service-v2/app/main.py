@@ -88,6 +88,7 @@ async def lifespan(app: FastAPI):
             settings.multi_tenant_db_url,
             pool_size=settings.multi_tenant_db_pool_size,
             max_overflow=settings.multi_tenant_db_max_overflow,
+            pool_pre_ping=True,
         )
         app.state.multi_tenant_engine = mt_engine
 

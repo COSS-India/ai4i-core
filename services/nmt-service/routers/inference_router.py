@@ -41,6 +41,8 @@ from ai4icore_multi_tenant import (
     get_tenant_db_session_factory,
     try_get_tenant_context,
     enforce_tenant_and_service_checks,
+    PayPerUseClient,
+    ppu_actor_key,
 )
 
 get_tenant_db_session = get_tenant_db_session_factory()
@@ -85,6 +87,62 @@ API_GATEWAY_URL = app_env.api_gateway_url
 # SMR Service Configuration
 SMR_SERVICE_URL = app_env.smr_service_url
 
+
+async def _ppu_tenant_id_nmt(http_request: Request) -> Optional[str]:
+    ctx = await try_get_tenant_context(http_request, API_GATEWAY_URL)
+    if ctx and ctx.get("tenant_id"):
+        return str(ctx["tenant_id"])
+    tid = getattr(http_request.state, "tenant_id", None)
+    return str(tid) if tid else None
+
+
+async def _nmt_ppu_check(http_request: Request, service_id: str, units: float) -> None:
+    ppu = PayPerUseClient()
+    tenant_id = await _ppu_tenant_id_nmt(http_request)
+    actor = ppu_actor_key(http_request)
+    if not ppu.base_url:
+        if tenant_id:
+            logger.warning(
+                "pay_per_use: base URL not configured; skipping quota/wallet pre-check for tenant_id=%s",
+                tenant_id,
+            )
+        return
+    if not tenant_id or actor is None or not service_id:
+        return
+    u = max(float(units), 1.0)
+    ok = await ppu.check(tenant_id, actor, str(service_id), u)
+    if not ok:
+        raise HTTPException(status_code=429, detail="Pay-per-use check failed")
+
+
+async def _nmt_ppu_record(http_request: Request, service_id: str, units: float) -> None:
+    ppu = PayPerUseClient()
+    tenant_id = await _ppu_tenant_id_nmt(http_request)
+    actor = ppu_actor_key(http_request)
+    if not ppu.base_url:
+        if tenant_id:
+            logger.warning(
+                "pay_per_use: base URL not configured; usage not recorded for tenant_id=%s "
+                "(set PAY_PER_USE_URL or PAY_PER_USE_SERVICE_URL)",
+                tenant_id,
+            )
+        return
+    if not tenant_id or actor is None or not service_id:
+        if tenant_id and actor is None:
+            logger.warning(
+                "pay_per_use: no billing actor (set user_id/api_key_id or valid JWT); "
+                "usage not recorded for tenant_id=%s service_id=%s",
+                tenant_id,
+                service_id,
+            )
+        return
+    u = max(float(units), 1.0)
+    try:
+        await ppu.record(tenant_id, actor, str(service_id), u)
+    except Exception as e:
+        logger.warning("pay_per_use record failed: %s", e)
+
+
 # Create router
 inference_router = APIRouter(
     prefix="/api/v1/nmt",
@@ -98,14 +156,143 @@ async def get_db_session(request: Request) -> AsyncSession:
     return request.app.state.db_session_factory()
 
 
+async def _resolve_triton_from_model_management(
+    http_request: Request, service_id: str
+) -> None:
+    """
+    Resolve Triton endpoint and model name from Model Management and set request.state.
+    Used when serviceId is known (from SMR or from the client).
+    """
+    model_management_client = getattr(http_request.app.state, "model_management_client", None)
+    redis_client = getattr(http_request.app.state, "redis_client", None)
+
+    if not model_management_client:
+        logger.error(
+            "Model Management client not available in app.state - cannot resolve endpoint",
+            extra={"service_id": service_id},
+        )
+        http_request.state.model_management_error = (
+            "Model Management client not available in application state"
+        )
+        return
+
+    try:
+        auth_headers = extract_auth_headers(http_request)
+        service_info = await model_management_client.get_service(
+            service_id=service_id,
+            use_cache=True,
+            redis_client=redis_client,
+            auth_headers=auth_headers,
+        )
+
+        if not service_info:
+            logger.error(
+                "Service not found in Model Management",
+                extra={"service_id": service_id},
+            )
+            http_request.state.model_management_error = (
+                f"Service {service_id} not found in Model Management database"
+            )
+        elif service_info.is_published is not True:
+            logger.warning(
+                "NMT inference rejected: service is unpublished",
+                extra={"service_id": service_id},
+            )
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": SERVICE_UNPUBLISHED,
+                    "message": SERVICE_UNPUBLISHED_MESSAGE,
+                    "serviceId": service_id,
+                },
+            )
+        elif not service_info.endpoint:
+            logger.error(
+                "Service found but has no endpoint configured",
+                extra={
+                    "service_id": service_id,
+                    "service_name": service_info.name,
+                    "model_id": service_info.model_id,
+                },
+            )
+            http_request.state.model_management_error = (
+                f"Service {service_id} found but has no endpoint configured"
+            )
+        else:
+            triton_endpoint = service_info.endpoint
+            triton_api_key = service_info.api_key or ""
+
+            triton_model_name = "unknown"
+            if service_info.model_inference_endpoint:
+                inference_endpoint = service_info.model_inference_endpoint
+                if isinstance(inference_endpoint, dict):
+                    triton_model_name = (
+                        inference_endpoint.get("model_name")
+                        or inference_endpoint.get("modelName")
+                        or inference_endpoint.get("model")
+                        or service_info.triton_model
+                        or service_info.model_name
+                        or "unknown"
+                    )
+                    logger.debug(
+                        "Extracted model name from inference endpoint",
+                        extra={
+                            "service_id": service_id,
+                            "model_name": triton_model_name,
+                            "inference_endpoint_keys": list(inference_endpoint.keys())
+                            if isinstance(inference_endpoint, dict)
+                            else None,
+                        },
+                    )
+            elif service_info.model_name:
+                triton_model_name = service_info.model_name
+            elif service_info.triton_model:
+                triton_model_name = service_info.triton_model
+
+            http_request.state.triton_endpoint = triton_endpoint
+            http_request.state.triton_api_key = triton_api_key
+            http_request.state.triton_model_name = triton_model_name
+            logger.info(
+                "Resolved Triton endpoint from Model Management for serviceId",
+                extra={
+                    "service_id": service_id,
+                    "triton_endpoint": triton_endpoint,
+                    "triton_model_name": triton_model_name,
+                    "has_api_key": bool(triton_api_key),
+                },
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error resolving Triton endpoint for serviceId",
+            extra={"service_id": service_id, "error": str(e)},
+            exc_info=True,
+        )
+        http_request.state.model_management_error = str(e)
+        if "401" in str(e) or "403" in str(e) or "404" in str(e):
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "MODEL_MANAGEMENT_ERROR",
+                    "message": (
+                        f"Failed to resolve endpoint for serviceId {service_id}: {str(e)}"
+                    ),
+                },
+            ) from e
+
+
 async def resolve_service_id_if_needed(
     request: NMTInferenceRequest,
     http_request: Request,
 ) -> Optional[Dict[str, Any]]:
     """
-    Dependency to resolve serviceId via SMR if not provided in request.
-    This runs before get_nmt_service to ensure serviceId is available.
-    
+    Dependency to resolve serviceId and Triton endpoint before inference.
+
+    If config.serviceId is missing, calls SMR to choose a serviceId, then resolves
+    the endpoint via Model Management. If the client already sends serviceId,
+    only Model Management resolution runs (same as the SMR path).
+
     Returns SMR response data if SMR was called, None otherwise.
     """
     # Log removed - middleware handles request/response logging
@@ -116,10 +303,8 @@ async def resolve_service_id_if_needed(
         
         # Only use tenant_id if it's from JWT token, not from fallback lookup
         # Check if tenant_id exists in JWT payload (authentic tenant_id)
-        jwt_payload = getattr(http_request.state, "jwt_payload", None)
-        tenant_id_from_jwt = None
-        if jwt_payload:
-            tenant_id_from_jwt = jwt_payload.get("tenant_id")
+        claims = getattr(http_request.state, "jwt_claims", None)
+        tenant_id_from_jwt = getattr(claims, "tenant_id", None) if claims else None
         
         # Only pass tenant_id to SMR if it's from JWT token
         # If tenant_id is from fallback lookup (not in JWT), treat as free user
@@ -206,128 +391,17 @@ async def resolve_service_id_if_needed(
         request.config.serviceId = service_id
         # Also set in request.state for Model Management middleware
         http_request.state.service_id = service_id
-        
-        # Manually resolve Triton endpoint using Model Management client
-        # (since middleware already ran and didn't see serviceId)
-        model_management_client = getattr(http_request.app.state, "model_management_client", None)
-        redis_client = getattr(http_request.app.state, "redis_client", None)
-        
-        if not model_management_client:
-            logger.error(
-                "Model Management client not available in app.state - cannot resolve endpoint",
-                extra={"service_id": service_id}
-            )
-            http_request.state.model_management_error = "Model Management client not available in application state"
-        else:
-            try:
-                auth_headers = extract_auth_headers(http_request)
-                # Get service info from Model Management
-                service_info = await model_management_client.get_service(
-                    service_id=service_id,
-                    use_cache=True,
-                    redis_client=redis_client,
-                    auth_headers=auth_headers,
-                )
-                
-                if not service_info:
-                    logger.error(
-                        "Service not found in Model Management",
-                        extra={"service_id": service_id}
-                    )
-                    http_request.state.model_management_error = f"Service {service_id} not found in Model Management database"
-                elif service_info.is_published is not True:
-                    logger.warning(
-                        "NMT inference rejected: service is unpublished",
-                        extra={"service_id": service_id},
-                    )
-                    raise HTTPException(
-                        status_code=403,
-                        detail={
-                            "code": SERVICE_UNPUBLISHED,
-                            "message": SERVICE_UNPUBLISHED_MESSAGE,
-                            "serviceId": service_id,
-                        },
-                    )
-                elif not service_info.endpoint:
-                    logger.error(
-                        "Service found but has no endpoint configured",
-                        extra={
-                            "service_id": service_id,
-                            "service_name": service_info.name,
-                            "model_id": service_info.model_id,
-                        }
-                    )
-                    http_request.state.model_management_error = f"Service {service_id} found but has no endpoint configured"
-                else:
-                    triton_endpoint = service_info.endpoint
-                    triton_api_key = service_info.api_key or ""
-                    
-                    # Extract model name from inference endpoint
-                    # The model_name is typically stored in model_inference_endpoint.model_name
-                    triton_model_name = "unknown"
-                    if service_info.model_inference_endpoint:
-                        # Try to extract model name from inference endpoint schema
-                        inference_endpoint = service_info.model_inference_endpoint
-                        if isinstance(inference_endpoint, dict):
-                            # Check common patterns for model name in inference endpoint
-                            # model_name is the standard field name in InferenceEndPoint
-                            triton_model_name = (
-                                inference_endpoint.get("model_name") or
-                                inference_endpoint.get("modelName") or
-                                inference_endpoint.get("model") or
-                                service_info.triton_model or
-                                service_info.model_name or
-                                "unknown"
-                            )
-                            logger.debug(
-                                "Extracted model name from inference endpoint",
-                                extra={
-                                    "service_id": service_id,
-                                    "model_name": triton_model_name,
-                                    "inference_endpoint_keys": list(inference_endpoint.keys()) if isinstance(inference_endpoint, dict) else None,
-                                }
-                            )
-                    elif service_info.model_name:
-                        triton_model_name = service_info.model_name
-                    elif service_info.triton_model:
-                        triton_model_name = service_info.triton_model
-                    
-                    http_request.state.triton_endpoint = triton_endpoint
-                    http_request.state.triton_api_key = triton_api_key
-                    http_request.state.triton_model_name = triton_model_name
-                    logger.info(
-                        "Manually resolved Triton endpoint for SMR-selected serviceId",
-                        extra={
-                            "service_id": service_id,
-                            "triton_endpoint": triton_endpoint,
-                            "triton_model_name": triton_model_name,
-                            "has_api_key": bool(triton_api_key),
-                        }
-                    )
-            except Exception as e:
-                logger.error(
-                    "Error resolving Triton endpoint for SMR-selected serviceId",
-                    extra={"service_id": service_id, "error": str(e)},
-                    exc_info=True
-                )
-                # Set error in request state so get_nmt_service can provide better error message
-                http_request.state.model_management_error = str(e)
-                # Re-raise if it's a critical error that should stop processing
-                if "401" in str(e) or "403" in str(e) or "404" in str(e):
-                    raise HTTPException(
-                        status_code=500,
-                        detail={
-                            "code": "MODEL_MANAGEMENT_ERROR",
-                            "message": f"Failed to resolve endpoint for serviceId {service_id}: {str(e)}",
-                        },
-                    ) from e
-        
+        await _resolve_triton_from_model_management(http_request, service_id)
+
         # Store SMR response in request state for later use
         http_request.state.smr_response_data = smr_response_data
         
         # Verify that endpoint was set (if Model Management client was available)
         # Skip this check if context-aware was used (endpoint resolution was skipped)
         is_context_aware = getattr(http_request.state, "is_context_aware", False)
+        model_management_client = getattr(
+            http_request.app.state, "model_management_client", None
+        )
         if not is_context_aware and model_management_client:
             triton_endpoint_check = getattr(http_request.state, "triton_endpoint", None)
             if not triton_endpoint_check:
@@ -368,7 +442,44 @@ async def resolve_service_id_if_needed(
         )
         
         return smr_response_data
-    
+
+    sid = (request.config.serviceId or "").strip()
+    if sid:
+        http_request.state.service_id = sid
+        await _resolve_triton_from_model_management(http_request, sid)
+        is_context_aware = getattr(http_request.state, "is_context_aware", False)
+        model_management_client = getattr(
+            http_request.app.state, "model_management_client", None
+        )
+        if not is_context_aware and model_management_client:
+            if not getattr(http_request.state, "triton_endpoint", None):
+                model_mgmt_error = getattr(
+                    http_request.state, "model_management_error", None
+                )
+                error_msg = f"Failed to resolve Triton endpoint for serviceId: {sid}"
+                if model_mgmt_error:
+                    error_msg += f". {model_mgmt_error}"
+                else:
+                    error_msg += (
+                        ". Please ensure the service is registered in Model Management "
+                        "database with a valid endpoint."
+                    )
+                logger.error(
+                    "Failed to resolve Triton endpoint for explicit serviceId",
+                    extra={
+                        "service_id": sid,
+                        "model_management_error": model_mgmt_error,
+                    },
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "code": "ENDPOINT_RESOLUTION_FAILED",
+                        "message": error_msg,
+                        "smr_response": None,
+                    },
+                )
+
     return None
 
 
@@ -943,6 +1054,24 @@ async def run_inference(
         # SMR already handled the context-aware translation, return the result
         from models.nmt_response import TranslationOutput
         context_output = smr_response.get("context_aware_result", {}).get("output", [])
+        sid_ctx = (
+            (request.config.serviceId or smr_response.get("serviceId") or "")
+        ).strip()
+        if request.input:
+            nmt_ppu_units_ctx = float(max(sum(len(inp.source or "") for inp in request.input), 1))
+        else:
+            nmt_ppu_units_ctx = float(
+                max(
+                    sum(
+                        len(str(item.get("source", "") or ""))
+                        + len(str(item.get("target", "") or ""))
+                        for item in context_output
+                    ),
+                    1,
+                )
+            )
+        if sid_ctx:
+            await _nmt_ppu_check(http_request, sid_ctx, nmt_ppu_units_ctx)
         output_list = [
             TranslationOutput(
                 source=item.get("source", ""),
@@ -952,6 +1081,8 @@ async def run_inference(
         ]
         
         response = NMTInferenceResponse(output=output_list, smr_response=smr_response)
+        if sid_ctx:
+            await _nmt_ppu_record(http_request, sid_ctx, nmt_ppu_units_ctx)
         return response
     
     # Normal SMR flow when context-aware is not enabled or serviceId was already provided
@@ -1014,6 +1145,12 @@ async def run_inference(
             # Add input metrics to span
             span.set_attribute("nmt.input.character_length", total_input_characters)
             span.set_attribute("nmt.input.word_count", total_input_words)
+
+            await _nmt_ppu_check(
+                http_request,
+                str(request.config.serviceId),
+                float(max(total_input_characters, 1)),
+            )
             
             # Track request size (approximate)
             try:
@@ -1360,6 +1497,12 @@ async def run_inference(
                 response_dict["smr_response"] = None
             # Create new response object with SMR data
             response = NMTInferenceResponse(**response_dict)
+
+            await _nmt_ppu_record(
+                http_request,
+                str(request.config.serviceId),
+                float(max(total_input_characters, 1)),
+            )
             
             # Log removed - middleware handles request/response logging
             
@@ -1394,6 +1537,11 @@ async def run_inference(
                 span.add_event("nmt.inference.static_fallback", {"reason": "Triton unreachable"})
                 span.set_status(Status(StatusCode.OK))
                 logger.info("Returning static NMT fallback (Triton unreachable)")
+                await _nmt_ppu_record(
+                    http_request,
+                    str(request.config.serviceId),
+                    float(max(total_input_characters, 1)),
+                )
                 return NMTInferenceResponse(output=output)
             span.set_attribute("error", True)
             span.set_attribute("error.type", type(exc).__name__)
@@ -1504,6 +1652,13 @@ async def _run_nmt_inference_impl(
     api_key_id = getattr(http_request.state, "api_key_id", None)
     session_id = getattr(http_request.state, "session_id", None)
 
+    total_input_chars = sum(len(inp.source or "") for inp in request.input)
+    await _nmt_ppu_check(
+        http_request,
+        str(request.config.serviceId),
+        float(max(total_input_chars, 1)),
+    )
+
     # Log removed - middleware handles request/response logging
 
     try:
@@ -1525,6 +1680,11 @@ async def _run_nmt_inference_impl(
             static_data = get_nmt_static_response(input_texts)
             output = [TranslationOutput(**o) for o in static_data["output"]]
             logger.info("Returning static NMT fallback (Triton unreachable)")
+            await _nmt_ppu_record(
+                http_request,
+                str(request.config.serviceId),
+                float(max(total_input_chars, 1)),
+            )
             return NMTInferenceResponse(output=output, smr_response=smr_response_data)
         raise
     
@@ -1539,6 +1699,12 @@ async def _run_nmt_inference_impl(
     else:
         response_dict["smr_response"] = None
     response = NMTInferenceResponse(**response_dict)
+
+    await _nmt_ppu_record(
+        http_request,
+        str(request.config.serviceId),
+        float(max(total_input_chars, 1)),
+    )
 
     # Log removed - middleware handles request/response logging
     return response

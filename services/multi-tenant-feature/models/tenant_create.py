@@ -20,6 +20,11 @@ class TenantRegisterRequest(BaseModel):
     requested_subscriptions: Optional[List[SubscriptionType]] = Field(default=[], description="List of requested service subscriptions, e.g. ['tts', 'asr']")
     requested_quotas: Optional[QuotaStructure] = Field(None, description="Requested quota limits for the tenant")
     usage_quota: Optional[QuotaStructure] = Field(None, description="Initial usage quota values")
+    plan_id: Optional[UUID] = Field(None, description="Optional subscription plan from policy-engine (POST /policies)")
+    plan_ids: Optional[List[UUID]] = Field(
+        None,
+        description="Optional list of policy-engine plan UUIDs (e.g. all tiers for one product name); merged into one tenant snapshot",
+    )
 
 
 class TenantRegisterResponse(BaseModel):
