@@ -268,6 +268,10 @@ def _load_policy_service_metadata():
         sys.path.insert(0, policy_path)
 
     # Ensure we import policy-service's `app.*`, not another service's `app.*`.
+    # SAFETY: This is only safe because our migration entrypoints run databases
+    # sequentially in a single process (e.g. `scripts/migrate.sh`). If migrations
+    # are ever executed in parallel within the same Python process, purging
+    # `app.*` here can corrupt other services' imports mid-run.
     for module_name in list(sys.modules.keys()):
         if module_name == "app" or module_name.startswith("app."):
             sys.modules.pop(module_name, None)
