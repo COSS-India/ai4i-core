@@ -144,7 +144,7 @@ async def run_inference(
         # Fallback if tracing not available
         return await _run_inference_impl(request_body, http_request, language_diarization_service)
     
-    with tracer.start_as_current_span("language_diarization.inference") as span:
+    with tracer.start_as_current_span("language-diarization.inference") as span:
         try:
             # Extract auth context from request.state (if middleware is configured)
             user_id = getattr(http_request.state, "user_id", None)
@@ -157,9 +157,9 @@ async def run_inference(
                 span.set_attribute("correlation.id", correlation_id)
             
             # Add request metadata to span
-            span.set_attribute("language_diarization.audio_count", len(request_body.audio))
+            span.set_attribute("language-diarization.audio_count", len(request_body.audio))
             if request_body.config and request_body.config.serviceId:
-                span.set_attribute("language_diarization.service_id", request_body.config.serviceId)
+                span.set_attribute("language-diarization.service_id", request_body.config.serviceId)
             
             # Track request size (approximate)
             try:
@@ -177,7 +177,7 @@ async def run_inference(
                 span.set_attribute("session.id", str(session_id))
             
             # Add span event for request start
-            span.add_event("language_diarization.inference.started", {
+            span.add_event("language-diarization.inference.started", {
                 "audio_count": len(request_body.audio),
                 "service_id": request_body.config.serviceId if request_body.config else "unknown"
             })
@@ -224,10 +224,10 @@ async def run_inference(
             )
             
             # Add response metadata to span
-            span.set_attribute("language_diarization.output_count", len(response.output))
+            span.set_attribute("language-diarization.output_count", len(response.output))
             span.set_attribute("http.status_code", 200)
             span.set_attribute("http.response.size_bytes", response_size)
-            span.set_attribute("language_diarization.total_segments", total_segments)
+            span.set_attribute("language-diarization.total_segments", total_segments)
             
             # Add response preview to span
             try:
@@ -248,7 +248,7 @@ async def run_inference(
             for idx, out in enumerate(response.output):
                 completion_event_data[f"output_{idx}_segments"] = out.total_segments
             
-            span.add_event("language_diarization.inference.completed", completion_event_data)
+            span.add_event("language-diarization.inference.completed", completion_event_data)
             span.set_status(Status(StatusCode.OK))
             
             return response
@@ -263,7 +263,7 @@ async def run_inference(
             span.set_attribute("http.status_code", 400)
             span.set_attribute("error.stack_trace", tb_str[:1000])
             
-            span.add_event("language_diarization.inference.failed", {
+            span.add_event("language-diarization.inference.failed", {
                 "error_type": type(exc).__name__,
                 "error_message": str(exc),
                 "stack_trace_preview": tb_str[:500]
@@ -306,7 +306,7 @@ async def run_inference(
                         segments=segments,
                         target_language=o["target_language"],
                     ))
-                span.add_event("language_diarization.inference.static_fallback", {"reason": "Triton unreachable"})
+                span.add_event("language-diarization.inference.static_fallback", {"reason": "Triton unreachable"})
                 span.set_status(Status(StatusCode.OK))
                 logger.info("Returning static Language Diarization fallback (Triton unreachable)")
                 return LanguageDiarizationInferenceResponse(output=output)
@@ -323,7 +323,7 @@ async def run_inference(
             triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
             
             # Add detailed context to span event
-            span.add_event("language_diarization.inference.failed", {
+            span.add_event("language-diarization.inference.failed", {
                 "error_type": type(exc).__name__,
                 "error_message": str(exc),
                 "service_id": service_id or "unknown",
@@ -381,7 +381,7 @@ async def run_inference(
             span.set_attribute("error.stack_trace", tb_str[:1000])  # Truncate for span
             
             # Add detailed error event
-            span.add_event("language_diarization.inference.failed", {
+            span.add_event("language-diarization.inference.failed", {
                 "error_type": type(exc).__name__,
                 "error_message": str(exc),
                 "stack_trace_preview": tb_str[:500],

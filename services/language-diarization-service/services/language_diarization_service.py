@@ -119,18 +119,18 @@ class LanguageDiarizationService:
 
         # Process each audio input with tracing
         if tracer:
-            audio_loop_span_context = tracer.start_as_current_span("language_diarization.process_audio_loop")
+            audio_loop_span_context = tracer.start_as_current_span("language-diarization.process_audio_loop")
         else:
             audio_loop_span_context = nullcontext()
         
         with audio_loop_span_context as audio_loop_span:
             if audio_loop_span:
-                audio_loop_span.set_attribute("language_diarization.audio_count", len(request.audio))
+                audio_loop_span.set_attribute("language-diarization.audio_count", len(request.audio))
             
             for idx, audio_item in enumerate(request.audio):
                 # Resolve audio to base64 with tracing
                 if tracer:
-                    resolve_span_context = tracer.start_as_current_span("language_diarization.resolve_audio")
+                    resolve_span_context = tracer.start_as_current_span("language-diarization.resolve_audio")
                 else:
                     resolve_span_context = nullcontext()
                 
@@ -138,11 +138,11 @@ class LanguageDiarizationService:
                     audio_base64 = self._resolve_audio_base64(audio_item)
                     
                     if resolve_span:
-                        resolve_span.set_attribute("language_diarization.audio_index", idx + 1)
-                        resolve_span.set_attribute("language_diarization.has_content", bool(audio_item.audioContent))
-                        resolve_span.set_attribute("language_diarization.has_uri", bool(audio_item.audioUri))
+                        resolve_span.set_attribute("language-diarization.audio_index", idx + 1)
+                        resolve_span.set_attribute("language-diarization.has_content", bool(audio_item.audioContent))
+                        resolve_span.set_attribute("language-diarization.has_uri", bool(audio_item.audioUri))
                         if audio_base64:
-                            resolve_span.set_attribute("language_diarization.audio_size_bytes", len(audio_base64))
+                            resolve_span.set_attribute("language-diarization.audio_size_bytes", len(audio_base64))
 
                 if not audio_base64:
                     # Skip if no audio data
@@ -177,7 +177,7 @@ class LanguageDiarizationService:
 
                     # Map the response to output format with tracing
                     if tracer:
-                        extract_span_context = tracer.start_as_current_span("language_diarization.extract_results")
+                        extract_span_context = tracer.start_as_current_span("language-diarization.extract_results")
                     else:
                         extract_span_context = nullcontext()
                     
@@ -210,8 +210,8 @@ class LanguageDiarizationService:
                         target_language = diarization_data.get("target_language", target_language)
 
                         if extract_span:
-                            extract_span.set_attribute("language_diarization.segment_count", len(segments_list))
-                            extract_span.set_attribute("language_diarization.target_language", target_language)
+                            extract_span.set_attribute("language-diarization.segment_count", len(segments_list))
+                            extract_span.set_attribute("language-diarization.target_language", target_language)
 
                         output = LanguageDiarizationOutput(
                             total_segments=len(segments_list),
