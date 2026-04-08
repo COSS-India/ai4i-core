@@ -17,17 +17,10 @@ from db_operations import (
 )
 from db_connection import get_auth_db_session
 from utils.permission_checker import require_permission, require_permission_dependency
-from validators import validate_endpoint, ValidationStatus
+from utils.request_helpers import get_user_id, validate_endpoint_or_raise
 from logger import logger
 from typing import List, Union, Optional
 from models.type_enum import TaskTypeEnum
-from ai4icore_env import app_env
-
-
-def get_user_id_from_request(request: Request) -> Optional[str]:
-    """Extract user_id from request state (set by AuthProvider or Kong) as string."""
-    user_id = getattr(request.state, 'user_id', None)
-    return str(user_id) if user_id is not None else None
 
 
 router_models = APIRouter(
@@ -35,6 +28,16 @@ router_models = APIRouter(
     tags=["Model Management"],
     dependencies=[Depends(AuthProvider)]
 )
+
+
+def _ep_schema_params(ep_schema) -> dict:
+    """Extract request_schema and triton_schema from an endpoint schema object."""
+    if not ep_schema:
+        return {"request_schema": None, "triton_schema": None}
+    return {
+        "request_schema": ep_schema.request,
+        "triton_schema": ep_schema.response.get("triton") if ep_schema.response else None,
+    }
 
 
 @router_models.get("", response_model=List[ModelViewResponse])
@@ -103,7 +106,6 @@ async def view_model_by_id(
     db: AsyncSession = Depends(get_auth_db_session)
 ):
     """Get model by ID with optional version in body - POST /models/{model_id}. Requires 'model.read' permission (ADMIN or MODERATOR only)."""
-    # Check permission - only ADMIN and MODERATOR can read models
     await require_permission("model.read", request, db)
     try:
         version = payload.version if payload else None
@@ -128,29 +130,20 @@ async def create_model(
     db: AsyncSession = Depends(get_auth_db_session)
 ):
     """Create a new model - POST /models. Requires 'model.create' permission (ADMIN or MODERATOR only)."""
-    
     try:
-        # Validate inference endpoint URL if provided
-        endpoint_url = payload.inferenceEndPoint.endpoint
-        if endpoint_url:
-            validation = await validate_endpoint(
-                endpoint=endpoint_url,
-                task_type=payload.task.type,
-                request_schema=payload.inferenceEndPoint.schema.request or None,
-                run_inference_test=app_env.run_inference_test,
-            )
-            if not validation.is_valid:
-                failed = [d for d in validation.details if d.status == ValidationStatus.FAILED]
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "kind": "EndpointValidationError",
-                        "message": "Inference endpoint URL is invalid.",
-                        "errors": [d.message for d in failed],
-                    },
-                )
+        # Endpoint validation on create is optional — skip so models can be
+        # registered before Triton is reachable. Endpoint will be validated
+        # on service creation
+        # endpoint_url = payload.inferenceEndPoint.endpoint
+        # if endpoint_url:
+        #     await validate_endpoint_or_raise(
+        #         endpoint=endpoint_url,
+        #         task_type=payload.task.type,
+        #         error_message="Inference endpoint URL is invalid.",
+        #         **_ep_schema_params(payload.inferenceEndPoint.schema),
+        #     )
 
-        user_id = get_user_id_from_request(request)
+        user_id = get_user_id(request)
         model_id = await save_model_to_db(payload, created_by=user_id)
         logger.info(f"Model '{payload.name}' inserted successfully by user {user_id}.")
         return f"Model '{payload.name}' (ID: {model_id}) created successfully."
@@ -171,32 +164,17 @@ async def update_model_endpoint(
     db: AsyncSession = Depends(get_auth_db_session)
 ):
     """Update a model - PATCH /models. Requires 'model.update' permission (ADMIN or MODERATOR only)."""
-    
     try:
-        # Validate inference endpoint URL if being updated
         if payload.inferenceEndPoint and payload.inferenceEndPoint.endpoint:
             task_type = payload.task.type if payload.task else None
-            validation = await validate_endpoint(
+            await validate_endpoint_or_raise(
                 endpoint=payload.inferenceEndPoint.endpoint,
                 task_type=task_type,
-                request_schema=(
-                    payload.inferenceEndPoint.schema.request
-                    if payload.inferenceEndPoint.schema else None
-                ),
-                run_inference_test=app_env.run_inference_test,
+                error_message="Inference endpoint URL is invalid.",
+                **_ep_schema_params(payload.inferenceEndPoint.schema),
             )
-            if not validation.is_valid:
-                failed = [d for d in validation.details if d.status == ValidationStatus.FAILED]
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "kind": "EndpointValidationError",
-                        "message": "Inference endpoint URL is invalid.",
-                        "errors": [d.message for d in failed],
-                    },
-                )
 
-        user_id = get_user_id_from_request(request)
+        user_id = get_user_id(request)
         result = await update_model(payload, updated_by=user_id)
 
         if result == 0:
