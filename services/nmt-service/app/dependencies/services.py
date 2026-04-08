@@ -89,10 +89,7 @@ async def get_nmt_service(
 
     # Factory function to create Triton clients for different endpoints
     def get_triton_client_for_endpoint(endpoint: str) -> NMTTritonClient:
-        triton_url = endpoint
-        if triton_url.startswith(("http://", "https://")):
-            triton_url = triton_url.split("://", 1)[1]
-        return NMTTritonClient(triton_url=triton_url, api_key=triton_api_key)
+        return NMTTritonClient(triton_url=endpoint, api_key=triton_api_key)
 
     redis_client = getattr(request.app.state, "redis_client", None)
     model_management_client = getattr(request.app.state, "model_management_client", None)
