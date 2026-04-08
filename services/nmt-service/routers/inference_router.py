@@ -968,6 +968,14 @@ async def run_inference(
         return await _run_nmt_inference_impl(request, http_request, nmt_service)
     
     with tracer.start_as_current_span("nmt.inference") as span:
+        start_time = time.time()
+
+        def _finalize_span(status: str) -> None:
+            """Set required final attributes on the parent span (Telemetry Standardization)."""
+            processing_time_seconds = time.time() - start_time
+            span.set_attribute("nmt.processing_time_seconds", processing_time_seconds)
+            span.set_attribute("nmt.status", status)
+
         try:
             # Extract auth context from request.state (if middleware is configured)
             user_id = getattr(http_request.state, "user_id", None)
@@ -1004,6 +1012,17 @@ async def run_inference(
             # Add request metadata to span
             span.set_attribute("nmt.input_count", len(request.input))
             span.set_attribute("nmt.service_id", request.config.serviceId)
+            # Required standard attribute (Telemetry Standardization)
+            span.set_attribute("nmt.input_type", "text")
+
+            # Required standard attribute (Telemetry Standardization)
+            # Prefer middleware/model-management resolved model name when available.
+            resolved_model_name = getattr(http_request.state, "triton_model_name", None)
+            if resolved_model_name:
+                span.set_attribute("nmt.model_name", resolved_model_name)
+            else:
+                span.set_attribute("nmt.model_name", "unknown")
+
             span.set_attribute("nmt.source_language", request.config.language.sourceLanguage)
             span.set_attribute("nmt.target_language", request.config.language.targetLanguage)
             if request.config.language.sourceScriptCode:
@@ -1023,12 +1042,13 @@ async def run_inference(
             except Exception:
                 pass
             
-            if user_id:
-                span.set_attribute("user.id", str(user_id))
-            if api_key_id:
-                span.set_attribute("api_key.id", str(api_key_id))
-            if session_id:
-                span.set_attribute("session.id", str(session_id))
+            # Required standard attributes (Telemetry Standardization)
+            if user_id is not None:
+                span.set_attribute("user.id", int(user_id))
+            if api_key_id is not None:
+                span.set_attribute("api_key.id", int(api_key_id))
+            if session_id is not None:
+                span.set_attribute("session.id", int(session_id))
             
             # Add span event for request start
             span.add_event("nmt.inference.started", {
@@ -1161,7 +1181,6 @@ async def run_inference(
                         # This avoids another Model Management call when get_triton_client is invoked
                         # The cache will be used by get_triton_client, and the verification step will
                         # also use the cached service registry entry, avoiding Model Management calls
-                        import time
                         expires_at = time.time() + cache_ttl_seconds
                         fallback_triton_client = get_fallback_triton_client_for_endpoint(triton_endpoint)
                         
@@ -1327,6 +1346,9 @@ async def run_inference(
                 "status": "success"
             })
             span.set_status(Status(StatusCode.OK))
+
+            # Required standard attributes (Telemetry Standardization)
+            _finalize_span("success")
             
             # Include SMR response in the final response (null if SMR was not called)
             response_dict = response.dict()
@@ -1366,6 +1388,7 @@ async def run_inference(
             return response
 
         except (InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError) as exc:
+            _finalize_span("error")
             span.set_attribute("error", True)
             span.set_attribute("error.type", type(exc).__name__)
             span.set_attribute("error.message", str(exc))
@@ -1394,7 +1417,9 @@ async def run_inference(
                 span.add_event("nmt.inference.static_fallback", {"reason": "Triton unreachable"})
                 span.set_status(Status(StatusCode.OK))
                 logger.info("Returning static NMT fallback (Triton unreachable)")
+                _finalize_span("success")
                 return NMTInferenceResponse(output=output)
+            _finalize_span("error")
             span.set_attribute("error", True)
             span.set_attribute("error.type", type(exc).__name__)
             span.set_attribute("error.message", str(exc))
@@ -1408,6 +1433,7 @@ async def run_inference(
             raise
 
         except Exception as exc:
+            _finalize_span("error")
             span.set_attribute("error", True)
             span.set_attribute("error.type", type(exc).__name__)
             span.set_attribute("error.message", str(exc))
