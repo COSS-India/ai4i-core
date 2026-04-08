@@ -1170,16 +1170,12 @@ services:
       - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
       - JWKS_URL=${JWKS_URL:-http://auth-service:8081/api/v1/auth/.well-known/jwks.json}
       - MULTI_TENANT_SERVICE_URL=${MULTI_TENANT_SERVICE_URL:-http://multi-tenant-service:8001}
-      - PYTHONPATH=/app:/app/libs/ai4icore_exceptions:/app/libs/ai4icore_auth:/app/libs
+      - PYTHONPATH=/app
     env_file:
       - ./services/policy-service/.env
     volumes:
-      - ./services/policy-service:/app
-      - ./libs/ai4icore_env:/app/libs/ai4icore_env
-      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
-      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./shared:/app/shared
+      # Bind-mount only the service's application code so image-bundled /app/libs remains intact
+      - ./services/policy-service/app:/app/app
     command: ["--reload"]
     depends_on:
       postgres:
