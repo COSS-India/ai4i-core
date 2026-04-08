@@ -42,6 +42,7 @@ DATABASES=(
   "ai4i_platform_db"
   "metrics_db"
   "model_management_db"
+  "policy_db"
   "multi_tenant_db"
   "telemetry_db"
 )
@@ -50,105 +51,6 @@ DATABASES=(
 EXTERNAL_DATABASES=(
   "unleash"
 )
-
-ensure_policy_service_schema() {
-  # policy-service manages its own schema, but we want the repo migration flow
-  # to create the tables up-front so the service can start cleanly.
-  #
-  # DB name is the policy-service default (services/policy-service/env.template).
-  local policy_db="policy"
-
-  local pg_user pg_password pg_host pg_port
-  pg_user="${POSTGRES_USER:-ai4i_user}"
-  pg_password="${POSTGRES_PASSWORD:-}"
-  pg_host="${POSTGRES_HOST:-localhost}"
-  pg_port="${POSTGRES_PORT:-5432}"
-
-  echo "🔧 Ensuring policy-service database + schema exist..."
-
-  # Ensure DB exists (same approach as external DBs)
-  if PGPASSWORD="$pg_password" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" -d postgres \
-      -tAc "SELECT 1 FROM pg_database WHERE datname='$policy_db'" 2>/dev/null | grep -q 1; then
-    print_status "info" "$policy_db already exists"
-  else
-    if PGPASSWORD="$pg_password" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" -d postgres \
-        -c "CREATE DATABASE $policy_db;" 2>/dev/null; then
-      print_status "applied" "Created database: $policy_db"
-    else
-      print_status "info" "Failed to create $policy_db (may need manual creation)"
-    fi
-  fi
-
-  # Create schema objects (idempotent)
-  PGPASSWORD="$pg_password" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" -d "$policy_db" -v ON_ERROR_STOP=1 <<'SQL'
-CREATE TABLE IF NOT EXISTS pii_types (
-  pii_type_id UUID PRIMARY KEY,
-  pii_type_label VARCHAR(255) NOT NULL,
-  regex_pattern TEXT NOT NULL,
-  is_active BOOLEAN NOT NULL DEFAULT TRUE,
-  mask_format VARCHAR(32) NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_pii_type_label UNIQUE (pii_type_label)
-);
-
-CREATE TABLE IF NOT EXISTS pii_policy (
-  policy_id UUID PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  description VARCHAR(512),
-  is_active BOOLEAN NOT NULL DEFAULT TRUE,
-  is_global BOOLEAN NOT NULL DEFAULT FALSE,
-  supported_languages JSONB NOT NULL DEFAULT '[]'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_pii_policy_name UNIQUE (name)
-);
-
-CREATE TABLE IF NOT EXISTS policy_pii_types (
-  id UUID PRIMARY KEY,
-  policy_id UUID NOT NULL,
-  pii_type_id UUID NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_policy_pii_type UNIQUE (policy_id, pii_type_id),
-  CONSTRAINT fk_policy_pii_types_policy FOREIGN KEY (policy_id) REFERENCES pii_policy (policy_id) ON DELETE CASCADE,
-  CONSTRAINT fk_policy_pii_types_pii_type FOREIGN KEY (pii_type_id) REFERENCES pii_types (pii_type_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS tenant_policy (
-  id UUID PRIMARY KEY,
-  tenant_id VARCHAR(64) NOT NULL,
-  policy_id UUID NOT NULL,
-  assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_tenant_policy UNIQUE (tenant_id, policy_id),
-  CONSTRAINT fk_tenant_policy_policy FOREIGN KEY (policy_id) REFERENCES pii_policy (policy_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS pii_audit_logs (
-  pii_audit_id UUID PRIMARY KEY,
-  trace_id VARCHAR(128),
-  tenant_id VARCHAR(64),
-  policy_id UUID,
-  target_context VARCHAR(255),
-  pii_count INTEGER,
-  processing_ms INTEGER,
-  trace_json JSONB,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT fk_pii_audit_logs_policy FOREIGN KEY (policy_id) REFERENCES pii_policy (policy_id) ON DELETE SET NULL
-);
-
-CREATE INDEX IF NOT EXISTS ix_pii_types_pii_type_label ON pii_types (pii_type_label);
-CREATE INDEX IF NOT EXISTS ix_pii_policy_name ON pii_policy (name);
-CREATE INDEX IF NOT EXISTS ix_policy_pii_types_policy_id ON policy_pii_types (policy_id);
-CREATE INDEX IF NOT EXISTS ix_policy_pii_types_pii_type_id ON policy_pii_types (pii_type_id);
-CREATE INDEX IF NOT EXISTS ix_tenant_policy_tenant_id ON tenant_policy (tenant_id);
-CREATE INDEX IF NOT EXISTS ix_tenant_policy_policy_id ON tenant_policy (policy_id);
-CREATE INDEX IF NOT EXISTS ix_pii_audit_logs_trace_id ON pii_audit_logs (trace_id);
-CREATE INDEX IF NOT EXISTS ix_pii_audit_logs_tenant_id ON pii_audit_logs (tenant_id);
-CREATE INDEX IF NOT EXISTS ix_pii_audit_logs_policy_id ON pii_audit_logs (policy_id);
-SQL
-
-  print_status "applied" "policy-service schema ensured"
-  echo
-}
 
 print_db_header() {
   local db="$1"
@@ -400,7 +302,6 @@ run_for_all_databases() {
   # Ensure external service databases exist before running migrations
   if [[ "$command" == "upgrade" ]]; then
     ensure_external_databases
-    ensure_policy_service_schema
   fi
 
   local db

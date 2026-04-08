@@ -72,6 +72,7 @@ DATABASE_ORDER = [
     "ai4i_platform_db",
     "metrics_db",
     "model_management_db",
+    "policy_db",
     "multi_tenant_db",
     "telemetry_db",
 ]
@@ -82,6 +83,18 @@ def _require_env(key: str) -> str:
     if not value:
         raise ValueError(f"Missing required environment variable: {key}")
     return value
+
+
+def _require_env_any(keys: list[str]) -> str:
+    """
+    Return the first non-empty env var value among keys, else raise.
+    Useful for optional per-service overrides that can fall back to shared POSTGRES_* vars.
+    """
+    for key in keys:
+        value = os.getenv(key)
+        if value:
+            return value
+    raise ValueError(f"Missing required environment variable (any of): {', '.join(keys)}")
 
 
 def _load_module(module_name: str, file_path: Path):
@@ -237,6 +250,30 @@ def _load_model_management_metadata():
         return fake_db_connection.AppDBBase.metadata
 
     return _with_temp_module("db_connection", fake_db_connection, loader)
+
+
+def _load_policy_service_metadata():
+    """
+    Load policy-service ORM metadata (pii types/policies/tenant assignments/audit logs).
+
+    NOTE: policy-service is a FastAPI project that uses the generic package name `app`,
+    which can collide with other services that also use `app`. We therefore:
+      - add the policy-service root to sys.path
+      - purge any previously imported `app` modules from sys.modules
+      - import policy-service's `app.db.base` and return its declarative base metadata
+    """
+    policy_root = PROJECT_ROOT / "services" / "policy-service"
+    policy_path = str(policy_root)
+    if policy_path not in sys.path:
+        sys.path.insert(0, policy_path)
+
+    # Ensure we import policy-service's `app.*`, not another service's `app.*`.
+    for module_name in list(sys.modules.keys()):
+        if module_name == "app" or module_name.startswith("app."):
+            sys.modules.pop(module_name, None)
+
+    module = importlib.import_module("app.db.base")
+    return module.AppDBBase.metadata
 
 
 def _load_multi_tenant_metadata():
@@ -414,6 +451,15 @@ DATABASE_SPECS = {
         database_name_key="APP_DB_NAME",
         metadata_loader=_load_model_management_metadata,
     ),
+    "policy_db": DatabaseSpec(
+        name="policy_db",
+        user_key="POLICY_DB_USER",
+        password_key="POLICY_DB_PASSWORD",
+        host_key="POLICY_DB_HOST",
+        port_key="POLICY_DB_PORT",
+        database_name_key="POLICY_DB_NAME",
+        metadata_loader=_load_policy_service_metadata,
+    ),
     "multi_tenant_db": DatabaseSpec(
         name="multi_tenant_db",
         user_key="APP_DB_USER",
@@ -454,6 +500,17 @@ def get_database_name(name: str) -> str:
 
 def get_connection_parts(name: str) -> dict[str, str]:
     spec = get_database_spec(name)
+    # policy_db should work in deployed environments without requiring dedicated POLICY_DB_*
+    # variables; if those are absent, fall back to the shared POSTGRES_* (or ALEMBIC_DB_*) vars.
+    if name == "policy_db":
+        return {
+            "user": _require_env_any([spec.user_key, "POSTGRES_USER"]),
+            "password": _require_env_any([spec.password_key, "POSTGRES_PASSWORD"]),
+            "host": _require_env_any([spec.host_key, "POSTGRES_HOST", "ALEMBIC_DB_HOST"]),
+            "port": _require_env_any([spec.port_key, "POSTGRES_PORT", "ALEMBIC_DB_PORT"]),
+            "database": _require_env_any([spec.database_name_key]),
+        }
+
     return {
         "user": _require_env(spec.user_key),
         "password": _require_env(spec.password_key),
