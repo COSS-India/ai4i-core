@@ -520,15 +520,25 @@ class NMTService:
                 batch_count = (len(input_texts) + max_batch_size - 1) // max_batch_size
                 span.set_attribute("nmt.batch_count", batch_count)
                 span.set_attribute("nmt.max_batch_size", max_batch_size)
-                
-                for i in range(0, len(input_texts), max_batch_size):
-                    batch = input_texts[i:i + max_batch_size]
-                    batch_index = i // max_batch_size
-                    
-                    with tracer.start_as_current_span("nmt.process_batch_item") as batch_span:
-                        batch_span.set_attribute("nmt.batch_index", batch_index)
-                        batch_span.set_attribute("nmt.batch_size", len(batch))
-                        
+
+                # IMPORTANT (Telemetry Standardization): no span-per-loop-item.
+                # Wrap all batch iterations in ONE span, and use events/attributes for per-batch detail.
+                with tracer.start_as_current_span("nmt.triton_inference") as triton_inference_span:
+                    triton_inference_span.set_attribute("nmt.batch_count", batch_count)
+                    triton_inference_span.set_attribute("nmt.max_batch_size", max_batch_size)
+
+                    for i in range(0, len(input_texts), max_batch_size):
+                        batch = input_texts[i:i + max_batch_size]
+                        batch_index = i // max_batch_size
+
+                        triton_inference_span.add_event(
+                            "nmt.batch.started",
+                            {
+                                "batch_index": batch_index,
+                                "batch_size": len(batch),
+                            },
+                        )
+
                         try:
                             # Get appropriate Triton client for this service
                             with tracer.start_as_current_span("nmt.get_triton_client") as client_span:
@@ -537,12 +547,16 @@ class NMTService:
                                 endpoint = service_entry[0] if service_entry else "default"
                                 client_span.set_attribute("nmt.triton_endpoint", endpoint)
                                 client_span.set_attribute("nmt.model_name", model_name)
-                            
+
                             # Apply mapping: "indictrans" -> "nmt" for Triton server
-                            if model_name == "indictrans" or (isinstance(model_name, str) and "indictrans" in model_name.lower()):
-                                logger.info(f"🔧 MAPPING: '{model_name}' -> 'nmt' for Triton (service_id: {service_id})")
+                            if model_name == "indictrans" or (
+                                isinstance(model_name, str) and "indictrans" in model_name.lower()
+                            ):
+                                logger.info(
+                                    f"🔧 MAPPING: '{model_name}' -> 'nmt' for Triton (service_id: {service_id})"
+                                )
                                 model_name = "nmt"
-                            
+
                             # Prepare Triton inputs
                             with tracer.start_as_current_span("nmt.prepare_triton_inputs") as prep_span:
                                 inputs, outputs = triton_client.get_translation_io_for_triton(
@@ -551,29 +565,42 @@ class NMTService:
                                 prep_span.set_attribute("nmt.input_count", len(batch))
                                 prep_span.set_attribute("nmt.source_lang", source_lang)
                                 prep_span.set_attribute("nmt.target_lang", target_lang)
-                            
+
                             # Send Triton request (triton_client will create its own span)
                             response = triton_client.send_triton_request(
                                 model_name=model_name,
                                 inputs=inputs,
-                                outputs=outputs
+                                outputs=outputs,
                             )
-                            
-                            # Extract results
+
+                            # Extract results (keep existing span for now; we'll regroup later as part of the 7-phase migration)
                             with tracer.start_as_current_span("nmt.extract_results") as extract_span:
                                 encoded_result = response.as_numpy("OUTPUT_TEXT")
                                 if encoded_result is None:
                                     encoded_result = np.array([])
-                                
+
                                 output_batch.extend(encoded_result.tolist())
-                                extract_span.set_attribute("nmt.result_count", len(encoded_result.tolist()) if encoded_result is not None else 0)
-                            
+                                extract_span.set_attribute(
+                                    "nmt.result_count",
+                                    len(encoded_result.tolist()) if encoded_result is not None else 0,
+                                )
+
+                            triton_inference_span.add_event(
+                                "nmt.batch.completed",
+                                {
+                                    "batch_index": batch_index,
+                                    "result_count": (
+                                        len(encoded_result.tolist()) if encoded_result is not None else 0
+                                    ),
+                                },
+                            )
+
                         except Exception as e:
-                            batch_span.set_attribute("error", True)
-                            batch_span.set_attribute("error.type", type(e).__name__)
-                            batch_span.set_attribute("error.message", str(e))
-                            batch_span.set_status(Status(StatusCode.ERROR, str(e)))
-                            batch_span.record_exception(e)
+                            triton_inference_span.set_attribute("error", True)
+                            triton_inference_span.set_attribute("error.type", type(e).__name__)
+                            triton_inference_span.set_attribute("error.message", str(e))
+                            triton_inference_span.set_status(Status(StatusCode.ERROR, str(e)))
+                            triton_inference_span.record_exception(e)
                             logger.error(f"Triton inference failed for batch {batch_index}: {e}")
                             raise TritonInferenceError(f"Triton inference failed: {e}")
                 
