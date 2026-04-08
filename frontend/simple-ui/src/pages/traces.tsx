@@ -77,6 +77,67 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
   let hasError = false;
   let errorMessage: string | undefined = undefined;
 
+  // --- Standard 7-phase lifecycle spans (Telemetry Step Standardization) ---
+  // Make these appear as distinct steps in the Trace UI instead of collapsing them
+  // under generic "processing/routing/database" buckets.
+  //
+  // Examples:
+  // - nmt.preprocess / ocr.preprocess / tts.preprocess
+  // - nmt.resolve_model (optional)
+  // - nmt.triton_inference (phase wrapper) containing internal triton.inference (leaf)
+  // - nmt.postprocess
+  // - nmt.persist
+  const isStandardPhaseSpan =
+    opName.endsWith(".preprocess") ||
+    opName.endsWith(".resolve_model") ||
+    opName.endsWith(".triton_inference") ||
+    opName.endsWith(".postprocess") ||
+    opName.endsWith(".persist");
+
+  if (isStandardPhaseSpan) {
+    isImportant = true;
+    isTopLevel = false;
+
+    if (opName.endsWith(".preprocess")) {
+      category = "phase.preprocess";
+      // Use the proposed span name verbatim (e.g., nmt.preprocess)
+      displayName = span.operationName;
+      description = "Prepares and normalizes inputs for inference";
+      icon = FiCpu;
+    } else if (opName.endsWith(".resolve_model")) {
+      category = "phase.resolve_model";
+      // Use the proposed span name verbatim (e.g., nmt.resolve_model)
+      displayName = span.operationName;
+      description = "Resolves the appropriate model and endpoint for inference";
+      icon = FiGlobe;
+    } else if (opName.endsWith(".triton_inference")) {
+      category = "phase.triton_inference";
+      // Use the proposed span name verbatim (e.g., nmt.triton_inference)
+      displayName = span.operationName;
+      description = "Runs inference against Triton";
+      icon = FiCpu;
+    } else if (opName.endsWith(".postprocess")) {
+      category = "phase.postprocess";
+      // Use the proposed span name verbatim (e.g., nmt.postprocess)
+      displayName = span.operationName;
+      description = "Formats model outputs into the API response";
+      icon = FiSettings;
+    } else if (opName.endsWith(".persist")) {
+      category = "phase.persist";
+      // Use the proposed span name verbatim (e.g., nmt.persist)
+      displayName = span.operationName;
+      description = "Stores request/results and updates status in the database";
+      icon = FiDatabase;
+    }
+  }
+  // Hide internal Triton leaf span from the main step list (still available in technical details)
+  else if (opName === "triton.inference") {
+    category = "triton";
+    isImportant = false;
+    icon = FiCpu;
+    displayName = span.operationName;
+  }
+
   // Check for errors in span
   const checkForErrors = () => {
     // Debug: Log all tags for error spans (helpful for troubleshooting)
@@ -259,28 +320,31 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
   
   checkForErrors();
 
-  // Authentication & Authorization - show request.authorize or auth.validate
-  if (opName === "request.authorize" || (opName.includes("authorize") && !opName.includes("decision") && !opName.includes("check"))) {
-    category = "auth";
-    isImportant = true;
-    isTopLevel = true;
-    icon = FiShield;
-    const authMethod = getTag("auth.method") || getTag("auth_source") || "API Key";
-    const org = getTag("organization");
-    const authResult = getTag("auth.decision.result");
-    const authValid = getTag("auth.valid");
-    
-    // Check if authorization failed
-    if (authResult && (authResult.toLowerCase().includes("reject") || authResult.toLowerCase().includes("deny") || authResult.toLowerCase().includes("fail"))) {
-      hasError = true;
-      errorMessage = `Authorization failed: ${authResult}`;
-    } else if (authValid && String(authValid).toLowerCase() === "false") {
-      hasError = true;
-      errorMessage = "Authorization validation failed";
+  // IMPORTANT: If this span is one of the standardized phase spans, keep its categorization.
+  // Do not override it with the generic rules below.
+  if (!isStandardPhaseSpan && opName !== "triton.inference") {
+    // Authentication & Authorization - show request.authorize or auth.validate
+    if (opName === "request.authorize" || (opName.includes("authorize") && !opName.includes("decision") && !opName.includes("check"))) {
+      category = "auth";
+      isImportant = true;
+      isTopLevel = true;
+      icon = FiShield;
+      const authMethod = getTag("auth.method") || getTag("auth_source") || "API Key";
+      const org = getTag("organization");
+      const authResult = getTag("auth.decision.result");
+      const authValid = getTag("auth.valid");
+      
+      // Check if authorization failed
+      if (authResult && (authResult.toLowerCase().includes("reject") || authResult.toLowerCase().includes("deny") || authResult.toLowerCase().includes("fail"))) {
+        hasError = true;
+        errorMessage = `Authorization failed: ${authResult}`;
+      } else if (authValid && String(authValid).toLowerCase() === "false") {
+        hasError = true;
+        errorMessage = "Authorization validation failed";
+      }
+      displayName = "Request Authorization";
+      description = `Validates authentication credentials using ${authMethod}${org ? ` for ${org}` : ""}`;
     }
-    displayName = "Request Authorization";
-    description = `Validates authentication credentials using ${authMethod}${org ? ` for ${org}` : ""}`;
-  }
   // Also show auth.validate if it's a top-level operation
   else if (opName.includes("auth.validate") && !opName.includes("decision") && !opName.includes("check")) {
     category = "auth";
@@ -304,6 +368,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     displayName = "Authentication Validation";
     description = `Validates authentication credentials using ${authMethod}${org ? ` for ${org}` : ""}`;
   }
+  // end: generic categorization overrides (only for non-standard spans)
   // Skip nested auth decision spans - they're redundant
   else if (opName.includes("auth.decision") || (opName.includes("auth") && opName.includes("check"))) {
     category = "auth";
@@ -325,7 +390,8 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     const outputCount = getTag("ocr.output_count") || getTag("nmt.output_count");
     const sourceLang = getTag("ocr.source_language") || getTag("nmt.source_language");
     const targetLang = getTag("nmt.target_language");
-    displayName = serviceName.includes("ocr") ? "OCR Processing" : serviceName.includes("nmt") ? "Translation Processing" : "Request Processing";
+    // Phase 1 is the proposed {svc}.inference span — display the span name verbatim (e.g., nmt.inference)
+    displayName = span.operationName;
     let descParts = ["Processes the request"];
     if (serviceId) descParts.push(`using ${serviceId}`);
     if (imageCount) descParts.push(`(${imageCount} image${parseInt(imageCount) !== 1 ? "s" : ""})`);
@@ -572,6 +638,8 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       description = `Processes ${displayName}`;
     }
   }
+
+  } // <-- closes: if (!isStandardPhaseSpan && opName !== "triton.inference")
 
   // Check for request.reject operations - mark as important and error
   if (opName.includes("reject") || opName.includes("request.reject")) {
@@ -910,6 +978,40 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     });
   };
 
+  // Phase 7 in the standard lifecycle ("set final attributes on {svc}.inference")
+  // is not a distinct span in Jaeger. Add a synthetic step so the UI can show 7 phases.
+  const addSyntheticFinalizeStep = (spanList: ProcessedSpan[]): void => {
+    const inferenceSpan = spanList.find(
+      p => p.span.operationName?.toLowerCase().endsWith(".inference")
+    );
+    if (!inferenceSpan) return;
+    if (spanList.some(p => p.category === "phase.finalize")) return;
+
+    const finalizeStartUs = inferenceSpan.span.startTime + inferenceSpan.span.duration;
+
+    spanList.push({
+      span: {
+        ...inferenceSpan.span,
+        spanID: `${inferenceSpan.span.spanID}-finalize`,
+        operationName: `${inferenceSpan.span.operationName}.finalize`,
+        duration: 0,
+        startTime: finalizeStartUs,
+      } as any,
+      serviceName: inferenceSpan.serviceName,
+      category: "phase.finalize",
+      // Use a proposed-looking name for Phase 7 (UI-only step; not a real Jaeger span)
+      displayName: `${inferenceSpan.span.operationName}.finalize`,
+      description: "Sets final metrics and status on the inference span",
+      icon: FiCheckCircle,
+      isImportant: true,
+      isTopLevel: false,
+      hasError: false,
+      relativeStart: (finalizeStartUs - traceStartTime) / 1000,
+      relativeEnd: (finalizeStartUs - traceStartTime) / 1000,
+      effectiveDuration: 0,
+    });
+  };
+
   // If we have too few spans, include some important non-top-level ones
   if (sorted.length < 3) {
     const additional = processed
@@ -927,6 +1029,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     
     const combined = [...sorted, ...additional].sort((a, b) => a.relativeStart - b.relativeStart);
     computeEffectiveDurations(combined);
+    addSyntheticFinalizeStep(combined);
     return combined;
   }
 
@@ -1014,10 +1117,12 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     
     console.log("Final fallback spans:", finalSpans.length, finalSpans.map(s => s.displayName));
     computeEffectiveDurations(finalSpans);
+    addSyntheticFinalizeStep(finalSpans);
     return finalSpans;
   }
 
   computeEffectiveDurations(sorted);
+  addSyntheticFinalizeStep(sorted);
   return sorted;
 };
 
@@ -2337,9 +2442,14 @@ const TracesPage: React.FC = () => {
                               });
                             };
                             
-                            // Collect triton and internal tags from all child spans
-                            const visitedChildren = new Set<string>();
-                            collectTagsFromChildren(processed.span.spanID, visitedChildren);
+                            // Collect triton and internal tags from all child spans.
+                            // Exception: for the standard Triton phase span (e.g., nmt.triton_inference),
+                            // keep child tags separated so the UI can show triton.inference as an indented child
+                            // with its own technical details.
+                            if (processed.category !== "phase.triton_inference") {
+                              const visitedChildren = new Set<string>();
+                              collectTagsFromChildren(processed.span.spanID, visitedChildren);
+                            }
                             
                             const relevantTags = allTags.filter((t: { key: string; value: any }) => {
                               const key = t.key.toLowerCase();
@@ -2783,6 +2893,7 @@ const TracesPage: React.FC = () => {
                                                 Technical Information:
                                 </Text>
                                             </HStack>
+
                                             <VStack spacing={2} align="stretch">
                                               {relevantTags.map((tag: { key: string; value: any }, tagIdx: number) => (
                                                 <Box
@@ -2820,6 +2931,112 @@ const TracesPage: React.FC = () => {
                                                 </Box>
                                               ))}
                                             </VStack>
+
+                                            {/* Internal child span (e.g., triton.inference) as a separate, indented "mini span card" */}
+                                            {/* Keep it visually isolated from the parent tag list */}
+                                            {processed.category === "phase.triton_inference" && (
+                                              <Box mt={6} pt={4} borderTop="1px solid" borderTopColor="gray.200">
+                                                <HStack spacing={2} mb={2} align="center">
+                                                  <Icon as={FiLayers} color="gray.600" boxSize={3} />
+                                                  <Text fontSize="xs" color="gray.700" fontWeight="semibold">
+                                                    Internal child spans:
+                                                  </Text>
+                                                </HStack>
+
+                                                {(spanRelationships.childSpans.get(processed.span.spanID) || [])
+                                                  .map((childId: string) => spanRelationships.spanMap.get(childId))
+                                                  .filter((s: any) => s && String(s.operationName).toLowerCase() === "triton.inference")
+                                                  .map((s: any, i: number) => (
+                                                    <Card
+                                                      key={i}
+                                                      bg="white"
+                                                      border="1px"
+                                                      borderColor="gray.200"
+                                                      boxShadow="sm"
+                                                      ml={6} // visual indent under parent span
+                                                    >
+                                                      <CardBody py={2}>
+                                                        <HStack justify="space-between" align="center">
+                                                          <HStack spacing={2} align="center">
+                                                            <Text fontSize="sm" fontFamily="mono" color="gray.800" fontWeight="semibold">
+                                                              {s.operationName}
+                                                            </Text>
+                                                          </HStack>
+                                                          <Badge fontSize="xs" colorScheme="blue">
+                                                            {formatDuration(s.duration)}
+                                                          </Badge>
+                                                        </HStack>
+
+                                                        <Button
+                                                          mt={2}
+                                                          variant="outline"
+                                                          colorScheme="gray"
+                                                          width="full"
+                                                          h="22px"
+                                                          minH="22px"
+                                                          maxH="22px"
+                                                          fontSize="10px"
+                                                          px={2}
+                                                          py={0}
+                                                          lineHeight="1.2"
+                                                          leftIcon={<Icon as={expandedTags.has(s.spanID) ? FiEyeOff : FiEye} boxSize={2.5} />}
+                                                          onClick={() => {
+                                                            const spanId = s.spanID;
+                                                            const newExpanded = new Set(expandedTags);
+                                                            if (newExpanded.has(spanId)) newExpanded.delete(spanId);
+                                                            else newExpanded.add(spanId);
+                                                            setExpandedTags(newExpanded);
+                                                          }}
+                                                        >
+                                                          {expandedTags.has(s.spanID)
+                                                            ? "Hide Technical Details"
+                                                            : `Show Technical Details (${(s.tags || []).length} tags)`}
+                                                        </Button>
+
+                                                        <Collapse in={expandedTags.has(s.spanID)} animateOpacity>
+                                                          <Box mt={3} p={3} bg="gray.50" borderRadius="md" border="1px" borderColor="gray.200">
+                                                            <VStack spacing={2} align="stretch">
+                                                              {(s.tags || []).map((tag: { key: string; value: any }, tagIdx: number) => (
+                                                                <Box
+                                                                  key={tagIdx}
+                                                                  p={2}
+                                                                  bg="white"
+                                                                  borderRadius="sm"
+                                                                  border="1px"
+                                                                  borderColor="gray.200"
+                                                                >
+                                                                  <HStack spacing={2} align="start">
+                                                                    <Text
+                                                                      fontSize="xs"
+                                                                      color="gray.600"
+                                                                      fontWeight="medium"
+                                                                      minW="140px"
+                                                                      textTransform="uppercase"
+                                                                      letterSpacing="0.5px"
+                                                                    >
+                                                                      {tag.key}:
+                                                                    </Text>
+                                                                    <Text
+                                                                      color="gray.800"
+                                                                      fontFamily="mono"
+                                                                      fontSize="xs"
+                                                                      wordBreak="break-word"
+                                                                      whiteSpace="pre-wrap"
+                                                                      flex={1}
+                                                                    >
+                                                                      {formatTagValue(tag.key, tag.value)}
+                                                                    </Text>
+                                                                  </HStack>
+                                                                </Box>
+                                                              ))}
+                                                            </VStack>
+                                                          </Box>
+                                                        </Collapse>
+                                                      </CardBody>
+                                                    </Card>
+                                                  ))}
+                                              </Box>
+                                            )}
                                           </Box>
                                         </Collapse>
                                       </Box>
