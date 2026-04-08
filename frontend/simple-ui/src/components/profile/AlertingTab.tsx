@@ -120,6 +120,10 @@ function getAllowedForDurations(evalInterval: string | null | undefined): string
   return [...(FOR_DURATION_BY_EVAL_INTERVAL[key] ?? FOR_DURATION_BY_EVAL_INTERVAL["30s"])];
 }
 
+function expandServices(raw: string[]): string[] {
+  return raw.includes("all") ? TARGET_SERVICES.map((t) => t.value) : raw;
+}
+
 /** Visible mandatory-field marker used with `FormControl isRequired`. */
 const FORM_REQUIRED_ASTERISK = (
   <Text as="span" color="red.500" ml={1} aria-hidden>
@@ -279,6 +283,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const recvs = useNotificationReceivers();
   const rules = useRoutingRules();
   const history = useAlertHistory(isActive && subTabIndex === 2);
+  const expandedUpdateServices = expandServices(defs.updateForm.service ?? []);
 
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
@@ -1307,38 +1312,23 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       _active={{ bg: "white" }}
                       rightIcon={<Text fontSize="xs" color="gray.500">▾</Text>}
                     >
-                      {(() => {
-                        const raw = defs.updateForm.service ?? [];
-                        const sel = raw.includes("all") ? TARGET_SERVICES.map((t) => t.value) : raw;
-                        if (sel.length === 0) {
-                          return <Text color="gray.400">Select targets...</Text>;
-                        }
-                        if (sel.length === TARGET_SERVICES.length) {
-                          return "All services selected";
-                        }
-                        if (sel.length === 1) {
-                          const v = sel[0];
-                          return TARGET_SERVICES.find((t) => t.value === v)?.label ?? v;
-                        }
-                        return `${sel.length} services selected`;
-                      })()}
+                      {expandedUpdateServices.length === 0 ? (
+                        <Text color="gray.400">Select targets...</Text>
+                      ) : expandedUpdateServices.length === TARGET_SERVICES.length ? (
+                        "All services selected"
+                      ) : expandedUpdateServices.length === 1 ? (
+                        TARGET_SERVICES.find((t) => t.value === expandedUpdateServices[0])?.label ?? expandedUpdateServices[0]
+                      ) : (
+                        `${expandedUpdateServices.length} services selected`
+                      )}
                     </MenuButton>
                     <MenuList w="100%" maxH="300px" overflowY="auto">
                       <MenuItem closeOnSelect={false} px={4} py={2}>
                         <Checkbox
-                          isChecked={
-                            (() => {
-                              const raw = defs.updateForm.service ?? [];
-                              const sel = raw.includes("all") ? TARGET_SERVICES.map((t) => t.value) : raw;
-                              return sel.length === TARGET_SERVICES.length;
-                            })()
-                          }
+                          isChecked={expandedUpdateServices.length === TARGET_SERVICES.length}
                           isIndeterminate={
-                            (() => {
-                              const raw = defs.updateForm.service ?? [];
-                              const sel = raw.includes("all") ? TARGET_SERVICES.map((t) => t.value) : raw;
-                              return sel.length > 0 && sel.length < TARGET_SERVICES.length;
-                            })()
+                            expandedUpdateServices.length > 0 &&
+                            expandedUpdateServices.length < TARGET_SERVICES.length
                           }
                           onChange={(e) => {
                             defs.setUpdateForm({
@@ -1355,16 +1345,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       {TARGET_SERVICES.map((opt) => (
                         <MenuItem key={opt.value} closeOnSelect={false} px={4} py={2}>
                           <Checkbox
-                            isChecked={
-                              (() => {
-                                const raw = defs.updateForm.service ?? [];
-                                const sel = raw.includes("all") ? TARGET_SERVICES.map((t) => t.value) : raw;
-                                return sel.includes(opt.value);
-                              })()
-                            }
+                            isChecked={expandedUpdateServices.includes(opt.value)}
                             onChange={(e) => {
-                              const currentRaw = defs.updateForm.service ?? [];
-                              const current = currentRaw.includes("all") ? TARGET_SERVICES.map((t) => t.value) : currentRaw;
+                              const current = expandServices(defs.updateForm.service ?? []);
                               defs.setUpdateForm({
                                 ...defs.updateForm,
                                 // Once user makes an explicit selection, drop the "all" sentinel.
