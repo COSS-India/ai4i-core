@@ -61,9 +61,8 @@ class AuthService:
             status = status.split(".")[-1]
         return status in {"SUSPENDED", "DEACTIVATED"}
 
-    def _format_tenant_inactive_message(self, tenant_status: str) -> str:
-        # Keep punctuation/spacing exactly as requested.
-        return f"tenant is {tenant_status.lower()} , please contact your platform admin"
+    def _format_tenant_inactive_message(self) -> str:
+        return "Tenant access is restricted. Contact your administrator."
 
     def _format_user_inactive_message(self, user_status: str) -> str:
         # Keep spelling exactly as requested (including "cotact").
@@ -154,7 +153,7 @@ class AuthService:
                 user.id,
             )
             raise AuthorizationError(
-                message=self._format_tenant_inactive_message(str(tenant_status)),
+                message=self._format_tenant_inactive_message(),
                 code="TENANT_INACTIVE",
             )
 

@@ -38,8 +38,8 @@ def _is_suspended_or_deactivated(status_val: str | None) -> bool:
     return status in {"SUSPENDED", "DEACTIVATED"}
 
 
-def _tenant_inactive_message(tenant_status: str) -> str:
-    return f"tenant is {tenant_status.lower()} , please contact your platform admin"
+def _tenant_inactive_message() -> str:
+    return "Tenant access is restricted. Contact your administrator."
 
 
 def _user_inactive_message(user_status: str) -> str:
@@ -79,12 +79,22 @@ async def validate_token(
     if claims.user_id:
         user = await user_svc.get_user_by_id(claims.user_id)
         if not user:
-            return JSONResponse(status_code=401, content={"valid": False, "error": "USER_NOT_FOUND"})
+            # Backward compatibility: API key validation should still succeed
+            # even if the owning user record was deleted.
+            if claims.token_type != "api_key":
+                return JSONResponse(status_code=401, content={"valid": False, "error": "USER_NOT_FOUND"})
+            logger.warning(
+                "API key token validated with missing user record: user_id=%s token_id=%s",
+                claims.user_id,
+                claims.token_id,
+            )
+            user = None
 
-        if not user.is_active:
+        if user and not user.is_active:
             return JSONResponse(status_code=401, content={"valid": False, "error": "USER_INACTIVE"})
 
-        username = user.username
+        if user:
+            username = user.username
 
         tenant_service = None
         mt_factory = getattr(request.app.state, "multi_tenant_session_factory", None)
@@ -93,7 +103,7 @@ async def validate_token(
 
         # Enforce tenant lifecycle status on every token validation.
         # This ensures suspended/deactivated tenant admins/users are cut off on next request.
-        if tenant_service:
+        if tenant_service and user:
             tenant_id = user.tenant_id_cached or claims.tenant_id
             is_tenant_user = bool(user.is_tenant)
 
@@ -110,7 +120,7 @@ async def validate_token(
                         content={
                             "valid": False,
                             "error": "TENANT_INACTIVE",
-                            "message": _tenant_inactive_message(str(tenant_status)),
+                            "message": _tenant_inactive_message(),
                         },
                     )
 
