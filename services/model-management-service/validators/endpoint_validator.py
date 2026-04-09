@@ -9,6 +9,9 @@ Two-level validation for inference endpoints:
 """
 
 import httpx
+import asyncio
+import ipaddress
+import socket
 from enum import Enum
 from typing import Optional, Dict, Any, List
 from urllib.parse import urlparse
@@ -53,6 +56,65 @@ class EndpointValidationResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 _ALLOWED_SCHEMES = {"http", "https"}
+
+
+def _looks_like_cluster_internal_hostname(hostname: str) -> bool:
+    h = hostname.strip(".").lower()
+    if h in {"localhost", "kubernetes.default.svc"}:
+        return True
+    if h.endswith(".svc") or h.endswith(".svc.cluster.local") or h.endswith(".cluster.local"):
+        return True
+    return False
+
+
+def _is_disallowed_ip(ip: ipaddress._BaseAddress) -> bool:
+    # Block internal/unsafe destinations to mitigate SSRF.
+    return bool(
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+async def _is_safe_host(hostname: str, *, resolve_timeout_s: float = 2.0) -> bool:
+    """
+    Resolve *hostname* and ensure it does not map to private/link-local/loopback/etc.
+    If resolution fails or times out, treat it as unsafe (fail closed).
+    """
+    if not hostname:
+        return False
+
+    if _looks_like_cluster_internal_hostname(hostname):
+        return False
+
+    try:
+        # If user supplied an IP literal, validate it directly.
+        ip_literal = ipaddress.ip_address(hostname)
+        return not _is_disallowed_ip(ip_literal)
+    except ValueError:
+        pass
+
+    try:
+        loop = asyncio.get_running_loop()
+        infos = await asyncio.wait_for(
+            loop.getaddrinfo(hostname, None, type=socket.SOCK_STREAM),
+            timeout=resolve_timeout_s,
+        )
+    except Exception:
+        return False
+
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except Exception:
+            return False
+        if _is_disallowed_ip(ip):
+            return False
+
+    return True
 
 
 def validate_url_format(url: str) -> ValidationDetail:
@@ -207,6 +269,23 @@ async def validate_endpoint(
     details.append(url_result)
 
     if url_result.status == ValidationStatus.FAILED:
+        return EndpointValidationResult(
+            is_valid=False, endpoint=endpoint, details=details,
+        )
+
+    parsed = urlparse(endpoint)
+    hostname = parsed.hostname or ""
+    if not await _is_safe_host(hostname):
+        details.append(
+            ValidationDetail(
+                level=ValidationLevel.URL_FORMAT,
+                status=ValidationStatus.FAILED,
+                message=(
+                    "Endpoint host is not allowed for probing (SSRF protection). "
+                    f"Blocked hostname: '{hostname or '(empty)'}'"
+                ),
+            )
+        )
         return EndpointValidationResult(
             is_valid=False, endpoint=endpoint, details=details,
         )
