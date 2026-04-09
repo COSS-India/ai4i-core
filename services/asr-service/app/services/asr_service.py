@@ -137,11 +137,6 @@ class ASRService:
                     fallback_service_id=fallback_service_id,
                 )
 
-                # Strip scheme for TritonClient
-                triton_url = triton_endpoint
-                if triton_url.startswith(("http://", "https://")):
-                    triton_url = triton_url.split("://", 1)[1]
-
                 from app.repositories.asr_repository import ASRRepository as _Repo
                 from app.services.audio_service import AudioService as _Audio
                 from app.clients.triton_client import ASRTritonClient as _Triton
@@ -154,7 +149,7 @@ class ASRService:
                 fallback_service = ASRService(
                     repository=_Repo(fallback_db),
                     audio_service=_Audio(),
-                    triton_client=_Triton(triton_url, api_key=triton_api_key or None),
+                    triton_client=_Triton(triton_endpoint, api_key=triton_api_key or None),
                     resolved_model_name=triton_model_name,
                 )
 

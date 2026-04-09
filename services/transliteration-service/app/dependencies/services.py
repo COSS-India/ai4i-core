@@ -57,12 +57,7 @@ async def get_transliteration_service(
             ),
         )
 
-    # Strip http:// scheme for tritonclient (expects host:port)
-    triton_url = triton_endpoint
-    if triton_url.startswith(('http://', 'https://')):
-        triton_url = triton_url.split('://', 1)[1]
-
-    triton_client = TransliterationTritonClient(triton_url, api_key=triton_api_key or None)
+    triton_client = TransliterationTritonClient(triton_endpoint, api_key=triton_api_key or None)
     return TransliterationService(
         repository=repository,
         text_service=text_service,

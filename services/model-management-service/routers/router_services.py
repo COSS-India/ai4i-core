@@ -12,6 +12,7 @@ from models.service_create import ServiceCreateRequest
 from models.service_update import ServiceUpdateRequest
 from models.service_health import ServiceHeartbeatRequest
 from db_operations import (
+    get_model_details,
     get_service_details,
     list_all_services,
     get_service_policy,
@@ -24,24 +25,28 @@ from db_operations import (
 )
 from db_connection import get_auth_db_session
 from utils.permission_checker import require_permission, require_permission_dependency
+from utils.request_helpers import get_user_id, validate_endpoint_or_raise
 from logger import logger
 from typing import List, Union, Optional
 from models.type_enum import TaskTypeEnum
 
 
-def get_user_id_from_request(request: Request) -> Optional[str]:
-    """Extract user_id from request state (set by AuthProvider or Kong) as string."""
-    user_id = getattr(request.state, 'user_id', None)
-    return str(user_id) if user_id is not None else None
+def _extract_validation_params(model_data: dict) -> dict:
+    """Pull task_type, request_schema, triton_schema from model data."""
+    task_type = (model_data.get("task") or {}).get("type")
+    inference_ep = model_data.get("inferenceEndPoint") or {}
+    schema = inference_ep.get("schema") or {}
+    return {
+        "task_type": task_type,
+        "request_schema": schema.get("request"),
+        "triton_schema": (schema.get("response") or {}).get("triton"),
+    }
 
 
 router_services = APIRouter(
     prefix="/services",
     tags=["Model Management"],
 )
-
-# Routes that require auth (added via route-level Depends)
-# Routes without auth: list_services_try_it, list_services_policies (used by SMR, nmt, transliteration)
 
 
 @router_services.get("", response_model=List[ServiceListResponse], dependencies=[Depends(AuthProvider)])
@@ -101,7 +106,6 @@ async def list_services_try_it(
     - For any other task type, returns an error indicating try-it is not available.
     """
     try:
-        # Only allow NMT for try-it; reject other task types explicitly
         if not task_type or task_type.lower() != TaskTypeEnum.nmt.value:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -167,7 +171,6 @@ async def view_service(
     db: AsyncSession = Depends(get_auth_db_session)
 ):
     """View service details by ID - POST /services/{service_id}. Requires 'service.read' (all authenticated roles, including USER and GUEST, for inference resolution)."""
-    # Check permission - any authenticated user can read service details (needed for inference resolution)
     await require_permission("service.read", request, db)
     try:
         data = await get_service_details(service_id)
@@ -193,7 +196,22 @@ async def create_service(
     """Create a new service - POST /services. Requires 'service.create' permission (ADMIN or MODERATOR only)."""
     
     try:
-        user_id = get_user_id_from_request(request)
+        model_data = await get_model_details(payload.modelId, version=payload.modelVersion)
+        if not model_data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Model with ID '{payload.modelId}' version '{payload.modelVersion}' not found. Cannot validate endpoint.",
+            )
+
+        params = _extract_validation_params(model_data)
+        await validate_endpoint_or_raise(
+            endpoint=payload.endpoint,
+            api_key=payload.api_key,
+            error_message="Service endpoint validation failed.",
+            **params,
+        )
+
+        user_id = get_user_id(request)
         service_id = await save_service_to_db(payload, created_by=user_id)
         logger.info(f"Service '{payload.name}' inserted successfully by user {user_id}.")
         return f"Service '{payload.name}' (ID: {service_id}) created successfully."
@@ -216,13 +234,25 @@ async def update_service_endpoint(
     """Update a service - PATCH /services. Requires appropriate permission (ADMIN or MODERATOR only).
     For publish/unpublish operations, requires 'model.publish' or 'model.unpublish'.
     For other updates, requires 'service.update'."""
-    # Check if this is a publish/unpublish operation (additional check after basic service.update permission)
     if payload.isPublished is not None:
         permission = "model.publish" if payload.isPublished else "model.unpublish"
         await require_permission(permission, request, db)
     
     try:
-        user_id = get_user_id_from_request(request)
+        if payload.endpoint:
+            service_data = await get_service_details(payload.serviceId)
+            if service_data:
+                model_info = service_data.get("model") or {}
+                params = _extract_validation_params(model_info)
+                api_key = payload.api_key or service_data.get("api_key")
+                await validate_endpoint_or_raise(
+                    endpoint=payload.endpoint,
+                    api_key=api_key,
+                    error_message="Service endpoint validation failed.",
+                    **params,
+                )
+
+        user_id = get_user_id(request)
         result = await update_service(payload, updated_by=user_id)
 
         if result == 0:
@@ -283,7 +313,6 @@ async def delete_service(
 async def update_service_health_endpoint(service_id: str, payload: ServiceHeartbeatRequest, request: Request):
     """Update health status for a service - PATCH /services/{service_id}/health (service_id may contain slashes)"""
     try:
-        # Override serviceId from path
         merged_payload = ServiceHeartbeatRequest(serviceId=service_id, status=payload.status)
         result = await update_service_health(merged_payload)
 
@@ -310,7 +339,7 @@ async def update_service_health_endpoint(service_id: str, payload: ServiceHeartb
 async def add_or_update_service_policy_endpoint(service_id: str, payload: ServicePolicyUpdateRequest, request: Request):
     """Add or update policy for a service - POST /services/{service_id}/policy (service_id may contain slashes)"""
     try:
-        user_id = get_user_id_from_request(request)
+        user_id = get_user_id(request)
         result = await add_or_update_service_policy(
             service_id=service_id,
             policy_data=payload.policy,

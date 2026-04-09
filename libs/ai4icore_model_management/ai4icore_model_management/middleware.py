@@ -192,7 +192,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
     
     def _extract_triton_metadata(self, service_info: ServiceInfo, service_id: str = None) -> Tuple[str, str]:
         """Extract normalized Triton endpoint and model name from service info"""
-        endpoint = service_info.endpoint.replace("http://", "").replace("https://", "") if service_info.endpoint else ""
+        endpoint = service_info.endpoint if service_info.endpoint else ""
         model_name = None
 
         # Try to infer model name from model inference endpoint metadata (highest priority)
@@ -426,9 +426,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                             request.state.service_id = variant_service_id
                             request.state.experiment_info = variant
                             if variant.get("endpoint") and (variant.get("model_id") or variant.get("model_name")):
-                                request.state.triton_endpoint = (
-                                    variant["endpoint"].replace("http://", "").replace("https://", "")
-                                )
+                                request.state.triton_endpoint = variant["endpoint"]
                                 request.state.triton_model_name = (
                                     variant.get("model_id") or variant.get("model_name") or "unknown"
                                 )
