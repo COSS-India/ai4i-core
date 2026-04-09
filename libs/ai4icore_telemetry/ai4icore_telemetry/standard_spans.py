@@ -193,4 +193,3 @@ class StandardSpanManager:
             return
         with self._tracer.start_as_current_span(self._svc_key("persist")) as span:
             yield span
-
