@@ -1398,6 +1398,81 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+# --- Policy-service authenticated routes (Adopter Admin JWT required) ---
+# Covers: GET/POST /v1/pii-types, GET/PUT/DELETE /v1/pii-types/{id},
+#         GET/POST /v1/policies, GET/PUT /v1/policies/{id},
+#         PATCH /v1/policies/{id}/status, GET /v1/audit-logs, GET /v1/audit-logs/{id}
+- uri: /api/v1/policy-service/*
+  name: policy-service-route
+  priority: 100
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - PATCH
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      policy-service${APISIX_UPSTREAM_SUFFIX}:8107: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+      - |
+        return function(conf, ctx)
+          ngx.req.set_header("X-User-Id", nil)
+        end
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,PATCH,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Request-ID
+      allow_credential: true
+    proxy-rewrite:
+      regex_uri:
+      - ^/api/v1/policy-service/(.*)
+      - /$1
+      headers:
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      body_base64: false
+      headers:
+        set:
+          X-Served-By: APISIX-Gateway
+          X-Service: policy-service
+    limit-count:
+      policy: local
+      key_type: var
+      rejected_code: 429
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      allow_degradation: false
+      count: 120
 - uri: /api/v1/registry/*
   name: config-registry-route
   priority: 0
