@@ -42,6 +42,7 @@ DATABASES=(
   "ai4i_platform_db"
   "metrics_db"
   "model_management_db"
+  "policy_db"
   "multi_tenant_db"
   "telemetry_db"
 )
