@@ -123,6 +123,7 @@ async def test_inference(
     api_key: Optional[str] = None,
     timeout: float = 15.0,
     validation_mode: str = "lenient",
+    skip_tls_verify: bool = False,
     triton_schema: Optional[Dict[str, Any]] = None,
 ) -> ValidationDetail:
     """POST a probe payload and check the response status.
@@ -147,7 +148,9 @@ async def test_inference(
     )
 
     try:
-        async with httpx.AsyncClient(timeout=timeout, verify=False) as client:
+        if skip_tls_verify:
+            logger.warning("Endpoint probe TLS verification is disabled (skip_tls_verify=true).")
+        async with httpx.AsyncClient(timeout=timeout, verify=not skip_tls_verify) as client:
             response = await client.post(endpoint, json=payload, headers=headers)
 
         try:
@@ -212,6 +215,7 @@ async def validate_endpoint(
     run_inference_test: bool = True,
     timeout: float = 15.0,
     validation_mode: str = "lenient",
+    skip_tls_verify: bool = False,
     triton_schema: Optional[Dict[str, Any]] = None,
 ) -> EndpointValidationResult:
     """Run all validation levels against an inference *endpoint*."""
@@ -250,6 +254,7 @@ async def validate_endpoint(
             api_key=api_key,
             timeout=timeout,
             validation_mode=validation_mode,
+            skip_tls_verify=skip_tls_verify,
             triton_schema=triton_schema,
         )
         details.append(inference_result)

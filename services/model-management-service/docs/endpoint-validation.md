@@ -105,7 +105,8 @@ Depends on **`endpoint_validation_mode`**:
 
 Connect errors and timeouts fail regardless of mode.
 
-Default probe timeout: **15 seconds**. TLS verification is disabled for the probe client (`verify=False`).
+Default probe timeout: **15 seconds**. TLS verification is **enabled by default**. Set
+`ENDPOINT_VALIDATION_SKIP_TLS_VERIFY=true` only when probing endpoints that use self-signed certificates.
 
 ## Logging
 
