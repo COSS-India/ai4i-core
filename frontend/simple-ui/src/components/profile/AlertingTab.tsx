@@ -124,6 +124,27 @@ function expandServices(raw: string[]): string[] {
   return raw.includes("all") ? TARGET_SERVICES.map((t) => t.value) : raw;
 }
 
+function normalizeServiceValue(raw: string): string {
+  const v0 = String(raw ?? "").trim().toLowerCase();
+  if (!v0) return v0;
+  let v = v0.replace(/_+/g, "-").replace(/\/+/g, "-");
+  if (v.endsWith("-service")) v = v.slice(0, -"-service".length);
+  return v;
+}
+
+function extractServicesFromPromql(expr: string | null | undefined): string[] {
+  const text = String(expr ?? "");
+  if (!text) return [];
+  const out: string[] = [];
+  const re = /service\s*=\s*"([^"]+)"/g;
+  let match: RegExpExecArray | null = re.exec(text);
+  while (match) {
+    if (match[1]) out.push(match[1]);
+    match = re.exec(text);
+  }
+  return out;
+}
+
 /** Visible mandatory-field marker used with `FormControl isRequired`. */
 const FORM_REQUIRED_ASTERISK = (
   <Text as="span" color="red.500" ml={1} aria-hidden>
@@ -283,7 +304,19 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const recvs = useNotificationReceivers();
   const rules = useRoutingRules();
   const history = useAlertHistory(isActive && subTabIndex === 2);
-  const expandedUpdateServices = expandServices(defs.updateForm.service ?? []);
+  const expandedUpdateServices = (() => {
+    // If form state has been initialized (including explicit empty []), always honor it.
+    if (defs.updateForm.service !== undefined) {
+      const raw = Array.isArray(defs.updateForm.service) ? defs.updateForm.service : [];
+      return expandServices(raw).map(normalizeServiceValue).filter(Boolean);
+    }
+    const fromForm = expandServices(defs.updateForm.service ?? []).map(normalizeServiceValue).filter(Boolean);
+    if (fromForm.length > 0) return fromForm;
+    const fromItem = (defs.updateItem?.service ?? []).map(normalizeServiceValue).filter(Boolean);
+    if (fromItem.length > 0) return fromItem;
+    const fromExpr = extractServicesFromPromql(defs.updateItem?.promql_expr).map(normalizeServiceValue).filter(Boolean);
+    return fromExpr;
+  })();
 
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
@@ -843,8 +876,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   <Menu closeOnSelect={false} matchWidth>
                     <MenuButton
                       as={Button}
+                      variant="outline"
                       w="100%"
                       bg="white"
+                      color="gray.700"
                       borderWidth="1px"
                       borderColor="gray.200"
                       borderRadius="md"
@@ -860,13 +895,13 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                           return <Text color="gray.400">Select targets</Text>;
                         }
                         if (sel.length === TARGET_SERVICES.length) {
-                          return <Text color="gray.400">All services selected</Text>;
+                          return <Text color="gray.700">All services selected</Text>;
                         }
                         if (sel.length === 1) {
                           const v = sel[0];
-                          return <Text color="gray.400">{TARGET_SERVICES.find((t) => t.value === v)?.label ?? v}</Text>;
+                          return <Text color="gray.700">{TARGET_SERVICES.find((t) => t.value === v)?.label ?? v}</Text>;
                         }
-                        return <Text color="gray.400">{`${sel.length} services selected`}</Text>;
+                        return <Text color="gray.700">{`${sel.length} services selected`}</Text>;
                       })()}
                     </MenuButton>
                     <MenuList w="100%" maxH="300px" overflowY="auto">
@@ -1204,7 +1239,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
                 <Textarea value={defs.updateForm.description ?? ""} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, description: e.target.value || null })} bg="white" rows={3} />
               </FormControl>
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={Boolean(defs.updateErrors.category)}>
                 <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
                   Category
                 </FormLabel>
@@ -1213,9 +1248,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   value={defs.updateForm.category ?? "application"}
                   onChange={(v) => defs.setUpdateForm({ ...defs.updateForm, category: v, sub_category: undefined, signal: undefined, signal_metric: undefined })}
                 />
+                <FormErrorMessage>{defs.updateErrors.category}</FormErrorMessage>
               </FormControl>
               <Divider />
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={Boolean(defs.updateErrors.sub_category)}>
                 <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
                   Subcategory
                 </FormLabel>
@@ -1237,8 +1273,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </Select>
+                <FormErrorMessage>{defs.updateErrors.sub_category}</FormErrorMessage>
               </FormControl>
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={Boolean(defs.updateErrors.signal)}>
                 <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
                   Signal
                 </FormLabel>
@@ -1262,8 +1299,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </Select>
+                <FormErrorMessage>{defs.updateErrors.signal}</FormErrorMessage>
               </FormControl>
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={Boolean(defs.updateErrors.signal_metric)}>
                 <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
                   Signal Metric
                 </FormLabel>
@@ -1278,9 +1316,13 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </Select>
+                <FormErrorMessage>{defs.updateErrors.signal_metric}</FormErrorMessage>
               </FormControl>
               <Divider />
-              <FormControl isRequired={defs.updateForm.category !== "infrastructure"}>
+              <FormControl
+                isRequired={defs.updateForm.category !== "infrastructure"}
+                isInvalid={Boolean(defs.updateErrors.service)}
+              >
                 <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
                   Target
                 </FormLabel>
@@ -1301,8 +1343,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   <Menu closeOnSelect={false} matchWidth>
                     <MenuButton
                       as={Button}
+                      variant="outline"
                       w="100%"
                       bg="white"
+                      color="gray.700"
                       borderWidth="1px"
                       borderColor="gray.200"
                       borderRadius="md"
@@ -1315,11 +1359,13 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       {expandedUpdateServices.length === 0 ? (
                         <Text color="gray.400">Select targets...</Text>
                       ) : expandedUpdateServices.length === TARGET_SERVICES.length ? (
-                        "All services selected"
+                        <Text color="gray.700">All services selected</Text>
                       ) : expandedUpdateServices.length === 1 ? (
-                        TARGET_SERVICES.find((t) => t.value === expandedUpdateServices[0])?.label ?? expandedUpdateServices[0]
+                        <Text color="gray.700">
+                          {TARGET_SERVICES.find((t) => t.value === expandedUpdateServices[0])?.label ?? expandedUpdateServices[0]}
+                        </Text>
                       ) : (
-                        `${expandedUpdateServices.length} services selected`
+                        <Text color="gray.700">{`${expandedUpdateServices.length} services selected`}</Text>
                       )}
                     </MenuButton>
                     <MenuList w="100%" maxH="300px" overflowY="auto">
@@ -1347,7 +1393,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                           <Checkbox
                             isChecked={expandedUpdateServices.includes(opt.value)}
                             onChange={(e) => {
-                              const current = expandServices(defs.updateForm.service ?? []);
+                              const current = expandedUpdateServices;
                               defs.setUpdateForm({
                                 ...defs.updateForm,
                                 // Once user makes an explicit selection, drop the "all" sentinel.
@@ -1364,8 +1410,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     </MenuList>
                   </Menu>
                 )}
+                <FormErrorMessage>{defs.updateErrors.service}</FormErrorMessage>
               </FormControl>
-              <FormControl isRequired>
+              <FormControl
+                isRequired
+                isInvalid={Boolean(defs.updateErrors.condition_operator) || Boolean(defs.updateErrors.threshold_value)}
+              >
                 <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
                   Condition + Threshold
                 </FormLabel>
@@ -1432,8 +1482,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     </Box>
                   )}
                 </SimpleGrid>
+                <FormErrorMessage>
+                  {defs.updateErrors.condition_operator ?? defs.updateErrors.threshold_value}
+                </FormErrorMessage>
               </FormControl>
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={Boolean(defs.updateErrors.severity)}>
                 <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
                   Severity
                 </FormLabel>
@@ -1472,8 +1525,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     );
                   })}
                 </HStack>
+                <FormErrorMessage>{defs.updateErrors.severity}</FormErrorMessage>
               </FormControl>
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={Boolean(defs.updateErrors.evaluation_interval)}>
                 <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
                   Evaluation Interval
                 </FormLabel>
@@ -1490,8 +1544,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 >
                   {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
                 </Select>
+                <FormErrorMessage>{defs.updateErrors.evaluation_interval}</FormErrorMessage>
               </FormControl>
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={Boolean(defs.updateErrors.for_duration)}>
                 <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
                   For Duration
                 </FormLabel>
@@ -1508,6 +1563,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <option key={v} value={v}>{v}</option>
                   ))}
                 </Select>
+                <FormErrorMessage>{defs.updateErrors.for_duration}</FormErrorMessage>
               </FormControl>
               <FormControl isRequired>
                 <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
@@ -1526,7 +1582,15 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
             <Button variant="outline" mr={3} onClick={defs.closeUpdate} isDisabled={defs.isUpdating}>Cancel</Button>
-            <Button colorScheme="orange" onClick={defs.handleUpdate} isLoading={defs.isUpdating} loadingText="Saving...">Save Changes</Button>
+            <Button
+              colorScheme="orange"
+              onClick={defs.handleUpdate}
+              isLoading={defs.isUpdating}
+              loadingText="Saving..."
+              isDisabled={defs.isUpdating || (defs.updateForm.category !== "infrastructure" && expandedUpdateServices.length === 0)}
+            >
+              Save Changes
+            </Button>
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
