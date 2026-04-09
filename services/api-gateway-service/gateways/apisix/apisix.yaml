@@ -65,21 +65,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -114,6 +111,13 @@
       time_window: 60
       allow_degradation: false
       count: 200
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/asr/*
   name: asr-route
   priority: 10
@@ -134,21 +138,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -179,6 +180,13 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/audio-lang-detection/*
   name: audio-lang-detection-route
   priority: 0
@@ -199,21 +207,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -244,7 +249,13 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
-# --- Public auth routes (no forward-auth, IP-based rate limits) ---
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/auth/login
   name: auth-login-route
   priority: 20
@@ -500,7 +511,6 @@
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
-# --- Protected auth routes (forward-auth required, catch-all) ---
 - uri: /api/v1/auth/*
   name: auth-route
   priority: 0
@@ -522,21 +532,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -554,6 +561,13 @@
           X-Correlation-ID: $request_id
           X-Gateway: apisix
       use_real_request_uri_unsafe: false
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/config/*
   name: config-route
   priority: 0
@@ -574,21 +588,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -619,6 +630,13 @@
       rejected_code: 429
       show_limit_quota_header: true
       allow_degradation: false
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/feature-flags/*
   name: feature-flags-route
   priority: 0
@@ -663,21 +681,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -708,6 +723,13 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/language-diarization/*
   name: language-diarization-route
   priority: 0
@@ -732,21 +754,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -777,6 +796,13 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/llm/*
   name: llm-route
   priority: 0
@@ -797,21 +823,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -842,7 +865,13 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
-# --- Public model-management routes (no auth, specific endpoints) ---
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/model-management/services/try-it-service-list
   name: model-management-try-it-service-list-public-route
   priority: 200
@@ -904,22 +933,19 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-          ngx.req.set_header("X-Try-It", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\n  ngx.req.set_header(\"X-Try-It\",
+        nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -952,6 +978,13 @@
       time_window: 60
       allow_degradation: false
       count: 120
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/multi-tenant/email/verify
   name: multi-tenant-email-verify-route
   priority: 210
@@ -964,26 +997,26 @@
     type: roundrobin
     pass_host: pass
     nodes:
-      "multi-tenant-service${APISIX_UPSTREAM_SUFFIX}:8001": 1
+      multi-tenant-service${APISIX_UPSTREAM_SUFFIX}:8001: 1
   plugins:
     cors:
-      allow_origins: "${APISIX_PUBLIC_ORIGIN}"
-      allow_methods: "GET,POST,OPTIONS"
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,OPTIONS
       max_age: 3600
       allow_credential: true
-      expose_headers: "X-Correlation-ID"
-      allow_headers: "Accept,Accept-Version,Content-Length,Content-Type,Date,request-startTime,Request-StartTime,Request-Starttime"
+      expose_headers: X-Correlation-ID
+      allow_headers: Accept,Accept-Version,Content-Length,Content-Type,Date,request-startTime,Request-StartTime,Request-Starttime
     proxy-rewrite:
       regex_uri:
-      - "^/api/v1/multi-tenant/(.*)"
-      - "/$1"
+      - ^/api/v1/multi-tenant/(.*)
+      - /$1
       headers:
         add:
-          X-Correlation-ID: "$request_id"
-          X-Gateway: "apisix"
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
     response-rewrite:
       headers:
-        X-Service: "multi-tenant-service"
+        X-Service: multi-tenant-service
       body_base64: false
     limit-count:
       policy: redis
@@ -1019,21 +1052,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -1069,6 +1099,13 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/ner/*
   name: ner-route
   priority: 0
@@ -1089,21 +1126,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -1134,6 +1168,13 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/nmt/*
   name: nmt-route
   priority: 0
@@ -1154,26 +1195,22 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
       keepalive_pool: 5
-    # Use headers.add so client Authorization is preserved (required for tenant_id in observability metrics)
     proxy-rewrite:
       headers:
         add:
@@ -1199,6 +1236,13 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/observability/*
   name: telemetry-observability-route
   priority: 10
@@ -1243,21 +1287,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -1288,6 +1329,13 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/pipeline/*
   name: pipeline-route
   priority: 0
@@ -1308,21 +1356,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -1353,9 +1398,15 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/pii/*
   name: pii-guard-route
-
   priority: 20
   methods:
   - GET
@@ -1417,10 +1468,13 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
-# --- Policy-service authenticated routes (Adopter Admin JWT required) ---
-# Covers: GET/POST /v1/pii-types, GET/PUT/DELETE /v1/pii-types/{id},
-#         GET/POST /v1/policies, GET/PUT /v1/policies/{id},
-#         PATCH /v1/policies/{id}/status, GET /v1/audit-logs, GET /v1/audit-logs/{id}
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/policy-service/*
   name: policy-service-route
   priority: 100
@@ -1442,21 +1496,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -1492,6 +1543,13 @@
       time_window: 60
       allow_degradation: false
       count: 120
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/registry/*
   name: config-registry-route
   priority: 0
@@ -1512,21 +1570,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -1557,6 +1612,13 @@
       rejected_code: 429
       show_limit_quota_header: true
       allow_degradation: false
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/speaker-diarization/*
   name: speaker-diarization-route
   priority: 0
@@ -1577,21 +1639,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -1622,6 +1681,13 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/telemetry/*
   name: telemetry-ingestion-route
   priority: 0
@@ -1666,21 +1732,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -1711,6 +1774,13 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /api/v1/try-it*
   name: api-gateway-try-it-route
   priority: 80
@@ -1731,9 +1801,10 @@
         X-Service: nmt-service
     serverless-pre-function:
       functions:
-      - 'return function(conf, ctx) local sid = ngx.var.http_x_anonymous_session_id;
-        if sid and sid ~= '''' then ngx.req.set_header(''X-Try-It-RateLimit-Key'', sid)
-        else ngx.req.set_header(''X-Try-It-RateLimit-Key'', ngx.var.remote_addr or ''unknown'') end; end'
+      - return function(conf, ctx) local sid = ngx.var.http_x_anonymous_session_id;
+        if sid and sid ~= '' then ngx.req.set_header('X-Try-It-RateLimit-Key', sid)
+        else ngx.req.set_header('X-Try-It-RateLimit-Key', ngx.var.remote_addr or 'unknown')
+        end; end
       phase: rewrite
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
@@ -1776,21 +1847,18 @@
     serverless-pre-function:
       phase: rewrite
       functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
     forward-auth:
       uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
       request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
       upstream_headers:
-        - X-User-ID
+      - X-User-ID
       client_headers:
-        - WWW-Authenticate
+      - WWW-Authenticate
       timeout: 3000
       keepalive: true
       keepalive_timeout: 60000
@@ -1821,6 +1889,13 @@
       time_window: 60
       rejected_code: 429
       allow_degradation: false
+    serverless-post-function:
+      phase: header_filter
+      functions:
+      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
+        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
+        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
+        \ end\nend\n"
 - uri: /alerts-management
   name: frontend-alerts-management
   priority: 3
@@ -2332,7 +2407,6 @@
     type: roundrobin
 - uri: /pii-management
   name: frontend-pii-management
-
   priority: 3
   methods:
   - GET
@@ -2345,7 +2419,6 @@
     type: roundrobin
 - uri: /pii-management/*
   name: frontend-pii-management-prefix
-
   priority: 3
   methods:
   - GET
@@ -2569,4 +2642,3 @@
       headers:
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
-#END
