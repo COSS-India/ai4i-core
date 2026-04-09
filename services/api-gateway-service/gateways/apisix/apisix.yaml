@@ -398,7 +398,7 @@
     limit-count:
       policy: local
       key_type: var
-      key: remote_addr
+      key: http_x_forwarded_for
       count: 30
       time_window: 60
       rejected_code: 429
@@ -465,7 +465,7 @@
     limit-count:
       policy: local
       key_type: var
-      key: remote_addr
+      key: http_x_forwarded_for
       count: 30
       time_window: 60
       rejected_code: 429
@@ -980,7 +980,7 @@
     limit-count:
       policy: local
       key_type: var
-      key: remote_addr
+      key: http_x_forwarded_for
       count: 20
       time_window: 60
       rejected_code: 429
