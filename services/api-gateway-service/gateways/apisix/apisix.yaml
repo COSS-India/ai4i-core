@@ -277,7 +277,7 @@
       policy: local
       key_type: var
       key: remote_addr
-      count: 20
+      count: 10
       time_window: 60
       rejected_code: 429
       show_limit_quota_header: true
@@ -314,8 +314,44 @@
       policy: local
       key_type: var
       key: remote_addr
-      count: 10
-      time_window: 60
+      count: 5
+      time_window: 3600
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
+- uri: /api/v1/auth/request-password-reset
+  name: auth-request-password-reset-route
+  priority: 20
+  methods:
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: POST,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      key: remote_addr
+      count: 3
+      time_window: 3600
       rejected_code: 429
       show_limit_quota_header: true
       allow_degradation: false
