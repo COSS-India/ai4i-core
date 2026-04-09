@@ -78,12 +78,7 @@ async def get_tts_service(
             },
         )
 
-    # Strip protocol prefix from endpoint URL
-    triton_url = triton_endpoint
-    if triton_url.startswith(("http://", "https://")):
-        triton_url = triton_url.split("://", 1)[1]
-
-    triton_client = TTSTritonClient(triton_url=triton_url, api_key=triton_api_key)
+    triton_client = TTSTritonClient(triton_url=triton_endpoint, api_key=triton_api_key)
 
     return TTSService(
         repository=repository,
