@@ -1,0 +1,450 @@
+# Policy Service - Public API (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: Policy Service
+  description: Manage PII types, sanitisation policies, tenant assignments, and audit logs.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: Policy Service
+paths:
+  /api/v1/policy-service/health:
+    get:
+      tags: [Policy Service]
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+
+  /api/v1/policy-service/v1/pii-types:
+    get:
+      tags: [Policy Service]
+      summary: List PII types
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: search
+          in: query
+          required: false
+          schema: { type: string }
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, default: 1, minimum: 1 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+      responses:
+        "200":
+          description: PII types list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PiiTypeListResponse" }
+    post:
+      tags: [Policy Service]
+      summary: Create PII type
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PiiTypeCreate" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PiiTypeOut" }
+
+  /api/v1/policy-service/v1/pii-types/{pii_type_id}:
+    get:
+      tags: [Policy Service]
+      summary: Get PII type
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: pii_type_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: PII type
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PiiTypeOut" }
+    put:
+      tags: [Policy Service]
+      summary: Update PII type
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: pii_type_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PiiTypeUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PiiTypeOut" }
+    delete:
+      tags: [Policy Service]
+      summary: Delete PII type
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: pii_type_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Deleted }
+
+  /api/v1/policy-service/v1/policies:
+    get:
+      tags: [Policy Service]
+      summary: List policies
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: is_global
+          in: query
+          required: false
+          schema: { type: boolean }
+        - name: is_active
+          in: query
+          required: false
+          schema: { type: boolean }
+        - name: search
+          in: query
+          required: false
+          schema: { type: string }
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, default: 1, minimum: 1 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+      responses:
+        "200":
+          description: Policies list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyListResponse" }
+    post:
+      tags: [Policy Service]
+      summary: Create policy
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicyCreate" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyDetailOut" }
+
+  /api/v1/policy-service/v1/policies/{policy_id}:
+    get:
+      tags: [Policy Service]
+      summary: Get policy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: policy_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Policy detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyDetailOut" }
+    put:
+      tags: [Policy Service]
+      summary: Update policy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: policy_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicyUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PolicyDetailOut" }
+
+  /api/v1/policy-service/v1/policies/{policy_id}/status:
+    patch:
+      tags: [Policy Service]
+      summary: Set policy status
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: policy_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PolicyStatusUpdate" }
+      responses:
+        "200":
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  is_active: { type: boolean }
+
+  /api/v1/policy-service/v1/audit-logs:
+    get:
+      tags: [Policy Service]
+      summary: Query audit logs
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: policy_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: trace_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: min_pii_count
+          in: query
+          required: false
+          schema: { type: integer }
+        - name: page
+          in: query
+          required: false
+          schema: { type: integer, default: 1, minimum: 1 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 50, minimum: 1, maximum: 200 }
+      responses:
+        "200":
+          description: Audit logs list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditLogListResponse" }
+
+  /api/v1/policy-service/v1/audit-logs/{log_id}:
+    get:
+      tags: [Policy Service]
+      summary: Get audit log by id
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: log_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Audit log detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditLogDetailOut" }
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Meta:
+      type: object
+      properties:
+        total: { type: integer }
+        page: { type: integer }
+        limit: { type: integer }
+
+    PiiTypeCreate:
+      type: object
+      required: [pii_type_label, regex_pattern, example_values, mask_format]
+      properties:
+        pii_type_label: { type: string }
+        regex_pattern: { type: string }
+        example_values:
+          type: array
+          items: { type: string }
+        mask_format: { type: string, enum: [full, partial, redact] }
+
+    PiiTypeUpdate:
+      type: object
+      properties:
+        pii_type_label: { type: string }
+        regex_pattern: { type: string }
+        mask_format: { type: string, enum: [full, partial, redact] }
+
+    PiiTypeOut:
+      type: object
+      properties:
+        pii_type_id: { type: string, format: uuid }
+        pii_type_label: { type: string }
+        regex_pattern: { type: string }
+        mask_format: { type: string }
+        created_at: { type: string, format: date-time }
+
+    PiiTypeListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/PiiTypeOut" }
+        meta: { $ref: "#/components/schemas/Meta" }
+
+    PolicyPiiTypeLink:
+      type: object
+      required: [pii_type_id]
+      properties:
+        pii_type_id: { type: string, format: uuid }
+
+    PolicyCreate:
+      type: object
+      required: [name, supported_languages]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        is_global: { type: boolean, default: false }
+        supported_languages:
+          type: array
+          items: { type: string }
+        tenant_id: { type: string }
+        pii_types:
+          type: array
+          items: { $ref: "#/components/schemas/PolicyPiiTypeLink" }
+
+    PolicyUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        supported_languages:
+          type: array
+          items: { type: string }
+        is_global: { type: boolean }
+        tenant_id: { type: string }
+        pii_types:
+          type: array
+          items: { $ref: "#/components/schemas/PolicyPiiTypeLink" }
+
+    PolicyStatusUpdate:
+      type: object
+      required: [is_active]
+      properties:
+        is_active: { type: boolean }
+
+    PolicyPiiTypeOut:
+      type: object
+      properties:
+        pii_type_id: { type: string, format: uuid }
+        pii_type_label: { type: string }
+        mask_format: { type: string }
+
+    PolicyOut:
+      type: object
+      properties:
+        policy_id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        is_active: { type: boolean }
+        is_global: { type: boolean }
+        supported_languages:
+          type: array
+          items: { type: string }
+        tenant_ids:
+          type: array
+          items: { type: string }
+        pii_types_count: { type: integer }
+        pii_types:
+          type: array
+          items: { $ref: "#/components/schemas/PolicyPiiTypeOut" }
+        created_at: { type: string, format: date-time }
+
+    PolicyDetailOut:
+      allOf:
+        - $ref: "#/components/schemas/PolicyOut"
+        - type: object
+          properties:
+            pii_types:
+              type: array
+              items: { $ref: "#/components/schemas/PolicyPiiTypeOut" }
+
+    PolicyListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/PolicyOut" }
+        meta: { $ref: "#/components/schemas/Meta" }
+
+    AuditLogOut:
+      type: object
+      properties:
+        pii_audit_id: { type: string, format: uuid }
+        trace_id: { type: string }
+        tenant_id: { type: string }
+        policy_id: { type: string, format: uuid }
+        target_context: { type: string }
+        pii_count: { type: integer }
+        processing_ms: { type: integer }
+        created_at: { type: string, format: date-time }
+
+    AuditLogDetailOut:
+      allOf:
+        - $ref: "#/components/schemas/AuditLogOut"
+        - type: object
+          properties:
+            trace_json: {}
+
+    AuditLogListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/AuditLogOut" }
+        meta: { $ref: "#/components/schemas/Meta" }
+
+security:
+  - BearerAuth: []
+
