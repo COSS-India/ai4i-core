@@ -10,12 +10,18 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.base import AppDBBase as Base
 from app.db.session import get_engine
+import logging
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings = get_settings()
     engine = get_engine()
-    if engine is not None:
+    if engine is not None and settings.auto_create_tables:
+        logging.getLogger(__name__).warning(
+            "AUTO_CREATE_TABLES is enabled; creating tables from ORM metadata at startup. "
+            "Disable this in environments managed by Alembic migrations."
+        )
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
     yield
