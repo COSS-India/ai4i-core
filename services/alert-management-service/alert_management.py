@@ -785,12 +785,12 @@ def build_promql_from_threshold(
             )
         if at == "memory":
             return (
-                f'100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > {threshold_value}'
+                f'max(100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))) > {threshold_value}'
             )
         if at == "disk":
             return (
-                f'100 * (1 - (node_filesystem_avail_bytes{{fstype!~"tmpfs|ramfs|overlay", mountpoint="/"}} '
-                f'/ node_filesystem_size_bytes{{fstype!~"tmpfs|ramfs|overlay", mountpoint="/"}})) > {threshold_value}'
+                f'max(100 * (1 - (node_filesystem_avail_bytes{{fstype!~"tmpfs|ramfs|overlay", mountpoint="/"}} '
+                f'/ node_filesystem_size_bytes{{fstype!~"tmpfs|ramfs|overlay", mountpoint="/"}}))) > {threshold_value}'
             )
         raise HTTPException(
             status_code=400,
@@ -902,13 +902,13 @@ def build_promql_from_signal_config(
             return f"{expr} {op} {threshold_value}"
         if infra == "memory":
             expr = (
-                '100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))'
+                'max(100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)))'
             )
             return f"{expr} {op} {threshold_value}"
         if infra == "disk":
             expr = (
-                '100 * (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|ramfs|overlay", mountpoint="/"} '
-                '/ node_filesystem_size_bytes{fstype!~"tmpfs|ramfs|overlay", mountpoint="/"}))'
+                'max(100 * (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|ramfs|overlay", mountpoint="/"} '
+                '/ node_filesystem_size_bytes{fstype!~"tmpfs|ramfs|overlay", mountpoint="/"})))'
             )
             return f"{expr} {op} {threshold_value}"
         raise HTTPException(status_code=400, detail=f"Unsupported infra_type '{infra}'.")
@@ -961,8 +961,8 @@ def inject_service_into_promql(promql_expr: str, services: Optional[List[str]]) 
     if len(svc_list) == 1:
         service_part = f'service="{svc_list[0]}"'
     else:
-        # Regex match: escape each name and join with |
-        escaped = [re.escape(s) for s in svc_list]
+        # Regex match: escape regex metacharacters but keep '-' unescaped for PromQL/RE2.
+        escaped = [re.escape(s).replace(r"\-", "-") for s in svc_list]
         pattern = "|".join(escaped)
         service_part = f'service=~"{pattern}"'
 
@@ -1647,18 +1647,111 @@ async def toggle_alert_definition(alert_id: int, organization: Optional[str], en
 # Similar functions for notification_receivers and routing_rules would follow the same pattern
 # For brevity, I'll create simplified versions - full implementations would mirror the alert_definitions pattern
 
+# -----------------------------------------------------------------------------
 # Default email templates for notification receivers (Alertmanager Go template syntax)
-# Include inference endpoint when present (e.g. application latency alerts); .Alerts[0].Labels.endpoint
-DEFAULT_EMAIL_SUBJECT_TEMPLATE = "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }}{{ with (index .Alerts 0).Labels.endpoint }} - {{ . }}{{ end }}"
-# Plain-text severity labels only (no emoji) for consistent rendering in email clients.
-DEFAULT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{ if eq .GroupLabels.severity \"critical\" }}#d32f2f{{ else if eq .GroupLabels.severity \"warning\" }}#f57c00{{ else }}#1976d2{{ end }};">
-  {{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
-</h2>
-<p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
-<p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
-<p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
-<p><strong>Inference endpoint(s):</strong> {{ range $i, $a := .Alerts }}{{ if index $a.Labels "endpoint" }}{{ if $i }}, {{ end }}{{ $a.Labels.endpoint }}{{ end }}{{ end }}</p>
+# -----------------------------------------------------------------------------
+def _format_environment_title(env: Optional[str]) -> str:
+    env_norm = (env or "").strip().lower()
+    if env_norm in {"production", "prod", "live"}:
+        return "Production"
+    if env_norm in {"staging"}:
+        return "Staging"
+    if env_norm in {"dev", "development", "local", "test"}:
+        return "Dev"
+    return env_norm.title() if env_norm else "Dev"
+
+
+ENVIRONMENT_TITLE = _format_environment_title(os.getenv("ENVIRONMENT") or app_env.environment or "dev")
+
+
+GLOBAL_EMAIL_SUBJECT_TEMPLATE = (
+    "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] "
+    "{{ .GroupLabels.alertname }} — "
+    + ENVIRONMENT_TITLE
+    + " - "
+    "{{ if eq .GroupLabels.severity \"critical\" }}Service Impacted{{ else if eq .GroupLabels.severity \"warning\" }}Service Degrading{{ else }}For Your Awareness{{ end }}"
+)
+
+TENANT_EMAIL_SUBJECT_TEMPLATE = GLOBAL_EMAIL_SUBJECT_TEMPLATE
+
+
+GLOBAL_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
+<p>{{ .GroupLabels.alertname }}</p>
+
+<p><strong>Category</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "category_display" }}</p>
+
+<p><strong>Signal</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "signal_display" }}</p>
+
+{{ if index (index .Alerts 0).Annotations "service_type_full" }}<p><strong>Service Type</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "service_type_full" }}</p>
+{{ end }}
+
+<p><strong>Tenant</strong></p>
+<p>Global (All Tenants)</p>
+
+<p><strong>Environment</strong></p>
+<p>__ENVIRONMENT_TITLE__</p>
+
+<p><strong>Condition</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "condition_display" }}</p>
+
+<p><strong>Current Value</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "current_value" }}</p>
+
+<p><strong>Threshold</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "threshold_display" }}</p>
+
+<p><strong>Triggered At</strong></p>
+<p>{{ (index .Alerts 0).StartsAt }}</p>
+
+<p><strong>Sustained For</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "sustained_for" }}</p>
 """
+
+TENANT_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
+<p>{{ .GroupLabels.alertname }}</p>
+
+<p><strong>Category</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "category_display" }}</p>
+
+<p><strong>Signal</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "signal_display" }}</p>
+
+{{ if index (index .Alerts 0).Annotations "service_type_full" }}<p><strong>Service Type</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "service_type_full" }}</p>
+{{ end }}
+
+<p><strong>Tenant</strong></p>
+<p>__TENANT_NAME__</p>
+
+<p><strong>Environment</strong></p>
+<p>__ENVIRONMENT_TITLE__</p>
+
+<p><strong>Condition</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "condition_display" }}</p>
+
+<p><strong>Current Value</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "current_value" }}</p>
+
+<p><strong>Threshold</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "threshold_display" }}</p>
+
+<p><strong>Triggered At</strong></p>
+<p>{{ (index .Alerts 0).StartsAt }}</p>
+
+<p><strong>Sustained For</strong></p>
+<p>{{ index (index .Alerts 0).Annotations "sustained_for" }}</p>
+"""
+
+# Inject environment title into the HTML without interfering with Alertmanager Go-template braces.
+GLOBAL_EMAIL_BODY_TEMPLATE = GLOBAL_EMAIL_BODY_TEMPLATE.replace("__ENVIRONMENT_TITLE__", ENVIRONMENT_TITLE)
+TENANT_EMAIL_BODY_TEMPLATE = TENANT_EMAIL_BODY_TEMPLATE.replace("__ENVIRONMENT_TITLE__", ENVIRONMENT_TITLE)
+
+# Keep legacy names used elsewhere in this file.
+DEFAULT_EMAIL_SUBJECT_TEMPLATE = GLOBAL_EMAIL_SUBJECT_TEMPLATE
+DEFAULT_EMAIL_BODY_TEMPLATE = GLOBAL_EMAIL_BODY_TEMPLATE
 
 async def create_notification_receiver(
     organization: str,
@@ -1725,9 +1818,15 @@ async def create_notification_receiver(
         suffix_parts.append("tenant-" + str(data.tenant).strip())
     receiver_name = base_name + ("--" + "--".join(suffix_parts) if suffix_parts else "")
     
-    # Use default templates if not provided
-    email_subject_template = data.email_subject_template or DEFAULT_EMAIL_SUBJECT_TEMPLATE
-    email_body_template = data.email_body_template or DEFAULT_EMAIL_BODY_TEMPLATE
+    # Use default templates if not provided.
+    # Tenant receivers should use the tenant-scoped body (shows the tenant label),
+    # while global receivers use the "Global (All Tenants)" body.
+    is_tenant_receiver = bool(tenant_val)
+    default_subject_template = TENANT_EMAIL_SUBJECT_TEMPLATE if is_tenant_receiver else GLOBAL_EMAIL_SUBJECT_TEMPLATE
+    default_body_template = TENANT_EMAIL_BODY_TEMPLATE if is_tenant_receiver else GLOBAL_EMAIL_BODY_TEMPLATE
+
+    email_subject_template = data.email_subject_template or default_subject_template
+    email_body_template = data.email_body_template or default_body_template
     
     await ensure_db_pool()
     
@@ -2023,44 +2122,44 @@ async def update_notification_receiver(receiver_id: int, organization: Optional[
             email_to = None
             rbac_role = None
         
-        # When tenant is explicitly cleared, drop --tenant-<name> from receiver_name (same rules as create).
+        # Keep receiver_name aligned with auto-name pattern when receiver_name was not customized.
+        # This covers updates to tenant/category/severity/alert_names (including tenant -> global).
         auto_receiver_name: Optional[str] = None
-        prev_tenant = str(existing.get("tenant") or "").strip()
-        if data.tenant is not None:
-            eff_tenant_stored = str(data.tenant).strip() or None
+
+        def _build_auto_receiver_name(severity: str, category: str, alert_names: List[str], tenant: Optional[str]) -> str:
+            base_nm = f"{(severity or 'warning').lower()}-{(category or 'application').lower()}"
+            suffix_parts: List[str] = []
+            if alert_names:
+                suffix_parts.append("alerts-" + "|".join(sorted(alert_names)))
+            if tenant:
+                suffix_parts.append("tenant-" + tenant)
+            return base_nm + ("--" + "--".join(suffix_parts) if suffix_parts else "")
+
+        ex_category = str(existing.get("category") or "application").lower()
+        ex_severity = str(existing.get("severity") or "warning").lower()
+        ex_alert_names = [n for n in (existing.get("alert_names") or []) if n and str(n).strip()]
+        ex_tenant = str(existing.get("tenant") or "").strip() or None
+        existing_auto_name = _build_auto_receiver_name(ex_severity, ex_category, ex_alert_names, ex_tenant)
+
+        eff_category = data.category.lower() if data.category is not None else ex_category
+        eff_severity = data.severity.lower() if data.severity is not None else ex_severity
+        if data.alert_names is not None:
+            eff_alert_names = [n for n in data.alert_names if n and str(n).strip()]
         else:
-            eff_tenant_stored = prev_tenant or None
+            eff_alert_names = ex_alert_names
+        eff_tenant = (str(data.tenant).strip() or None) if data.tenant is not None else ex_tenant
 
         if (
             data.receiver_name is None
-            and data.tenant is not None
-            and eff_tenant_stored is None
-            and prev_tenant
+            and (
+                data.tenant is not None
+                or data.alert_names is not None
+                or data.category is not None
+                or data.severity is not None
+            )
+            and str(existing.get("receiver_name") or "").strip() == existing_auto_name
         ):
-            eff_category = (
-                data.category.lower()
-                if data.category is not None
-                else str(existing.get("category") or "application").lower()
-            )
-            eff_severity = (
-                data.severity.lower()
-                if data.severity is not None
-                else str(existing.get("severity") or "warning").lower()
-            )
-            if data.alert_names is not None:
-                eff_alert_names_list = [n for n in data.alert_names if n and str(n).strip()]
-            else:
-                raw_an = existing.get("alert_names")
-                eff_alert_names_list = [n for n in (raw_an or []) if n and str(n).strip()]
-            base_nm = f"{eff_severity}-{eff_category}"
-            suffix_parts: List[str] = []
-            if eff_alert_names_list:
-                suffix_parts.append(
-                    "alerts-" + "|".join(sorted(eff_alert_names_list))
-                )
-            candidate = base_nm + (
-                "--" + "--".join(suffix_parts) if suffix_parts else ""
-            )
+            candidate = _build_auto_receiver_name(eff_severity, eff_category, eff_alert_names, eff_tenant)
             if candidate != existing["receiver_name"]:
                 dup = await conn.fetchrow(
                     "SELECT id FROM notification_receivers WHERE receiver_name = $1 AND id != $2",
