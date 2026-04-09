@@ -56,17 +56,11 @@ class LanguageDiarizationTritonClient(TritonClient):
             audio_base64, target_language
         )
 
-        headers: Dict[str, str] = {}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-
         try:
-            response = self.client.infer(
+            response = self.send_triton_request(
                 model_name="lang_diarization",
-                model_version="1",
                 inputs=inputs,
                 outputs=outputs,
-                headers=headers or None,
             )
         except Exception as exc:
             logger.error(
