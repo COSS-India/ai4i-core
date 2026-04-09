@@ -280,7 +280,7 @@
       redis_password: ${REDIS_PASSWORD}
       redis_timeout: 1001
       key_type: var
-      key: remote_addr
+      key: http_x_forwarded_for
       count: 10
       time_window: 60
       rejected_code: 429
@@ -321,7 +321,7 @@
       redis_password: ${REDIS_PASSWORD}
       redis_timeout: 1001
       key_type: var
-      key: remote_addr
+      key: http_x_forwarded_for
       count: 5
       time_window: 3600
       rejected_code: 429
@@ -361,7 +361,7 @@
       redis_password: ${REDIS_PASSWORD}
       redis_timeout: 1001
       key_type: var
-      key: remote_addr
+      key: http_x_forwarded_for
       count: 3
       time_window: 3600
       rejected_code: 429
