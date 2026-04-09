@@ -275,7 +275,7 @@
       use_real_request_uri_unsafe: false
     limit-count:
       policy: redis
-      redis_host: redis.dev.svc.cluster.local
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
       redis_port: 6379
       redis_password: ${REDIS_PASSWORD}
       redis_timeout: 1001
@@ -316,7 +316,7 @@
       use_real_request_uri_unsafe: false
     limit-count:
       policy: redis
-      redis_host: redis.dev.svc.cluster.local
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
       redis_port: 6379
       redis_password: ${REDIS_PASSWORD}
       redis_timeout: 1001
@@ -356,7 +356,7 @@
       use_real_request_uri_unsafe: false
     limit-count:
       policy: redis
-      redis_host: redis.dev.svc.cluster.local
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
       redis_port: 6379
       redis_password: ${REDIS_PASSWORD}
       redis_timeout: 1001
@@ -397,7 +397,7 @@
       use_real_request_uri_unsafe: false
     limit-count:
       policy: redis
-      redis_host: redis.dev.svc.cluster.local
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
       redis_port: 6379
       redis_password: ${REDIS_PASSWORD}
       redis_timeout: 1001
@@ -468,7 +468,7 @@
       use_real_request_uri_unsafe: false
     limit-count:
       policy: redis
-      redis_host: redis.dev.svc.cluster.local
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
       redis_port: 6379
       redis_password: ${REDIS_PASSWORD}
       redis_timeout: 1001
@@ -987,7 +987,7 @@
       body_base64: false
     limit-count:
       policy: redis
-      redis_host: redis.dev.svc.cluster.local
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
       redis_port: 6379
       redis_password: ${REDIS_PASSWORD}
       redis_timeout: 1001
@@ -1390,11 +1390,15 @@
         X-Service: pii-guard-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
       key_type: var
       count: 120
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_forwarded_for
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -2031,11 +2035,15 @@
         X-Service: unleash-service
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
       key_type: var
       count: 200
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_forwarded_for
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -2064,11 +2072,15 @@
       expose_headers: X-Auth-Token
       allow_credential: true
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
       key_type: var
       count: 200
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_forwarded_for
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -2117,11 +2129,15 @@
         X-Service: jaeger
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
       key_type: var
       count: 100
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_forwarded_for
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -2275,11 +2291,15 @@
         X-Service: opensearch-dashboards
       body_base64: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
       key_type: var
       count: 100
       show_limit_quota_header: true
-      key: remote_addr
+      key: http_x_forwarded_for
       time_window: 60
       rejected_code: 429
       allow_degradation: false
@@ -2385,13 +2405,17 @@
       - /prometheus/$1
       use_real_request_uri_unsafe: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
       key_type: var
       rejected_code: 429
       show_limit_quota_header: true
       allow_degradation: false
       time_window: 60
-      key: remote_addr
+      key: http_x_forwarded_for
       count: 200
 - uri: /prometheus/query
   name: prometheus-query-page
