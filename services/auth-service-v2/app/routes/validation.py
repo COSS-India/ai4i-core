@@ -89,7 +89,7 @@ async def validate_token(
         tenant_service = None
         mt_factory = getattr(request.app.state, "multi_tenant_session_factory", None)
         if mt_factory:
-            tenant_service = TenantService(mt_factory)
+            tenant_service = TenantService(mt_factory, cache_svc)
 
         # Enforce tenant lifecycle status on every token validation.
         # This ensures suspended/deactivated tenant admins/users are cut off on next request.
@@ -101,7 +101,7 @@ async def validate_token(
                 tenant_id = await tenant_service.resolve_and_cache_tenant_id(claims.user_id, is_tenant_user)
 
             if tenant_id:
-                tenant_status = await tenant_service.get_tenant_status(tenant_id)
+                tenant_status = await tenant_service.get_tenant_status_cached(tenant_id)
                 if tenant_status is None:
                     tenant_status = await tenant_service.get_tenant_status_by_user_id(claims.user_id, is_tenant_user)
                 if _is_suspended_or_deactivated(tenant_status):
@@ -116,7 +116,10 @@ async def validate_token(
 
                 # tenant admin only checks tenant status; tenant user checks both tenant and tenant-user status
                 if not is_tenant_user:
-                    tenant_user_status = await tenant_service.get_tenant_user_status(tenant_id, claims.user_id)
+                    tenant_user_status = await tenant_service.get_tenant_user_status_cached(
+                        tenant_id,
+                        claims.user_id,
+                    )
                     if _is_suspended_or_deactivated(tenant_user_status):
                         return JSONResponse(
                             status_code=401,

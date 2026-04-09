@@ -61,6 +61,10 @@ class SessionService:
         """Invalidate all sessions for a user (except optionally one)."""
         return await self._repo.invalidate_all_for_user(user_id, except_token)
 
+    async def invalidate_all_for_users(self, user_ids: list[int]) -> int:
+        """Invalidate all sessions for multiple users in one DB operation."""
+        return await self._repo.invalidate_all_for_users(user_ids)
+
     async def is_refresh_token_active(self, token_id: str) -> bool:
         """Check if a refresh token is still active. Redis first, DB fallback."""
         if await self._cache.is_refresh_token_valid(token_id):

@@ -26,6 +26,7 @@ from app.schemas.auth import (
 from app.services.auth_service import AuthService
 from app.services.cache_service import CacheService
 from app.services.session_service import SessionService
+from app.services.tenant_service import TenantService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -131,9 +132,7 @@ async def revoke_sessions_by_tenant(
         })
 
     session_service = SessionService(SessionRepository(db), cache)
-    sessions_revoked = 0
-    for user_id in user_ids:
-        sessions_revoked += await session_service.invalidate_all_for_user(user_id)
+    sessions_revoked = await session_service.invalidate_all_for_users(user_ids)
     await session_service.commit()
 
     return success_response(data={
@@ -163,9 +162,7 @@ async def revoke_sessions_by_users(
         return success_response(data={"users_matched": 0, "sessions_revoked": 0})
 
     session_service = SessionService(SessionRepository(db), cache)
-    sessions_revoked = 0
-    for user_id in user_ids:
-        sessions_revoked += await session_service.invalidate_all_for_user(user_id)
+    sessions_revoked = await session_service.invalidate_all_for_users(user_ids)
     await session_service.commit()
 
     return success_response(data={

@@ -5,7 +5,7 @@ UserSession table queries.
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.session import UserSession
@@ -65,6 +65,22 @@ class SessionRepository:
             s.is_active = False
         await self._db.flush()
         return len(sessions)
+
+    async def invalidate_all_for_users(self, user_ids: list[int]) -> int:
+        """Batch invalidate active sessions for multiple users."""
+        if not user_ids:
+            return 0
+
+        result = await self._db.execute(
+            update(UserSession)
+            .where(
+                UserSession.user_id.in_(user_ids),
+                UserSession.is_active == True,  # noqa: E712
+            )
+            .values(is_active=False)
+        )
+        await self._db.flush()
+        return int(result.rowcount or 0)
 
     async def cleanup_expired(self) -> int:
         result = await self._db.execute(
