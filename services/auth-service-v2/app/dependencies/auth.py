@@ -179,6 +179,7 @@ async def get_current_user(
     request: Request,
     payload: TokenPayload = Depends(get_current_token),
     db: AsyncSession = Depends(get_db),
+    cache_service: CacheService = Depends(get_cache_service),
 ) -> User:
     """Resolve the authenticated user from the token payload."""
     repo = UserRepository(db)
@@ -190,7 +191,7 @@ async def get_current_user(
 
     mt_factory = getattr(request.app.state, "multi_tenant_session_factory", None)
     if mt_factory:
-        tenant_service = TenantService(mt_factory)
+        tenant_service = TenantService(mt_factory, cache_service)
 
         def _is_suspended_or_deactivated(status_val: str | None) -> bool:
             if not status_val:
@@ -206,9 +207,15 @@ async def get_current_user(
             tenant_id = await tenant_service.resolve_and_cache_tenant_id(user.id, is_tenant_user)
 
         if tenant_id:
-            tenant_status = await tenant_service.get_tenant_status(tenant_id)
-            if tenant_status is None:
-                tenant_status = await tenant_service.get_tenant_status_by_user_id(user.id, is_tenant_user)
+            # Do not rely only on cache here. /auth/me is used by UI refresh and should
+            # reflect tenant suspension immediately.
+            tenant_status = await tenant_service.get_tenant_status_cached(tenant_id)
+            tenant_status_by_user = await tenant_service.get_tenant_status_by_user_id(
+                user.id,
+                is_tenant_user,
+            )
+            if tenant_status_by_user is not None:
+                tenant_status = tenant_status_by_user
             if _is_suspended_or_deactivated(tenant_status):
                 raise AuthorizationError(
                     message=f"tenant is {str(tenant_status).lower()} , please contact your platform admin",
@@ -216,7 +223,7 @@ async def get_current_user(
                 )
 
             if not is_tenant_user:
-                tenant_user_status = await tenant_service.get_tenant_user_status(tenant_id, user.id)
+                tenant_user_status = await tenant_service.get_tenant_user_status_cached(tenant_id, user.id)
                 if _is_suspended_or_deactivated(tenant_user_status):
                     raise AuthorizationError(
                         message=f"User is {str(tenant_user_status).lower()} , please contact your admin",

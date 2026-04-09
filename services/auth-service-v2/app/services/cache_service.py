@@ -17,6 +17,8 @@ _API_KEY_PREFIX = "auth:apikey:"
 _REFRESH_PREFIX = "auth:refresh:"
 _ROLE_PERMS_PREFIX = "auth:role:"
 _API_PERMS_KEY = "auth:api_perms"
+_TENANT_STATUS_PREFIX = "auth:tenant_status:"
+_TENANT_USER_STATUS_PREFIX = "auth:tenant_user_status:"
 
 
 class CacheService(_BaseCacheService):
@@ -83,3 +85,43 @@ class CacheService(_BaseCacheService):
 
     async def revoke_refresh_token(self, token_id: str) -> None:
         await self._redis_refresh_tokens.delete(f"{_REFRESH_PREFIX}{token_id}")
+
+    # ── Tenant status caches (short TTL for validate path) ──
+
+    async def get_tenant_status(self, tenant_id: str) -> Optional[str]:
+        data = await self._redis_api_permissions.get(f"{_TENANT_STATUS_PREFIX}{tenant_id}")
+        if not data:
+            return None
+        if isinstance(data, bytes):
+            return data.decode()
+        return str(data)
+
+    async def set_tenant_status(self, tenant_id: str, status: str, ttl_seconds: int) -> None:
+        await self._redis_api_permissions.setex(
+            f"{_TENANT_STATUS_PREFIX}{tenant_id}",
+            ttl_seconds,
+            status,
+        )
+
+    async def get_tenant_user_status(self, tenant_id: str, user_id: int) -> Optional[str]:
+        data = await self._redis_api_permissions.get(
+            f"{_TENANT_USER_STATUS_PREFIX}{tenant_id}:{user_id}"
+        )
+        if not data:
+            return None
+        if isinstance(data, bytes):
+            return data.decode()
+        return str(data)
+
+    async def set_tenant_user_status(
+        self,
+        tenant_id: str,
+        user_id: int,
+        status: str,
+        ttl_seconds: int,
+    ) -> None:
+        await self._redis_api_permissions.setex(
+            f"{_TENANT_USER_STATUS_PREFIX}{tenant_id}:{user_id}",
+            ttl_seconds,
+            status,
+        )

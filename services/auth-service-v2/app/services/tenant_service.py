@@ -12,10 +12,13 @@ from typing import Any, Optional
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.cache_service import CacheService
+
 logger = logging.getLogger(__name__)
 
 # Timeout for multi-tenant DB queries (prevent blocking auth)
 _TENANT_QUERY_TIMEOUT = 5.0
+_TENANT_STATUS_CACHE_TTL_SECONDS = 60
 
 
 class TenantService:
@@ -27,8 +30,9 @@ class TenantService:
     When a factory is provided, sessions are created and closed per query.
     """
 
-    def __init__(self, session_or_factory=None) -> None:
+    def __init__(self, session_or_factory=None, cache_service: CacheService | None = None) -> None:
         self._session_or_factory = session_or_factory
+        self._cache_service = cache_service
 
     async def _get_session(self):
         """Get a DB session — creates one from factory if needed."""
@@ -410,6 +414,52 @@ class TenantService:
         finally:
             if callable(self._session_or_factory):
                 await db.close()
+
+    async def get_tenant_status_cached(
+        self,
+        tenant_id: str,
+        *,
+        ttl_seconds: int = _TENANT_STATUS_CACHE_TTL_SECONDS,
+    ) -> Optional[str]:
+        tenant_id_norm = (tenant_id or "").strip().lower()
+        if not tenant_id_norm:
+            return None
+
+        if self._cache_service:
+            cached_status = await self._cache_service.get_tenant_status(tenant_id_norm)
+            if cached_status:
+                return self._normalize_status(cached_status)
+
+        status = await self.get_tenant_status(tenant_id_norm)
+        if status and self._cache_service:
+            await self._cache_service.set_tenant_status(tenant_id_norm, status, ttl_seconds)
+        return status
+
+    async def get_tenant_user_status_cached(
+        self,
+        tenant_id: str,
+        user_id: int,
+        *,
+        ttl_seconds: int = _TENANT_STATUS_CACHE_TTL_SECONDS,
+    ) -> Optional[str]:
+        tenant_id_norm = (tenant_id or "").strip().lower()
+        if not tenant_id_norm:
+            return None
+
+        if self._cache_service:
+            cached_status = await self._cache_service.get_tenant_user_status(tenant_id_norm, user_id)
+            if cached_status:
+                return self._normalize_status(cached_status)
+
+        status = await self.get_tenant_user_status(tenant_id_norm, user_id)
+        if status and self._cache_service:
+            await self._cache_service.set_tenant_user_status(
+                tenant_id_norm,
+                user_id,
+                status,
+                ttl_seconds,
+            )
+        return status
 
     async def debug_tenant_mappings(
         self, tenant_id: str, user_id: int, is_tenant: bool
