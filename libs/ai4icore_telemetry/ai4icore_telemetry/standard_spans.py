@@ -17,7 +17,7 @@ Phase 7: set final metrics on the parent {svc}.inference before it ends.
 from __future__ import annotations
 
 import time
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, Optional
 
@@ -34,6 +34,31 @@ except Exception:  # pragma: no cover
     _TRACING_AVAILABLE = False
 
 
+class _NoOpSpan:
+    def set_attribute(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def add_event(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def set_status(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def record_exception(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def is_recording(self) -> bool:
+        return False
+
+
+_NOOP_SPAN = _NoOpSpan()
+
+
+@contextmanager
+def _noop_span_context() -> Iterator[_NoOpSpan]:
+    yield _NOOP_SPAN
+
+
 @dataclass(frozen=True)
 class _InferenceContext:
     start_time: float
@@ -47,6 +72,12 @@ class StandardSpanManager:
     - This is intentionally "thin": it standardizes span names + required attributes.
     - It does NOT change business logic or enforce how services resolve model/client/db, etc.
     - If OpenTelemetry is not available, all context managers become no-ops.
+    - Repo migration status (gradual rollout):
+      - Migrated to StandardSpanManager phases: nmt-service, speaker-diarization-service,
+        language-diarization-service.
+      - Not yet migrated (still primarily uses raw tracer spans): asr-service, ocr-service,
+        tts-service, ner-service, language-detection-service, transliteration-service,
+        audio-lang-detection-service (and others).
     """
 
     def __init__(self, service_prefix: str, tracer_name: Optional[str] = None):
@@ -122,9 +153,9 @@ class StandardSpanManager:
         to own the whole lifecycle.
         """
         if not self._tracer:
-            with nullcontext() as span:
+            with _noop_span_context() as span:
                 yield span
-            return
+                return
 
         ctx = _InferenceContext(start_time=time.time())
         with self._tracer.start_as_current_span(self._svc_key("inference")) as span:
@@ -152,44 +183,44 @@ class StandardSpanManager:
     @contextmanager
     def preprocess(self) -> Iterator[Any]:
         if not self._tracer:
-            with nullcontext() as span:
+            with _noop_span_context() as span:
                 yield span
-            return
+                return
         with self._tracer.start_as_current_span(self._svc_key("preprocess")) as span:
             yield span
 
     @contextmanager
     def resolve_model(self) -> Iterator[Any]:
         if not self._tracer:
-            with nullcontext() as span:
+            with _noop_span_context() as span:
                 yield span
-            return
+                return
         with self._tracer.start_as_current_span(self._svc_key("resolve_model")) as span:
             yield span
 
     @contextmanager
     def triton_inference(self) -> Iterator[Any]:
         if not self._tracer:
-            with nullcontext() as span:
+            with _noop_span_context() as span:
                 yield span
-            return
+                return
         with self._tracer.start_as_current_span(self._svc_key("triton_inference")) as span:
             yield span
 
     @contextmanager
     def postprocess(self) -> Iterator[Any]:
         if not self._tracer:
-            with nullcontext() as span:
+            with _noop_span_context() as span:
                 yield span
-            return
+                return
         with self._tracer.start_as_current_span(self._svc_key("postprocess")) as span:
             yield span
 
     @contextmanager
     def persist(self) -> Iterator[Any]:
         if not self._tracer:
-            with nullcontext() as span:
+            with _noop_span_context() as span:
                 yield span
-            return
+                return
         with self._tracer.start_as_current_span(self._svc_key("persist")) as span:
             yield span

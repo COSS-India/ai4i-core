@@ -187,7 +187,8 @@ class NMTService:
                     if effective_model and "indictrans" in effective_model.lower():
                         effective_model = "nmt"
 
-                with tracer.start_as_current_span("nmt.create_db_request"):
+                # Persist phase (DB): create request record
+                with _standard_spans.persist() as persist_span:
                     request_record = await self.repository.create_request(
                         model_id=service_id,
                         source_language=original_source_lang,
@@ -198,6 +199,7 @@ class NMTService:
                         session_id=session_id,
                     )
                     request_id = request_record.id
+                    persist_span.set_attribute("nmt.request_id", str(request_id))
 
                 max_batch_size = 90
                 output_batch: list = []
