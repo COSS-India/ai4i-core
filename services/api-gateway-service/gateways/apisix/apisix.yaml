@@ -277,6 +277,7 @@
       policy: redis
       redis_host: redis.dev.svc.cluster.local
       redis_port: 6379
+      redis_password: "$secret://env/REDIS_PASSWORD"
       redis_timeout: 1001
       key_type: var
       key: remote_addr
@@ -317,6 +318,7 @@
       policy: redis
       redis_host: redis.dev.svc.cluster.local
       redis_port: 6379
+      redis_password: "$secret://env/REDIS_PASSWORD"
       redis_timeout: 1001
       key_type: var
       key: remote_addr
@@ -356,6 +358,7 @@
       policy: redis
       redis_host: redis.dev.svc.cluster.local
       redis_port: 6379
+      redis_password: "$secret://env/REDIS_PASSWORD"
       redis_timeout: 1001
       key_type: var
       key: remote_addr
