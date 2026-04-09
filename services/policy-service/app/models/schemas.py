@@ -117,7 +117,8 @@ class PolicyOut(BaseModel):
     is_active: bool
     is_global: bool
     supported_languages: List[str]
-    tenant_id: Optional[str] = None
+    # New: full assignment set (empty for global policies).
+    tenant_ids: List[str] = []
     pii_types_count: Optional[int] = None
     pii_types: List[PolicyPiiTypeOut] = []
     created_at: datetime
@@ -130,7 +131,7 @@ class PolicyDetailOut(BaseModel):
     is_active: bool
     is_global: bool
     supported_languages: List[str]
-    tenant_id: Optional[str] = None
+    tenant_ids: List[str] = []
     pii_types: List[PolicyPiiTypeOut] = []
     created_at: datetime
     model_config = {"from_attributes": True}

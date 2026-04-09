@@ -47,6 +47,7 @@ async def list_policies(
     data: list[PolicyOut] = []
     for row in rows:
         links = row.pii_types or []
+        tenant_ids = [tp.tenant_id for tp in (getattr(row, "tenant_policies", None) or []) if tp.tenant_id]
         data.append(
             PolicyOut(
                 policy_id=row.policy_id,
@@ -55,7 +56,7 @@ async def list_policies(
                 is_active=row.is_active,
                 is_global=row.is_global,
                 supported_languages=row.supported_languages or [],
-                tenant_id=None,
+                tenant_ids=tenant_ids,
                 pii_types_count=len(links),
                 pii_types=[
                     PolicyPiiTypeOut(
@@ -113,6 +114,11 @@ def _build_detail(policy) -> PolicyDetailOut:
                 mask_format=link.pii_type.mask_format,
             )
         )
+    tenant_ids = [
+        tp.tenant_id
+        for tp in (getattr(policy, "tenant_policies", None) or [])
+        if getattr(tp, "tenant_id", None)
+    ]
     return PolicyDetailOut(
         policy_id=policy.policy_id,
         name=policy.name,
@@ -120,6 +126,7 @@ def _build_detail(policy) -> PolicyDetailOut:
         is_active=policy.is_active,
         is_global=policy.is_global,
         supported_languages=policy.supported_languages or [],
+        tenant_ids=tenant_ids,
         pii_types=pii_types_out,
         created_at=policy.created_at,
     )
