@@ -60,17 +60,15 @@ class SessionService:
     ) -> int:
         """Invalidate all sessions for a user (except optionally one) and revoke Redis refresh tokens."""
         sessions = await self._repo.invalidate_all_for_user(user_id, except_token)
-        for session in sessions:
-            if session.token_id:
-                await self._cache.revoke_refresh_token(session.token_id)
+        token_ids = [session.token_id for session in sessions if session.token_id]
+        await self._cache.revoke_refresh_tokens(token_ids)
         return len(sessions)
 
     async def invalidate_all_for_users(self, user_ids: list[int]) -> int:
         """Invalidate all sessions for multiple users and revoke Redis refresh tokens."""
         sessions = await self._repo.invalidate_all_for_users(user_ids)
-        for session in sessions:
-            if session.token_id:
-                await self._cache.revoke_refresh_token(session.token_id)
+        token_ids = [session.token_id for session in sessions if session.token_id]
+        await self._cache.revoke_refresh_tokens(token_ids)
         return len(sessions)
 
     async def is_refresh_token_active(self, token_id: str) -> bool:

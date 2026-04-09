@@ -207,15 +207,12 @@ async def get_current_user(
             tenant_id = await tenant_service.resolve_and_cache_tenant_id(user.id, is_tenant_user)
 
         if tenant_id:
-            # Do not rely only on cache here. /auth/me is used by UI refresh and should
-            # reflect tenant suspension immediately.
             tenant_status = await tenant_service.get_tenant_status_cached(tenant_id)
-            tenant_status_by_user = await tenant_service.get_tenant_status_by_user_id(
-                user.id,
-                is_tenant_user,
-            )
-            if tenant_status_by_user is not None:
-                tenant_status = tenant_status_by_user
+            if tenant_status is None:
+                tenant_status = await tenant_service.get_tenant_status_by_user_id(
+                    user.id,
+                    is_tenant_user,
+                )
             if _is_suspended_or_deactivated(tenant_status):
                 raise AuthorizationError(
                     message="Tenant access is restricted. Contact your administrator.",

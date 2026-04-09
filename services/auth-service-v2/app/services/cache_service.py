@@ -87,6 +87,18 @@ class CacheService(_BaseCacheService):
     async def revoke_refresh_token(self, token_id: str) -> None:
         await self._redis_refresh_tokens.delete(f"{_REFRESH_PREFIX}{token_id}")
 
+    async def revoke_refresh_tokens(self, token_ids: list[str]) -> None:
+        """Revoke multiple refresh token_ids in a single Redis pipeline."""
+        if not token_ids:
+            return
+        keys = [f"{_REFRESH_PREFIX}{token_id}" for token_id in token_ids if token_id]
+        if not keys:
+            return
+        async with self._redis_refresh_tokens.pipeline(transaction=False) as pipe:
+            for key in keys:
+                pipe.delete(key)
+            await pipe.execute()
+
     # ── Tenant status caches (short TTL for validate path) ──
 
     async def get_tenant_status(self, tenant_id: str) -> Optional[str]:
