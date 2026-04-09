@@ -5,7 +5,7 @@ UserSession table queries.
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.session import UserSession
@@ -51,7 +51,7 @@ class SessionRepository:
 
     async def invalidate_all_for_user(
         self, user_id: int, except_token: Optional[str] = None
-    ) -> int:
+    ) -> list[UserSession]:
         query = select(UserSession).where(
             UserSession.user_id == user_id,
             UserSession.is_active == True,  # noqa: E712
@@ -64,23 +64,24 @@ class SessionRepository:
         for s in sessions:
             s.is_active = False
         await self._db.flush()
-        return len(sessions)
+        return sessions
 
-    async def invalidate_all_for_users(self, user_ids: list[int]) -> int:
-        """Batch invalidate active sessions for multiple users."""
+    async def invalidate_all_for_users(self, user_ids: list[int]) -> list[UserSession]:
+        """Batch invalidate active sessions for multiple users and return affected sessions."""
         if not user_ids:
-            return 0
+            return []
 
         result = await self._db.execute(
-            update(UserSession)
-            .where(
+            select(UserSession).where(
                 UserSession.user_id.in_(user_ids),
                 UserSession.is_active == True,  # noqa: E712
             )
-            .values(is_active=False)
         )
+        sessions = result.scalars().all()
+        for s in sessions:
+            s.is_active = False
         await self._db.flush()
-        return int(result.rowcount or 0)
+        return sessions
 
     async def cleanup_expired(self) -> int:
         result = await self._db.execute(

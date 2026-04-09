@@ -218,7 +218,7 @@ async def get_current_user(
                 tenant_status = tenant_status_by_user
             if _is_suspended_or_deactivated(tenant_status):
                 raise AuthorizationError(
-                    message=f"tenant is {str(tenant_status).lower()} , please contact your platform admin",
+                    message="Tenant access is restricted. Contact your administrator.",
                     code="TENANT_INACTIVE",
                 )
 

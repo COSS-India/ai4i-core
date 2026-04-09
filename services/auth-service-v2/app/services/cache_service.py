@@ -19,6 +19,7 @@ _ROLE_PERMS_PREFIX = "auth:role:"
 _API_PERMS_KEY = "auth:api_perms"
 _TENANT_STATUS_PREFIX = "auth:tenant_status:"
 _TENANT_USER_STATUS_PREFIX = "auth:tenant_user_status:"
+_REVOCATION_COOLDOWN_PREFIX = "auth:revocation_cooldown:"
 
 
 class CacheService(_BaseCacheService):
@@ -125,3 +126,22 @@ class CacheService(_BaseCacheService):
             ttl_seconds,
             status,
         )
+
+    # ── Revocation endpoint cooldown (anti-DoS guard) ──
+
+    async def acquire_revocation_cooldown(self, scope: str, ttl_seconds: int) -> bool:
+        """
+        Acquire a short-lived cooldown key.
+        Returns True only for the first caller during the cooldown window.
+        """
+        key = f"{_REVOCATION_COOLDOWN_PREFIX}{scope}"
+        result = await self._redis_api_permissions.set(key, "1", ex=ttl_seconds, nx=True)
+        return bool(result)
+
+    async def get_revocation_cooldown_ttl(self, scope: str) -> int:
+        """Return remaining cooldown in seconds for a scope (0 when absent)."""
+        key = f"{_REVOCATION_COOLDOWN_PREFIX}{scope}"
+        ttl = await self._redis_api_permissions.ttl(key)
+        if ttl is None or ttl < 0:
+            return 0
+        return int(ttl)
