@@ -274,7 +274,10 @@
           X-Gateway: apisix
       use_real_request_uri_unsafe: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: redis.dev.svc.cluster.local
+      redis_port: 6379
+      redis_timeout: 1001
       key_type: var
       key: remote_addr
       count: 10
@@ -311,7 +314,10 @@
           X-Gateway: apisix
       use_real_request_uri_unsafe: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: redis.dev.svc.cluster.local
+      redis_port: 6379
+      redis_timeout: 1001
       key_type: var
       key: remote_addr
       count: 5
@@ -347,7 +353,10 @@
           X-Gateway: apisix
       use_real_request_uri_unsafe: false
     limit-count:
-      policy: local
+      policy: redis
+      redis_host: redis.dev.svc.cluster.local
+      redis_port: 6379
+      redis_timeout: 1001
       key_type: var
       key: remote_addr
       count: 3
