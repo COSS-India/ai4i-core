@@ -1371,6 +1371,25 @@
     pass_host: pass
     type: roundrobin
   plugins:
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\nend\n"
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+      - Authorization
+      - X-API-Key
+      - x-api-key
+      - apikey
+      upstream_headers:
+      - X-User-ID
+      client_headers:
+      - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
     cors:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
@@ -1390,15 +1409,11 @@
         X-Service: pii-guard-service
       body_base64: false
     limit-count:
-      policy: redis
-      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
-      redis_port: 6379
-      redis_password: ${REDIS_PASSWORD}
-      redis_timeout: 1001
+      policy: local
       key_type: var
       count: 120
       show_limit_quota_header: true
-      key: http_x_forwarded_for
+      key: http_x_user_id
       time_window: 60
       rejected_code: 429
       allow_degradation: false
