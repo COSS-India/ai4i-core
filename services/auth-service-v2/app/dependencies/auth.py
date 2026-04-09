@@ -208,6 +208,12 @@ async def get_current_user(
 
         if tenant_id:
             tenant_status = await tenant_service.get_tenant_status_cached(tenant_id)
+            # Avoid stale "ACTIVE" cache allowing suspended/deactivated tenants.
+            # Re-check source-of-truth before granting access.
+            if not _is_suspended_or_deactivated(tenant_status):
+                fresh_tenant_status = await tenant_service.get_tenant_status(tenant_id)
+                if fresh_tenant_status is not None:
+                    tenant_status = fresh_tenant_status
             if tenant_status is None:
                 tenant_status = await tenant_service.get_tenant_status_by_user_id(
                     user.id,
@@ -221,6 +227,12 @@ async def get_current_user(
 
             if not is_tenant_user:
                 tenant_user_status = await tenant_service.get_tenant_user_status_cached(tenant_id, user.id)
+                if not _is_suspended_or_deactivated(tenant_user_status):
+                    fresh_tenant_user_status = await tenant_service.get_tenant_user_status(
+                        tenant_id, user.id
+                    )
+                    if fresh_tenant_user_status is not None:
+                        tenant_user_status = fresh_tenant_user_status
                 if _is_suspended_or_deactivated(tenant_user_status):
                     raise AuthorizationError(
                         message=f"User is {str(tenant_user_status).lower()} , please contact your admin",

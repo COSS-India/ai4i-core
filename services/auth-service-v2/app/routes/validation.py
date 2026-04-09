@@ -112,6 +112,12 @@ async def validate_token(
 
             if tenant_id:
                 tenant_status = await tenant_service.get_tenant_status_cached(tenant_id)
+                # Avoid stale "ACTIVE" cache allowing suspended/deactivated tenants.
+                # Re-check source-of-truth before granting access.
+                if not _is_suspended_or_deactivated(tenant_status):
+                    fresh_tenant_status = await tenant_service.get_tenant_status(tenant_id)
+                    if fresh_tenant_status is not None:
+                        tenant_status = fresh_tenant_status
                 if tenant_status is None:
                     tenant_status = await tenant_service.get_tenant_status_by_user_id(claims.user_id, is_tenant_user)
                 if _is_suspended_or_deactivated(tenant_status):
@@ -130,6 +136,13 @@ async def validate_token(
                         tenant_id,
                         claims.user_id,
                     )
+                    if not _is_suspended_or_deactivated(tenant_user_status):
+                        fresh_tenant_user_status = await tenant_service.get_tenant_user_status(
+                            tenant_id,
+                            claims.user_id,
+                        )
+                        if fresh_tenant_user_status is not None:
+                            tenant_user_status = fresh_tenant_user_status
                     if _is_suspended_or_deactivated(tenant_user_status):
                         return JSONResponse(
                             status_code=401,
