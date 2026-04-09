@@ -186,6 +186,8 @@ class AppEnv(BaseSettings):
     endpoint_validation_mode: str = "lenient"
     # Live inference probe timeout (seconds) used by Model Management endpoint validation
     endpoint_validation_timeout_seconds: float = 30.0
+    # Allow skipping TLS verification for endpoint validation probes (self-signed certs)
+    endpoint_validation_skip_tls_verify: bool = False
 
     # ── Multi-tenant ──
     multi_tenant_enabled: bool = True

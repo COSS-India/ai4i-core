@@ -31,6 +31,7 @@ async def validate_endpoint_or_raise(
         run_inference_test=app_env.run_inference_test,
         timeout=app_env.endpoint_validation_timeout_seconds,
         validation_mode=app_env.endpoint_validation_mode,
+        skip_tls_verify=app_env.endpoint_validation_skip_tls_verify,
         triton_schema=triton_schema or None,
     )
     if not validation.is_valid:
