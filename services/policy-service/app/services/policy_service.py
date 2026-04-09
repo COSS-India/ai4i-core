@@ -199,10 +199,31 @@ class PolicyService:
         validated = await _validated_forward_auth_header(auth_header)
         if validated:
             headers["Authorization"] = validated
-        async with httpx.AsyncClient(timeout=app_env.policy_service_http_timeout) as client:
-            resp = await client.get(primary_url, headers=headers)
-            if resp.status_code == 404:
-                resp = await client.get(gateway_url, headers=headers)
+        try:
+            async with httpx.AsyncClient(timeout=app_env.policy_service_http_timeout) as client:
+                resp = await client.get(primary_url, headers=headers)
+                if resp.status_code == 404:
+                    resp = await client.get(gateway_url, headers=headers)
+        except httpx.TimeoutException:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": {
+                        "code": "TENANT_SERVICE_TIMEOUT",
+                        "message": "Timed out fetching tenants from multi-tenant service",
+                    }
+                },
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": {
+                        "code": "TENANT_SERVICE_ERROR",
+                        "message": f"Failed to reach multi-tenant service: {type(e).__name__}",
+                    }
+                },
+            )
         if resp.status_code >= 400:
             raise HTTPException(
                 status_code=502,

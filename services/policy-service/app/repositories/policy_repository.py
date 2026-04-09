@@ -32,6 +32,7 @@ class PolicyRepository:
         stmt = (
             select(PiiPolicy)
             .options(selectinload(PiiPolicy.pii_types).selectinload(PolicyPiiType.pii_type))
+            .options(selectinload(PiiPolicy.tenant_policies))
             .where(PiiPolicy.policy_id == policy_id)
         )
         result = await self.db.execute(stmt)
@@ -51,7 +52,8 @@ class PolicyRepository:
     ) -> tuple[Sequence[PiiPolicy], int]:
         # Eager-load pii_types to avoid async lazy-load (MissingGreenlet) in route serialization/counting.
         stmt = select(PiiPolicy).options(
-            selectinload(PiiPolicy.pii_types).selectinload(PolicyPiiType.pii_type)
+            selectinload(PiiPolicy.pii_types).selectinload(PolicyPiiType.pii_type),
+            selectinload(PiiPolicy.tenant_policies),
         )
         if is_global is not None:
             stmt = stmt.where(PiiPolicy.is_global == is_global)
