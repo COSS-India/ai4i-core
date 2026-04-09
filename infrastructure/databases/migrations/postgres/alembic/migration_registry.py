@@ -153,31 +153,31 @@ def _load_auth_metadata():
         table.to_metadata(combined_metadata)
 
     service_model_files = [
-        ("asr", PROJECT_ROOT / "services" / "asr-service" / "models" / "database_models.py"),
-        ("nmt", PROJECT_ROOT / "services" / "nmt-service" / "models" / "database_models.py"),
-        ("tts", PROJECT_ROOT / "services" / "tts-service" / "models" / "database_models.py"),
-        ("ner", PROJECT_ROOT / "services" / "ner-service" / "models" / "database_models.py"),
-        ("ocr", PROJECT_ROOT / "services" / "ocr-service" / "models" / "database_models.py"),
+        ("asr", PROJECT_ROOT / "services" / "asr-service" / "app" / "models" / "asr.py"),
+        ("nmt", PROJECT_ROOT / "services" / "nmt-service" / "app" / "models" / "nmt.py"),
+        ("tts", PROJECT_ROOT / "services" / "tts-service" / "app" / "models" / "tts.py"),
+        ("ner", PROJECT_ROOT / "services" / "ner-service" / "app" / "models" / "ner.py"),
+        ("ocr", PROJECT_ROOT / "services" / "ocr-service" / "app" / "models" / "ocr.py"),
         (
             "language_detection",
-            PROJECT_ROOT / "services" / "language-detection-service" / "models" / "database_models.py",
+            PROJECT_ROOT / "services" / "language-detection-service" / "app" / "models" / "language_detection.py",
         ),
         (
             "language_diarization",
-            PROJECT_ROOT / "services" / "language-diarization-service" / "models" / "database_models.py",
+            PROJECT_ROOT / "services" / "language-diarization-service" / "app" / "models" / "language_diarization.py",
         ),
-        ("llm", PROJECT_ROOT / "services" / "llm-service" / "models" / "database_models.py"),
+        ("llm", PROJECT_ROOT / "services" / "llm-service" / "app" / "models" / "llm.py"),
         (
             "speaker_diarization",
-            PROJECT_ROOT / "services" / "speaker-diarization-service" / "models" / "database_models.py",
+            PROJECT_ROOT / "services" / "speaker-diarization-service" / "app" / "models" / "speaker_diarization.py",
         ),
         (
             "transliteration",
-            PROJECT_ROOT / "services" / "transliteration-service" / "models" / "database_models.py",
+            PROJECT_ROOT / "services" / "transliteration-service" / "app" / "models" / "transliteration.py",
         ),
         (
             "audio_lang_detection",
-            PROJECT_ROOT / "services" / "audio-lang-detection-service" / "models" / "database_models.py",
+            PROJECT_ROOT / "services" / "audio-lang-detection-service" / "app" / "models" / "audio_lang_detection.py",
         ),
     ]
 
@@ -186,6 +186,11 @@ def _load_auth_metadata():
         ("ForeignKey('sessions.id'", "ForeignKey('user_sessions.id'"),
     ]
 
+    # Tables already managed by auth-service-v2; skip stubs/duplicates from
+    # service model files so autogenerate doesn't create spurious tables
+    # (e.g. a "sessions" stub when auth-service-v2 uses "user_sessions").
+    auth_table_names = set(combined_metadata.tables.keys()) | {"sessions"}
+
     for service_name, file_path in service_model_files:
         service_module = _load_module_with_replacements(
             f"ai4i_alembic_dynamic.{service_name}_database_models",
@@ -193,6 +198,8 @@ def _load_auth_metadata():
             replacements=replacements,
         )
         for table in service_module.Base.metadata.tables.values():
+            if table.name in auth_table_names:
+                continue
             table.to_metadata(combined_metadata)
 
     return combined_metadata
@@ -305,19 +312,20 @@ def _load_multi_tenant_metadata():
 
 
 def _load_ai4i_platform_metadata():
-    module = _load_module(
-        "ai4i_alembic_dynamic.policy_engine.db_models",
-        PROJECT_ROOT / "services" / "policy-engine" / "app" / "db_models.py",
+    # policy-engine service was removed; define all ai4i_platform_db tables
+    # inline so autogenerate sees them and doesn't emit spurious DROPs.
+    metadata = MetaData()
+
+    Table(
+        "smr_tenant_policies",
+        metadata,
+        Column("tenant_id", String(length=50), primary_key=True, nullable=False),
+        Column("latency_policy", String(length=20), nullable=False, server_default="medium"),
+        Column("cost_policy", String(length=20), nullable=False, server_default="tier_2"),
+        Column("accuracy_policy", String(length=20), nullable=False, server_default="standard"),
+        Column("created_at", DateTime(), server_default=text("now()"), nullable=False),
+        Column("updated_at", DateTime(), server_default=text("now()"), nullable=False),
     )
-    # Alembic autogenerate for `ai4i_platform_db` uses the SQLAlchemy metadata
-    # returned here. The PII tables live in a separate Alembic revision
-    # (`create_pii_tables.py`) but were not represented in the policy-engine
-    # metadata, so autogenerate could incorrectly generate a migration that
-    # drops them.
-    #
-    # We include lightweight definitions for PII tables here so autogenerate
-    # sees them as expected and preserves them during fresh runs.
-    metadata: MetaData = module.Base.metadata
 
     if "pattern_library" not in metadata.tables:
         Table(
