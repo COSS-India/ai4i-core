@@ -35,6 +35,13 @@ except Exception:  # pragma: no cover
 
 
 class _NoOpSpan:
+    """
+    Minimal no-op span used when OpenTelemetry is unavailable.
+
+    IMPORTANT: If service code starts calling additional span APIs (e.g. end(), update_name(),
+    get_span_context(), etc.) while tracing may be disabled, add matching no-op methods here
+    to avoid AttributeError in those environments.
+    """
     def set_attribute(self, *args: Any, **kwargs: Any) -> None:
         return None
 
