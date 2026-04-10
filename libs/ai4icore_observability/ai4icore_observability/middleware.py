@@ -266,8 +266,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
         # Calculate duration and track metrics
         duration = time.time() - start_time
-        # Calculate duration and track metrics
-        duration = time.time() - start_time
         # Track request
         try:
             # Debug: Log the full path being used for metrics
