@@ -6,11 +6,13 @@ for consistency with the clean architecture pattern.
 """
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 import httpx
 
 from ai4icore_exceptions import TritonInferenceError
+from ai4icore_model_management.triton_client import _accumulate_inference_time
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +26,7 @@ class LLMTritonClient:
     """
 
     def __init__(self, triton_url: str, api_key: Optional[str] = None, timeout: float = 300.0):
-        if not triton_url.startswith(('http://', 'https://')):
-            self.triton_url = f"http://{triton_url}"
-        else:
-            self.triton_url = triton_url
+        self.triton_url = triton_url
         self.api_key = api_key
         self.timeout = timeout
         self._client: Optional[httpx.AsyncClient] = None
@@ -101,11 +100,15 @@ class LLMTritonClient:
 
             logger.info(f"Sending LLM inference request to {endpoint_url}")
 
-            response = await self.client.post(
-                endpoint_url,
-                json=payload,
-                headers=headers,
-            )
+            _start = time.perf_counter()
+            try:
+                response = await self.client.post(
+                    endpoint_url,
+                    json=payload,
+                    headers=headers,
+                )
+            finally:
+                _accumulate_inference_time((time.perf_counter() - _start) * 1000)
 
             response.raise_for_status()
             result = response.json()

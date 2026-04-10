@@ -359,6 +359,10 @@ def create_inference_app(
         except Exception as e:
             logger.warning("Logging plugin failed: %s", e)
 
+    # ── Inference Response Headers (X-Trace-Id, X-Inference-Model-Time) ──
+    from .inference_headers import InferenceHeadersMiddleware
+    application.add_middleware(InferenceHeadersMiddleware)
+
     # ── Rate Limiting ──
     application.add_middleware(
         RateLimitMiddleware,

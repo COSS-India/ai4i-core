@@ -50,5 +50,5 @@ EXPOSE 8099
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:8099/health || exit 1
 
-ENTRYPOINT ["uvicorn", "app.main:get_app", "--host", "0.0.0.0", "--port", "8099", "--no-access-log"]
+ENTRYPOINT ["uvicorn", "app.main:get_app", "--factory", "--host", "0.0.0.0", "--port", "8099", "--no-access-log"]
 
