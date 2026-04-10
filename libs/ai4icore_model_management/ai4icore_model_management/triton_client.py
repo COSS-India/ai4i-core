@@ -217,6 +217,17 @@ class TritonClient:
 
     # -- core implementation -------------------------------------------
 
+    def _build_infer_url(self, model_name: str, model_version: str) -> str:
+        """Build the full Triton V2 infer URL.
+
+        If triton_url already contains ``/v2/models/`` (full path), use as-is.
+        Otherwise append ``/v2/models/{model_name}/versions/{model_version}/infer``.
+        """
+        url = self.triton_url.rstrip("/")
+        if "/v2/models/" in url:
+            return url
+        return f"{url}/v2/models/{model_name}/versions/{model_version}/infer"
+
     def _send_impl(self, model_name, inputs, outputs, headers, model_version):
         try:
             req_headers = dict(headers or {})
@@ -229,11 +240,12 @@ class TritonClient:
                 "outputs": [{"name": out.name()} for out in outputs],
             }
 
+            infer_url = self._build_infer_url(model_name, model_version)
             logger.debug(
-                "Triton inference: model='%s' endpoint='%s'", model_name, self.triton_url
+                "Triton inference: model='%s' endpoint='%s'", model_name, infer_url
             )
 
-            response = self.client.post(self.triton_url, json=payload, headers=req_headers)
+            response = self.client.post(infer_url, json=payload, headers=req_headers)
             response.raise_for_status()
             return InferResult(response.json())
 
