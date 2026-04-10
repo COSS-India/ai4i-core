@@ -15,6 +15,8 @@ Usage:
 """
 
 import logging
+import time
+from contextvars import ContextVar
 from typing import Dict, List, Optional
 
 import httpx
@@ -30,6 +32,18 @@ from ai4icore_exceptions import TritonInferenceError
 
 logger = logging.getLogger(__name__)
 
+# Reference to the current ASGI scope dict, set by InferenceHeadersMiddleware.
+# TritonClient accumulates inference timing into scope["_inference_model_time_ms"].
+_current_scope: ContextVar[dict] = ContextVar("_current_scope", default=None)
+
+SCOPE_KEY = "_inference_model_time_ms"
+
+
+def _accumulate_inference_time(elapsed_ms: float) -> None:
+    """Add elapsed_ms to the running total in the current request's ASGI scope."""
+    scope = _current_scope.get()
+    if scope is not None:
+        scope[SCOPE_KEY] = scope.get(SCOPE_KEY, 0.0) + elapsed_ms
 try:
     from opentelemetry import trace
     from opentelemetry.trace import Status, StatusCode
@@ -168,9 +182,13 @@ class TritonClient:
         *model_name* and *model_version* are retained for logging / tracing
         only -- they do **not** alter the URL.
         """
-        if _OTEL_AVAILABLE:
-            return self._send_traced(model_name, inputs, outputs, headers, model_version)
-        return self._send_impl(model_name, inputs, outputs, headers, model_version)
+        start = time.perf_counter()
+        try:
+            if _OTEL_AVAILABLE:
+                return self._send_traced(model_name, inputs, outputs, headers, model_version)
+            return self._send_impl(model_name, inputs, outputs, headers, model_version)
+        finally:
+            _accumulate_inference_time((time.perf_counter() - start) * 1000)
 
     # -- traced wrapper ------------------------------------------------
 
@@ -199,6 +217,17 @@ class TritonClient:
 
     # -- core implementation -------------------------------------------
 
+    def _build_infer_url(self, model_name: str, model_version: str) -> str:
+        """Build the full Triton V2 infer URL.
+
+        If triton_url already contains ``/v2/models/`` (full path), use as-is.
+        Otherwise append ``/v2/models/{model_name}/versions/{model_version}/infer``.
+        """
+        url = self.triton_url.rstrip("/")
+        if "/v2/models/" in url:
+            return url
+        return f"{url}/v2/models/{model_name}/versions/{model_version}/infer"
+
     def _send_impl(self, model_name, inputs, outputs, headers, model_version):
         try:
             req_headers = dict(headers or {})
@@ -211,11 +240,12 @@ class TritonClient:
                 "outputs": [{"name": out.name()} for out in outputs],
             }
 
+            infer_url = self._build_infer_url(model_name, model_version)
             logger.debug(
-                "Triton inference: model='%s' endpoint='%s'", model_name, self.triton_url
+                "Triton inference: model='%s' endpoint='%s'", model_name, infer_url
             )
 
-            response = self.client.post(self.triton_url, json=payload, headers=req_headers)
+            response = self.client.post(infer_url, json=payload, headers=req_headers)
             response.raise_for_status()
             return InferResult(response.json())
 
