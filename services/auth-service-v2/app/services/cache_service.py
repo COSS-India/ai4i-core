@@ -116,6 +116,12 @@ class CacheService(_BaseCacheService):
             status,
         )
 
+    async def delete_tenant_status(self, tenant_id: str) -> None:
+        tenant_id_norm = (tenant_id or "").strip().lower()
+        if not tenant_id_norm:
+            return
+        await self._redis_api_permissions.delete(f"{_TENANT_STATUS_PREFIX}{tenant_id_norm}")
+
     async def get_tenant_user_status(self, tenant_id: str, user_id: int) -> Optional[str]:
         data = await self._redis_api_permissions.get(
             f"{_TENANT_USER_STATUS_PREFIX}{tenant_id}:{user_id}"

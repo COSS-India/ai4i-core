@@ -19,7 +19,7 @@ from app.dependencies.auth import _check_token_revocation, get_jwt_verifier
 from app.dependencies.services import get_cache_service, get_user_service
 from app.schemas.token import TokenValidationResponse
 from app.services.cache_service import CacheService
-from app.services.tenant_service import TenantService
+from app.services.tenant_service import TenantService, is_suspended_or_deactivated
 from app.services.user_service import UserService
 
 logger = logging.getLogger(__name__)
@@ -29,21 +29,12 @@ router = APIRouter(prefix="/auth", tags=["Validation"])
 security = HTTPBearer(auto_error=False)
 
 
-def _is_suspended_or_deactivated(status_val: str | None) -> bool:
-    if not status_val:
-        return False
-    status = str(status_val).strip().upper()
-    if "." in status:
-        status = status.split(".")[-1]
-    return status in {"SUSPENDED", "DEACTIVATED"}
-
-
 def _tenant_inactive_message() -> str:
     return "Tenant access is restricted. Contact your administrator."
 
 
 def _user_inactive_message(user_status: str) -> str:
-    return f"User is {user_status.lower()} , please contact your admin"
+    return f"User is {user_status.lower()}, please contact your admin"
 
 
 @router.get("/validate")
@@ -112,15 +103,10 @@ async def validate_token(
 
             if tenant_id:
                 tenant_status = await tenant_service.get_tenant_status_cached(tenant_id)
-                # Avoid stale "ACTIVE" cache allowing suspended/deactivated tenants.
-                # Re-check source-of-truth before granting access.
-                if not _is_suspended_or_deactivated(tenant_status):
-                    fresh_tenant_status = await tenant_service.get_tenant_status(tenant_id)
-                    if fresh_tenant_status is not None:
-                        tenant_status = fresh_tenant_status
+                # Cache-first: only hit source-of-truth when cache misses.
                 if tenant_status is None:
                     tenant_status = await tenant_service.get_tenant_status_by_user_id(claims.user_id, is_tenant_user)
-                if _is_suspended_or_deactivated(tenant_status):
+                if is_suspended_or_deactivated(tenant_status):
                     return JSONResponse(
                         status_code=401,
                         content={
@@ -136,14 +122,13 @@ async def validate_token(
                         tenant_id,
                         claims.user_id,
                     )
-                    if not _is_suspended_or_deactivated(tenant_user_status):
-                        fresh_tenant_user_status = await tenant_service.get_tenant_user_status(
+                    # Cache-first: only hit source-of-truth when cache misses.
+                    if tenant_user_status is None:
+                        tenant_user_status = await tenant_service.get_tenant_user_status(
                             tenant_id,
                             claims.user_id,
                         )
-                        if fresh_tenant_user_status is not None:
-                            tenant_user_status = fresh_tenant_user_status
-                    if _is_suspended_or_deactivated(tenant_user_status):
+                    if is_suspended_or_deactivated(tenant_user_status):
                         return JSONResponse(
                             status_code=401,
                             content={

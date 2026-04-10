@@ -21,6 +21,16 @@ _TENANT_QUERY_TIMEOUT = 5.0
 _TENANT_STATUS_CACHE_TTL_SECONDS = 60
 
 
+def is_suspended_or_deactivated(status_val: Any) -> bool:
+    """Return True when lifecycle status is suspended/deactivated."""
+    if status_val is None:
+        return False
+    status = str(getattr(status_val, "value", status_val)).strip().upper()
+    if "." in status:
+        status = status.split(".")[-1]
+    return status in {"SUSPENDED", "DEACTIVATED"}
+
+
 class TenantService:
     """
     Resolves tenant information from the multi-tenant database.
