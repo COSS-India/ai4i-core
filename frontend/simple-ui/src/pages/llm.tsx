@@ -197,6 +197,7 @@ const LLMPage: React.FC = () => {
                     onInputLanguageChange={setInputLanguage}
                     onOutputLanguageChange={setOutputLanguage}
                     availableLanguages={availableLanguages}
+                    disabled={fetching || !serviceId}
                   />
                 </Box>
 
@@ -206,7 +207,7 @@ const LLMPage: React.FC = () => {
                     inputText={inputText}
                     onInputChange={setInputText}
                     maxLength={MAX_LLM_INPUT_LENGTH}
-                    disabled={fetching}
+                    disabled={fetching || !serviceId}
                   />
                 </Box>
 
