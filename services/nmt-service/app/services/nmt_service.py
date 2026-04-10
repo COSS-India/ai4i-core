@@ -364,7 +364,7 @@ class NMTService:
     # ──────────────────────────────────────────────
 
     def _extract_triton_metadata(self, service_info: ServiceInfo, service_id: str = None) -> Tuple[str, str]:
-        endpoint = service_info.endpoint.replace("http://", "").replace("https://", "")
+        endpoint = service_info.endpoint
         model_name = service_info.triton_model
 
         if service_info.model_inference_endpoint:
@@ -503,10 +503,7 @@ class NMTService:
         from app.services.text_service import TextService
 
         def _client_factory(endpoint: str) -> NMTTritonClient:
-            url = endpoint
-            if url.startswith(("http://", "https://")):
-                url = url.split("://", 1)[1]
-            return NMTTritonClient(triton_url=url, api_key=triton_api_key)
+            return NMTTritonClient(triton_url=endpoint, api_key=triton_api_key)
 
         mm_client = getattr(http_request.app.state, "model_management_client", None)
         redis = getattr(http_request.app.state, "redis_client", None)
