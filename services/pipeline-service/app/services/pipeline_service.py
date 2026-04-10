@@ -47,6 +47,19 @@ else:
     tracer = None
 
 
+def _pipeline_run_tasks_attributes(request: PipelineInferenceRequest) -> Dict[str, Any]:
+    """Attributes for the pipeline.run_tasks span (telemetry naming: pipeline.<snake_case>)."""
+    return {
+        "pipeline.task_count": len(request.pipelineTasks),
+        "pipeline.task_types": ",".join(t.taskType.value for t in request.pipelineTasks),
+    }
+
+
+def _pipeline_task_step_span_name(task_type: TaskType) -> str:
+    """One span name per TaskType, e.g. pipeline.task_asr, pipeline.task_translation."""
+    return f"pipeline.task_{task_type.value}"
+
+
 class PipelineService:
     """Service for orchestrating AI pipeline tasks."""
     
@@ -80,20 +93,9 @@ class PipelineService:
         
         # Create a parent span for the entire pipeline if tracing is available
         if TRACING_AVAILABLE and tracer:
-            # Create readable task names for the span
-            task_names = []
-            for t in request.pipelineTasks:
-                task_name = str(t.taskType).upper()
-                if task_name == "TRANSLATION":
-                    task_name = "NMT"
-                task_names.append(task_name)
-            
             with tracer.start_as_current_span(
-                f"Pipeline: {' → '.join(task_names)}",
-                attributes={
-                    "pipeline.task_count": len(request.pipelineTasks),
-                    "pipeline.tasks": ",".join(task_names)
-                }
+                "pipeline.run_tasks",
+                attributes=_pipeline_run_tasks_attributes(request),
             ):
                 return await self._execute_pipeline_tasks(
                     request, results, previous_output, jwt_token, api_key, user_id
@@ -117,13 +119,9 @@ class PipelineService:
         for task_idx, pipeline_task in enumerate(request.pipelineTasks, start=1):
             logger.info(f"📋 Executing task {task_idx}/{len(request.pipelineTasks)}: {pipeline_task.taskType}")
             
-            # Create a span for each task if tracing is available
-            # Use clear names like "ASR Task", "NMT Task", "TTS Task"
-            task_type_name = str(pipeline_task.taskType).upper()
-            if task_type_name == "TRANSLATION":
-                task_type_name = "NMT"
-            span_name = f"{task_type_name} Task"
-            
+            # Create a span for each task if tracing is available (pipeline.task_<task_type>)
+            span_name = _pipeline_task_step_span_name(pipeline_task.taskType)
+
             try:
                 if TRACING_AVAILABLE and tracer:
                     with tracer.start_as_current_span(
@@ -131,6 +129,7 @@ class PipelineService:
                         attributes={
                             "task.index": task_idx,
                             "task.type": str(pipeline_task.taskType),
+                            "pipeline.task_type": pipeline_task.taskType.value,
                             "task.service_id": pipeline_task.config.serviceId,
                             "task.language": str(pipeline_task.config.language.dict()) if pipeline_task.config.language else "unknown"
                         }
@@ -353,8 +352,8 @@ class PipelineService:
         """Execute a single pipeline task with distributed tracing."""
         
         if task.taskType == TaskType.ASR:
-            # Construct ASR request with detailed tracing
-            with tracer.start_as_current_span("pipeline.construct_asr_request") as construct_span:
+            # Build downstream request (standard phase: preprocess)
+            with tracer.start_as_current_span("pipeline.preprocess") as construct_span:
                 asr_config = {
                     "serviceId": task.config.serviceId,
                     "language": task.config.language.dict(),
@@ -390,31 +389,27 @@ class PipelineService:
                 logger.info(f"📝 ASR request constructed with {audio_count} audio inputs")
             
             try:
-                # Call ASR service with tracing
-                with tracer.start_as_current_span("pipeline.call_asr_service") as call_span:
+                with tracer.start_as_current_span("pipeline.invoke") as call_span:
                     call_span.set_attribute("asr.service_id", task.config.serviceId)
-                    call_span.add_event("asr.request.started")
-                    
+                    call_span.add_event("pipeline.invoke.started")
+
                     response = await self.service_client.call_asr_service(asr_request, jwt_token=jwt_token, api_key=api_key, user_id=user_id)
-                    
+
                     output_count = len(response.get("output", []))
                     call_span.set_attribute("asr.output_count", output_count)
-                    call_span.add_event("asr.request.completed", {
-                        "output_count": output_count
-                    })
-                
-                # Process response with tracing
-                with tracer.start_as_current_span("pipeline.process_asr_response") as process_span:
+                    call_span.add_event("pipeline.invoke.completed", {"output_count": output_count})
+
+                with tracer.start_as_current_span("pipeline.postprocess") as process_span:
                     process_span.set_attribute("asr.output_count", output_count)
-                    
+
                     result = PipelineTaskOutput(
                         taskType="asr",
                         serviceId=task.config.serviceId,
                         output=response.get("output", []),
                         config=response.get("config")
                     )
-                    
-                    process_span.add_event("asr.response.processed")
+
+                    process_span.add_event("pipeline.postprocess.completed")
                     return result
                     
             except AuthenticationError:
@@ -430,15 +425,14 @@ class PipelineService:
                         current_span.set_attribute("error.message", str(e))
                         current_span.set_status(Status(StatusCode.ERROR, str(e)))
                         current_span.record_exception(e)
-                        current_span.add_event("asr.request.failed", {
+                        current_span.add_event("pipeline.invoke.failed", {
                             "error_type": type(e).__name__,
                             "error_message": str(e)
                         })
                 raise
         
         elif task.taskType == TaskType.TRANSLATION:
-            # Construct NMT request with detailed tracing
-            with tracer.start_as_current_span("pipeline.construct_nmt_request") as construct_span:
+            with tracer.start_as_current_span("pipeline.preprocess") as construct_span:
                 nmt_request = {
                     "input": input_data.get("input", []),
                     "config": {
@@ -465,31 +459,27 @@ class PipelineService:
                 logger.info(f"📝 Translation request constructed with {input_count} text inputs")
             
             try:
-                # Call NMT service with tracing
-                with tracer.start_as_current_span("pipeline.call_nmt_service") as call_span:
+                with tracer.start_as_current_span("pipeline.invoke") as call_span:
                     call_span.set_attribute("nmt.service_id", task.config.serviceId)
-                    call_span.add_event("nmt.request.started")
-                    
+                    call_span.add_event("pipeline.invoke.started")
+
                     response = await self.service_client.call_nmt_service(nmt_request, jwt_token=jwt_token, api_key=api_key, user_id=user_id)
-                    
+
                     output_count = len(response.get("output", []))
                     call_span.set_attribute("nmt.output_count", output_count)
-                    call_span.add_event("nmt.request.completed", {
-                        "output_count": output_count
-                    })
-                
-                # Process response with tracing
-                with tracer.start_as_current_span("pipeline.process_nmt_response") as process_span:
+                    call_span.add_event("pipeline.invoke.completed", {"output_count": output_count})
+
+                with tracer.start_as_current_span("pipeline.postprocess") as process_span:
                     process_span.set_attribute("nmt.output_count", output_count)
-                    
+
                     result = PipelineTaskOutput(
                         taskType="translation",
                         serviceId=task.config.serviceId,
                         output=response.get("output", []),
                         config=None
                     )
-                    
-                    process_span.add_event("nmt.response.processed")
+
+                    process_span.add_event("pipeline.postprocess.completed")
                     return result
                     
             except Exception as e:
@@ -502,15 +492,14 @@ class PipelineService:
                         current_span.set_attribute("error.message", str(e))
                         current_span.set_status(Status(StatusCode.ERROR, str(e)))
                         current_span.record_exception(e)
-                        current_span.add_event("nmt.request.failed", {
+                        current_span.add_event("pipeline.invoke.failed", {
                             "error_type": type(e).__name__,
                             "error_message": str(e)
                         })
                 raise
         
         elif task.taskType == TaskType.TTS:
-            # Construct TTS request with detailed tracing
-            with tracer.start_as_current_span("pipeline.construct_tts_request") as construct_span:
+            with tracer.start_as_current_span("pipeline.preprocess") as construct_span:
                 tts_request = {
                     "input": input_data.get("input", []),
                     "config": {
@@ -539,26 +528,22 @@ class PipelineService:
                 logger.info(f"📝 TTS request constructed with {input_count} text inputs")
             
             try:
-                # Call TTS service with tracing
-                with tracer.start_as_current_span("pipeline.call_tts_service") as call_span:
+                with tracer.start_as_current_span("pipeline.invoke") as call_span:
                     call_span.set_attribute("tts.service_id", task.config.serviceId)
-                    call_span.add_event("tts.request.started")
-                    
+                    call_span.add_event("pipeline.invoke.started")
+
                     response = await self.service_client.call_tts_service(tts_request, jwt_token=jwt_token, api_key=api_key, user_id=user_id)
-                    
+
                     audio_count = len(response.get("audio", []))
                     call_span.set_attribute("tts.audio_count", audio_count)
-                    call_span.add_event("tts.request.completed", {
-                        "audio_count": audio_count
-                    })
-                
-                # Process response with tracing
-                with tracer.start_as_current_span("pipeline.process_tts_response") as process_span:
+                    call_span.add_event("pipeline.invoke.completed", {"audio_count": audio_count})
+
+                with tracer.start_as_current_span("pipeline.postprocess") as process_span:
                     audio_count = len(response.get("audio", []))
                     process_span.set_attribute("tts.audio_count", audio_count)
-                    
+
                     logger.info(f"✅ TTS service returned {audio_count} audio outputs")
-                    
+
                     # TTS service returns audio in "audio" field, map to output
                     result = PipelineTaskOutput(
                         taskType="tts",
@@ -567,8 +552,8 @@ class PipelineService:
                         audio=response.get("audio", []),
                         config=response.get("config")
                     )
-                    
-                    process_span.add_event("tts.response.processed")
+
+                    process_span.add_event("pipeline.postprocess.completed")
                     return result
                     
             except Exception as e:
@@ -581,7 +566,7 @@ class PipelineService:
                         current_span.set_attribute("error.message", str(e))
                         current_span.set_status(Status(StatusCode.ERROR, str(e)))
                         current_span.record_exception(e)
-                        current_span.add_event("tts.request.failed", {
+                        current_span.add_event("pipeline.invoke.failed", {
                             "error_type": type(e).__name__,
                             "error_message": str(e)
                         })

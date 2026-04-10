@@ -978,39 +978,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     });
   };
 
-  // Phase 7 in the standard lifecycle ("set final attributes on {svc}.inference")
-  // is not a distinct span in Jaeger. Add a synthetic step so the UI can show 7 phases.
-  const addSyntheticFinalizeStep = (spanList: ProcessedSpan[]): void => {
-    const inferenceSpan = spanList.find(
-      p => p.span.operationName?.toLowerCase().endsWith(".inference")
-    );
-    if (!inferenceSpan) return;
-    if (spanList.some(p => p.category === "phase.finalize")) return;
-
-    const finalizeStartUs = inferenceSpan.span.startTime + inferenceSpan.span.duration;
-
-    spanList.push({
-      span: {
-        ...inferenceSpan.span,
-        spanID: `${inferenceSpan.span.spanID}-finalize`,
-        operationName: `${inferenceSpan.span.operationName}.finalize`,
-        duration: 0,
-        startTime: finalizeStartUs,
-      } as any,
-      serviceName: inferenceSpan.serviceName,
-      category: "phase.finalize",
-      // Use a proposed-looking name for Phase 7 (UI-only step; not a real Jaeger span)
-      displayName: `${inferenceSpan.span.operationName}.finalize`,
-      description: "Sets final metrics and status on the inference span",
-      icon: FiCheckCircle,
-      isImportant: true,
-      isTopLevel: false,
-      hasError: false,
-      relativeStart: (finalizeStartUs - traceStartTime) / 1000,
-      relativeEnd: (finalizeStartUs - traceStartTime) / 1000,
-      effectiveDuration: 0,
-    });
-  };
+  // Phase 7 per Telemetry Step Standardization: final metrics on {svc}.inference — no separate span or UI row.
 
   // If we have too few spans, include some important non-top-level ones
   if (sorted.length < 3) {
@@ -1029,7 +997,6 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     
     const combined = [...sorted, ...additional].sort((a, b) => a.relativeStart - b.relativeStart);
     computeEffectiveDurations(combined);
-    addSyntheticFinalizeStep(combined);
     return combined;
   }
 
@@ -1117,12 +1084,10 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     
     console.log("Final fallback spans:", finalSpans.length, finalSpans.map(s => s.displayName));
     computeEffectiveDurations(finalSpans);
-    addSyntheticFinalizeStep(finalSpans);
     return finalSpans;
   }
 
   computeEffectiveDurations(sorted);
-  addSyntheticFinalizeStep(sorted);
   return sorted;
 };
 
