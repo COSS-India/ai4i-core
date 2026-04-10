@@ -39,5 +39,5 @@ class AuditLogService:
     async def get(self, log_id: UUID) -> PiiAuditLog:
         obj = await self.repo.get(log_id)
         if not obj:
-            raise HTTPException(status_code=404, detail={"error": {"code": "NOT_FOUND", "message": "Log not found"}})
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Log not found"})
         return obj
