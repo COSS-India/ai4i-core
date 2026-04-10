@@ -26,10 +26,7 @@ class LLMTritonClient:
     """
 
     def __init__(self, triton_url: str, api_key: Optional[str] = None, timeout: float = 300.0):
-        if not triton_url.startswith(('http://', 'https://')):
-            self.triton_url = f"http://{triton_url}"
-        else:
-            self.triton_url = triton_url
+        self.triton_url = triton_url
         self.api_key = api_key
         self.timeout = timeout
         self._client: Optional[httpx.AsyncClient] = None

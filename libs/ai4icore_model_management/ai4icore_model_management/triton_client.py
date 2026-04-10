@@ -1,15 +1,12 @@
 """
-Triton Client -- Generic Triton Inference Server client wrapper.
-
-Base class for all service-specific Triton clients. Services inherit
-and add their own I/O preparation methods.
+Triton Client -- Generic inference client using httpx.
 
 Usage:
     from ai4icore_model_management import TritonClient
 
-    # Direct usage
-    client = TritonClient("triton-host:8000", api_key="...", timeout=30)
-    result = client.send_triton_request("model_name", inputs, outputs)
+    client = TritonClient(triton_url="<endpoint from services table>", api_key="...")
+    result = client.send_triton_request("my_model", inputs, outputs)
+    array = result.as_numpy("OUTPUT_NAME")
 
     # Or inherit for service-specific I/O
     class NERTritonClient(TritonClient):
@@ -22,10 +19,14 @@ import time
 from contextvars import ContextVar
 from typing import Dict, List, Optional
 
+import httpx
 import numpy as np
-import tritonclient.http as http_client
 from tritonclient.http import InferInput, InferRequestedOutput
-from tritonclient.utils import np_to_triton_dtype
+from tritonclient.utils import (
+    deserialize_bytes_tensor,
+    np_to_triton_dtype,
+    triton_to_np_dtype,
+)
 
 from ai4icore_exceptions import TritonInferenceError
 
@@ -43,8 +44,6 @@ def _accumulate_inference_time(elapsed_ms: float) -> None:
     scope = _current_scope.get()
     if scope is not None:
         scope[SCOPE_KEY] = scope.get(SCOPE_KEY, 0.0) + elapsed_ms
-
-# Optional OpenTelemetry support
 try:
     from opentelemetry import trace
     from opentelemetry.trace import Status, StatusCode
@@ -54,8 +53,99 @@ except ImportError:
     _OTEL_AVAILABLE = False
 
 
+# ------------------------------------------------------------------
+# Response wrapper
+# ------------------------------------------------------------------
+
+class InferResult:
+    """Lightweight wrapper over a Triton V2 JSON response."""
+
+    __slots__ = ("_outputs",)
+
+    def __init__(self, response_data: dict):
+        self._outputs: Dict[str, dict] = {
+            out["name"]: out for out in response_data.get("outputs", [])
+        }
+
+    def as_numpy(self, name: str) -> Optional[np.ndarray]:
+        """Return the named output tensor as a numpy array (matches tritonclient API)."""
+        output = self._outputs.get(name)
+        if output is None:
+            return None
+
+        shape = output["shape"]
+        datatype = output["datatype"]
+        data = output.get("data")
+        if data is None:
+            return None
+
+        flat = _flatten(data)
+
+        if datatype == "BYTES":
+            arr = np.array(
+                [v.encode("utf-8") if isinstance(v, str) else v for v in flat],
+                dtype=object,
+            )
+        else:
+            arr = np.array(flat, dtype=triton_to_np_dtype(datatype))
+
+        return arr.reshape(shape)
+
+
+# ------------------------------------------------------------------
+# Serialisation helpers
+# ------------------------------------------------------------------
+
+def _flatten(data) -> list:
+    """Recursively flatten nested lists into a 1-D list."""
+    if not isinstance(data, list):
+        return [data]
+    out: list = []
+    for item in data:
+        out.extend(_flatten(item))
+    return out
+
+
+def _serialize_input(inp: InferInput) -> dict:
+    """Convert an *InferInput* to a Triton V2 JSON dict."""
+    tensor: dict = {
+        "name": inp.name(),
+        "datatype": inp.datatype(),
+        "shape": list(inp.shape()),
+    }
+
+    json_data = getattr(inp, "_data", None)
+    if json_data is not None:
+        tensor["data"] = json_data
+        return tensor
+
+    raw = getattr(inp, "_raw_data", None)
+    if raw is not None:
+        if inp.datatype() == "BYTES":
+            byte_vals = deserialize_bytes_tensor(raw)
+            tensor["data"] = [
+                v.decode("utf-8") if isinstance(v, bytes) else str(v)
+                for v in byte_vals
+            ]
+        else:
+            tensor["data"] = np.frombuffer(
+                raw, dtype=triton_to_np_dtype(inp.datatype())
+            ).tolist()
+
+    return tensor
+
+
+# ------------------------------------------------------------------
+# Client
+# ------------------------------------------------------------------
+
 class TritonClient:
-    """Generic Triton Inference Server client with optional tracing."""
+    """Generic Triton inference client.
+
+    Posts directly to the endpoint URL from the services table.
+    No URL manipulation is performed -- the caller is expected to
+    supply a valid, fully-qualified inference URL.
+    """
 
     def __init__(
         self,
@@ -63,35 +153,17 @@ class TritonClient:
         api_key: Optional[str] = None,
         timeout: int = 30,
     ):
-        self.triton_url = self._normalize_url(triton_url)
+        self.triton_url = triton_url.strip()
         self.api_key = api_key
         self.timeout = timeout
-        self._client: Optional[http_client.InferenceServerClient] = None
-
-    @staticmethod
-    def _normalize_url(url: str) -> str:
-        """Strip http(s):// prefix -- tritonclient expects host:port."""
-        url = url.strip()
-        if url.startswith("http://"):
-            url = url[7:]
-        elif url.startswith("https://"):
-            url = url[8:]
-        return url
+        self._client: Optional[httpx.Client] = None
 
     @property
-    def client(self) -> http_client.InferenceServerClient:
-        """Lazy initialization of the underlying HTTP client."""
+    def client(self) -> httpx.Client:
+        """Lazy-initialised httpx client."""
         if self._client is None:
-            logger.info("Initializing Triton client: %s", self.triton_url)
-            try:
-                self._client = http_client.InferenceServerClient(
-                    url=self.triton_url, verbose=False
-                )
-            except Exception as e:
-                logger.error("Failed to init Triton client '%s': %s", self.triton_url, e)
-                raise TritonInferenceError(
-                    f"Failed to initialize Triton client: {e}"
-                ) from e
+            logger.info("Initializing Triton httpx client for: %s", self.triton_url)
+            self._client = httpx.Client(timeout=self.timeout)
         return self._client
 
     # ------------------------------------------------------------------
@@ -104,12 +176,11 @@ class TritonClient:
         outputs: List[InferRequestedOutput],
         headers: Optional[Dict[str, str]] = None,
         model_version: str = "1",
-    ):
-        """
-        Send inference request to Triton. Traces automatically when OTel is available.
+    ) -> InferResult:
+        """POST the inference payload directly to *self.triton_url*.
 
-        Returns the raw Triton inference result.
-        Raises TritonInferenceError on any failure.
+        *model_name* and *model_version* are retained for logging / tracing
+        only -- they do **not** alter the URL.
         """
         start = time.perf_counter()
         try:
@@ -119,14 +190,9 @@ class TritonClient:
         finally:
             _accumulate_inference_time((time.perf_counter() - start) * 1000)
 
-    def _send_traced(
-        self,
-        model_name: str,
-        inputs: List[InferInput],
-        outputs: List[InferRequestedOutput],
-        headers: Optional[Dict[str, str]],
-        model_version: str,
-    ):
+    # -- traced wrapper ------------------------------------------------
+
+    def _send_traced(self, model_name, inputs, outputs, headers, model_version):
         tracer = trace.get_tracer("ai4icore_model_management")
         with tracer.start_as_current_span("triton.inference") as span:
             span.set_attribute("triton.model_name", model_name)
@@ -136,7 +202,6 @@ class TritonClient:
             span.set_attribute("triton.output_count", len(outputs))
             span.set_attribute("triton.timeout_seconds", self.timeout)
             span.add_event("triton.inference.start", {"model": model_name})
-
             try:
                 result = self._send_impl(model_name, inputs, outputs, headers, model_version)
                 span.set_attribute("triton.status", "success")
@@ -150,93 +215,80 @@ class TritonClient:
                 span.record_exception(e)
                 raise
 
-    def _send_impl(
-        self,
-        model_name: str,
-        inputs: List[InferInput],
-        outputs: List[InferRequestedOutput],
-        headers: Optional[Dict[str, str]],
-        model_version: str,
-    ):
-        """Core inference logic without tracing."""
+    # -- core implementation -------------------------------------------
+
+    def _send_impl(self, model_name, inputs, outputs, headers, model_version):
         try:
             req_headers = dict(headers or {})
+            req_headers["Content-Type"] = "application/json"
             if self.api_key:
                 req_headers["Authorization"] = f"Bearer {self.api_key}"
 
-            logger.debug("Triton inference: model='%s' endpoint='%s'", model_name, self.triton_url)
+            payload = {
+                "inputs": [_serialize_input(inp) for inp in inputs],
+                "outputs": [{"name": out.name()} for out in outputs],
+            }
 
-            async_response = self.client.async_infer(
-                model_name=model_name,
-                model_version=model_version,
-                inputs=inputs,
-                outputs=outputs,
-                headers=req_headers or None,
+            logger.debug(
+                "Triton inference: model='%s' endpoint='%s'", model_name, self.triton_url
             )
-            return async_response.get_result(block=True, timeout=self.timeout)
+
+            response = self.client.post(self.triton_url, json=payload, headers=req_headers)
+            response.raise_for_status()
+            return InferResult(response.json())
+
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            logger.error(
+                "Triton inference failed: model='%s' endpoint='%s' status=%s",
+                model_name, self.triton_url, status,
+            )
+            if status == 404:
+                raise TritonInferenceError(
+                    f"Model '{model_name}' not found at '{self.triton_url}'.",
+                    model_name=model_name,
+                ) from e
+            raise TritonInferenceError(
+                f"Triton inference failed ({status}): {e}", model_name=model_name
+            ) from e
+
+        except httpx.ConnectError as e:
+            logger.error("Cannot connect to Triton at '%s': %s", self.triton_url, e)
+            raise TritonInferenceError(
+                f"Cannot connect to Triton at '{self.triton_url}'. "
+                "Verify endpoint and server status.",
+                model_name=model_name,
+            ) from e
 
         except Exception as e:
-            error_msg = str(e)
-            logger.error("Triton inference failed: model='%s' endpoint='%s' error=%s", model_name, self.triton_url, e)
-
-            if "404" in error_msg or "Not Found" in error_msg:
-                available = self.list_models()
-                hint = f" Available: {', '.join(available)}" if available else ""
-                raise TritonInferenceError(
-                    f"Model '{model_name}' not found at '{self.triton_url}'.{hint}",
-                    model_name=model_name,
-                ) from e
-
-            if "connection" in error_msg.lower():
-                raise TritonInferenceError(
-                    f"Cannot connect to Triton at '{self.triton_url}'. Verify endpoint and server status.",
-                    model_name=model_name,
-                ) from e
-
+            logger.error(
+                "Triton inference failed: model='%s' endpoint='%s' error=%s",
+                model_name, self.triton_url, e,
+            )
             raise TritonInferenceError(
                 f"Triton inference failed: {e}", model_name=model_name
             ) from e
 
     # ------------------------------------------------------------------
-    # Server introspection
-    # ------------------------------------------------------------------
-    def is_server_ready(self) -> bool:
-        """Check if Triton server is ready to accept requests."""
-        try:
-            return self.client.is_server_ready()
-        except Exception as e:
-            logger.warning("Triton health check failed at '%s': %s", self.triton_url, e)
-            return False
-
-    def list_models(self) -> List[str]:
-        """List available model names on the Triton server."""
-        try:
-            index = self.client.get_model_repository_index()
-            return [m.get("name", "") for m in (index or [])]
-        except Exception as e:
-            logger.warning("Failed to list Triton models at '%s': %s", self.triton_url, e)
-            return []
-
-    # ------------------------------------------------------------------
-    # Tensor helpers (common across services)
+    # Tensor helpers (used by service-specific subclasses)
     # ------------------------------------------------------------------
     def _get_string_tensor(self, string_values: List[str], tensor_name: str) -> InferInput:
-        """Create a string tensor with shape [batch, 1] for Triton input."""
+        """Create a BYTES tensor with shape [batch, 1]."""
         try:
             nested = [[v] for v in string_values]
             np_array = np.array(nested, dtype=object)
-            tensor = InferInput(tensor_name, np_array.shape, np_to_triton_dtype(np_array.dtype))
+            tensor = InferInput(tensor_name, list(np_array.shape), np_to_triton_dtype(np_array.dtype))
             tensor.set_data_from_numpy(np_array)
             return tensor
         except Exception as e:
             raise TritonInferenceError(f"Failed to create tensor '{tensor_name}': {e}") from e
 
     def _get_bool_tensor(self, bool_values: List[bool], tensor_name: str) -> InferInput:
-        """Create a boolean tensor with shape [batch, 1] for Triton input."""
+        """Create a BOOL tensor with shape [batch, 1]."""
         try:
             nested = [[v] for v in bool_values]
             np_array = np.array(nested, dtype=bool)
-            tensor = InferInput(tensor_name, np_array.shape, np_to_triton_dtype(np_array.dtype))
+            tensor = InferInput(tensor_name, list(np_array.shape), np_to_triton_dtype(np_array.dtype))
             tensor.set_data_from_numpy(np_array)
             return tensor
         except Exception as e:
