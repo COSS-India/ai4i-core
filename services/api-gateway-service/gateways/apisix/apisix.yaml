@@ -1520,9 +1520,6 @@
       expose_headers: X-Auth-Token,X-Correlation-ID,X-Request-ID
       allow_credential: true
     proxy-rewrite:
-      regex_uri:
-      - ^/api/v1/policy-service/(.*)
-      - /$1
       headers:
         add:
           X-Correlation-ID: $request_id
