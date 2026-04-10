@@ -207,97 +207,22 @@ services:
       start_period: 40s
     restart: unless-stopped
 
-  kong:
-    image: kong:3.4-ubuntu
-    container_name: ai4v-gateway
-    profiles:
-      - kong
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ai4v-nginx-proxy
     ports:
       - "8080:8080"
-      - "8443:8443"
-      - "8001:8001"
-      - "8444:8444"
-    environment:
-      KONG_DATABASE: "off"
-      KONG_PROXY_LISTEN: 0.0.0.0:8080
-      KONG_DECLARATIVE_CONFIG: /tmp/kong-substituted.yml
-      KONG_PROXY_ACCESS_LOG: /dev/stdout
-      KONG_ADMIN_ACCESS_LOG: /dev/stdout
-      KONG_PROXY_ERROR_LOG: /dev/stderr
-      KONG_ADMIN_ERROR_LOG: /dev/stderr
-      KONG_ADMIN_LISTEN: 0.0.0.0:8001
-      KONG_ADMIN_GUI_URL: http://localhost:8002
-      KONG_PLUGINS: token-validator
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      AI4VOICE_API_KEY: ${AI4VOICE_API_KEY}
-      ASR_API_KEY: ${ASR_API_KEY}
-      TTS_API_KEY: ${TTS_API_KEY}
-      NMT_API_KEY: ${NMT_API_KEY}
-      PIPELINE_API_KEY: ${PIPELINE_API_KEY}
-      DEVELOPER_API_KEY: ${DEVELOPER_API_KEY}
-      MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
-      LLM_API_KEY: ${LLM_API_KEY}
-    env_file:
-      - ./.env
     volumes:
-      - ./services/api-gateway-service/gateways/kong/kong.yml:/kong/kong.yml:ro
-      - ./services/api-gateway-service/gateways/kong/substitute-env.sh:/kong/substitute-env.sh:ro
-      - ./services/Konga-API-manager/plugins/token-validator/kong/plugins:/usr/local/share/lua/5.1/kong/plugins:ro
-    command: >
-      sh -c "
-        CR=$(printf '\\r') &&
-        tr -d \"$$CR\" < /kong/substitute-env.sh > /tmp/kong-substitute-env.sh &&
-        sh /tmp/kong-substitute-env.sh &&
-        /docker-entrypoint.sh kong docker-start
-      "
+      - ./services/api-gateway-service/gateways/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     networks:
       microservices-network:
         aliases:
           - api-gateway-service
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD", "kong", "health"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"]
       interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
-
-  apisix:
-    image: apache/apisix:latest
-    container_name: ai4v-gateway
-    profiles:
-      - apisix
-    ports:
-      - "8080:8080"
-    environment:
-      APISIX_STAND_ALONE: "true"
-      APISIX_PUBLIC_ORIGIN: ${APISIX_PUBLIC_ORIGIN:-http://localhost:3000}
-      APISIX_UPSTREAM_SUFFIX: ${APISIX_UPSTREAM_SUFFIX:-}
-    env_file:
-      - ./.env
-    volumes:
-      - ./services/api-gateway-service/gateways/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
-      - ./services/api-gateway-service/gateways/apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml.template:ro
-      - ./services/api-gateway-service/gateways/apisix/substitute-env.sh:/usr/local/apisix/substitute-env.sh:ro
-    command: >
-      sh -c "
-        CR=$(printf '\\r') &&
-        tr -d \"$$CR\" < /usr/local/apisix/substitute-env.sh > /tmp/substitute-env.sh &&
-        tr -d \"$$CR\" < /usr/local/apisix/conf/apisix.yaml.template > /tmp/apisix.yaml.template &&
-        APISIX_CONFIG_TEMPLATE=/tmp/apisix.yaml.template sh /tmp/substitute-env.sh &&
-        /usr/bin/apisix init &&
-        exec /usr/local/openresty/bin/openresty -p /usr/local/apisix -g 'daemon off;'
-      "
-    networks:
-      microservices-network:
-        aliases:
-          - api-gateway-service
-    dns_search: []
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
 
   auth-service:
@@ -670,7 +595,7 @@ services:
       - ./shared:/app/shared
     command: ["--reload"]
     depends_on:
-      apisix:
+      nginx:
         condition: service_started
       config-service:
         condition: service_healthy
@@ -971,28 +896,6 @@ services:
           - model-management-service
     restart: unless-stopped
 
-  # Policy Engine
-  policy-engine:
-    build:
-      context: .
-      dockerfile: ./services/policy-engine/Dockerfile
-    container_name: ai4v-policy-engine
-    ports:
-      - "8102:8095"
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-    volumes:
-      - ./services/policy-engine:/app
-      - ./libs/ai4icore_env:/app/libs/ai4icore_env
-    command: ["sh", "-c", "pip install --no-cache-dir -e /app/libs/ai4icore_env && uvicorn main:app --host 0.0.0.0 --port 8095 --workers 1 --reload"]
-    networks:
-      - microservices-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
-      interval: 30s
-      timeout: 5s
-
   smr-service:
     build:
       context: .
@@ -1007,7 +910,6 @@ services:
       - APP_DB_HOST=postgres
       - APP_DB_PORT=5432
       - APP_DB_NAME=model_management_db
-      - POLICY_ENGINE_URL=http://policy-engine:8095
       - REQUEST_PROFILER_SERVICE_URL=http://request-profiler-service:8000
     env_file:
       - ./services/smr-service/.env
@@ -1015,8 +917,6 @@ services:
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
     depends_on:
-      policy-engine:
-        condition: service_started
       model-management-service:
         condition: service_started
       postgres:
@@ -1177,6 +1077,42 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/language-detection/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  policy-service:
+    build:
+      context: .
+      dockerfile: ./services/policy-service/Dockerfile
+    container_name: ai4v-policy-service
+    ports:
+      - "8107:8099"
+    environment:
+      - ENV_FILE=.env
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - JWKS_URL=${JWKS_URL:-http://auth-service:8081/api/v1/auth/.well-known/jwks.json}
+      - MULTI_TENANT_SERVICE_URL=${MULTI_TENANT_SERVICE_URL:-http://multi-tenant-service:8001}
+      - PYTHONPATH=/app
+    env_file:
+      - ./services/policy-service/.env
+    volumes:
+      # Bind-mount only the service's application code so image-bundled /app/libs remains intact
+      - ./services/policy-service/app:/app/app
+    command: ["--reload"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    networks:
+      microservices-network:
+        aliases:
+          - policy-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8099/health"]
       interval: 10s
       timeout: 10s
       retries: 3

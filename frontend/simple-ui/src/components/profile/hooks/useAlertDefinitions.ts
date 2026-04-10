@@ -253,6 +253,14 @@ export function useAlertDefinitions() {
     const category = item.category ?? "application";
     const evalInterval = item.evaluation_interval ?? "30s";
     const forDuration = normalizeForDuration(evalInterval, item.for_duration ?? "5m");
+    // Backend uses [] to mean "all services". For update UI, represent that explicitly so the
+    // target selector shows populated values instead of appearing empty.
+    const serviceFormValue =
+      category === "infrastructure"
+        ? undefined
+        : Array.isArray(item.service) && item.service.length === 0
+          ? ["all"]
+          : item.service ?? undefined;
     setUpdateForm({
       description: item.description ?? "",
       category,
@@ -264,7 +272,7 @@ export function useAlertDefinitions() {
       condition_operator: item.condition_operator ?? undefined,
       threshold_value: item.threshold_value ?? undefined,
       threshold_unit: item.threshold_unit ?? undefined,
-      service: item.service ?? undefined,
+      service: serviceFormValue,
       evaluation_interval: evalInterval,
       for_duration: forDuration,
       enabled: item.enabled,
@@ -394,12 +402,7 @@ export function useAlertDefinitions() {
         .filter((d) => {
           if (searchQuery.trim()) {
             const q = searchQuery.toLowerCase();
-            const matchesSearch =
-              d.name.toLowerCase().includes(q) ||
-              (d.description ?? "").toLowerCase().includes(q) ||
-              (d.alert_type ?? "").toLowerCase().includes(q) ||
-              d.promql_expr.toLowerCase().includes(q);
-            if (!matchesSearch) return false;
+            if (!d.name.toLowerCase().includes(q)) return false;
           }
           if (filterSeverity !== "all" && d.severity !== filterSeverity)
             return false;

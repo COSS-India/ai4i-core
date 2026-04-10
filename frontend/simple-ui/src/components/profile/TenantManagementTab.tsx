@@ -42,13 +42,6 @@ import {
   TabPanels,
   Tab,
   TabPanel,
-  Modal,
-  ModalOverlay,
-  ModalContent,
-  ModalHeader,
-  ModalFooter,
-  ModalBody,
-  ModalCloseButton,
   Menu,
   MenuButton,
   MenuList,
@@ -58,11 +51,13 @@ import {
   useDisclosure,
 } from "@chakra-ui/react";
 import { FiBriefcase, FiUsers, FiMoreVertical, FiEye, FiEdit2, FiUserPlus, FiPlayCircle, FiRefreshCw, FiPlus, FiSettings, FiArrowLeft, FiMail, FiPause, FiPower, FiTrash2 } from "react-icons/fi";
-import { ViewIcon, ViewOffIcon, TriangleDownIcon, TriangleUpIcon, SearchIcon } from "@chakra-ui/icons";
+import { ViewIcon, ViewOffIcon, SearchIcon } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import { TENANT_USER_ROLE_OPTIONS } from "./types";
 import ConfirmDialog from "../common/ConfirmDialog";
+import { TableFilterToolbar, TablePaginationBar, TableSortHeader } from "../common/TableControls";
+import StandardModal from "../common/StandardModal";
 import type { TenantUserView } from "../../types/multiTenant";
 
 /** Users table for tenant detail view: filters by tenant and shows search/filters + actions. */
@@ -82,6 +77,7 @@ function TenantDetailUsersPanel(props: {
   onDeleteUser: (u: TenantUserView) => void;
   TENANT_USER_ROLE_OPTIONS: ReadonlyArray<{ value: string; label: string }>;
 }) {
+  const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
   const {
     tenantId,
     tenantUsers,
@@ -111,6 +107,8 @@ function TenantDetailUsersPanel(props: {
   }, [tenantUsers, tenantId, userFilterStatus, userFilterRole, userSearch]);
 
   const [userNameSortDirection, setUserNameSortDirection] = useState<"asc" | "desc">("asc");
+  const [listPage, setListPage] = useState(1);
+  const [listPageSize, setListPageSize] = useState(25);
   const sortedFiltered = useMemo(() => {
     return [...filtered].sort((a, b) => {
       const aName = a.username ?? "";
@@ -123,13 +121,33 @@ function TenantDetailUsersPanel(props: {
     });
   }, [filtered, userNameSortDirection]);
 
+  const totalUsers = sortedFiltered.length;
+  const totalPages = Math.max(1, Math.ceil(totalUsers / listPageSize));
+  const startRow = totalUsers === 0 ? 0 : (listPage - 1) * listPageSize + 1;
+  const endRow = Math.min(listPage * listPageSize, totalUsers);
+  const paginatedUsers = sortedFiltered.slice((listPage - 1) * listPageSize, listPage * listPageSize);
+
+  useEffect(() => {
+    if (listPage > totalPages) setListPage(totalPages);
+  }, [listPage, totalPages]);
+
   return (
     <VStack align="stretch" spacing={4}>
       {(() => {
         const hasActiveFilters =
           userSearch.trim().length > 0 || userFilterRole !== "all" || userFilterStatus !== "all";
         return (
-          <HStack spacing={4} flexWrap="wrap" align="flex-end">
+          <TableFilterToolbar
+            hasActiveFilters={hasActiveFilters}
+            onClear={() => {
+              setUserSearch("");
+              setUserFilterRole("all");
+              setUserFilterStatus("all");
+              setListPage(1);
+            }}
+            spacing={4}
+            align="flex-end"
+          >
             <InputGroup size="sm" maxW="240px">
               <InputLeftElement pointerEvents="none">
                 <SearchIcon color="gray.400" />
@@ -137,39 +155,28 @@ function TenantDetailUsersPanel(props: {
               <Input
                 placeholder="Search users..."
                 value={userSearch}
-                onChange={(e) => setUserSearch(e.target.value)}
+                onChange={(e) => {
+                  setUserSearch(e.target.value);
+                  setListPage(1);
+                }}
                 bg="white"
                 pl={10}
               />
             </InputGroup>
-        <Select size="sm" maxW="140px" value={userFilterRole} onChange={(e) => setUserFilterRole(e.target.value)} bg="white">
+        <Select size="sm" maxW="140px" value={userFilterRole} onChange={(e) => { setUserFilterRole(e.target.value); setListPage(1); }} bg="white">
           <option value="all">All Roles</option>
           {roleOptions.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </Select>
-        <Select size="sm" maxW="140px" value={userFilterStatus} onChange={(e) => setUserFilterStatus(e.target.value)} bg="white">
+        <Select size="sm" maxW="140px" value={userFilterStatus} onChange={(e) => { setUserFilterStatus(e.target.value); setListPage(1); }} bg="white">
           <option value="all">All Status</option>
           <option value="ACTIVE">Active</option>
           <option value="PENDING">Pending</option>
           <option value="SUSPENDED">Suspended</option>
           <option value="DEACTIVATED">Deactivated</option>
         </Select>
-            {hasActiveFilters ? (
-              <Button
-                size="sm"
-                variant="outline"
-                colorScheme="gray"
-                onClick={() => {
-                  setUserSearch("");
-                  setUserFilterRole("all");
-                  setUserFilterStatus("all");
-                }}
-              >
-                Clear all
-              </Button>
-            ) : null}
-          </HStack>
+          </TableFilterToolbar>
         );
       })()}
       <TableContainer>
@@ -177,29 +184,14 @@ function TenantDetailUsersPanel(props: {
           <Thead>
             <Tr>
               <Th>
-                <HStack spacing={2}>
-                  <Text>Name</Text>
-                  <Tooltip label="Sort Name A to Z" hasArrow>
-                    <IconButton
-                      aria-label="Sort users by name ascending"
-                      icon={<TriangleUpIcon />}
-                      size="xs"
-                      variant={userNameSortDirection === "asc" ? "solid" : "ghost"}
-                      colorScheme="gray"
-                      onClick={() => setUserNameSortDirection("asc")}
-                    />
-                  </Tooltip>
-                  <Tooltip label="Sort Name Z to A" hasArrow>
-                    <IconButton
-                      aria-label="Sort users by name descending"
-                      icon={<TriangleDownIcon />}
-                      size="xs"
-                      variant={userNameSortDirection === "desc" ? "solid" : "ghost"}
-                      colorScheme="gray"
-                      onClick={() => setUserNameSortDirection("desc")}
-                    />
-                  </Tooltip>
-                </HStack>
+                <TableSortHeader
+                  label="Name"
+                  direction={userNameSortDirection}
+                  onAsc={() => setUserNameSortDirection("asc")}
+                  onDesc={() => setUserNameSortDirection("desc")}
+                  ascAriaLabel="Sort users by name ascending"
+                  descAriaLabel="Sort users by name descending"
+                />
               </Th>
               <Th>EMAIL</Th>
               <Th>ROLE</Th>
@@ -209,7 +201,7 @@ function TenantDetailUsersPanel(props: {
             </Tr>
           </Thead>
           <Tbody>
-            {sortedFiltered.map((u) => (
+            {paginatedUsers.map((u) => (
               <Tr key={u.id}>
                 <Td fontWeight="medium">{u.username || "—"}</Td>
                 <Td fontSize="sm">{u.email}</Td>
@@ -251,7 +243,31 @@ function TenantDetailUsersPanel(props: {
           </Tbody>
         </Table>
       </TableContainer>
-      <Text fontSize="sm" color="gray.500">Showing {filtered.length} user(s)</Text>
+      {totalUsers > 0 ? (
+        <TablePaginationBar
+          startRow={startRow}
+          endRow={endRow}
+          totalItems={totalUsers}
+          page={listPage}
+          totalPages={totalPages}
+          pageSize={listPageSize}
+          pageSizeOptions={PAGE_SIZE_OPTIONS}
+          onPageSizeChange={(value) => {
+            setListPageSize(value);
+            setListPage(1);
+          }}
+          onFirst={() => setListPage(1)}
+          onPrev={() => setListPage((p) => Math.max(1, p - 1))}
+          onNext={() => setListPage((p) => Math.min(totalPages, p + 1))}
+          onLast={() => setListPage(totalPages)}
+          canPrev={listPage > 1}
+          canNext={listPage < totalPages}
+          borderColor="gray.200"
+          bg="white"
+        />
+      ) : (
+        <Text fontSize="sm" color="gray.500">Showing 0 user(s)</Text>
+      )}
     </VStack>
   );
 }
@@ -262,6 +278,7 @@ export interface TenantManagementTabProps {
 }
 
 export default function TenantManagementTab({ isActive = false }: TenantManagementTabProps) {
+  const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
   const { user } = useAuth();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const cardBg = useColorModeValue("white", "gray.800");
@@ -269,9 +286,17 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
   const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
 
   const tm = useTenantManagement({ user: user ?? null });
+  const tenantUserAssignableRoleOptions = useMemo(
+    () => TENANT_USER_ROLE_OPTIONS.filter((opt) => opt.value !== "ADMIN"),
+    []
+  );
 
   const [tenantNameSortDirection, setTenantNameSortDirection] = useState<"asc" | "desc">("asc");
   const [tenantUserNameSortDirection, setTenantUserNameSortDirection] = useState<"asc" | "desc">("asc");
+  const [tenantListPage, setTenantListPage] = useState(1);
+  const [tenantListPageSize, setTenantListPageSize] = useState(25);
+  const [tenantUserListPage, setTenantUserListPage] = useState(1);
+  const [tenantUserListPageSize, setTenantUserListPageSize] = useState(25);
 
   const sortedTenants = useMemo(() => {
     return [...(tm.filteredTenants ?? [])].sort((a, b) => {
@@ -296,6 +321,32 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
       return timeB - timeA;
     });
   }, [tm.filteredTenantUsers, tenantUserNameSortDirection]);
+
+  const totalTenants = sortedTenants.length;
+  const totalTenantPages = Math.max(1, Math.ceil(totalTenants / tenantListPageSize));
+  const tenantStartRow = totalTenants === 0 ? 0 : (tenantListPage - 1) * tenantListPageSize + 1;
+  const tenantEndRow = Math.min(tenantListPage * tenantListPageSize, totalTenants);
+  const paginatedTenants = sortedTenants.slice(
+    (tenantListPage - 1) * tenantListPageSize,
+    tenantListPage * tenantListPageSize
+  );
+
+  const totalTenantUsers = sortedTenantUsers.length;
+  const totalTenantUserPages = Math.max(1, Math.ceil(totalTenantUsers / tenantUserListPageSize));
+  const tenantUserStartRow = totalTenantUsers === 0 ? 0 : (tenantUserListPage - 1) * tenantUserListPageSize + 1;
+  const tenantUserEndRow = Math.min(tenantUserListPage * tenantUserListPageSize, totalTenantUsers);
+  const paginatedTenantUsers = sortedTenantUsers.slice(
+    (tenantUserListPage - 1) * tenantUserListPageSize,
+    tenantUserListPage * tenantUserListPageSize
+  );
+
+  useEffect(() => {
+    if (tenantListPage > totalTenantPages) setTenantListPage(totalTenantPages);
+  }, [tenantListPage, totalTenantPages]);
+
+  useEffect(() => {
+    if (tenantUserListPage > totalTenantUserPages) setTenantUserListPage(totalTenantUserPages);
+  }, [tenantUserListPage, totalTenantUserPages]);
 
   const hasActiveMultiTenantFilters =
     tm.multiTenantSubView === "adopter"
@@ -329,15 +380,13 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
     onEditUserConfirmClose();
   };
 
-  // When user switches to this tab or subview (Adopter vs Tenant Admin), fetch the right list.
-  // In User Management also fetch tenants so "Manage User Services" can resolve tenant subscriptions without calling view/tenant.
+  // When user switches to this tab or subview (Adopter vs Tenant Admin), fetch only the relevant list.
   useEffect(() => {
     if (!isActive || !user?.id) return;
     if (tm.multiTenantSubView === "adopter") {
       tm.handleFetchTenants();
     } else {
       tm.handleFetchTenantUsers();
-      tm.handleFetchTenants(); // needed so Manage User Services can find tenant subscriptions in User Management
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, user?.id, tm.multiTenantSubView]);
@@ -374,15 +423,33 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             {!tm.tenantDetailView && (
               <>
                 {showAdopter && (
-                  <HStack spacing={2} px={3} py={1.5} borderRadius="md" bg="blue.50" borderWidth="1px" borderColor="blue.200">
-                    <FiBriefcase color="var(--chakra-colors-blue-600)" />
-                    <Text fontSize="sm" fontWeight="medium" color="gray.700">Adopter Admin</Text>
+                  <HStack
+                    spacing={2}
+                    px={0}
+                    py={0}
+                    color="gray.700"
+                    cursor="default"
+                    userSelect="none"
+                  >
+                    <FiBriefcase color="var(--chakra-colors-gray-600)" size={14} />
+                    <Text fontSize="xs" fontWeight="semibold" letterSpacing="wide" textTransform="uppercase">
+                      Adopter Admin
+                    </Text>
                   </HStack>
                 )}
                 {showTenant && (
-                  <HStack spacing={2} px={3} py={1.5} borderRadius="md" bg="blue.50" borderWidth="1px" borderColor="blue.200">
-                    <FiUsers color="var(--chakra-colors-blue-600)" />
-                    <Text fontSize="sm" fontWeight="medium" color="gray.700">Tenant Admin</Text>
+                  <HStack
+                    spacing={2}
+                    px={0}
+                    py={0}
+                    color="gray.700"
+                    cursor="default"
+                    userSelect="none"
+                  >
+                    <FiUsers color="var(--chakra-colors-gray-600)" size={14} />
+                    <Text fontSize="xs" fontWeight="semibold" letterSpacing="wide" textTransform="uppercase">
+                      Tenant Admin
+                    </Text>
                   </HStack>
                 )}
                 <HStack flex={1} justify="flex-end">
@@ -402,12 +469,21 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           {!tm.tenantDetailView && (
           <Box>
            
-            <HStack spacing={4} flexWrap="wrap" align="flex-end">
+            <TableFilterToolbar
+              hasActiveFilters={hasActiveMultiTenantFilters}
+              onClear={() => {
+                tm.handleResetMultiTenantFilters();
+                setTenantListPage(1);
+                setTenantUserListPage(1);
+              }}
+              spacing={4}
+              align="flex-end"
+            >
               {tm.multiTenantSubView === "adopter" ? (
                 <>
                   <FormControl maxW="180px">
                     <FormLabel fontSize="sm"> Status</FormLabel>
-                    <Select size="sm" value={tm.tenantFilterStatus} onChange={(e) => tm.setTenantFilterStatus(e.target.value)} bg="white">
+                    <Select size="sm" value={tm.tenantFilterStatus} onChange={(e) => { tm.setTenantFilterStatus(e.target.value); setTenantListPage(1); }} bg="white">
                       <option value="all">All Status</option>
                       <option value="ACTIVE">Active</option>
                       <option value="PENDING">Pending</option>
@@ -417,7 +493,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   </FormControl>
                   <FormControl maxW="180px">
                     <FormLabel fontSize="sm"> Services</FormLabel>
-                    <Select size="sm" value={tm.tenantFilterServices} onChange={(e) => tm.setTenantFilterServices(e.target.value)} bg="white">
+                    <Select size="sm" value={tm.tenantFilterServices} onChange={(e) => { tm.setTenantFilterServices(e.target.value); setTenantListPage(1); }} bg="white">
                       <option value="all">All Services</option>
                       {Array.from(new Set(tm.tenants.flatMap((t) => t.subscriptions || []))).sort().map((s) => (
                         <option key={s} value={s}>{s}</option>
@@ -433,7 +509,10 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                       <Input
                         placeholder="Search tenant name or ID..."
                         value={tm.tenantSearch}
-                        onChange={(e) => tm.setTenantSearch(e.target.value)}
+                        onChange={(e) => {
+                          tm.setTenantSearch(e.target.value);
+                          setTenantListPage(1);
+                        }}
                         bg="white"
                         pl={10}
                       />
@@ -444,7 +523,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <>
                   <FormControl maxW="180px">
                     <FormLabel fontSize="sm"> Status</FormLabel>
-                    <Select size="sm" value={tm.userFilterStatus} onChange={(e) => tm.setUserFilterStatus(e.target.value)} bg="white">
+                    <Select size="sm" value={tm.userFilterStatus} onChange={(e) => { tm.setUserFilterStatus(e.target.value); setTenantUserListPage(1); }} bg="white">
                       <option value="all">All Status</option>
                       <option value="ACTIVE">Active</option>
                       <option value="SUSPENDED">Suspended</option>
@@ -452,7 +531,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   </FormControl>
                   <FormControl maxW="180px">
                     <FormLabel fontSize="sm"> Services</FormLabel>
-                    <Select size="sm" value={tm.userFilterServices} onChange={(e) => tm.setUserFilterServices(e.target.value)} bg="white">
+                    <Select size="sm" value={tm.userFilterServices} onChange={(e) => { tm.setUserFilterServices(e.target.value); setTenantUserListPage(1); }} bg="white">
                       <option value="all">All Services</option>
                       {Array.from(new Set(tm.tenantUsers.flatMap((u) => u.subscriptions || []))).sort().map((s) => (
                         <option key={s} value={s}>{s}</option>
@@ -461,7 +540,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   </FormControl>
                                 <FormControl maxW="180px">
                                   <FormLabel fontSize="sm"> Role</FormLabel>
-                                  <Select size="sm" value={tm.userFilterRole} onChange={(e) => tm.setUserFilterRole(e.target.value)} bg="white">
+                                  <Select size="sm" value={tm.userFilterRole} onChange={(e) => { tm.setUserFilterRole(e.target.value); setTenantUserListPage(1); }} bg="white">
                                     <option value="all">All Roles</option>
                                     {TENANT_USER_ROLE_OPTIONS.map((opt) => (
                                       <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -478,7 +557,10 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                         size="sm"
                         placeholder="Search user name or email..."
                         value={tm.userSearch}
-                        onChange={(e) => tm.setUserSearch(e.target.value)}
+                        onChange={(e) => {
+                          tm.setUserSearch(e.target.value);
+                          setTenantUserListPage(1);
+                        }}
                         bg="white"
                         pl={10}
                       />
@@ -486,12 +568,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   </FormControl>
                 </>
               )}
-              {hasActiveMultiTenantFilters ? (
-                <Button size="sm" variant="outline" onClick={tm.handleResetMultiTenantFilters}>
-                  Clear all
-                </Button>
-              ) : null}
-            </HStack>
+            </TableFilterToolbar>
           </Box>
           )}
         </CardHeader>
@@ -616,29 +693,14 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   <Thead>
                     <Tr>
                       <Th>
-                        <HStack spacing={2}>
-                          <Text>Name</Text>
-                          <Tooltip label="Sort Name A to Z" hasArrow>
-                            <IconButton
-                              aria-label="Sort tenants by name ascending"
-                              icon={<TriangleUpIcon />}
-                              size="xs"
-                              variant={tenantNameSortDirection === "asc" ? "solid" : "ghost"}
-                              colorScheme="gray"
-                              onClick={() => setTenantNameSortDirection("asc")}
-                            />
-                          </Tooltip>
-                          <Tooltip label="Sort Name Z to A" hasArrow>
-                            <IconButton
-                              aria-label="Sort tenants by name descending"
-                              icon={<TriangleDownIcon />}
-                              size="xs"
-                              variant={tenantNameSortDirection === "desc" ? "solid" : "ghost"}
-                              colorScheme="gray"
-                              onClick={() => setTenantNameSortDirection("desc")}
-                            />
-                          </Tooltip>
-                        </HStack>
+                        <TableSortHeader
+                          label="Name"
+                          direction={tenantNameSortDirection}
+                          onAsc={() => setTenantNameSortDirection("asc")}
+                          onDesc={() => setTenantNameSortDirection("desc")}
+                          ascAriaLabel="Sort tenants by name ascending"
+                          descAriaLabel="Sort tenants by name descending"
+                        />
                       </Th>
                       <Th>TENANT ID</Th>
                       <Th>CONTACT</Th>
@@ -649,7 +711,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     </Tr>
                   </Thead>
                   <Tbody>
-                  {sortedTenants.map((t) => (
+                  {paginatedTenants.map((t) => (
                       <Tr
                         key={t.id}
                         cursor="pointer"
@@ -740,29 +802,14 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <Thead>
                   <Tr>
                     <Th>
-                      <HStack spacing={2}>
-                        <Text>Name</Text>
-                        <Tooltip label="Sort Name A to Z" hasArrow>
-                          <IconButton
-                            aria-label="Sort tenant users by name ascending"
-                            icon={<TriangleUpIcon />}
-                            size="xs"
-                            variant={tenantUserNameSortDirection === "asc" ? "solid" : "ghost"}
-                            colorScheme="gray"
-                            onClick={() => setTenantUserNameSortDirection("asc")}
-                          />
-                        </Tooltip>
-                        <Tooltip label="Sort Name Z to A" hasArrow>
-                          <IconButton
-                            aria-label="Sort tenant users by name descending"
-                            icon={<TriangleDownIcon />}
-                            size="xs"
-                            variant={tenantUserNameSortDirection === "desc" ? "solid" : "ghost"}
-                            colorScheme="gray"
-                            onClick={() => setTenantUserNameSortDirection("desc")}
-                          />
-                        </Tooltip>
-                      </HStack>
+                      <TableSortHeader
+                        label="Name"
+                        direction={tenantUserNameSortDirection}
+                        onAsc={() => setTenantUserNameSortDirection("asc")}
+                        onDesc={() => setTenantUserNameSortDirection("desc")}
+                        ascAriaLabel="Sort tenant users by name ascending"
+                        descAriaLabel="Sort tenant users by name descending"
+                      />
                     </Th>
                     <Th>EMAIL</Th>
                     <Th>TENANT</Th>
@@ -774,7 +821,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   </Tr>
                 </Thead>
                 <Tbody>
-                  {sortedTenantUsers.map((u) => (
+                  {paginatedTenantUsers.map((u) => (
                     <Tr
                       key={u.id}
                       cursor="pointer"
@@ -832,32 +879,92 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             </TableContainer>
           )}
           {!tm.tenantDetailView && tm.multiTenantSubView === "adopter" && !tm.isLoadingTenants && (
-            <Text fontSize="sm" color="gray.500" mt={2}>
-              Showing {tm.filteredTenants.length} of {tm.tenants.length} tenants
-            </Text>
+            <TablePaginationBar
+              startRow={tenantStartRow}
+              endRow={tenantEndRow}
+              totalItems={totalTenants}
+              page={tenantListPage}
+              totalPages={totalTenantPages}
+              pageSize={tenantListPageSize}
+              pageSizeOptions={PAGE_SIZE_OPTIONS}
+              onPageSizeChange={(value) => {
+                setTenantListPageSize(value);
+                setTenantListPage(1);
+              }}
+              onFirst={() => setTenantListPage(1)}
+              onPrev={() => setTenantListPage((p) => Math.max(1, p - 1))}
+              onNext={() => setTenantListPage((p) => Math.min(totalTenantPages, p + 1))}
+              onLast={() => setTenantListPage(totalTenantPages)}
+              canPrev={tenantListPage > 1}
+              canNext={tenantListPage < totalTenantPages}
+              borderColor={cardBorder}
+              bg={cardBg}
+            />
           )}
           {!tm.tenantDetailView && tm.multiTenantSubView === "tenant" && !tm.isLoadingTenantUsers && (
-            <Text fontSize="sm" color="gray.500" mt={2}>
-              Showing {tm.filteredTenantUsers.length} of {tm.tenantUsers.length} users
-            </Text>
+            <TablePaginationBar
+              startRow={tenantUserStartRow}
+              endRow={tenantUserEndRow}
+              totalItems={totalTenantUsers}
+              page={tenantUserListPage}
+              totalPages={totalTenantUserPages}
+              pageSize={tenantUserListPageSize}
+              pageSizeOptions={PAGE_SIZE_OPTIONS}
+              onPageSizeChange={(value) => {
+                setTenantUserListPageSize(value);
+                setTenantUserListPage(1);
+              }}
+              onFirst={() => setTenantUserListPage(1)}
+              onPrev={() => setTenantUserListPage((p) => Math.max(1, p - 1))}
+              onNext={() => setTenantUserListPage((p) => Math.min(totalTenantUserPages, p + 1))}
+              onLast={() => setTenantUserListPage(totalTenantUserPages)}
+              canPrev={tenantUserListPage > 1}
+              canNext={tenantUserListPage < totalTenantUserPages}
+              borderColor={cardBorder}
+              bg={cardBg}
+            />
           )}
         </CardBody>
       </Card>
 
       {/* Create New Tenant Modal */}
-      <Modal isOpen={tm.isTenantModalOpen} onClose={tm.closeTenantModal} size="lg" isCentered>
-        <ModalOverlay />
-        <ModalContent maxH="90vh" display="flex" flexDirection="column">
-          <ModalHeader flexShrink={0}>Create New Tenant</ModalHeader>
-          <ModalCloseButton />
-          <Box px={6} pt={2} pb={2} flexShrink={0}>
+      <StandardModal
+        isOpen={tm.isTenantModalOpen}
+        onClose={tm.closeTenantModal}
+        size="lg"
+        title="Create New Tenant"
+        contentProps={{ maxH: "90vh", display: "flex", flexDirection: "column" }}
+        bodyProps={{ overflowY: "auto", flex: "1", minH: 0 }}
+        footerProps={{ flexShrink: 0 }}
+        footer={
+          <>
+            {tm.tenantModalStep === 1 && (
+              <>
+                <Button variant="ghost" mr={3} onClick={tm.closeTenantModal}>Cancel</Button>
+                <Button colorScheme="blue" onClick={tm.handleTenantStepNext} isDisabled={!tm.tenantForm.organization_name.trim() || !tm.tenantForm.domain.trim() || !tm.tenantForm.contact_email.trim() || !tm.tenantForm.requested_subscriptions?.length}>
+                  Next &rarr;
+                </Button>
+              </>
+            )}
+            {tm.tenantModalStep === 2 && (
+              <>
+                <Button variant="ghost" mr={3} onClick={tm.handleTenantStepBack} isDisabled={tm.isSubmittingTenant}>&larr; Back</Button>
+                <Button variant="ghost" mr={3} onClick={tm.closeTenantModal} isDisabled={tm.isSubmittingTenant}>Cancel</Button>
+                <Button colorScheme="blue" onClick={tm.handleRegisterTenant} isLoading={tm.isSubmittingTenant} loadingText="Sending...">
+                  Register Tenant
+                </Button>
+              </>
+            )}
+          </>
+        }
+      >
+        <Box px={0} pt={0} pb={2} flexShrink={0}>
             <HStack spacing={2}>
               <Badge colorScheme={tm.tenantModalStep === 1 ? "blue" : "green"} borderRadius="full" px={2}>1</Badge>
               <Badge colorScheme={tm.tenantModalStep === 2 ? "blue" : "gray"} borderRadius="full" px={2}>2</Badge>
             </HStack>
             <Text fontSize="sm" color="gray.600" mt={1}>Step {tm.tenantModalStep} of 2</Text>
-          </Box>
-          <ModalBody overflowY="auto" flex="1" minH={0}>
+        </Box>
             {tm.tenantModalStep === 1 && (
               <VStack spacing={4} align="stretch">
                 <FormControl isRequired>
@@ -989,46 +1096,34 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 </Alert>
               </VStack>
             )}
-          </ModalBody>
-          <ModalFooter flexShrink={0}>
-            {tm.tenantModalStep === 1 && (
-              <>
-                <Button variant="ghost" mr={3} onClick={tm.closeTenantModal}>Cancel</Button>
-                <Button colorScheme="blue" onClick={tm.handleTenantStepNext} isDisabled={!tm.tenantForm.organization_name.trim() || !tm.tenantForm.domain.trim() || !tm.tenantForm.contact_email.trim() || !tm.tenantForm.requested_subscriptions?.length}>
-                  Next &rarr;
-                </Button>
-              </>
-            )}
-            {tm.tenantModalStep === 2 && (
-              <>
-                <Button variant="ghost" mr={3} onClick={tm.handleTenantStepBack} isDisabled={tm.isSubmittingTenant}>&larr; Back</Button>
-                <Button variant="ghost" mr={3} onClick={tm.closeTenantModal} isDisabled={tm.isSubmittingTenant}>Cancel</Button>
-                <Button colorScheme="blue" onClick={tm.handleRegisterTenant} isLoading={tm.isSubmittingTenant} loadingText="Sending...">
-                  {/* Send Verification to Tenant */}
-                  Register Tenant
-                </Button>
-              </>
-            )}
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+      </StandardModal>
 
       {/* Manage Services Modal (existing tenant) */}
-      <Modal
+      <StandardModal
         isOpen={tm.isManageServicesModalOpen}
         onClose={mustKeepManageServicesOpen ? () => {} : tm.closeManageServices}
         size="lg"
-        isCentered
+        title="Manage Services"
         closeOnOverlayClick={!mustKeepManageServicesOpen}
         closeOnEsc={!mustKeepManageServicesOpen}
+        hideCloseButton={mustKeepManageServicesOpen}
+        footer={
+          tm.availableServices.length > 0 ? (
+            <>
+              <Button variant="ghost" mr={3} onClick={tm.closeManageServices} isDisabled={mustKeepManageServicesOpen}>Cancel</Button>
+              <Button
+                colorScheme="blue"
+                onClick={tm.saveManageServices}
+                isDisabled={tm.manageServicesTenant?.status === "ACTIVE" && tm.manageServicesSelected.length === 0}
+              >
+                Done
+              </Button>
+            </>
+          ) : undefined
+        }
       >
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Manage Services</ModalHeader>
-          {!mustKeepManageServicesOpen && <ModalCloseButton />}
-          <ModalBody>
-            {tm.manageServicesTenant && (
-              <>
+        {tm.manageServicesTenant && (
+          <>
                 <Text fontWeight="semibold" color="gray.700" mb={2}>{tm.manageServicesTenant.organization_name || tm.manageServicesTenant.tenant_id}</Text>
                 {tm.isLoadingServices ? (
                   <Center py={10}>
@@ -1124,42 +1219,43 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     )}
                   </VStack>
                 )}
-              </>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            {tm.availableServices.length > 0 && (
-              <>
-                <Button variant="ghost" mr={3} onClick={tm.closeManageServices} isDisabled={mustKeepManageServicesOpen}>Cancel</Button>
-                <Button
-                  colorScheme="blue"
-                  onClick={tm.saveManageServices}
-                  isDisabled={tm.manageServicesTenant?.status === "ACTIVE" && tm.manageServicesSelected.length === 0}
-                >
-                  Done
-                </Button>
-              </>
-            )}
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </>
+        )}
+      </StandardModal>
 
       {/* Manage User Services Modal */}
-      <Modal
+      <StandardModal
         isOpen={tm.isManageUserServicesModalOpen}
         onClose={mustKeepManageUserServicesOpen ? () => {} : tm.closeManageUserServices}
         size="lg"
-        isCentered
+        title="Manage User Services"
         closeOnOverlayClick={!mustKeepManageUserServicesOpen}
         closeOnEsc={!mustKeepManageUserServicesOpen}
+        hideCloseButton={mustKeepManageUserServicesOpen}
+        footer={
+          tm.availableServicesForUser.length > 0 ? (
+            <>
+              <Button
+                variant="ghost"
+                mr={3}
+                onClick={tm.closeManageUserServices}
+                isDisabled={mustKeepManageUserServicesOpen}
+              >
+                Cancel
+              </Button>
+              <Button
+                colorScheme="blue"
+                onClick={tm.saveManageUserServices}
+                isDisabled={tm.manageUserServicesUser?.status === "ACTIVE" && tm.manageUserServicesSelected.length === 0}
+              >
+                Done
+              </Button>
+            </>
+          ) : undefined
+        }
       >
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Manage User Services</ModalHeader>
-          {!mustKeepManageUserServicesOpen && <ModalCloseButton />}
-          <ModalBody>
-            {tm.manageUserServicesUser && (
-              <>
+        {tm.manageUserServicesUser && (
+          <>
                 <Text fontWeight="semibold" color="gray.700" mb={2}>{tm.manageUserServicesUser.username} ({tm.manageUserServicesUser.email})</Text>
                 {tm.isLoadingUserServices ? (
                   <Center py={10}>
@@ -1257,41 +1353,43 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     )}
                   </VStack>
                 )}
-              </>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            {tm.availableServicesForUser.length > 0 && (
-              <>
-                <Button
-                  variant="ghost"
-                  mr={3}
-                  onClick={tm.closeManageUserServices}
-                  isDisabled={mustKeepManageUserServicesOpen}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  colorScheme="blue"
-                  onClick={tm.saveManageUserServices}
-                  isDisabled={tm.manageUserServicesUser?.status === "ACTIVE" && tm.manageUserServicesSelected.length === 0}
-                >
-                  Done
-                </Button>
-              </>
-            )}
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </>
+        )}
+      </StandardModal>
 
       {/* Add New User Modal */}
-      <Modal isOpen={tm.isUserModalOpen} onClose={tm.closeUserModal} size="md" isCentered>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Add New User</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            <VStack spacing={4} align="stretch">
+      <StandardModal
+        isOpen={tm.isUserModalOpen}
+        onClose={tm.closeUserModal}
+        size="md"
+        title="Add New User"
+        footer={
+          <>
+            <Button variant="ghost" mr={3} onClick={tm.closeUserModal} isDisabled={tm.isSubmittingUser}>Cancel</Button>
+            <Button
+              colorScheme="blue"
+              onClick={tm.handleRegisterUser}
+              isLoading={tm.isSubmittingUser}
+              loadingText="Adding..."
+              isDisabled={
+                !tm.userForm.tenant_id ||
+                !tm.userForm.full_name?.trim() ||
+                !tm.userForm.email.trim() ||
+                !tm.userForm.username.trim() ||
+                tm.userForm.username.trim().length < 3 ||
+                (() => {
+                  const selectedTenant = tm.tenants.find((t) => t.tenant_id === tm.userForm.tenant_id);
+                  const tenantServices = selectedTenant?.subscriptions ?? [];
+                  return tenantServices.length > 0 && (tm.userForm.services?.length ?? 0) === 0;
+                })()
+              }
+            >
+              + Add User
+            </Button>
+          </>
+        }
+      >
+        <VStack spacing={4} align="stretch">
               <FormControl isRequired>
                 <FormLabel>Tenant</FormLabel>
                 <Input
@@ -1332,7 +1430,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
               <FormControl>
                 <FormLabel>Role</FormLabel>
                 <Select value={tm.userForm.role || "USER"} onChange={(e) => tm.setUserForm((f) => ({ ...f, role: e.target.value }))} bg="white">
-                  {TENANT_USER_ROLE_OPTIONS.map((opt) => (
+                  {tenantUserAssignableRoleOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </Select>
@@ -1405,104 +1503,84 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   );
                 })()}
               </FormControl>
-            </VStack>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="ghost" mr={3} onClick={tm.closeUserModal} isDisabled={tm.isSubmittingUser}>Cancel</Button>
-            <Button
-              colorScheme="blue"
-              onClick={tm.handleRegisterUser}
-              isLoading={tm.isSubmittingUser}
-              loadingText="Adding..."
-              isDisabled={
-                !tm.userForm.tenant_id ||
-                !tm.userForm.full_name?.trim() ||
-                !tm.userForm.email.trim() ||
-                !tm.userForm.username.trim() ||
-                tm.userForm.username.trim().length < 3 ||
-                (() => {
-                  const selectedTenant = tm.tenants.find((t) => t.tenant_id === tm.userForm.tenant_id);
-                  const tenantServices = selectedTenant?.subscriptions ?? [];
-                  return tenantServices.length > 0 && (tm.userForm.services?.length ?? 0) === 0;
-                })()
-              }
-            >
-              + Add User
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+        </VStack>
+      </StandardModal>
 
       {/* View Tenant Details Modal */}
-      <Modal isOpen={tm.isViewTenantModalOpen} onClose={tm.closeViewTenantModal} size="lg" isCentered>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Tenant Details</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            {tm.isLoadingViewTenant ? (
-              <Center py={6}><Spinner size="lg" color="blue.500" /></Center>
-            ) : tm.viewTenantDetail ? (
-              <VStack align="stretch" spacing={3}>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Tenant ID</Text><Text>{tm.viewTenantDetail.tenant_id}</Text></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Organization</Text><Text>{tm.viewTenantDetail.organization_name || "—"}</Text></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Contact Email</Text><Text>{tm.viewTenantDetail.email}</Text></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Domain</Text><Text>{tm.viewTenantDetail.domain || "—"}</Text></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Status</Text><Badge colorScheme={tm.viewTenantDetail.status === "ACTIVE" ? "green" : tm.viewTenantDetail.status === "SUSPENDED" ? "orange" : "gray"}>{tm.viewTenantDetail.status}</Badge></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Subscriptions</Text><HStack flexWrap="wrap" spacing={1}>{(tm.viewTenantDetail.subscriptions || []).map((s) => <Badge key={s} colorScheme="blue" fontSize="xs">{String(s).toUpperCase()}</Badge>)}</HStack></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Created</Text><Text fontSize="sm">{tm.viewTenantDetail.created_at ? new Date(tm.viewTenantDetail.created_at).toLocaleString() : "—"}</Text></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Updated</Text><Text fontSize="sm">{tm.viewTenantDetail.updated_at ? new Date(tm.viewTenantDetail.updated_at).toLocaleString() : "—"}</Text></Box>
-              </VStack>
-            ) : (
-              <Text color="gray.500">No tenant data to display.</Text>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button onClick={tm.closeViewTenantModal}>Close</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+      <StandardModal
+        isOpen={tm.isViewTenantModalOpen}
+        onClose={tm.closeViewTenantModal}
+        size="lg"
+        title="Tenant Details"
+        footer={<Button onClick={tm.closeViewTenantModal}>Close</Button>}
+      >
+        {tm.isLoadingViewTenant ? (
+          <Center py={6}><Spinner size="lg" color="blue.500" /></Center>
+        ) : tm.viewTenantDetail ? (
+          <VStack align="stretch" spacing={3}>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Tenant ID</Text><Text>{tm.viewTenantDetail.tenant_id}</Text></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Organization</Text><Text>{tm.viewTenantDetail.organization_name || "—"}</Text></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Contact Email</Text><Text>{tm.viewTenantDetail.email}</Text></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Domain</Text><Text>{tm.viewTenantDetail.domain || "—"}</Text></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Status</Text><Badge colorScheme={tm.viewTenantDetail.status === "ACTIVE" ? "green" : tm.viewTenantDetail.status === "SUSPENDED" ? "orange" : "gray"}>{tm.viewTenantDetail.status}</Badge></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Subscriptions</Text><HStack flexWrap="wrap" spacing={1}>{(tm.viewTenantDetail.subscriptions || []).map((s) => <Badge key={s} colorScheme="blue" fontSize="xs">{String(s).toUpperCase()}</Badge>)}</HStack></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Created</Text><Text fontSize="sm">{tm.viewTenantDetail.created_at ? new Date(tm.viewTenantDetail.created_at).toLocaleString() : "—"}</Text></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Updated</Text><Text fontSize="sm">{tm.viewTenantDetail.updated_at ? new Date(tm.viewTenantDetail.updated_at).toLocaleString() : "—"}</Text></Box>
+          </VStack>
+        ) : (
+          <Text color="gray.500">No tenant data to display.</Text>
+        )}
+      </StandardModal>
 
       {/* View User Details Modal */}
-      <Modal isOpen={tm.isViewUserModalOpen} onClose={tm.closeViewUserModal} size="md" isCentered>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>User Details</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            {tm.isLoadingViewUser ? (
-              <Center py={6}><Spinner size="lg" color="blue.500" /></Center>
-            ) : tm.viewUserDetail ? (
-              <VStack align="stretch" spacing={3}>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">User ID</Text><Text>{tm.viewUserDetail.user_id}</Text></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Name</Text><Text>{tm.viewUserDetail.username || "—"}</Text></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Email</Text><Text>{tm.viewUserDetail.email}</Text></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Tenant ID</Text><Text>{tm.viewUserDetail.tenant_id}</Text></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Role</Text><Text>{tm.viewUserDetail.role ?? "—"}</Text></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Status</Text><Badge colorScheme={tm.viewUserDetail.status === "ACTIVE" ? "green" : tm.viewUserDetail.status === "PENDING" ? "blue" : tm.viewUserDetail.status === "SUSPENDED" ? "orange" : "gray"}>{tm.viewUserDetail.status}</Badge></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Services</Text><HStack flexWrap="wrap" spacing={1}>{(tm.viewUserDetail.subscriptions || []).map((s) => <Badge key={s} colorScheme="blue" fontSize="xs">{String(s).toUpperCase()}</Badge>)}</HStack></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Created</Text><Text fontSize="sm">{tm.viewUserDetail.created_at ? new Date(tm.viewUserDetail.created_at).toLocaleString() : "—"}</Text></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Updated</Text><Text fontSize="sm">{tm.viewUserDetail.updated_at ? new Date(tm.viewUserDetail.updated_at).toLocaleString() : "—"}</Text></Box>
-              </VStack>
-            ) : (
-              <Text color="gray.500">No user data to display.</Text>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button onClick={tm.closeViewUserModal}>Close</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+      <StandardModal
+        isOpen={tm.isViewUserModalOpen}
+        onClose={tm.closeViewUserModal}
+        size="md"
+        title="User Details"
+        footer={<Button onClick={tm.closeViewUserModal}>Close</Button>}
+      >
+        {tm.isLoadingViewUser ? (
+          <Center py={6}><Spinner size="lg" color="blue.500" /></Center>
+        ) : tm.viewUserDetail ? (
+          <VStack align="stretch" spacing={3}>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">User ID</Text><Text>{tm.viewUserDetail.user_id}</Text></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Name</Text><Text>{tm.viewUserDetail.username || "—"}</Text></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Email</Text><Text>{tm.viewUserDetail.email}</Text></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Tenant ID</Text><Text>{tm.viewUserDetail.tenant_id}</Text></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Role</Text><Text>{tm.viewUserDetail.role ?? "—"}</Text></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Status</Text><Badge colorScheme={tm.viewUserDetail.status === "ACTIVE" ? "green" : tm.viewUserDetail.status === "PENDING" ? "blue" : tm.viewUserDetail.status === "SUSPENDED" ? "orange" : "gray"}>{tm.viewUserDetail.status}</Badge></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Services</Text><HStack flexWrap="wrap" spacing={1}>{(tm.viewUserDetail.subscriptions || []).map((s) => <Badge key={s} colorScheme="blue" fontSize="xs">{String(s).toUpperCase()}</Badge>)}</HStack></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Created</Text><Text fontSize="sm">{tm.viewUserDetail.created_at ? new Date(tm.viewUserDetail.created_at).toLocaleString() : "—"}</Text></Box>
+            <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Updated</Text><Text fontSize="sm">{tm.viewUserDetail.updated_at ? new Date(tm.viewUserDetail.updated_at).toLocaleString() : "—"}</Text></Box>
+          </VStack>
+        ) : (
+          <Text color="gray.500">No user data to display.</Text>
+        )}
+      </StandardModal>
 
       {/* Edit Tenant Modal */}
-      <Modal isOpen={tm.isEditTenantModalOpen} onClose={tm.closeEditTenantModal} size="lg" isCentered>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Edit Tenant</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            {tm.editTenantRow && (
-              <VStack align="stretch" spacing={4}>
+      <StandardModal
+        isOpen={tm.isEditTenantModalOpen}
+        onClose={tm.closeEditTenantModal}
+        size="lg"
+        title="Edit Tenant"
+        footer={
+          <>
+            <Button variant="ghost" mr={3} onClick={tm.closeEditTenantModal} isDisabled={tm.isSubmittingEditTenant}>Cancel</Button>
+            <Button
+              colorScheme="blue"
+              onClick={onEditTenantConfirmOpen}
+              isLoading={tm.isSubmittingEditTenant}
+              isDisabled={!tm.editTenantForm.organization_name?.trim() || !tm.editTenantForm.contact_email?.trim() || !tm.editTenantForm.domain?.trim()}
+            >
+              Save Changes
+            </Button>
+          </>
+        }
+      >
+        {tm.editTenantRow && (
+          <VStack align="stretch" spacing={4}>
                 <FormControl>
                   <FormLabel>Tenant ID</FormLabel>
                   <Input value={tm.editTenantForm.tenant_id} isReadOnly variant="filled" />
@@ -1511,13 +1589,15 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   <FormLabel>Organization Name</FormLabel>
                   <Input value={tm.editTenantForm.organization_name ?? ""} onChange={(e) => tm.setEditTenantForm((f) => ({ ...f, organization_name: e.target.value }))} placeholder="Organization name" />
                 </FormControl>
-                <FormControl isRequired isDisabled={tm.editTenantRow.status === "PENDING"}>
+                <FormControl isRequired>
                   <FormLabel>Contact Email</FormLabel>
                   <Input
                     type="email"
                     value={tm.editTenantForm.contact_email ?? ""}
-                    onChange={(e) => tm.setEditTenantForm((f) => ({ ...f, contact_email: e.target.value }))}
-                    placeholder="contact@example.com"
+                    isReadOnly
+                    variant="filled"
+                    bg="gray.50"
+                    _readOnly={{ cursor: "default" }}
                   />
                 </FormControl>
                 <FormControl isRequired>
@@ -1543,72 +1623,80 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     <Input type="number" value={tm.editTenantForm.usage_quota?.audio_length_in_min ?? ""} onChange={(e) => tm.setEditTenantForm((f) => ({ ...f, usage_quota: { ...f.usage_quota, audio_length_in_min: e.target.value ? Number(e.target.value) : undefined } }))} placeholder="—" />
                   </FormControl>
                 </SimpleGrid> */}
-              </VStack>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="ghost" mr={3} onClick={tm.closeEditTenantModal} isDisabled={tm.isSubmittingEditTenant}>Cancel</Button>
-            <Button
-              colorScheme="blue"
-              onClick={onEditTenantConfirmOpen}
-              isLoading={tm.isSubmittingEditTenant}
-              isDisabled={!tm.editTenantForm.organization_name?.trim() || !tm.editTenantForm.contact_email?.trim() || !tm.editTenantForm.domain?.trim()}
-            >
-              Save Changes
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </VStack>
+        )}
+      </StandardModal>
 
       {/* Edit User Modal */}
-      <Modal isOpen={tm.isEditUserModalOpen} onClose={tm.closeEditUserModal} size="md" isCentered>
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Edit User</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            {tm.editUserRow && (
-              <VStack align="stretch" spacing={4}>
-                <FormControl>
-                  <FormLabel>Tenant ID</FormLabel>
-                  <Input value={tm.editUserForm.tenant_id} isReadOnly variant="filled" size="sm" />
-                </FormControl>
-                <FormControl>
-                  <FormLabel>User ID</FormLabel>
-                  <Input value={String(tm.editUserForm.user_id)} isReadOnly variant="filled" size="sm" />
-                </FormControl>
-                <FormControl isRequired>
-                  <FormLabel>Username</FormLabel>
-                  <Input value={tm.editUserForm.username ?? ""} onChange={(e) => tm.setEditUserForm((f) => ({ ...f, username: e.target.value }))} placeholder="Username" minLength={3} />
-                </FormControl>
-                <FormControl isRequired>
-                  <FormLabel>Email</FormLabel>
-                  <Input type="email" value={tm.editUserForm.email ?? ""} onChange={(e) => tm.setEditUserForm((f) => ({ ...f, email: e.target.value }))} placeholder="user@example.com" />
-                </FormControl>
-                <FormControl>
-                  <FormLabel>Role (optional)</FormLabel>
-                  <Select value={tm.editUserForm.role ?? "USER"} onChange={(e) => tm.setEditUserForm((f) => ({ ...f, role: e.target.value }))} bg="white" size="sm">
-                    {TENANT_USER_ROLE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </Select>
-                </FormControl>
-              </VStack>
-            )}
-          </ModalBody>
-          <ModalFooter>
+      <StandardModal
+        isOpen={tm.isEditUserModalOpen}
+        onClose={tm.closeEditUserModal}
+        size="md"
+        title="Edit User"
+        footer={
+          <>
             <Button variant="ghost" mr={3} onClick={tm.closeEditUserModal} isDisabled={tm.isSubmittingEditUser}>Cancel</Button>
             <Button
               colorScheme="blue"
               onClick={onEditUserConfirmOpen}
               isLoading={tm.isSubmittingEditUser}
-              isDisabled={!tm.editUserForm.username?.trim() || tm.editUserForm.username.trim().length < 3 || !tm.editUserForm.email?.trim()}
+              isDisabled={!tm.editUserForm.username?.trim() || tm.editUserForm.username.trim().length < 3}
             >
               Save Changes
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+          </>
+        }
+      >
+        {tm.editUserRow && (
+          <VStack align="stretch" spacing={4}>
+            <FormControl>
+              <FormLabel>Tenant ID</FormLabel>
+              <Input
+                value={tm.editUserForm.tenant_id}
+                isReadOnly
+              />
+            </FormControl>
+            <FormControl>
+              <FormLabel>User ID</FormLabel>
+              <Input
+                value={String(tm.editUserForm.user_id)}
+                isReadOnly
+              />
+            </FormControl>
+            <FormControl isRequired>
+              <FormLabel>Username</FormLabel>
+              <Input
+                value={tm.editUserForm.username ?? ""}
+                onChange={(e) => tm.setEditUserForm((f) => ({ ...f, username: e.target.value }))}
+                placeholder="Username"
+                minLength={3}
+              />
+            </FormControl>
+            <FormControl>
+              <FormLabel>Email</FormLabel>
+              <Input
+                type="email"
+                value={tm.editUserForm.email ?? ""}
+                isReadOnly
+              />
+              <Text fontSize="xs" color="gray.500" mt={1}>
+                Email cannot be changed for now.
+              </Text>
+            </FormControl>
+            <FormControl>
+              <FormLabel>Role (optional)</FormLabel>
+              <Select
+                value={(tm.editUserForm.role ?? "USER") === "ADMIN" ? "USER" : (tm.editUserForm.role ?? "USER")}
+                onChange={(e) => tm.setEditUserForm((f) => ({ ...f, role: e.target.value }))}
+              >
+                {tenantUserAssignableRoleOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </Select>
+            </FormControl>
+          </VStack>
+        )}
+      </StandardModal>
 
       {/* Delete User Confirmation */}
       <ConfirmDialog

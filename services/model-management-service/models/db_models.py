@@ -1,7 +1,7 @@
 import uuid
 from sqlalchemy import Column, String,BigInteger, Text, DateTime, ForeignKey , Boolean, UniqueConstraint, Enum as SQLEnum, and_
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import relationship, foreign
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from db_connection import AppDBBase
 import enum
@@ -27,7 +27,7 @@ class Model(AppDBBase):
     )
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    model_id = Column(String(255), nullable=False)  # Removed unique=True, now part of composite key
+    model_id = Column(String(255), unique=True, nullable=False)
     version = Column(String(100), nullable=False)
     version_status = Column(SQLEnum(VersionStatus, name='version_status'), nullable=False, default=VersionStatus.ACTIVE)
     version_status_updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -49,27 +49,24 @@ class Model(AppDBBase):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
-    services = relationship(
-        "Service",
-        back_populates="model",
-        primaryjoin="and_(Model.model_id == foreign(Service.model_id), Model.version == foreign(Service.model_version))"
-    )
+    services = relationship("Service", back_populates="model")
 
 
 class Service(AppDBBase):
     __tablename__ = "services"
     __table_args__ = (
-        UniqueConstraint('model_id', 'model_version', 'name', name='uq_model_id_version_service_name'),
+        # Enforce global uniqueness so service_id can be derived from service name only.
+        UniqueConstraint('name', name='uq_service_name'),
     )
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    service_id = Column(String(255), unique=True, nullable=False)  # Hash of (model_name, model_version, service_name)
+    service_id = Column(String(255), unique=True, nullable=False)  # Hash of service name only
     name = Column(String(255), nullable=False)
     service_description = Column(Text)
     hardware_description = Column(Text)
     published_on = Column(BigInteger, nullable=False)
-    model_id = Column(String(255), nullable=False)  # Part of composite foreign key
-    model_version = Column(String(100), nullable=False)  # Part of composite foreign key
+    model_id = Column(String(255), ForeignKey('models.model_id'), nullable=False)
+    model_version = Column(String(100), nullable=False)
     endpoint = Column(String(500), nullable=False)
     api_key = Column(String(255))
     health_status = Column(JSONB)
@@ -84,14 +81,7 @@ class Service(AppDBBase):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
-    # Note: Foreign key constraint on composite (model_id, version) will be handled at application level
-    model = relationship(
-        "Model",
-        back_populates="services",
-        primaryjoin="and_(foreign(Service.model_id) == Model.model_id, foreign(Service.model_version) == Model.version)",
-        foreign_keys=[model_id, model_version],
-        uselist=False
-    )
+    model = relationship("Model", back_populates="services", uselist=False)
     # A/B Testing relationships
     experiment_variants = relationship("ExperimentVariant", back_populates="service", cascade="all, delete-orphan")
 
