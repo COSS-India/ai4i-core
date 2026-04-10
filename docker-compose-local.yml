@@ -1126,6 +1126,8 @@ services:
     container_name: ai4v-speaker-diarization-service
     ports:
       - "8095:8095"
+    env_file:
+      - ./services/speaker-diarization-service/.env
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=${TRITON_ENDPOINT}
