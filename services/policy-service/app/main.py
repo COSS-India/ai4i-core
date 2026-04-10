@@ -1,16 +1,21 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 
 from app.api.routes.health import router as health_router
 from app.api.routes.pii_types import router as pii_types_router
 from app.api.routes.policies import router as policies_router
 from app.api.routes.audit_logs import router as audit_logs_router
 from app.core.config import get_settings
-from app.core.logging import configure_logging
 from app.db.base import AppDBBase as Base
 from app.db.session import get_engine
 import logging
+
+from ai4icore_exceptions import register_exception_handlers  # type: ignore
+from ai4icore_logging import register_logging_plugin  # type: ignore
 
 
 @asynccontextmanager
@@ -29,7 +34,6 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    configure_logging(level=settings.log_level)
 
     application = FastAPI(
         title="Policy Service — PII Policy Module",
@@ -40,6 +44,15 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
         lifespan=lifespan,
     )
+
+    # Platform shared libraries
+    register_logging_plugin(application)
+    register_exception_handlers(application)
+
+    # Ensure Pydantic validation errors are always JSON-serializable.
+    @application.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(_request, exc: RequestValidationError):
+        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
 
     def custom_openapi():
         if application.openapi_schema:
