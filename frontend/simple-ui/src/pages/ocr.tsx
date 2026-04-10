@@ -64,6 +64,8 @@ const OCRPage: React.FC = () => {
     (!!imageFile || !!imageUri?.trim()) &&
     !fetching;
 
+  const blockMediaInput = fetching || !selectedServiceId?.trim();
+
   /**
    * Validates if a URL is safe to use as an image source.
    * Only allows http:, https:, blob:, and data:image/* protocols.
@@ -111,6 +113,16 @@ const OCRPage: React.FC = () => {
   };
 
   const processFile = (file: File) => {
+    if (!selectedServiceId?.trim()) {
+      toast({
+        title: "Service Required",
+        description: "Please select an OCR service before uploading an image.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     // Validate file type
     const isJPG = file.type === 'image/jpeg' || file.type === 'image/jpg' || file.name.toLowerCase().endsWith('.jpg') || file.name.toLowerCase().endsWith('.jpeg');
     const isPNG = file.type === 'image/png' || file.name.toLowerCase().endsWith('.png');
@@ -173,6 +185,16 @@ const OCRPage: React.FC = () => {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
+    if (!selectedServiceId?.trim()) {
+      toast({
+        title: "Service Required",
+        description: "Please select an OCR service before uploading an image.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     const file = e.dataTransfer.files?.[0];
     if (file && file.type.startsWith('image/')) {
       processFile(file);
@@ -200,7 +222,7 @@ const OCRPage: React.FC = () => {
     }
   };
 
-  const handleUriChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+   const handleUriChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setImageUri(value);
     setImageFile(null);
@@ -472,29 +494,34 @@ const OCRPage: React.FC = () => {
                         type="file"
                         accept="image/*"
                         onChange={handleFileChange}
-                        isDisabled={fetching}
+                        isDisabled={blockMediaInput}
                         display="none"
                       />
 
                       {/* Drag and drop zone */}
                       {!imageFile ? (
                         <Box
-                          onDragOver={handleDragOver}
-                          onDragLeave={handleDragLeave}
-                          onDrop={handleDrop}
+                          onDragOver={blockMediaInput ? undefined : handleDragOver}
+                          onDragLeave={blockMediaInput ? undefined : handleDragLeave}
+                          onDrop={blockMediaInput ? undefined : handleDrop}
                           border="2px dashed"
                           borderColor={isDragging ? "teal.400" : "gray.300"}
                           borderRadius="lg"
                           p={8}
                           textAlign="center"
                           bg={isDragging ? "teal.50" : "gray.50"}
-                          cursor="pointer"
+                          cursor={blockMediaInput ? "not-allowed" : "pointer"}
+                          opacity={blockMediaInput ? 0.6 : 1}
                           transition="all 0.2s"
-                          _hover={{
-                            borderColor: "teal.400",
-                            bg: "teal.50",
-                          }}
-                          onClick={handleFileButtonClick}
+                          _hover={
+                            blockMediaInput
+                              ? {}
+                              : {
+                                  borderColor: "teal.400",
+                                  bg: "teal.50",
+                                }
+                          }
+                          onClick={blockMediaInput ? undefined : handleFileButtonClick}
                         >
                           <VStack spacing={4}>
                             <Icon as={AttachmentIcon} boxSize={10} color={isDragging ? "teal.500" : "gray.400"} />
@@ -507,6 +534,7 @@ const OCRPage: React.FC = () => {
                               size="sm"
                               colorScheme="teal"
                               leftIcon={<FaUpload />}
+                              isDisabled={blockMediaInput}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleFileButtonClick();
@@ -554,7 +582,7 @@ const OCRPage: React.FC = () => {
                         value={imageUri}
                         onChange={handleUriChange}
                         placeholder="https://example.com/image.jpg"
-                        isDisabled={fetching}
+                        isDisabled={blockMediaInput}
                         size="md"
                         borderColor="gray.300"
                         _focus={{
