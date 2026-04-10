@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import roleService, { Role } from "../../../services/roleService";
 import type { User } from "../../../types/auth";
@@ -21,16 +21,11 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
   const [roles, setRoles] = useState<Role[]>([]);
   const [selectedUser, setSelectedUser] = useState<SelectedUserInfo | null>(null);
   const [selectedUserRoles, setSelectedUserRoles] = useState<string[]>([]);
-  const [selectedRole, setSelectedRole] = useState("");
   const [isLoadingRoles, setIsLoadingRoles] = useState(false);
   const [isLoadingUserRoles, setIsLoadingUserRoles] = useState(false);
-  const [isAssigningRole, setIsAssigningRole] = useState(false);
-  const [isAssignConfirmOpen, setIsAssignConfirmOpen] = useState(false);
-
-  // Reset role selection when user changes so dropdown shows no option pre-selected
-  useEffect(() => {
-    setSelectedRole("");
-  }, [selectedUser]);
+  const [isManageRolesOpen, setIsManageRolesOpen] = useState(false);
+  const [draftRole, setDraftRole] = useState<string>("");
+  const [isSavingRoles, setIsSavingRoles] = useState(false);
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN") || user?.is_superuser);
   const isModeratorOnly = Boolean(
@@ -89,51 +84,120 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     }
   };
 
-  const openAssignConfirm = () => {
-    if (!selectedUser || !selectedRole) {
+  const availableRoles = roles
+    .map((role) => role.name)
+    .filter((name) => name && name.trim().length > 0)
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+  const openManageRoles = async () => {
+    if (!selectedUser) {
       toast({
-        title: "Validation Error",
-        description: "Please select a role",
-        status: "error",
+        title: "Select user",
+        description: "Choose a user before managing roles.",
+        status: "info",
         duration: 3000,
         isClosable: true,
       });
       return;
     }
-    setIsAssignConfirmOpen(true);
-  };
-
-  const closeAssignConfirm = () => {
-    setIsAssignConfirmOpen(false);
-  };
-
-  const handleConfirmAssignRole = async () => {
-    if (!selectedUser || !selectedRole) return;
-    setIsAssigningRole(true);
-    try {
-      await roleService.assignRole(selectedUser.id, selectedRole);
+    if (!isAdmin || isModeratorOnly) return;
+    if (roles.length === 0) {
+      await handleLoadRoles();
+    }
+    const primaryRole = selectedUserRoles[0] ?? "";
+    if (selectedUserRoles.length > 1) {
       toast({
-        title: "Success",
-        description: `Role ${selectedRole} has been assigned to ${selectedUser.username}.`,
-        status: "success",
-        duration: 3000,
+        title: "Multiple roles detected",
+        description: "This user currently has multiple roles. Saving will normalize to one role.",
+        status: "info",
+        duration: 4500,
         isClosable: true,
       });
-      const userRolesData = await roleService.getUserRoles(selectedUser.id);
-      setSelectedUserRoles(userRolesData.roles);
-      setSelectedRole("");
-      closeAssignConfirm();
+    }
+    setDraftRole(primaryRole);
+    setIsManageRolesOpen(true);
+  };
+
+  const closeManageRoles = () => {
+    setIsManageRolesOpen(false);
+    setDraftRole("");
+  };
+
+  const hasDraftChanges = (() => {
+    const originalPrimary = selectedUserRoles[0] ?? "";
+    if (selectedUserRoles.length > 1) return true;
+    return originalPrimary !== draftRole;
+  })();
+
+  const saveManageRoles = async () => {
+    if (!selectedUser) return;
+    if (!isAdmin || isModeratorOnly) return;
+    const originalPrimary = selectedUserRoles[0] ?? "";
+    const toRemove = selectedUserRoles.filter((role) => role !== draftRole);
+    const toAdd =
+      draftRole && draftRole !== originalPrimary ? [draftRole] : [];
+
+    if (toAdd.length === 0 && toRemove.length === 0 && selectedUserRoles.length <= 1) {
+      toast({
+        title: "No changes",
+        description: "No role updates to save.",
+        status: "info",
+        duration: 2500,
+        isClosable: true,
+      });
+      closeManageRoles();
+      return;
+    }
+
+    setIsSavingRoles(true);
+    const failedOps: string[] = [];
+    try {
+      for (const roleName of toRemove) {
+        try {
+          await roleService.removeRole(selectedUser.id, roleName);
+        } catch {
+          failedOps.push(`remove:${roleName}`);
+        }
+      }
+      for (const roleName of toAdd) {
+        try {
+          await roleService.assignRole(selectedUser.id, roleName);
+        } catch {
+          failedOps.push(`assign:${roleName}`);
+        }
+      }
+
+      const refreshed = await roleService.getUserRoles(selectedUser.id);
+      setSelectedUserRoles(refreshed.roles);
+
+      if (failedOps.length === 0) {
+        toast({
+          title: "Roles updated",
+          description: `Updated roles for ${selectedUser.username}.`,
+          status: "success",
+          duration: 3000,
+          isClosable: true,
+        });
+      } else {
+        toast({
+          title: "Partially updated",
+          description: `Some role changes failed (${failedOps.length}). Please retry.`,
+          status: "warning",
+          duration: 5000,
+          isClosable: true,
+        });
+      }
+      closeManageRoles();
     } catch (error) {
       toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to assign role",
+        title: "Save failed",
+        description: error instanceof Error ? error.message : "Failed to update roles",
         status: "error",
         duration: 5000,
         isClosable: true,
       });
-      closeAssignConfirm();
     } finally {
-      setIsAssigningRole(false);
+      setIsSavingRoles(false);
     }
   };
 
@@ -141,18 +205,20 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     roles,
     selectedUser,
     selectedUserRoles,
-    selectedRole,
-    setSelectedRole,
     isLoadingRoles,
     isLoadingUserRoles,
-    isAssigningRole,
     isAdmin,
     isModeratorOnly,
-    isAssignConfirmOpen,
-    openAssignConfirm,
-    closeAssignConfirm,
-    handleConfirmAssignRole,
+    isManageRolesOpen,
+    draftRole,
+    setDraftRole,
+    isSavingRoles,
+    hasDraftChanges,
+    availableRoles,
     handleLoadRoles,
     handleUserSelect,
+    openManageRoles,
+    closeManageRoles,
+    saveManageRoles,
   };
 }

@@ -5,6 +5,7 @@ Seeds default AI models and services for all task types in model_management_db.
 from infrastructure.databases.core.base_seeder import BaseSeeder
 from ai4icore_env import app_env
 import hashlib
+import json
 import time
 import uuid
 
@@ -15,17 +16,19 @@ def generate_model_id(model_name: str, version: str) -> str:
     return hashlib.sha256(f"{normalized_name}:{normalized_version}".encode("utf-8")).hexdigest()[:32]
 
 
-def generate_service_id(model_name: str, model_version: str, service_name: str) -> str:
-    normalized_model_name = model_name.strip().lower()
-    normalized_model_version = model_version.strip().lower()
+def generate_service_id(service_name: str) -> str:
     normalized_service_name = service_name.strip().lower()
-    raw = f"{normalized_model_name}:{normalized_model_version}:{normalized_service_name}"
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+    return hashlib.sha256(normalized_service_name.encode("utf-8")).hexdigest()[:32]
 
 
 def generate_uuid(*parts: str) -> str:
     raw = ":".join(part.strip().lower() for part in parts)
     return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
+
+
+def _sql_lit(value: str) -> str:
+    """Escape single quotes for PostgreSQL string literals in raw SQL."""
+    return value.replace("'", "''")
 
 # Model/service definitions — endpoint comes from app_env at runtime
 MODELS = [
@@ -39,6 +42,17 @@ MODELS = [
         "domain": '["general"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_langdetect",
+        "request_schema": {
+            "inputs": [
+                {
+                    "name": "INPUT_TEXT",
+                    "datatype": "BYTES",
+                    "shape": [1, 1],
+                    "data": ["नमस्ते, यह एक उदाहरण वाक्य है।"],
+                }
+            ],
+            "outputs": [{"name": "OUTPUT_TEXT"}],
+        },
         "services": [
             {
                 "name": "indiclid-gpu",
@@ -57,6 +71,7 @@ MODELS = [
         "domain": '["general"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_audio_langdetect",
+        "request_schema": {"audio": [{"audioContent": ""}], "config": {}},
         "services": [
             {
                 "name": "ald-gpu",
@@ -75,6 +90,10 @@ MODELS = [
         "domain": '["documents", "handwritten", "printed"]',
         "license": "Apache-2.0",
         "endpoint_attr": "triton_endpoint_ocr",
+        "request_schema": {
+            "image": [{"imageContent": ""}],
+            "config": {"language": {"sourceLanguage": "hi"}},
+        },
         "services": [
             {
                 "name": "surya-ocr-gpu",
@@ -93,6 +112,10 @@ MODELS = [
         "domain": '["general", "news", "legal"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_ner",
+        "request_schema": {
+            "input": [{"source": "राम दिल्ली गए।"}],
+            "config": {"language": {"sourceLanguage": "hi"}},
+        },
         "services": [
             {
                 "name": "ner-gpu",
@@ -111,6 +134,7 @@ MODELS = [
         "domain": '["general", "meetings", "podcasts"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_speaker_diarization",
+        "request_schema": {"audio": [{"audioContent": ""}], "config": {}},
         "services": [
             {
                 "name": "sd-gpu",
@@ -129,6 +153,7 @@ MODELS = [
         "domain": '["code-switching", "multilingual"]',
         "license": "Apache-2.0",
         "endpoint_attr": "triton_endpoint_lang_diarization",
+        "request_schema": {"audio": [{"audioContent": ""}], "config": {}},
         "services": [
             {
                 "name": "lang-diarization-gpu",
@@ -147,6 +172,10 @@ MODELS = [
         "domain": '["general"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_transliteration",
+        "request_schema": {
+            "input": [{"source": "namaste"}],
+            "config": {"language": {"sourceLanguage": "hi", "targetLanguage": "en"}},
+        },
         "services": [
             {
                 "name": "indic-xlit-cpu",
@@ -165,6 +194,10 @@ MODELS = [
         "domain": '["general", "conversational"]',
         "license": "Apache-2.0",
         "endpoint_attr": "triton_endpoint_asr",
+        "request_schema": {
+            "audio": [{"audioContent": ""}],
+            "config": {"language": {"sourceLanguage": "hi"}},
+        },
         "services": [
             {
                 "name": "asr-gpu",
@@ -183,6 +216,10 @@ MODELS = [
         "domain": '["general"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_tts",
+        "request_schema": {
+            "input": [{"source": "नमस्ते"}],
+            "config": {"language": {"sourceLanguage": "hi"}, "gender": "female"},
+        },
         "services": [
             {
                 "name": "indo-aryan-tts-gpu",
@@ -201,6 +238,10 @@ MODELS = [
         "domain": '["general", "news", "conversational"]',
         "license": "MIT",
         "endpoint_attr": "triton_endpoint_nmt",
+        "request_schema": {
+            "input": [{"source": "Hello, how are you?"}],
+            "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+        },
         "services": [
             {
                 "name": "indictrans-gpu-t4",
@@ -219,6 +260,7 @@ MODELS = [
         "domain": '["general", "conversational", "qa"]',
         "license": "Apache-2.0",
         "endpoint_attr": "triton_endpoint_llm",
+        "request_schema": {"input": [{"source": "Hello"}], "config": {}},
         "services": [
             {
                 "name": "llm-indic-prod",
@@ -249,51 +291,71 @@ class ModelManagementDefaultSeeder(BaseSeeder):
             endpoint_url = getattr(app_env, m["endpoint_attr"], "") or ""
             model_id = generate_model_id(name, version)
 
+            ep = endpoint_url
+            tn = triton_model_name
+            request_schema = m.get("request_schema", {})
+            inference_endpoint = {
+                "schema": {
+                    "modelProcessingType": {"type": task_type},
+                    "model_name": tn,
+                    "request": request_schema,
+                    "response": {},
+                },
+                "callbackUrl": ep,
+            }
+
+            ep_lit = _sql_lit(ep)
+            tn_lit = _sql_lit(tn)
+            inference_endpoint_lit = _sql_lit(
+                json.dumps(inference_endpoint, ensure_ascii=False, separators=(",", ":"))
+            )
             adapter.execute(f"""
                 INSERT INTO models (id, model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
                 VALUES (
                     '{generate_uuid("model", name, version)}',
                     '{model_id}',
-                    '{version}',
-                    '{name}',
-                    '{m["description"]}',
+                    '{_sql_lit(version)}',
+                    '{_sql_lit(name)}',
+                    '{_sql_lit(m["description"])}',
                     '{{"type": "{task_type}"}}'::jsonb,
-                    '{m["languages"]}'::jsonb,
-                    '{m["domain"]}'::jsonb,
-                    '{m["license"]}',
-                    '{{"schema": {{"modelProcessingType": {{"type": "{task_type}"}}, "model_name": "{triton_model_name}", "request": {{}}, "response": {{}}}}, "callbackUrl": "{endpoint_url}"}}'::jsonb,
+                    '{_sql_lit(m["languages"])}'::jsonb,
+                    '{_sql_lit(m["domain"])}'::jsonb,
+                    '{_sql_lit(m["license"])}',
+                    '{inference_endpoint_lit}'::jsonb,
                     '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                     {timestamp_ms},
                     'ACTIVE'
                 ) ON CONFLICT (name, version) DO UPDATE SET
-                    inference_endpoint = jsonb_set(
-                        COALESCE(models.inference_endpoint, '{{}}'::jsonb),
-                        '{{schema,model_name}}',
-                        '"{triton_model_name}"'::jsonb,
-                        true
-                    ),
+                    inference_endpoint = '{inference_endpoint_lit}'::jsonb,
                     updated_at = CURRENT_TIMESTAMP;
             """)
 
             for svc in m["services"]:
                 svc_name = svc["name"]
-                service_id = generate_service_id(name, version, svc_name)
+                service_id = generate_service_id(svc_name)
 
+                sn = _sql_lit(svc_name)
                 adapter.execute(f"""
                     INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
                     VALUES (
                         '{generate_uuid("service", name, version, svc_name)}',
                         '{service_id}',
-                        '{svc_name}',
+                        '{sn}',
                         '{model_id}',
-                        '{version}',
-                        '{endpoint_url}',
-                        '{svc["description"]}',
-                        '{svc["hardware"]}',
+                        '{_sql_lit(version)}',
+                        '{ep_lit}',
+                        '{_sql_lit(svc["description"])}',
+                        '{_sql_lit(svc["hardware"])}',
                         {timestamp_ms},
-                        false
-                    ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
-                        endpoint = '{endpoint_url}',
+                        true
+                    ) ON CONFLICT (name) DO UPDATE SET
+                        service_id = '{service_id}',
+                        model_id = '{model_id}',
+                        model_version = '{_sql_lit(version)}',
+                        endpoint = '{ep_lit}',
+                        service_description = '{_sql_lit(svc["description"])}',
+                        hardware_description = '{_sql_lit(svc["hardware"])}',
+                        is_published = true,
                         updated_at = CURRENT_TIMESTAMP;
                 """)
 

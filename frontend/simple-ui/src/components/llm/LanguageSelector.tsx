@@ -1,6 +1,6 @@
 // Language selector component for LLM
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   Stack,
   FormControl,
@@ -32,6 +32,11 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
     const labelB = LANG_CODE_TO_LABEL[b] || b;
     return labelA.localeCompare(labelB);
   });
+  const targetLanguageOptions = useMemo(
+    () => sortedLanguages.filter((lang) => lang !== inputLanguage),
+    [sortedLanguages, inputLanguage]
+  );
+  const safeOutputLanguage = targetLanguageOptions.includes(outputLanguage) ? outputLanguage : '';
 
   return (
     <Stack spacing={4}>
@@ -69,11 +74,11 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
             <Text as="span" color="red.500">*</Text>
           </FormLabel>
           <Select
-            value={outputLanguage}
+            value={safeOutputLanguage}
             onChange={(e) => onOutputLanguageChange(e.target.value)}
             placeholder="Select"
           >
-            {sortedLanguages.map((lang) => (
+            {targetLanguageOptions.map((lang) => (
               <option key={lang} value={lang}>
                 {LANG_CODE_TO_LABEL[lang] || lang}
               </option>

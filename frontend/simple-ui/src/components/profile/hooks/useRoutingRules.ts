@@ -325,8 +325,7 @@ export function useRoutingRules() {
         if (searchQuery) {
           const q = searchQuery.toLowerCase();
           const nameMatch = (r.rule_name ?? r.receiver_name ?? "").toLowerCase().includes(q);
-          const defMatch = (r.alert_names ?? []).some((n) => n.toLowerCase().includes(q));
-          if (!nameMatch && !defMatch) return false;
+          if (!nameMatch) return false;
         }
         return true;
       }),

@@ -1,0 +1,138 @@
+"""LLM-specific Triton client.
+
+NOTE: The LLM service uses httpx to call an external LLM inference endpoint
+(not the native tritonclient library). We keep the client in app/clients/
+for consistency with the clean architecture pattern.
+"""
+
+import logging
+import time
+from typing import Any, Dict, List, Optional
+
+import httpx
+
+from ai4icore_exceptions import TritonInferenceError
+from ai4icore_model_management.triton_client import _accumulate_inference_time
+
+logger = logging.getLogger(__name__)
+
+
+class LLMTritonClient:
+    """HTTP client for LLM inference endpoint.
+
+    Unlike other services that use the Triton gRPC/HTTP native client,
+    the LLM service communicates via a JSON HTTP API that follows the
+    Triton inference protocol but is accessed through a gateway URL.
+    """
+
+    def __init__(self, triton_url: str, api_key: Optional[str] = None, timeout: float = 300.0):
+        self.triton_url = triton_url
+        self.api_key = api_key
+        self.timeout = timeout
+        self._client: Optional[httpx.AsyncClient] = None
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        """Lazy initialization of HTTP client."""
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self.timeout)
+        return self._client
+
+    def get_llm_io_for_triton(
+        self,
+        input_texts: List[str],
+        input_language: Optional[str],
+        output_language: Optional[str],
+    ) -> Dict[str, Any]:
+        """Prepare request payload for LLM inference."""
+        try:
+            input_lang = input_language or "en"
+            output_lang = output_language or "en"
+
+            payload = {
+                "inputs": [
+                    {
+                        "name": "INPUT_TEXT",
+                        "datatype": "BYTES",
+                        "shape": [len(input_texts), 1],
+                        "data": input_texts,
+                    },
+                    {
+                        "name": "INPUT_LANGUAGE_ID",
+                        "datatype": "BYTES",
+                        "shape": [len(input_texts), 1],
+                        "data": [input_lang] * len(input_texts),
+                    },
+                    {
+                        "name": "OUTPUT_LANGUAGE_ID",
+                        "datatype": "BYTES",
+                        "shape": [len(input_texts), 1],
+                        "data": [output_lang] * len(input_texts),
+                    },
+                ],
+                "outputs": [{"name": "OUTPUT_TEXT"}],
+            }
+
+            return payload
+
+        except Exception as e:
+            logger.error(f"Failed to prepare LLM I/O: {e}")
+            raise TritonInferenceError(f"Failed to prepare LLM I/O: {e}")
+
+    async def send_triton_request(
+        self,
+        model_name: str,
+        inputs: List[str],
+        input_language: Optional[str],
+        output_language: Optional[str],
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Send inference request to LLM endpoint."""
+        try:
+            if headers is None:
+                headers = {}
+            headers["Content-Type"] = "application/json"
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+
+            payload = self.get_llm_io_for_triton(inputs, input_language, output_language)
+            endpoint_url = f"{self.triton_url}/services/inference/{model_name}"
+
+            logger.info(f"Sending LLM inference request to {endpoint_url}")
+
+            _start = time.perf_counter()
+            try:
+                response = await self.client.post(
+                    endpoint_url,
+                    json=payload,
+                    headers=headers,
+                )
+            finally:
+                _accumulate_inference_time((time.perf_counter() - _start) * 1000)
+
+            response.raise_for_status()
+            result = response.json()
+
+            logger.info("LLM inference request completed successfully")
+            return result
+
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error during LLM inference: {e}")
+            raise TritonInferenceError(f"HTTP error during LLM inference: {e}")
+        except Exception as e:
+            logger.error(f"LLM inference request failed: {e}")
+            raise TritonInferenceError(f"LLM inference request failed: {e}")
+
+    def is_server_ready(self) -> bool:
+        """Check if LLM server is ready."""
+        try:
+            return bool(self.triton_url)
+        except Exception as e:
+            logger.error(f"Failed to check LLM server status: {e}")
+            return False
+
+    async def close(self):
+        """Close HTTP client."""
+        if self._client:
+            await self._client.aclose()
+            self._client = None
