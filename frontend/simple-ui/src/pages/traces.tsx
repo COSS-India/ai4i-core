@@ -86,13 +86,17 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
   // - nmt.resolve_model (optional)
   // - nmt.triton_inference (phase wrapper) containing internal triton.inference (leaf)
   // - nmt.postprocess
-  // - nmt.persist
+  // - nmt.persist | nmt.persist_request | nmt.persist_results (split DB phases)
+  const isPersistPhaseSpan =
+    opName.endsWith(".persist") ||
+    opName.endsWith(".persist_request") ||
+    opName.endsWith(".persist_results");
   const isStandardPhaseSpan =
     opName.endsWith(".preprocess") ||
     opName.endsWith(".resolve_model") ||
     opName.endsWith(".triton_inference") ||
     opName.endsWith(".postprocess") ||
-    opName.endsWith(".persist");
+    isPersistPhaseSpan;
 
   if (isStandardPhaseSpan) {
     isImportant = true;
@@ -122,9 +126,8 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       displayName = span.operationName;
       description = "Formats model outputs into the API response";
       icon = FiSettings;
-    } else if (opName.endsWith(".persist")) {
+    } else if (isPersistPhaseSpan) {
       category = "phase.persist";
-      // Use the proposed span name verbatim (e.g., nmt.persist)
       displayName = span.operationName;
       description = "Stores request/results and updates status in the database";
       icon = FiDatabase;

@@ -9,7 +9,6 @@ import base64
 import json
 import logging
 import time
-from contextlib import nullcontext
 from io import BytesIO
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -27,6 +26,7 @@ from app.repositories.asr_repository import ASRRepository
 from app.services.audio_service import AudioService
 from app.clients.triton_client import ASRTritonClient
 from ai4icore_exceptions import TritonInferenceError
+from ai4icore_telemetry import StandardSpanManager
 
 # OpenTelemetry for tracing
 try:
@@ -48,6 +48,8 @@ if TRACING_AVAILABLE and trace:
         tracer = trace.get_tracer("asr-service")
     except Exception:
         tracer = None
+
+_standard_spans = StandardSpanManager("asr")
 
 
 def count_words(text: str) -> int:
@@ -241,179 +243,276 @@ class ASRService:
                 "Please ensure serviceId is provided in the request or resolved via SMR."
             )
 
-        # Create database request record
-        db_request = await self.repository.create_request(
-            model_id=model_id_for_db,
-            language=language,
+        input_count = len(request.audio or [])
+
+        with _standard_spans.inference(
+            service_id=service_id,
+            model_name=model_name,
+            input_count=input_count,
+            input_type="audio",
             user_id=user_id,
             api_key_id=api_key_id,
             session_id=session_id,
-        )
+            extra_attrs={
+                "asr.language": language,
+                "asr.best_token_count": best_token_count,
+            },
+        ) as parent_span:
+            with _standard_spans.persist() as persist_span:
+                db_request = await self.repository.create_request(
+                    model_id=model_id_for_db,
+                    language=language,
+                    user_id=user_id,
+                    api_key_id=api_key_id,
+                    session_id=session_id,
+                )
+                persist_span.set_attribute("asr.request_id", str(db_request.id))
 
-        logger.info(f"Created ASR request {db_request.id} for {len(request.audio)} audio inputs")
+            logger.info(
+                "Created ASR request %s for %s audio inputs", db_request.id, input_count
+            )
 
-        # Initialize response
-        response = ASRInferenceResponse(output=[])
+            # Phase 2: preprocess
+            preprocessed: List[Tuple[int, List[np.ndarray], list]] = []
+            with _standard_spans.preprocess() as preprocess_span:
+                preprocess_span.set_attribute("asr.input_count", input_count)
 
-        # Process each audio input
-        for audio_idx, audio_input in enumerate(request.audio):
-            try:
-                logger.info(f"Processing audio input {audio_idx + 1}/{len(request.audio)}")
-
-                span_ctx = tracer.start_as_current_span("asr.process_audio_input") if tracer else nullcontext()
-                with span_ctx as audio_span:
-                    if audio_span:
-                        audio_span.set_attribute("asr.audio_index", audio_idx + 1)
-                        audio_span.set_attribute("asr.total_audio_count", len(request.audio))
-
-                    # Get audio bytes
-                    audio_bytes = await self._get_audio_bytes(audio_input)
-
-                    # Process audio
-                    file_handle = BytesIO(audio_bytes)
-                    processed_audio = await self._process_audio_input(file_handle, standard_rate)
-
-                    # Run preprocessors
-                    audio_chunks, speech_timestamps = await self._run_asr_pre_processors(
-                        processed_audio, pre_processors, standard_rate
-                    )
-
-                    # Batch inference
-                    transcript_lines = []
-                    n_best_tokens = []
-                    batch_size = 32 if "whisper" not in service_id.lower() else 1
-
-                    for i in range(0, len(audio_chunks), batch_size):
-                        batch = audio_chunks[i : i + batch_size]
-
-                        inputs, outputs = self.triton_client.get_asr_io_for_triton(
-                            batch, service_id, language, best_token_count
+                for audio_idx, audio_input in enumerate(request.audio or []):
+                    try:
+                        preprocess_span.add_event(
+                            "asr.audio.preprocess.started",
+                            {"audio_index": audio_idx, "total_audio_count": input_count},
                         )
-
-                        triton_response = self.triton_client.send_triton_request(
-                            model_name, inputs, outputs
+                        audio_bytes = await self._get_audio_bytes(audio_input)
+                        file_handle = BytesIO(audio_bytes)
+                        processed_audio = await self._process_audio_input(
+                            file_handle, standard_rate
                         )
+                        audio_chunks, speech_timestamps = await self._run_asr_pre_processors(
+                            processed_audio, pre_processors, standard_rate
+                        )
+                        preprocessed.append((audio_idx, audio_chunks, speech_timestamps))
+                        preprocess_span.add_event(
+                            "asr.audio.preprocess.completed",
+                            {
+                                "audio_index": audio_idx,
+                                "chunk_count": len(audio_chunks),
+                                "timestamp_count": len(speech_timestamps),
+                            },
+                        )
+                    except Exception as e:
+                        preprocess_span.add_event(
+                            "asr.audio.preprocess.failed",
+                            {
+                                "audio_index": audio_idx,
+                                "error.type": type(e).__name__,
+                                "error.message": str(e),
+                            },
+                        )
+                        raise TritonInferenceError(
+                            f"Failed to preprocess audio input {audio_idx + 1}: {e}"
+                        ) from e
 
-                        transcripts = triton_response.as_numpy("TRANSCRIPTS")
+            # Phase 4: triton inference
+            inferred: List[Tuple[int, List[dict], list]] = []
+            with _standard_spans.triton_inference() as triton_span:
+                batch_size = 32 if "whisper" not in service_id.lower() else 1
+                triton_span.set_attribute("asr.batch_size", batch_size)
 
-                        if transcripts is None:
-                            logger.error(
-                                f"Triton returned None for TRANSCRIPTS output (batch {i // batch_size + 1}, audio {audio_idx + 1})"
+                for audio_idx, audio_chunks, speech_timestamps in preprocessed:
+                    transcript_lines: List[dict] = []
+                    n_best_tokens: list = []
+                    try:
+                        triton_span.add_event(
+                            "asr.audio.inference.started",
+                            {"audio_index": audio_idx, "chunk_count": len(audio_chunks)},
+                        )
+                        for i in range(0, len(audio_chunks), batch_size):
+                            batch = audio_chunks[i : i + batch_size]
+                            batch_index = i // batch_size
+
+                            triton_span.add_event(
+                                "asr.triton.batch.started",
+                                {
+                                    "audio_index": audio_idx,
+                                    "batch_index": batch_index,
+                                    "batch_size": len(batch),
+                                },
                             )
-                            raise TritonInferenceError("Triton returned None for TRANSCRIPTS output")
 
-                        # Handle both 1D and 2D arrays
-                        if isinstance(transcripts, np.ndarray) and transcripts.ndim == 2:
-                            if transcripts.shape[1] == 1:
-                                transcripts_flat = [transcripts[j, 0] for j in range(transcripts.shape[0])]
+                            inputs, outputs = self.triton_client.get_asr_io_for_triton(
+                                batch, service_id, language, best_token_count
+                            )
+                            triton_response = self.triton_client.send_triton_request(
+                                model_name, inputs, outputs
+                            )
+                            transcripts = triton_response.as_numpy("TRANSCRIPTS")
+
+                            if transcripts is None:
+                                raise TritonInferenceError(
+                                    "Triton returned None for TRANSCRIPTS output"
+                                )
+
+                            if isinstance(transcripts, np.ndarray) and transcripts.ndim == 2:
+                                if transcripts.shape[1] == 1:
+                                    transcripts_flat = [
+                                        transcripts[j, 0]
+                                        for j in range(transcripts.shape[0])
+                                    ]
+                                else:
+                                    transcripts_flat = [
+                                        transcripts[j, 0]
+                                        if transcripts.shape[1] > 0
+                                        else b""
+                                        for j in range(transcripts.shape[0])
+                                    ]
+                            elif isinstance(transcripts, np.ndarray) and transcripts.ndim == 1:
+                                transcripts_flat = transcripts
                             else:
-                                transcripts_flat = [
-                                    transcripts[j, 0] if transcripts.shape[1] > 0 else b""
-                                    for j in range(transcripts.shape[0])
-                                ]
-                        elif isinstance(transcripts, np.ndarray) and transcripts.ndim == 1:
-                            transcripts_flat = transcripts
-                        else:
-                            transcripts_flat = transcripts
+                                transcripts_flat = transcripts
 
-                        for j, transcript_bytes in enumerate(transcripts_flat):
-                            try:
-                                transcript_text = self._decode_transcript(transcript_bytes)
+                            for j, transcript_bytes in enumerate(transcripts_flat):
+                                try:
+                                    transcript_text = self._decode_transcript(transcript_bytes)
+                                    if not transcript_text or not transcript_text.strip():
+                                        continue
 
-                                if not transcript_text or not transcript_text.strip():
+                                    if best_token_count > 0:
+                                        try:
+                                            transcript_data = json.loads(transcript_text)
+                                            transcript_text = transcript_data.get(
+                                                "source", transcript_text
+                                            )
+                                            if "nBestTokens" in transcript_data:
+                                                n_best_tokens.extend(
+                                                    transcript_data["nBestTokens"]
+                                                )
+                                        except json.JSONDecodeError:
+                                            pass
+
+                                    if i + j < len(speech_timestamps):
+                                        timestamp = speech_timestamps[i + j]
+                                        transcript_lines.append(
+                                            {
+                                                "text": transcript_text,
+                                                "start": timestamp.get("start_secs", 0),
+                                                "end": timestamp.get("end_secs", 0),
+                                            }
+                                        )
+                                    else:
+                                        transcript_lines.append(
+                                            {"text": transcript_text, "start": 0, "end": 0}
+                                        )
+                                except Exception:
                                     continue
 
-                                if best_token_count > 0:
-                                    try:
-                                        transcript_data = json.loads(transcript_text)
-                                        transcript_text = transcript_data.get("source", transcript_text)
-                                        if "nBestTokens" in transcript_data:
-                                            n_best_tokens.extend(transcript_data["nBestTokens"])
-                                    except json.JSONDecodeError:
-                                        pass
+                            triton_span.add_event(
+                                "asr.triton.batch.completed",
+                                {
+                                    "audio_index": audio_idx,
+                                    "batch_index": batch_index,
+                                    "transcript_line_count": len(transcript_lines),
+                                },
+                            )
 
-                                # Add timestamp if available
-                                if i + j < len(speech_timestamps):
-                                    timestamp = speech_timestamps[i + j]
-                                    transcript_lines.append({
-                                        "text": transcript_text,
-                                        "start": timestamp.get("start_secs", 0),
-                                        "end": timestamp.get("end_secs", 0),
-                                    })
-                                else:
-                                    transcript_lines.append({"text": transcript_text, "start": 0, "end": 0})
+                        if not transcript_lines:
+                            raise TritonInferenceError(
+                                f"No transcripts extracted from Triton for audio input {audio_idx + 1}. "
+                                f"Triton may have returned empty results. Please check the model and audio input."
+                            )
 
-                            except Exception as decode_error:
-                                logger.error(f"Failed to decode transcript at batch {i // batch_size + 1}, position {j}: {decode_error}", exc_info=True)
-                                continue
-
-                    if not transcript_lines:
-                        raise TritonInferenceError(
-                            f"No transcripts extracted from Triton for audio input {audio_idx + 1}. "
-                            f"Triton may have returned empty results. Please check the model and audio input."
+                        inferred.append((audio_idx, transcript_lines, n_best_tokens))
+                        triton_span.add_event(
+                            "asr.audio.inference.completed",
+                            {"audio_index": audio_idx, "line_count": len(transcript_lines)},
                         )
+                    except Exception as e:
+                        triton_span.add_event(
+                            "asr.audio.inference.failed",
+                            {
+                                "audio_index": audio_idx,
+                                "error.type": type(e).__name__,
+                                "error.message": str(e),
+                            },
+                        )
+                        raise TritonInferenceError(
+                            f"Failed to process audio input {audio_idx + 1}: {e}"
+                        ) from e
 
-                    # Run postprocessors
+            # Phase 5: postprocess
+            response = ASRInferenceResponse(output=[])
+            finalized: List[Tuple[int, str, Optional[List[NBestToken]], List[dict]]] = []
+            with _standard_spans.postprocess() as post_span:
+                for audio_idx, transcript_lines, n_best_tokens in inferred:
                     processed_transcript_lines = await self._run_asr_post_processors(
                         transcript_lines, post_processors, language
                     )
-
                     if not processed_transcript_lines:
                         raise TritonInferenceError(
                             f"Postprocessing resulted in empty transcripts for audio input {audio_idx + 1}"
                         )
 
-                # Format response
-                transcript = self._create_asr_response_format(processed_transcript_lines, transcription_format)
+                    transcript = self._create_asr_response_format(
+                        processed_transcript_lines, transcription_format
+                    )
+                    if not transcript or not transcript.strip():
+                        raise TritonInferenceError(
+                            f"Formatted transcript is empty for audio input {audio_idx + 1}"
+                        )
 
-                if not transcript or not transcript.strip():
-                    raise TritonInferenceError(
-                        f"Formatted transcript is empty for audio input {audio_idx + 1}"
+                    n_best_tokens_list = None
+                    if n_best_tokens:
+                        n_best_tokens_list = [
+                            NBestToken(word=token.get("word", ""), tokens=token.get("tokens", []))
+                            for token in n_best_tokens
+                        ]
+
+                    response.output.append(
+                        TranscriptOutput(source=transcript, nBestTokens=n_best_tokens_list)
+                    )
+                    finalized.append(
+                        (audio_idx, transcript, n_best_tokens_list, processed_transcript_lines)
+                    )
+                    post_span.add_event(
+                        "asr.audio.postprocess.completed",
+                        {"audio_index": audio_idx, "char_length": len(transcript)},
                     )
 
-                n_best_tokens_list = None
-                if n_best_tokens:
-                    n_best_tokens_list = [
-                        NBestToken(word=token.get("word", ""), tokens=token.get("tokens", []))
-                        for token in n_best_tokens
-                    ]
+                post_span.set_attribute("asr.output_count", len(response.output))
+                if parent_span is not None:
+                    try:
+                        parent_span.set_attribute("asr.output_count", len(response.output))
+                    except Exception:
+                        pass
 
-                transcript_output = TranscriptOutput(source=transcript, nBestTokens=n_best_tokens_list)
-                response.output.append(transcript_output)
+            # Phase 6: persist results + update status
+            with _standard_spans.persist() as persist_span:
+                for audio_idx, transcript, _n_best_tokens_list, processed_transcript_lines in finalized:
+                    await self.repository.create_result(
+                        request_id=db_request.id,
+                        transcript=transcript,
+                        confidence_score=None,
+                        word_timestamps=[
+                            line for line in processed_transcript_lines if "start" in line
+                        ],
+                        language_detected=language,
+                        audio_format=request.config.audioFormat.value
+                        if request.config.audioFormat
+                        else None,
+                        sample_rate=standard_rate,
+                    )
+                    persist_span.add_event(
+                        "asr.db.result.created",
+                        {"audio_index": audio_idx, "request_id": str(db_request.id)},
+                    )
 
-                # Create database result record
-                await self.repository.create_result(
-                    request_id=db_request.id,
-                    transcript=transcript,
-                    confidence_score=None,
-                    word_timestamps=[line for line in processed_transcript_lines if "start" in line],
-                    language_detected=language,
-                    audio_format=request.config.audioFormat.value if request.config.audioFormat else None,
-                    sample_rate=standard_rate,
+                processing_time = time.time() - start_time
+                await self.repository.update_request_status(
+                    db_request.id, "completed", processing_time
                 )
+                persist_span.set_attribute("asr.processing_time_seconds", processing_time)
 
-                logger.info(f"Completed processing audio input {audio_idx + 1}")
-
-            except Exception as e:
-                logger.error(
-                    f"Failed to process audio input {audio_idx + 1}: {e}",
-                    extra={
-                        "audio_index": audio_idx + 1,
-                        "error_type": type(e).__name__,
-                        "service_id": service_id,
-                    },
-                    exc_info=True,
-                )
-                raise TritonInferenceError(
-                    f"Failed to process audio input {audio_idx + 1}: {e}"
-                ) from e
-
-        # Update request status
-        processing_time = time.time() - start_time
-        await self.repository.update_request_status(db_request.id, "completed", processing_time)
-
-        logger.info(f"Completed ASR inference in {processing_time:.2f}s")
-        return response
+            return response
 
     # ------------------------------------------------------------------
     # Audio helpers

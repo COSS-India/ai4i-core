@@ -99,43 +99,43 @@ class NMTService:
         start_time = time.time()
         request_id = None
 
-        try:
-            service_id = (
-                getattr(http_request.state, "service_id", None) if http_request else None
-            ) or request.config.serviceId
-            source_lang = request.config.language.sourceLanguage
-            target_lang = request.config.language.targetLanguage
+        service_id = (
+            getattr(http_request.state, "service_id", None) if http_request else None
+        ) or request.config.serviceId
+        source_lang = request.config.language.sourceLanguage
+        target_lang = request.config.language.targetLanguage
 
-            original_source_lang = source_lang
-            original_target_lang = target_lang
+        original_source_lang = source_lang
+        original_target_lang = target_lang
 
-            if request.config.language.sourceScriptCode:
-                source_lang += "_" + request.config.language.sourceScriptCode
-            if request.config.language.targetScriptCode:
-                target_lang += "_" + request.config.language.targetScriptCode
+        if request.config.language.sourceScriptCode:
+            source_lang += "_" + request.config.language.sourceScriptCode
+        if request.config.language.targetScriptCode:
+            target_lang += "_" + request.config.language.targetScriptCode
 
-            input_count = len(request.input or [])
-            input_texts: List[str] = []
-            total_text_length = 0
-            total_input_words = 0
-            total_output_characters = 0
-            total_output_words = 0
-            model_name: Optional[str] = None
+        input_count = len(request.input or [])
+        input_texts: List[str] = []
+        total_text_length = 0
+        total_input_words = 0
+        total_output_characters = 0
+        total_output_words = 0
+        model_name: Optional[str] = None
 
-            with _standard_spans.inference(
-                service_id=service_id,
-                model_name=None,  # set after resolution
-                input_count=input_count,
-                input_type="text",
-                user_id=user_id,
-                api_key_id=api_key_id,
-                session_id=session_id,
-                extra_attrs={
-                    # Service-type extras (text) — set early for discoverability
-                    "nmt.source_language": original_source_lang,
-                    "nmt.target_language": original_target_lang,
-                },
-            ) as parent_span:
+        with _standard_spans.inference(
+            service_id=service_id,
+            model_name=None,  # set after resolution
+            input_count=input_count,
+            input_type="text",
+            user_id=user_id,
+            api_key_id=api_key_id,
+            session_id=session_id,
+            extra_attrs={
+                # Service-type extras (text) — set early for discoverability
+                "nmt.source_language": original_source_lang,
+                "nmt.target_language": original_target_lang,
+            },
+        ) as parent_span:
+            try:
                 with _standard_spans.preprocess() as preprocess_span:
                     input_texts = [
                         (ti.source.replace("\n", " ").strip() if ti.source else " ")
@@ -188,7 +188,7 @@ class NMTService:
                         effective_model = "nmt"
 
                 # Persist phase (DB): create request record
-                with _standard_spans.persist() as persist_span:
+                with _standard_spans.persist(suffix="request") as persist_span:
                     request_record = await self.repository.create_request(
                         model_id=service_id,
                         source_language=original_source_lang,
@@ -282,7 +282,7 @@ class NMTService:
 
                 nmt_response = NMTInferenceResponse(output=results)
 
-                with _standard_spans.persist() as persist_span:
+                with _standard_spans.persist(suffix="results") as persist_span:
                     persist_span.set_attribute("nmt.request_id", str(request_id))
                     stored = await self._persist_translation_results(
                         request_id=request_id,
@@ -332,66 +332,111 @@ class NMTService:
                 )
                 return nmt_response
 
-        except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError) as exc:
-            fallback_service_id = (
-                getattr(http_request.state, "fallback_service_id", None)
-                if http_request
-                else None
-            )
-            original_service_id = request.config.serviceId
+            except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError) as exc:
+                if parent_span is not None:
+                    try:
+                        if parent_span.is_recording():
+                            parent_span.add_event(
+                                "nmt.primary_service_failed",
+                                {
+                                    "error.type": type(exc).__name__,
+                                    "error.message": str(exc),
+                                },
+                            )
+                    except Exception:
+                        pass
 
-            if fallback_service_id and fallback_service_id != original_service_id:
-                logger.warning(
-                    "NMT: Primary service failed, attempting fallback",
-                    extra={
-                        "primary_service_id": original_service_id,
-                        "fallback_service_id": fallback_service_id,
-                        "error": str(exc),
-                    },
+                fallback_service_id = (
+                    getattr(http_request.state, "fallback_service_id", None)
+                    if http_request
+                    else None
                 )
-                try:
-                    from app.services.smr_service import SMRService
+                original_service_id = request.config.serviceId
 
-                    smr_svc = SMRService()
-                    triton_endpoint, triton_api_key, triton_model_name = (
-                        await smr_svc.switch_to_fallback(
-                            request, http_request, fallback_service_id
+                if fallback_service_id and fallback_service_id != original_service_id:
+                    logger.warning(
+                        "NMT: Primary service failed, attempting fallback",
+                        extra={
+                            "primary_service_id": original_service_id,
+                            "fallback_service_id": fallback_service_id,
+                            "error": str(exc),
+                        },
+                    )
+                    if parent_span is not None:
+                        try:
+                            if parent_span.is_recording():
+                                parent_span.add_event(
+                                    "nmt.fallback_attempt",
+                                    {"fallback_service_id": fallback_service_id},
+                                )
+                        except Exception:
+                            pass
+                    try:
+                        from app.services.smr_service import SMRService
+
+                        smr_svc = SMRService()
+                        triton_endpoint, triton_api_key, triton_model_name = (
+                            await smr_svc.switch_to_fallback(
+                                request, http_request, fallback_service_id
+                            )
                         )
-                    )
-                    fallback_nmt = self._build_fallback_service(
-                        http_request,
-                        fallback_service_id,
-                        triton_endpoint,
-                        triton_api_key,
-                        triton_model_name,
-                    )
-                    return await fallback_nmt.run_inference(
-                        request=request,
-                        user_id=user_id,
-                        api_key_id=api_key_id,
-                        session_id=session_id,
-                        auth_headers=auth_headers,
-                        http_request=http_request,
-                    )
-                except Exception as fallback_err:
-                    combined = (
-                        f"Primary service ({original_service_id}) failed: {exc}. "
-                        f"Fallback service ({fallback_service_id}) also failed: {fallback_err}"
-                    )
-                    raise TritonInferenceError(combined) from fallback_err
+                        fallback_nmt = self._build_fallback_service(
+                            http_request,
+                            fallback_service_id,
+                            triton_endpoint,
+                            triton_api_key,
+                            triton_model_name,
+                        )
+                        out = await fallback_nmt.run_inference(
+                            request=request,
+                            user_id=user_id,
+                            api_key_id=api_key_id,
+                            session_id=session_id,
+                            auth_headers=auth_headers,
+                            http_request=http_request,
+                        )
+                        if parent_span is not None:
+                            try:
+                                if parent_span.is_recording():
+                                    parent_span.add_event(
+                                        "nmt.fallback_succeeded",
+                                        {"fallback_service_id": fallback_service_id},
+                                    )
+                                    parent_span.set_attribute(
+                                        "nmt.fallback_service_id", fallback_service_id
+                                    )
+                            except Exception:
+                                pass
+                        return out
+                    except Exception as fallback_err:
+                        if parent_span is not None:
+                            try:
+                                if parent_span.is_recording():
+                                    parent_span.add_event(
+                                        "nmt.fallback_failed",
+                                        {
+                                            "error.type": type(fallback_err).__name__,
+                                            "error.message": str(fallback_err),
+                                        },
+                                    )
+                            except Exception:
+                                pass
+                        combined = (
+                            f"Primary service ({original_service_id}) failed: {exc}. "
+                            f"Fallback service ({fallback_service_id}) also failed: {fallback_err}"
+                        )
+                        raise TritonInferenceError(combined) from fallback_err
 
-            self._mark_failed(request_id, str(exc))
-            raise
-
-        except Exception as exc:
-            span = trace.get_current_span()
-            if span.is_recording():
-                span.set_status(Status(StatusCode.ERROR, str(exc)))
-                span.record_exception(exc)
-            self._mark_failed(request_id, str(exc))
-            if isinstance(exc, TextProcessingError):
+                self._mark_failed(request_id, str(exc))
                 raise
-            raise TextProcessingError(f"NMT inference failed: {exc}")
+
+            except Exception as exc:
+                # Still inside nmt.inference; StandardSpanManager.inference() records span
+                # status when this propagates, after _mark_failed.
+                self._mark_failed(request_id, str(exc))
+                if isinstance(exc, TextProcessingError):
+                    raise
+                raise TextProcessingError(f"NMT inference failed: {exc}") from exc
 
     # ──────────────────────────────────────────────
     # Triton client / model resolution (cached)
