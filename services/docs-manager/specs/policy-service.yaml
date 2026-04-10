@@ -392,11 +392,6 @@ components:
         supported_languages:
           type: array
           items: { type: string }
-        tenant_id:
-          type: string
-          nullable: true
-          deprecated: true
-          description: Legacy single-tenant field. Use tenant_ids.
         tenant_ids:
           type: array
           items: { type: string }
