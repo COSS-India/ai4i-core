@@ -58,7 +58,6 @@ async def list_policies(
                 is_active=row.is_active,
                 is_global=row.is_global,
                 supported_languages=row.supported_languages or [],
-                tenant_id=tenant_ids[0] if tenant_ids else None,
                 tenant_ids=tenant_ids,
                 pii_types=[
                     PolicyPiiTypeOut(
@@ -136,7 +135,6 @@ def _build_detail(policy) -> PolicyDetailOut:
         is_active=policy.is_active,
         is_global=policy.is_global,
         supported_languages=policy.supported_languages or [],
-        tenant_id=tenant_ids[0] if tenant_ids else None,
         tenant_ids=tenant_ids,
         pii_types=pii_types_out,
         created_at=policy.created_at,

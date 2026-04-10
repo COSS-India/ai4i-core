@@ -32,10 +32,8 @@ async def require_adopter_admin(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
-                "error": {
-                    "code": "FORBIDDEN",
-                    "message": "Adopter admin privileges required",
-                }
+                "code": "FORBIDDEN",
+                "message": "Adopter admin privileges required",
             },
         )
     # Make claims accessible to downstream code if needed

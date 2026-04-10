@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Repository for PiiPolicy CRUD and PII-type link operations (async SQLAlchemy)."""
 from collections import defaultdict
 from typing import Optional, Sequence
