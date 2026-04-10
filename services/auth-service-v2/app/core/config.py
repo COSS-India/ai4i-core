@@ -59,6 +59,7 @@ class AuthSettings(BaseSettings):
     redis_timeout: int = 10
     role_cache_ttl_seconds: int = 3600
     api_perms_cache_ttl_seconds: int = 3600
+    revocation_endpoint_cooldown_seconds: int = 30
 
     # ── RS256 JWT ──
     rs256_key_directory: str = "keys"
