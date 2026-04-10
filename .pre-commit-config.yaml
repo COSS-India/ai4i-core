@@ -1,5 +1,14 @@
-# Minimal pre-commit configuration
-# This file allows pre-commit to run without errors
-# You can add hooks later if needed
-
-repos: []
+repos:
+  - repo: local
+    hooks:
+      - id: validate-migrations
+        name: Validate migration integrity
+        entry: python scripts/validate-migrations.py
+        language: python
+        pass_filenames: false
+        files: >-
+          (?x)(
+            infrastructure/databases/migrations/
+            |services/.*/models/
+            |services/.*/app/models/
+          )
