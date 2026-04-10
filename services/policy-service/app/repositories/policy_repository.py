@@ -1,4 +1,5 @@
 """Repository for PiiPolicy CRUD and PII-type link operations (async SQLAlchemy)."""
+from collections import defaultdict
 from typing import Optional, Sequence
 from uuid import UUID
 
@@ -7,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.orm import PiiPolicy, PolicyPiiType
+from app.models.orm import PiiPolicy, PolicyPiiType, TenantPolicy
 
 
 class PolicyRepository:
@@ -53,7 +54,6 @@ class PolicyRepository:
         # Eager-load pii_types to avoid async lazy-load (MissingGreenlet) in route serialization/counting.
         stmt = select(PiiPolicy).options(
             selectinload(PiiPolicy.pii_types).selectinload(PolicyPiiType.pii_type),
-            selectinload(PiiPolicy.tenant_policies),
         )
         if is_global is not None:
             stmt = stmt.where(PiiPolicy.is_global == is_global)
@@ -68,6 +68,19 @@ class PolicyRepository:
         stmt = stmt.offset((page - 1) * limit).limit(limit)
         rows = (await self.db.execute(stmt)).scalars().all()
         return rows, total
+
+    async def list_tenant_ids_for_policies(self, policy_ids: Sequence[UUID]) -> dict[UUID, list[str]]:
+        if not policy_ids:
+            return {}
+        stmt = select(TenantPolicy.policy_id, TenantPolicy.tenant_id).where(
+            TenantPolicy.policy_id.in_(policy_ids)
+        )
+        rows = (await self.db.execute(stmt)).all()
+        out: dict[UUID, list[str]] = defaultdict(list)
+        for policy_id, tenant_id in rows:
+            if tenant_id:
+                out[policy_id].append(tenant_id)
+        return dict(out)
 
     async def create(self, data: dict) -> PiiPolicy:
         obj = PiiPolicy(**data)

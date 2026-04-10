@@ -42,12 +42,14 @@ async def list_policies(
     limit: int = Query(20, ge=1, le=100),
     svc: PolicyService = Depends(_svc),
 ):
-    rows, total = await svc.list(is_global=is_global, is_active=is_active, search=search, page=page, limit=limit)
+    rows, total, tenant_ids_by_policy = await svc.list(
+        is_global=is_global, is_active=is_active, search=search, page=page, limit=limit
+    )
     # Build list response explicitly (PolicyOut includes pii_types details)
     data: list[PolicyOut] = []
     for row in rows:
         links = row.pii_types or []
-        tenant_ids = [tp.tenant_id for tp in (getattr(row, "tenant_policies", None) or []) if tp.tenant_id]
+        tenant_ids = tenant_ids_by_policy.get(row.policy_id, [])
         data.append(
             PolicyOut(
                 policy_id=row.policy_id,
@@ -56,8 +58,8 @@ async def list_policies(
                 is_active=row.is_active,
                 is_global=row.is_global,
                 supported_languages=row.supported_languages or [],
+                tenant_id=tenant_ids[0] if tenant_ids else None,
                 tenant_ids=tenant_ids,
-                pii_types_count=len(links),
                 pii_types=[
                     PolicyPiiTypeOut(
                         pii_type_id=link.pii_type_id,
@@ -105,6 +107,18 @@ async def set_policy_status(
 
 def _build_detail(policy) -> PolicyDetailOut:
     from app.models.schemas import PolicyPiiTypeOut
+    # Fail fast if tenant_policies was not eager-loaded (async lazy-load can raise MissingGreenlet,
+    # and silent fallbacks can hide repository/query bugs).
+    try:
+        from sqlalchemy import inspect
+
+        attr_state = inspect(policy).attrs.tenant_policies
+        if not attr_state.loaded:
+            raise ValueError("Policy tenant_policies relationship was not eager-loaded")
+    except Exception:
+        # If SQLAlchemy inspection isn't available for some reason, fall back to a strict attribute check.
+        if not hasattr(policy, "tenant_policies"):
+            raise ValueError("Policy object is missing required tenant_policies relationship")
     pii_types_out = []
     for link in (policy.pii_types or []):
         pii_types_out.append(
@@ -114,11 +128,7 @@ def _build_detail(policy) -> PolicyDetailOut:
                 mask_format=link.pii_type.mask_format,
             )
         )
-    tenant_ids = [
-        tp.tenant_id
-        for tp in (getattr(policy, "tenant_policies", None) or [])
-        if getattr(tp, "tenant_id", None)
-    ]
+    tenant_ids = [tp.tenant_id for tp in (policy.tenant_policies or []) if tp.tenant_id]
     return PolicyDetailOut(
         policy_id=policy.policy_id,
         name=policy.name,
@@ -126,6 +136,7 @@ def _build_detail(policy) -> PolicyDetailOut:
         is_active=policy.is_active,
         is_global=policy.is_global,
         supported_languages=policy.supported_languages or [],
+        tenant_id=tenant_ids[0] if tenant_ids else None,
         tenant_ids=tenant_ids,
         pii_types=pii_types_out,
         created_at=policy.created_at,

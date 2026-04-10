@@ -24,7 +24,7 @@ paths:
                 properties:
                   status: { type: string }
 
-  /api/v1/policy-service/v1/pii-types:
+  /api/v1/policy-service/pii-types:
     get:
       tags: [Policy Service]
       summary: List PII types
@@ -64,7 +64,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PiiTypeOut" }
 
-  /api/v1/policy-service/v1/pii-types/{pii_type_id}:
+  /api/v1/policy-service/pii-types/{pii_type_id}:
     get:
       tags: [Policy Service]
       summary: Get PII type
@@ -112,7 +112,7 @@ paths:
       responses:
         "204": { description: Deleted }
 
-  /api/v1/policy-service/v1/policies:
+  /api/v1/policy-service/policies:
     get:
       tags: [Policy Service]
       summary: List policies
@@ -160,7 +160,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PolicyDetailOut" }
 
-  /api/v1/policy-service/v1/policies/{policy_id}:
+  /api/v1/policy-service/policies/{policy_id}:
     get:
       tags: [Policy Service]
       summary: Get policy
@@ -197,7 +197,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PolicyDetailOut" }
 
-  /api/v1/policy-service/v1/policies/{policy_id}/status:
+  /api/v1/policy-service/policies/{policy_id}/status:
     patch:
       tags: [Policy Service]
       summary: Set policy status
@@ -222,7 +222,7 @@ paths:
                 properties:
                   is_active: { type: boolean }
 
-  /api/v1/policy-service/v1/audit-logs:
+  /api/v1/policy-service/audit-logs:
     get:
       tags: [Policy Service]
       summary: Query audit logs
@@ -267,7 +267,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AuditLogListResponse" }
 
-  /api/v1/policy-service/v1/audit-logs/{log_id}:
+  /api/v1/policy-service/audit-logs/{log_id}:
     get:
       tags: [Policy Service]
       summary: Get audit log by id
@@ -392,10 +392,14 @@ components:
         supported_languages:
           type: array
           items: { type: string }
+        tenant_id:
+          type: string
+          nullable: true
+          deprecated: true
+          description: Legacy single-tenant field. Use tenant_ids.
         tenant_ids:
           type: array
           items: { type: string }
-        pii_types_count: { type: integer }
         pii_types:
           type: array
           items: { $ref: "#/components/schemas/PolicyPiiTypeOut" }
