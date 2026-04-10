@@ -5,6 +5,7 @@ Authentication routes: register, login, logout, refresh, password management.
 import hashlib
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
@@ -148,7 +149,7 @@ async def revoke_sessions_by_tenant(
             },
         )
 
-    tenant_service = TenantService(mt_factory)
+    tenant_service = TenantService(mt_factory, cache)
     user_ids = await tenant_service.get_tenant_user_ids(tenant_id) or []
     if not user_ids:
         return success_response(data={
@@ -160,6 +161,7 @@ async def revoke_sessions_by_tenant(
     session_service = SessionService(SessionRepository(db), cache)
     sessions_revoked = await session_service.invalidate_all_for_users(user_ids)
     await session_service.commit()
+    await cache.delete_tenant_status(tenant_id)
 
     return success_response(data={
         "tenant_id": tenant_id,
@@ -208,6 +210,14 @@ async def revoke_sessions_by_users(
     session_service = SessionService(SessionRepository(db), cache)
     sessions_revoked = await session_service.invalidate_all_for_users(user_ids)
     await session_service.commit()
+    tenant_ids_result = await db.execute(
+        select(User.tenant_id_cached)
+        .where(User.id.in_(user_ids), User.tenant_id_cached.is_not(None))
+        .distinct()
+    )
+    tenant_ids = [row[0] for row in tenant_ids_result.fetchall() if row[0]]
+    for tenant_id in tenant_ids:
+        await cache.delete_tenant_status(tenant_id)
 
     return success_response(data={
         "users_matched": len(user_ids),
