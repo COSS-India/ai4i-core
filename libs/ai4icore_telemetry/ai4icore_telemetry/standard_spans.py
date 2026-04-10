@@ -9,7 +9,7 @@ Implements the 7-phase lifecycle proposed in "Telemetry Step Standardization":
   {svc}.triton_inference
     triton.inference (internal leaf; created by the Triton client)
   {svc}.postprocess
-  {svc}.persist
+  {svc}.persist  (or {svc}.persist_<suffix> e.g. persist_request / persist_results when DB is split)
 
 Phase 7: set final metrics on the parent {svc}.inference before it ends.
 """
@@ -224,10 +224,17 @@ class StandardSpanManager:
             yield span
 
     @contextmanager
-    def persist(self) -> Iterator[Any]:
+    def persist(self, *, suffix: Optional[str] = None) -> Iterator[Any]:
+        """
+        Phase 6 span. Default name is {svc}.persist.
+
+        Use suffix when one logical persist phase is split (e.g. create_request vs store_results):
+        suffix=\"request\" -> {svc}.persist_request, suffix=\"results\" -> {svc}.persist_results.
+        """
+        phase = f"persist_{suffix}" if suffix else "persist"
         if not self._tracer:
             with _noop_span_context() as span:
                 yield span
                 return
-        with self._tracer.start_as_current_span(self._svc_key("persist")) as span:
+        with self._tracer.start_as_current_span(self._svc_key(phase)) as span:
             yield span

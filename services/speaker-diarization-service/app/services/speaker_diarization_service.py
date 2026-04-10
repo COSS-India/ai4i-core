@@ -255,20 +255,22 @@ class SpeakerDiarizationService:
                     post_span.set_attribute("speaker-diarization.output_count", len(output_list))
                     post_span.set_attribute("speaker-diarization.has_errors", has_errors)
 
-                # Persist results + update status in one persist phase (Phase 6)
+                # Persist results + update status in one persist phase (Phase 6).
+                # Per-item try/continue: one failed create_result must not skip the rest (same single span; events for detail).
                 with _standard_spans.persist() as persist_span:
                     if request_id:
-                        try:
-                            for out in output_list:
-                                segments_dict = [
-                                    {
-                                        "start_time": seg.start_time,
-                                        "end_time": seg.end_time,
-                                        "duration": seg.duration,
-                                        "speaker": seg.speaker,
-                                    }
-                                    for seg in out.segments
-                                ]
+                        db_results_saved = 0
+                        for audio_idx, out in enumerate(output_list):
+                            segments_dict = [
+                                {
+                                    "start_time": seg.start_time,
+                                    "end_time": seg.end_time,
+                                    "duration": seg.duration,
+                                    "speaker": seg.speaker,
+                                }
+                                for seg in out.segments
+                            ]
+                            try:
                                 await self.repository.create_result(
                                     request_id=request_id,
                                     total_segments=out.total_segments,
@@ -276,16 +278,28 @@ class SpeakerDiarizationService:
                                     speakers=out.speakers,
                                     segments=segments_dict,
                                 )
-                            persist_span.set_attribute(
-                                "speaker-diarization.db_results_created", len(output_list)
-                            )
-                        except Exception as e:
-                            has_errors = True
-                            persist_span.add_event(
-                                "speaker-diarization.db.create_result.failed",
-                                {"error.type": type(e).__name__, "error.message": str(e)},
-                            )
-                            logger.error("Failed to create result record: %s", e)
+                                db_results_saved += 1
+                            except Exception as e:
+                                has_errors = True
+                                persist_span.add_event(
+                                    "speaker-diarization.db.create_result.failed",
+                                    {
+                                        "audio_index": audio_idx,
+                                        "error.type": type(e).__name__,
+                                        "error.message": str(e),
+                                    },
+                                )
+                                logger.error(
+                                    "Failed to create result record (audio_index=%s): %s",
+                                    audio_idx,
+                                    e,
+                                )
+                        persist_span.set_attribute(
+                            "speaker-diarization.db_results_created", db_results_saved
+                        )
+                        persist_span.set_attribute(
+                            "speaker-diarization.db_results_expected", len(output_list)
+                        )
 
                         try:
                             processing_time = time.time() - start_time

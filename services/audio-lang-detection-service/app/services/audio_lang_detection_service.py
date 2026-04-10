@@ -12,6 +12,7 @@ import requests
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
+from ai4icore_telemetry import StandardSpanManager
 from app.schemas.inference import (
     AudioInput,
     AudioLangDetectionInferenceRequest,
@@ -26,6 +27,7 @@ from ai4icore_exceptions import TritonInferenceError
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("audio-lang-detection-service")
+_standard_spans = StandardSpanManager("audio-lang-detection")
 
 
 class AudioLangDetectionService:
@@ -58,32 +60,19 @@ class AudioLangDetectionService:
         - If audioContent is provided, use it directly
         - Else, download from audioUri and base64-encode it
         """
-        with tracer.start_as_current_span("audio-lang-detection.resolve_audio") as span:
-            if audio.audioContent:
-                span.set_attribute("audio.source", "content")
-                span.set_attribute("audio.size_bytes", len(audio.audioContent))
-                return audio.audioContent
+        if audio.audioContent:
+            return audio.audioContent
 
-            if audio.audioUri:
-                span.set_attribute("audio.source", "uri")
-                span.set_attribute("audio.uri", str(audio.audioUri))
-                try:
-                    resp = requests.get(str(audio.audioUri), timeout=300)
-                    resp.raise_for_status()
-                    audio_bytes = base64.b64encode(resp.content).decode("utf-8")
-                    span.set_attribute("audio.size_bytes", len(audio_bytes))
-                    return audio_bytes
-                except Exception as exc:
-                    span.set_attribute("error", True)
-                    span.set_attribute("error.type", type(exc).__name__)
-                    span.set_attribute("error.message", str(exc))
-                    span.set_status(Status(StatusCode.ERROR, str(exc)))
-                    span.record_exception(exc)
-                    logger.error("Failed to download audio from %s: %s", audio.audioUri, exc)
-                    return None
+        if audio.audioUri:
+            try:
+                resp = requests.get(str(audio.audioUri), timeout=300)
+                resp.raise_for_status()
+                return base64.b64encode(resp.content).decode("utf-8")
+            except Exception as exc:
+                logger.error("Failed to download audio from %s: %s", audio.audioUri, exc)
+                return None
 
-            span.set_attribute("audio.source", "none")
-            return None
+        return None
 
     def _empty_output(self) -> AudioLangDetectionOutput:
         """Return an empty output for failed/missing audio."""
@@ -113,22 +102,20 @@ class AudioLangDetectionService:
         start_time = time.time()
         request_id: Optional[UUID] = None
         has_errors = False
+        service_id = request.config.serviceId
+        input_count = len(request.audio or [])
 
-        with tracer.start_as_current_span("audio-lang-detection.process_batch") as span:
-            try:
-                service_id = request.config.serviceId
-                span.set_attribute("audio-lang-detection.total_audio", len(request.audio))
-                span.set_attribute("audio-lang-detection.service_id", service_id)
-                span.set_attribute("audio-lang-detection.model_name", self.model_name)
-
-                if user_id:
-                    span.set_attribute("user.id", str(user_id))
-                if api_key_id:
-                    span.set_attribute("api_key.id", str(api_key_id))
-                if session_id:
-                    span.set_attribute("session.id", str(session_id))
-
-                # Create request record
+        with _standard_spans.inference(
+            service_id=service_id,
+            model_name=self.model_name,
+            input_count=input_count,
+            input_type="audio",
+            user_id=user_id,
+            api_key_id=api_key_id,
+            session_id=session_id,
+        ) as parent_span:
+            # Phase 6: persist (create request)
+            with _standard_spans.persist() as persist_span:
                 try:
                     request_record = await self.repository.create_request(
                         model_id=service_id,
@@ -138,49 +125,63 @@ class AudioLangDetectionService:
                         session_id=session_id,
                     )
                     request_id = request_record.id
-                    span.set_attribute("audio-lang-detection.request_id", str(request_id))
-                    logger.info(f"Created audio language detection request {request_id}")
+                    persist_span.set_attribute("audio-lang-detection.request_id", str(request_id))
                 except Exception as e:
-                    logger.error(f"Failed to create request record: {e}")
+                    persist_span.add_event(
+                        "audio-lang-detection.db.create_request.failed",
+                        {"error.type": type(e).__name__, "error.message": str(e)},
+                    )
 
-                # Resolve all audio to base64
-                with tracer.start_as_current_span("audio-lang-detection.resolve_audio_files") as resolve_span:
-                    audio_files_b64: List[Optional[str]] = []
-                    for audio_item in request.audio:
-                        resolved = self._resolve_audio_base64(audio_item)
-                        audio_files_b64.append(resolved)
-                    resolved_count = sum(1 for a in audio_files_b64 if a)
-                    resolve_span.set_attribute("audio-lang-detection.resolved_count", resolved_count)
+            # Phase 2: preprocess
+            resolved_audio: List[Optional[str]] = []
+            with _standard_spans.preprocess() as preprocess_span:
+                preprocess_span.set_attribute("audio-lang-detection.input_count", input_count)
+                for idx, audio_item in enumerate(request.audio or []):
+                    audio_b64 = self._resolve_audio_base64(audio_item)
+                    resolved_audio.append(audio_b64)
+                    preprocess_span.add_event(
+                        "audio-lang-detection.audio.resolved",
+                        {
+                            "audio_index": idx,
+                            "has_content": bool(audio_item.audioContent),
+                            "has_uri": bool(audio_item.audioUri),
+                            "resolved": bool(audio_b64),
+                            "audio_size_bytes": len(audio_b64) if audio_b64 else 0,
+                        },
+                    )
 
-                output_list: List[AudioLangDetectionOutput] = []
-
-                # Process each audio input
-                for idx, audio_item in enumerate(request.audio):
-                    audio_base64 = audio_files_b64[idx]
-
+            # Phase 4: triton inference (single span; per-audio work is events)
+            output_list: List[AudioLangDetectionOutput] = []
+            inferred_rows: List[tuple] = []
+            with _standard_spans.triton_inference() as triton_span:
+                for idx, audio_base64 in enumerate(resolved_audio):
                     if not audio_base64:
                         output_list.append(self._empty_output())
                         continue
 
-                    with tracer.start_as_current_span("audio-lang-detection.triton_inference") as inference_span:
-                        inference_span.set_attribute("audio-lang-detection.audio_index", idx)
-                        try:
-                            detection_data = self.triton_client.run_audio_lang_detection_inference(
-                                audio_base64, model_name=self.model_name
+                    triton_span.add_event(
+                        "audio-lang-detection.audio.inference.started", {"audio_index": idx}
+                    )
+                    try:
+                        detection_data = self.triton_client.run_audio_lang_detection_inference(
+                            audio_base64, model_name=self.model_name
+                        )
+                        if not detection_data:
+                            output_list.append(self._empty_output())
+                            triton_span.add_event(
+                                "audio-lang-detection.audio.inference.empty_result",
+                                {"audio_index": idx},
                             )
+                            continue
 
-                            if not detection_data:
-                                output_list.append(self._empty_output())
-                                continue
+                        all_scores_data = detection_data.get("all_scores", {})
+                        language_code = detection_data.get("language_code", "")
+                        confidence = detection_data.get("confidence", 0.0)
 
-                            all_scores_data = detection_data.get("all_scores", {})
-                            language_code = detection_data.get("language_code", "")
-                            confidence = detection_data.get("confidence", 0.0)
+                        inferred_rows.append((idx, language_code, confidence, all_scores_data))
 
-                            inference_span.set_attribute("audio-lang-detection.detected_language", language_code)
-                            inference_span.set_attribute("audio-lang-detection.confidence", confidence)
-
-                            output = AudioLangDetectionOutput(
+                        output_list.append(
+                            AudioLangDetectionOutput(
                                 language_code=language_code,
                                 confidence=confidence,
                                 all_scores=AllScores(
@@ -189,85 +190,102 @@ class AudioLangDetectionService:
                                     top_scores=all_scores_data.get("top_scores", []),
                                 ),
                             )
-                            output_list.append(output)
+                        )
+                        triton_span.add_event(
+                            "audio-lang-detection.audio.inference.completed",
+                            {
+                                "audio_index": idx,
+                                "detected_language": language_code,
+                                "confidence": confidence,
+                            },
+                        )
+                    except TritonInferenceError as exc:
+                        has_errors = True
+                        triton_span.add_event(
+                            "audio-lang-detection.audio.inference.failed",
+                            {
+                                "audio_index": idx,
+                                "error.type": "TritonInferenceError",
+                                "error.message": str(exc),
+                            },
+                        )
+                        triton_span.set_status(Status(StatusCode.ERROR, str(exc)))
+                        triton_span.record_exception(exc)
+                        output_list.append(self._empty_output())
+                    except Exception as exc:
+                        has_errors = True
+                        triton_span.add_event(
+                            "audio-lang-detection.audio.inference.failed",
+                            {
+                                "audio_index": idx,
+                                "error.type": type(exc).__name__,
+                                "error.message": str(exc),
+                            },
+                        )
+                        triton_span.set_status(Status(StatusCode.ERROR, str(exc)))
+                        triton_span.record_exception(exc)
+                        output_list.append(self._empty_output())
 
-                            # Persist result
-                            if request_id:
-                                try:
-                                    await self.repository.create_result(
-                                        request_id=request_id,
-                                        language_code=language_code,
-                                        confidence=confidence,
-                                        all_scores=all_scores_data,
-                                    )
-                                except Exception as e:
-                                    logger.error(f"Failed to create result record: {e}")
-
-                        except TritonInferenceError as exc:
-                            inference_span.set_attribute("error", True)
-                            inference_span.set_attribute("error.type", "TritonInferenceError")
-                            inference_span.set_attribute("error.message", str(exc))
-                            inference_span.set_status(Status(StatusCode.ERROR, str(exc)))
-                            inference_span.record_exception(exc)
-                            logger.error("Audio Language Detection Triton inference failed: %s", exc)
-                            has_errors = True
-                            output_list.append(self._empty_output())
-
-                        except Exception as exc:
-                            inference_span.set_attribute("error", True)
-                            inference_span.set_attribute("error.type", type(exc).__name__)
-                            inference_span.set_attribute("error.message", str(exc))
-                            inference_span.set_status(Status(StatusCode.ERROR, str(exc)))
-                            inference_span.record_exception(exc)
-                            logger.error("Error in audio language detection inference: %s", exc, exc_info=True)
-                            has_errors = True
-                            output_list.append(self._empty_output())
-
-                # Update request status
+            # Phase 6: persist results + update status
+            processing_time = time.time() - start_time
+            with _standard_spans.persist() as persist_span:
                 if request_id:
+                    for idx, language_code, confidence, all_scores_data in inferred_rows:
+                        try:
+                            await self.repository.create_result(
+                                request_id=request_id,
+                                language_code=language_code,
+                                confidence=confidence,
+                                all_scores=all_scores_data,
+                            )
+                            persist_span.add_event(
+                                "audio-lang-detection.db.result.created",
+                                {"audio_index": idx},
+                            )
+                        except Exception as e:
+                            persist_span.add_event(
+                                "audio-lang-detection.db.result.failed",
+                                {
+                                    "audio_index": idx,
+                                    "error.type": type(e).__name__,
+                                    "error.message": str(e),
+                                },
+                            )
+
                     try:
-                        processing_time = time.time() - start_time
                         status_str = "failed" if has_errors else "completed"
-                        span.set_attribute("audio-lang-detection.processing_time_seconds", processing_time)
-                        span.set_attribute("audio-lang-detection.status", status_str)
                         await self.repository.update_request_status(
                             request_id=request_id,
                             status=status_str,
                             processing_time=processing_time,
                         )
+                        persist_span.set_attribute("audio-lang-detection.status", status_str)
                     except Exception as e:
-                        logger.error(f"Failed to update request status: {e}")
+                        persist_span.add_event(
+                            "audio-lang-detection.db.update_status.failed",
+                            {"error.type": type(e).__name__, "error.message": str(e)},
+                        )
 
-                # Create response config
-                response_config = None
-                if request.config.serviceId:
-                    response_config = AudioLangDetectionResponseConfig(
-                        serviceId=request.config.serviceId,
-                    )
-
-                span.set_attribute("audio-lang-detection.output_count", len(output_list))
-                span.set_attribute("audio-lang-detection.has_errors", has_errors)
-
-                return AudioLangDetectionInferenceResponse(
-                    taskType="audio-lang-detection",
-                    output=output_list,
-                    config=response_config,
+                persist_span.set_attribute(
+                    "audio-lang-detection.processing_time_seconds", processing_time
                 )
 
-            except Exception as e:
-                span.set_attribute("error", True)
-                span.set_attribute("error.type", type(e).__name__)
-                span.set_attribute("error.message", str(e))
-                span.set_status(Status(StatusCode.ERROR, str(e)))
-                span.record_exception(e)
-                logger.error(f"Audio language detection inference failed: {e}")
+            response_config = (
+                AudioLangDetectionResponseConfig(serviceId=request.config.serviceId)
+                if request.config.serviceId
+                else None
+            )
 
-                if request_id:
-                    try:
-                        await self.repository.update_request_status(
-                            request_id, "failed", error_message=str(e)
-                        )
-                    except Exception as update_error:
-                        logger.error(f"Failed to update request status: {update_error}")
+            if parent_span is not None:
+                try:
+                    parent_span.set_attribute(
+                        "audio-lang-detection.output_count", len(output_list)
+                    )
+                except Exception:
+                    pass
 
-                raise
+            return AudioLangDetectionInferenceResponse(
+                taskType="audio-lang-detection",
+                output=output_list,
+                config=response_config,
+            )
