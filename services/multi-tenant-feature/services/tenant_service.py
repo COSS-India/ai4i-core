@@ -69,6 +69,7 @@ from models.billing_update import BillingUpdateRequest, BillingUpdateResponse
 from logger import logger
 from uuid import UUID
 from dotenv import load_dotenv
+from cache.app_cache import get_async_cache_connection
 
 load_dotenv()
 
@@ -87,6 +88,46 @@ EMAIL_VERIFICATION_RESEND_MAX_PER_DAY = app_env.email_verification_resend_max_pe
 DB_NAME                 = str(app_env.app_db_name)
 API_GATEWAY_URL        = app_env.api_gateway_url
 API_GATEWAY_TIMEOUT       = app_env.api_gateway_timeout
+_AUTH_TENANT_STATUS_PREFIX = "auth:tenant_status:"
+_AUTH_TENANT_USER_STATUS_PREFIX = "auth:tenant_user_status:"
+_auth_cache_client = get_async_cache_connection()
+
+
+async def _invalidate_auth_tenant_status_cache(tenant_id: str) -> None:
+    """Invalidate auth-service tenant status cache key after status changes."""
+    if not _auth_cache_client:
+        return
+    tenant_id_norm = (tenant_id or "").strip().lower()
+    if not tenant_id_norm:
+        return
+    try:
+        await _auth_cache_client.delete(f"{_AUTH_TENANT_STATUS_PREFIX}{tenant_id_norm}")
+    except Exception as exc:
+        logger.warning(
+            "Failed to invalidate auth tenant status cache (tenant_id=%s): %s",
+            tenant_id_norm,
+            exc,
+        )
+
+
+async def _invalidate_auth_tenant_user_status_cache(tenant_id: str, user_id: int) -> None:
+    """Invalidate auth-service tenant-user status cache key after status changes."""
+    if not _auth_cache_client:
+        return
+    tenant_id_norm = (tenant_id or "").strip().lower()
+    if not tenant_id_norm:
+        return
+    try:
+        await _auth_cache_client.delete(
+            f"{_AUTH_TENANT_USER_STATUS_PREFIX}{tenant_id_norm}:{user_id}"
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to invalidate auth tenant-user status cache (tenant_id=%s user_id=%s): %s",
+            tenant_id_norm,
+            user_id,
+            exc,
+        )
 
 
 async def invalidate_pending_verification_tokens(
@@ -324,6 +365,37 @@ async def _assign_role_in_auth(user_id: int, role_name: str, auth_header: Option
             return False
     except Exception as e:
         logger.warning(f"Failed to assign role in auth for user_id={user_id} role={role_name}: {e}")
+        return False
+
+
+async def _revoke_tenant_sessions_in_auth(user_ids: list[int], auth_header: Optional[str]) -> bool:
+    """
+    Best-effort call to auth-service to revoke all active sessions for a tenant.
+    Returns True when auth-service confirms success, otherwise False.
+    """
+    if not auth_header:
+        logger.warning("Skipping tenant session revocation: missing Authorization header")
+        return False
+    if not user_ids:
+        logger.info("Skipping tenant session revocation: no user IDs to revoke")
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
+            r = await client.post(
+                f"{API_GATEWAY_URL}/api/v1/auth/sessions/revoke-by-users",
+                json={"user_ids": user_ids},
+                headers={"Authorization": auth_header},
+            )
+            if r.status_code in (200, 201):
+                return True
+            logger.warning(
+                "Auth session revocation by users failed status=%s body=%s",
+                r.status_code,
+                r.text,
+            )
+            return False
+    except Exception as e:
+        logger.warning("Failed to revoke tenant sessions in auth: %s", e)
         return False
 
 
@@ -2050,7 +2122,11 @@ async def register_user(
     return response
 
 
-async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSession) -> TenantStatusUpdateResponse:
+async def update_tenant_status(
+    payload: TenantStatusUpdateRequest,
+    db: AsyncSession,
+    auth_header: Optional[str] = None,
+) -> TenantStatusUpdateResponse:
     """
     Update tenant status and cascade status changes to tenant users and billing records.
     
@@ -2142,7 +2218,22 @@ async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
         await db.rollback()
         logger.exception(f"Error committing tenant status update to database | tenant={payload.tenant_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to update tenant status")
+
+    await _invalidate_auth_tenant_status_cache(tenant.tenant_id)
     
+    # Immediately revoke active auth sessions when tenant is suspended/deactivated.
+    # This is best-effort; auth enforcement on subsequent requests still blocks access.
+    if new_status in {TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED}:
+        tenant_user_ids_result = await db.execute(
+            select(TenantUser.user_id).where(
+                TenantUser.tenant_id == tenant.tenant_id,
+                TenantUser.user_id.is_not(None),
+            )
+        )
+        tenant_user_ids = [row[0] for row in tenant_user_ids_result.all() if row[0] is not None]
+        affected_user_ids = list(set([tenant.user_id] + tenant_user_ids)) if tenant.user_id else tenant_user_ids
+        await _revoke_tenant_sessions_in_auth(affected_user_ids, auth_header)
+
     response = TenantStatusUpdateResponse(
         tenant_id=tenant.tenant_id,
         old_status=old_status,
@@ -2229,6 +2320,8 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
         await db.rollback()
         logger.exception(f"Error committing tenant user status update to database | tenant={tenant_id} user_id={user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to update tenant user status")
+
+    await _invalidate_auth_tenant_user_status_cache(tenant_id, user_id)
 
     response = TenantUserStatusUpdateResponse(
         tenant_id=tenant_id,

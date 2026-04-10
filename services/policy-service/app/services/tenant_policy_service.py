@@ -19,17 +19,17 @@ class TenantPolicyService:
     async def assign(self, tenant_id: str, data: TenantPolicyAssign) -> TenantPolicyOut:
         policy = await self.policy_repo.get(data.policy_id)
         if not policy:
-            raise HTTPException(status_code=404, detail={"error": {"code": "NOT_FOUND", "message": "Policy not found"}})
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Policy not found"})
         if policy.is_global:
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": "VALIDATION_ERROR", "message": "Cannot explicitly assign a global policy"}},
+                detail={"code": "VALIDATION_ERROR", "message": "Cannot explicitly assign a global policy"},
             )
         existing = await self.repo.get_assignment(tenant_id, data.policy_id)
         if existing:
             raise HTTPException(
                 status_code=409,
-                detail={"error": {"code": "CONFLICT", "message": "Policy already assigned to this tenant"}},
+                detail={"code": "CONFLICT", "message": "Policy already assigned to this tenant"},
             )
         obj = await self.repo.assign(tenant_id, data.policy_id)
         return TenantPolicyOut.model_validate(obj)
@@ -44,5 +44,5 @@ class TenantPolicyService:
         if not removed:
             raise HTTPException(
                 status_code=404,
-                detail={"error": {"code": "NOT_FOUND", "message": "Assignment not found"}},
+                detail={"code": "NOT_FOUND", "message": "Assignment not found"},
             )
