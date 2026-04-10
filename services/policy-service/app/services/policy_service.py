@@ -64,11 +64,14 @@ class PolicyService:
         search: Optional[str],
         page: int,
         limit: int,
-    ) -> tuple[Sequence[PiiPolicy], int]:
-        return await self.repo.list(
+    ) -> tuple[Sequence[PiiPolicy], int, dict[UUID, list[str]]]:
+        rows, total = await self.repo.list(
             is_global=is_global, is_active=is_active, search=search,
             page=page, limit=min(limit, 100),
         )
+        policy_ids = [row.policy_id for row in rows]
+        tenant_ids_by_policy = await self.repo.list_tenant_ids_for_policies(policy_ids)
+        return rows, total, tenant_ids_by_policy
 
     async def get(self, policy_id: UUID) -> PiiPolicy:
         obj = await self.repo.get(policy_id)

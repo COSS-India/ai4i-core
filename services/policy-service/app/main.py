@@ -74,9 +74,11 @@ def create_app() -> FastAPI:
 
     application.openapi = custom_openapi  # type: ignore[assignment]
 
-    # Base URL: /v1
-    PREFIX = "/v1"
+    # Base URL: follow platform convention (/api/v1/<service>)
+    PREFIX = "/api/v1/policy-service"
+    # Keep /health for backward compatibility with local/docker healthchecks.
     application.include_router(health_router)
+    application.include_router(health_router, prefix=PREFIX)
     application.include_router(pii_types_router, prefix=PREFIX)
     application.include_router(policies_router, prefix=PREFIX)
     # tenant assignment is handled via policy create/update; no separate tenant router

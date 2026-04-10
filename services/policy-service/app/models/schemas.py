@@ -117,10 +117,11 @@ class PolicyOut(BaseModel):
     is_active: bool
     is_global: bool
     supported_languages: List[str]
-    # New: full assignment set (empty for global policies).
-    tenant_ids: List[str] = []
-    pii_types_count: Optional[int] = None
-    pii_types: List[PolicyPiiTypeOut] = []
+    # Backward compatibility: legacy consumers still read tenant_id.
+    # Canonical field is tenant_ids.
+    tenant_id: Optional[str] = None
+    tenant_ids: List[str] = Field(default_factory=list)
+    pii_types: List[PolicyPiiTypeOut] = Field(default_factory=list)
     created_at: datetime
     model_config = {"from_attributes": True}
 
@@ -131,8 +132,11 @@ class PolicyDetailOut(BaseModel):
     is_active: bool
     is_global: bool
     supported_languages: List[str]
-    tenant_ids: List[str] = []
-    pii_types: List[PolicyPiiTypeOut] = []
+    # Backward compatibility: legacy consumers still read tenant_id.
+    # Canonical field is tenant_ids.
+    tenant_id: Optional[str] = None
+    tenant_ids: List[str] = Field(default_factory=list)
+    pii_types: List[PolicyPiiTypeOut] = Field(default_factory=list)
     created_at: datetime
     model_config = {"from_attributes": True}
 
