@@ -28,6 +28,8 @@ interface ModelLanguageSelectorProps extends LanguageSelectorProps {
   hideServiceSelector?: boolean;
   /** When true, service dropdown is shown but disabled (e.g. anonymous users with fixed IndicTrans). */
   serviceDropdownDisabled?: boolean;
+  /** When true, lock service and language controls (e.g. while a translation request is in flight). */
+  inferenceInProgress?: boolean;
 }
 
 const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
@@ -39,6 +41,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   onServiceChange,
   hideServiceSelector = false,
   serviceDropdownDisabled = false,
+  inferenceInProgress = false,
 }) => {
   const [currentServiceId, setCurrentServiceId] = useState<string>(selectedServiceId || '');
   const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
@@ -221,6 +224,10 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
       ? languagePair.targetLanguage
       : '';
 
+  const languageConfigLocked =
+    inferenceInProgress ||
+    (!hideServiceSelector && !currentServiceId?.trim());
+
   return (
     <Stack spacing={6} pt={0} mt={0}>
       {/* Service Selection - Hidden for anonymous users */}
@@ -236,7 +243,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                 value={currentServiceId}
                 onChange={handleServiceChange}
                 placeholder="Select"
-                disabled={servicesLoading || serviceDropdownDisabled}
+                disabled={servicesLoading || serviceDropdownDisabled || inferenceInProgress}
               >
                 {services?.map((service) => {
                   const version = service.modelVersion || service.model_version;
@@ -300,6 +307,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                   value={safeSourceValue}
                   onChange={handleSourceLanguageChange}
                   placeholder="Select"
+                  isDisabled={languageConfigLocked}
                 >
                   {languageOptionsForDisplay.map((langCode) => (
                     <option key={langCode} value={langCode}>
@@ -314,7 +322,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                 aria-label="Swap languages"
                 icon={<FaExchangeAlt />}
                 onClick={handleSwapLanguages}
-                isDisabled={!isSwapAvailable}
+                isDisabled={languageConfigLocked || !isSwapAvailable}
                 variant="outline"
                 size="md"
                 colorScheme="orange"
@@ -330,6 +338,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                   value={safeTargetValue}
                   onChange={handleTargetLanguageChange}
                   placeholder="Select"
+                  isDisabled={languageConfigLocked}
                 >
                   {targetLanguageOptionsForDisplay.map((langCode) => (
                     <option key={langCode} value={langCode}>

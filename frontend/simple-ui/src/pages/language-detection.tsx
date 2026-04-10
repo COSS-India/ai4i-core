@@ -1043,6 +1043,7 @@ const LanguageDetectionPage: React.FC = () => {
                     size="md"
                     borderColor="gray.300"
                     maxLength={MAX_LANGUAGE_DETECTION_INPUT_LENGTH}
+                    isDisabled={fetching || !selectedServiceId}
                     _focus={{
                       borderColor: "orange.400",
                       boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",

@@ -84,6 +84,7 @@ export interface LanguageSelectorProps {
   onInputLanguageChange: (lang: string) => void;
   onOutputLanguageChange: (lang: string) => void;
   availableLanguages: string[];
+  disabled?: boolean;
 }
 
 export interface TextInputProps {
