@@ -43,6 +43,9 @@ services:
   pipeline-service:
     description: "Pipeline"
     spec_file: "pipeline-service.yaml"
+  policy-service:
+    description: "Policy Service"
+    spec_file: "policy-service.yaml"
   speaker-diarization-service:
     description: "Speaker Diarization"
     spec_file: "speaker-diarization-service.yaml"
