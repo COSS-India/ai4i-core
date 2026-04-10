@@ -515,6 +515,25 @@ def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], cat
                 if svc_meta:
                     annotations["service_type_abbr"] = annotations.get("service_type_abbr", svc_meta["abbr"])
                     annotations["service_type_full"] = annotations.get("service_type_full", svc_meta["full"])
+            if "service_type_full" not in annotations:
+                # Multi/all-service alert: derive friendly service name from the triggering endpoint label at fire time.
+                annotations["service_type_full"] = (
+                    '{{ with reReplaceAll "^/api/v[0-9]+/([^/]+)/.*$" "$1" $labels.endpoint }}'
+                    '{{ if eq . "nmt" }}NMT (Neural Machine Translation)'
+                    '{{ else if eq . "asr" }}ASR (Automatic Speech Recognition)'
+                    '{{ else if eq . "tts" }}TTS (Text To Speech)'
+                    '{{ else if eq . "ocr" }}OCR (Optical Character Recognition)'
+                    '{{ else if eq . "ner" }}NER (Named Entity Recognition)'
+                    '{{ else if eq . "transliteration" }}Transliteration'
+                    '{{ else if eq . "language-detection" }}Language Detection'
+                    '{{ else if eq . "audio-lang-detection" }}Audio Language Detection'
+                    '{{ else if eq . "language-diarization" }}Language Diarization'
+                    '{{ else if eq . "speaker-diarization" }}Speaker Diarization'
+                    '{{ else if eq . "llm" }}LLM'
+                    '{{ else if eq . "pipeline" }}Pipeline'
+                    '{{ else }}{{ . }}'
+                    '{{ end }}{{ end }}'
+                )
 
         # Category display based on sub_category (when present)
         if "category_display" not in annotations:
@@ -599,6 +618,8 @@ GLOBAL_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
 
 {{ if index (index .Alerts 0).Annotations "service_type_full" }}<p><strong>Service Type</strong></p>
 <p>{{ index (index .Alerts 0).Annotations "service_type_full" }}</p>
+{{ else if index (index .Alerts 0).Labels "endpoint" }}<p><strong>Service Type</strong></p>
+<p>{{ index (index .Alerts 0).Labels "endpoint" }}</p>
 {{ end }}
 
 <p><strong>Tenant</strong></p>
@@ -634,6 +655,8 @@ TENANT_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
 
 {{ if index (index .Alerts 0).Annotations "service_type_full" }}<p><strong>Service Type</strong></p>
 <p>{{ index (index .Alerts 0).Annotations "service_type_full" }}</p>
+{{ else if index (index .Alerts 0).Labels "endpoint" }}<p><strong>Service Type</strong></p>
+<p>{{ index (index .Alerts 0).Labels "endpoint" }}</p>
 {{ end }}
 
 <p><strong>Tenant</strong></p>

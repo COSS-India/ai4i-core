@@ -108,7 +108,7 @@ async def test_all_nmt_services():
         unique_endpoints = {}
         for service in services:
             if service.endpoint:
-                endpoint = service.endpoint.replace("http://", "").replace("https://", "")
+                endpoint = service.endpoint
                 if endpoint not in unique_endpoints:
                     unique_endpoints[endpoint] = []
                 unique_endpoints[endpoint].append({
@@ -150,9 +150,6 @@ async def test_all_nmt_services():
 
 def test_single_endpoint(endpoint: str):
     """Test a single endpoint provided as argument"""
-    # Remove http:// or https:// if present
-    endpoint = endpoint.replace("http://", "").replace("https://", "")
-    
     print("-" * 80)
     print("Querying Triton Server...")
     print("-" * 80)

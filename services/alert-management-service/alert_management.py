@@ -446,9 +446,13 @@ class AlertDefinitionCreate(BaseModel):
         """Require either (alert_type) or (sub_category, signal, signal_metric, condition_operator)."""
         new_path = all([self.sub_category, self.signal, self.signal_metric, self.condition_operator])
         if new_path:
-            return
-        if not self.alert_type:
+            pass
+        elif not self.alert_type:
             raise ValueError("Either provide alert_type or all of sub_category, signal, signal_metric, condition_operator")
+
+        if self.threshold_unit.strip().lower() in {"%", "percent", "percentage"}:
+            if not (0 <= self.threshold_value <= 100):
+                raise ValueError(f"threshold_value must be between 0 and 100 when threshold_unit is '{self.threshold_unit}'")
 
 class AlertDefinitionUpdate(BaseModel):
     """Request model for updating an alert definition"""
@@ -469,6 +473,15 @@ class AlertDefinitionUpdate(BaseModel):
     for_duration: Optional[str] = None
     enabled: Optional[bool] = None
     annotations: Optional[List[AlertAnnotation]] = None
+
+    def model_post_init(self, __context):
+        if (
+            self.threshold_unit is not None
+            and self.threshold_value is not None
+            and self.threshold_unit.strip().lower() in {"%", "percent", "percentage"}
+        ):
+            if not (0 <= self.threshold_value <= 100):
+                raise ValueError(f"threshold_value must be between 0 and 100 when threshold_unit is '{self.threshold_unit}'")
 
 class AlertDefinitionResponse(BaseModel):
     """Response model for alert definition"""
@@ -1686,6 +1699,8 @@ GLOBAL_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
 
 {{ if index (index .Alerts 0).Annotations "service_type_full" }}<p><strong>Service Type</strong></p>
 <p>{{ index (index .Alerts 0).Annotations "service_type_full" }}</p>
+{{ else if index (index .Alerts 0).Labels "endpoint" }}<p><strong>Service Type</strong></p>
+<p>{{ index (index .Alerts 0).Labels "endpoint" }}</p>
 {{ end }}
 
 <p><strong>Tenant</strong></p>
@@ -1721,6 +1736,8 @@ TENANT_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
 
 {{ if index (index .Alerts 0).Annotations "service_type_full" }}<p><strong>Service Type</strong></p>
 <p>{{ index (index .Alerts 0).Annotations "service_type_full" }}</p>
+{{ else if index (index .Alerts 0).Labels "endpoint" }}<p><strong>Service Type</strong></p>
+<p>{{ index (index .Alerts 0).Labels "endpoint" }}</p>
 {{ end }}
 
 <p><strong>Tenant</strong></p>

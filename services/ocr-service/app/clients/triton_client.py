@@ -56,16 +56,11 @@ class OCRTritonClient(TritonClient):
 
         inputs, outputs = self.get_ocr_io_for_triton(images_base64)
 
-        headers: Dict[str, str] = {}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-
         try:
-            response = self.client.infer(
+            response = self.send_triton_request(
                 model_name=self.model_name,
                 inputs=inputs,
                 outputs=outputs,
-                headers=headers or None,
             )
         except Exception as exc:
             logger.error("Triton OCR inference failed: %s", exc, exc_info=True)

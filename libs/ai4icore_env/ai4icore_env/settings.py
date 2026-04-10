@@ -181,6 +181,13 @@ class AppEnv(BaseSettings):
     model_management_cache_ttl: int = 300
     max_active_versions_per_model: int = 5
     allow_deprecated_model_changes: bool = True
+    run_inference_test: bool = True
+    # "lenient" (default): 4xx treated as pass (server reachable); "strict": only <400 passes
+    endpoint_validation_mode: str = "lenient"
+    # Live inference probe timeout (seconds) used by Model Management endpoint validation
+    endpoint_validation_timeout_seconds: float = 30.0
+    # Allow skipping TLS verification for endpoint validation probes (self-signed certs)
+    endpoint_validation_skip_tls_verify: bool = False
 
     # ── Multi-tenant ──
     multi_tenant_enabled: bool = True

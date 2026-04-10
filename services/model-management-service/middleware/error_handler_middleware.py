@@ -65,7 +65,9 @@ def add_error_handlers(app: FastAPI) -> None:
         if isinstance(exc.detail, dict) and "message" in exc.detail:
             message = exc.detail["message"]
             code = exc.detail.get("kind") or exc.detail.get("code") or "HTTP_ERROR"
-            details = exc.detail.get("error")
+            details = exc.detail.get("error") or exc.detail.get("errors")
+            if isinstance(details, list):
+                details = "; ".join(str(d) for d in details)
         else:
             message = str(exc.detail)
             code = "HTTP_ERROR"
