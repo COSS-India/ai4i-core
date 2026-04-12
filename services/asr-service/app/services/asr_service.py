@@ -311,21 +311,6 @@ class ASRService:
                     except Exception:
                         pass
 
-            # Phase 6a: persist — create request record
-            with _standard_spans.persist(suffix="request") as persist_span:
-                db_request = await self.repository.create_request(
-                    model_id=model_id_for_db,
-                    language=language,
-                    user_id=user_id,
-                    api_key_id=api_key_id,
-                    session_id=session_id,
-                )
-                persist_span.set_attribute("asr.request_id", str(db_request.id))
-
-            logger.info(
-                "Created ASR request %s for %s audio inputs", db_request.id, input_count
-            )
-
             # Phase 4: triton inference
             inferred: List[Tuple[int, List[dict], list]] = []
             with _standard_spans.triton_inference() as triton_span:
@@ -428,16 +413,6 @@ class ASRService:
                                     continue
 
                             triton_span.add_event(
-                                "asr.extract_transcripts.completed",
-                                {
-                                    "audio_index": audio_idx,
-                                    "batch_index": batch_index,
-                                    "raw_result_count": len(transcripts_flat),
-                                    "line_count": len(transcript_lines),
-                                },
-                            )
-
-                            triton_span.add_event(
                                 "asr.triton.batch.completed",
                                 {
                                     "audio_index": audio_idx,
@@ -528,9 +503,27 @@ class ASRService:
                     except Exception:
                         pass
 
-            # Phase 6b: persist — store results and finalize request
-            with _standard_spans.persist(suffix="results") as persist_span:
+            # Phase 6: single persist — create request, store results, update status
+            with _standard_spans.persist() as persist_span:
+                db_request = await self.repository.create_request(
+                    model_id=model_id_for_db,
+                    language=language,
+                    user_id=user_id,
+                    api_key_id=api_key_id,
+                    session_id=session_id,
+                )
                 persist_span.set_attribute("asr.request_id", str(db_request.id))
+                persist_span.add_event(
+                    "asr.db.request_created",
+                    {"request_id": str(db_request.id)},
+                )
+
+                logger.info(
+                    "Created ASR request %s for %s audio inputs",
+                    db_request.id,
+                    input_count,
+                )
+
                 for audio_idx, transcript, _n_best_tokens_list, processed_transcript_lines in finalized:
                     await self.repository.create_result(
                         request_id=db_request.id,
@@ -553,6 +546,13 @@ class ASRService:
                 processing_time = time.time() - start_time
                 await self.repository.update_request_status(
                     db_request.id, "completed", processing_time
+                )
+                persist_span.add_event(
+                    "asr.db.request_completed",
+                    {
+                        "request_id": str(db_request.id),
+                        "processing_time_seconds": processing_time,
+                    },
                 )
 
             return response

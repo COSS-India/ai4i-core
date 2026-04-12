@@ -158,18 +158,6 @@ class TTSService:
                             pass
 
                 total_text_length = sum(len(inp.source) for inp in request.input)
-                with _standard_spans.persist(suffix="request") as persist_span:
-                    db_request = await self.repository.create_request(
-                        model_id=service_id,
-                        voice_id=gender,
-                        language=language,
-                        text_length=total_text_length,
-                        user_id=user_id,
-                        api_key_id=api_key_id,
-                        session_id=session_id,
-                    )
-                    request_id = db_request.id
-                    persist_span.set_attribute("tts.request_id", str(request_id))
 
                 logger.info(f"Starting TTS inference for {input_count} text inputs")
 
@@ -316,15 +304,47 @@ class TTSService:
                             logger.error(
                                 f"Failed to process text input {input_idx + 1}: {e}"
                             )
-                            await self.repository.update_request_status(
-                                request_id, "failed", error_message=str(e)
-                            )
+                            try:
+                                dr = await self.repository.create_request(
+                                    model_id=service_id,
+                                    voice_id=gender,
+                                    language=language,
+                                    text_length=total_text_length,
+                                    user_id=user_id,
+                                    api_key_id=api_key_id,
+                                    session_id=session_id,
+                                )
+                                await self.repository.update_request_status(
+                                    dr.id, "failed", error_message=str(e)
+                                )
+                            except Exception as db_err:
+                                logger.error(
+                                    "TTS: failed to record failed request in DB: %s",
+                                    db_err,
+                                )
                             raise
 
                 total_audio_duration = None
                 total_audio_size = 0
 
-                with _standard_spans.persist(suffix="results") as persist_span:
+                # Phase 6: single persist — create request, store results, update status
+                with _standard_spans.persist() as persist_span:
+                    db_request = await self.repository.create_request(
+                        model_id=service_id,
+                        voice_id=gender,
+                        language=language,
+                        text_length=total_text_length,
+                        user_id=user_id,
+                        api_key_id=api_key_id,
+                        session_id=session_id,
+                    )
+                    request_id = db_request.id
+                    persist_span.set_attribute("tts.request_id", str(request_id))
+                    persist_span.add_event(
+                        "tts.db.request_created",
+                        {"request_id": str(request_id)},
+                    )
+
                     if response.audio:
                         total_audio_size = sum(
                             len(base64.b64decode(a.audioContent))
@@ -357,7 +377,13 @@ class TTSService:
                     await self.repository.update_request_status(
                         request_id, "completed", processing_time=processing_time
                     )
-                    persist_span.set_attribute("tts.request_id", str(request_id))
+                    persist_span.add_event(
+                        "tts.db.request_completed",
+                        {
+                            "request_id": str(request_id),
+                            "processing_time_seconds": processing_time,
+                        },
+                    )
 
                 total_output_audio_duration = (
                     total_audio_duration if total_audio_duration else 0.0
@@ -436,6 +462,26 @@ class TTSService:
                     except Exception as update_error:
                         logger.error(
                             f"Failed to update request status: {update_error}"
+                        )
+                else:
+                    try:
+                        ttl = sum(len(inp.source) for inp in request.input)
+                        dr = await self.repository.create_request(
+                            model_id=service_id,
+                            voice_id=gender,
+                            language=language,
+                            text_length=ttl,
+                            user_id=user_id,
+                            api_key_id=api_key_id,
+                            session_id=session_id,
+                        )
+                        await self.repository.update_request_status(
+                            dr.id, "failed", error_message=str(e)
+                        )
+                    except Exception as db_err:
+                        logger.error(
+                            "TTS: failed to record failed request in DB: %s",
+                            db_err,
                         )
 
                 if isinstance(e, TritonInferenceError):

@@ -187,20 +187,6 @@ class NMTService:
                     if effective_model and "indictrans" in effective_model.lower():
                         effective_model = "nmt"
 
-                # Persist phase (DB): create request record
-                with _standard_spans.persist(suffix="request") as persist_span:
-                    request_record = await self.repository.create_request(
-                        model_id=service_id,
-                        source_language=original_source_lang,
-                        target_language=original_target_lang,
-                        text_length=total_text_length,
-                        user_id=user_id,
-                        api_key_id=api_key_id,
-                        session_id=session_id,
-                    )
-                    request_id = request_record.id
-                    persist_span.set_attribute("nmt.request_id", str(request_id))
-
                 max_batch_size = 90
                 output_batch: list = []
                 batch_count = (len(input_texts) + max_batch_size - 1) // max_batch_size
@@ -282,8 +268,24 @@ class NMTService:
 
                 nmt_response = NMTInferenceResponse(output=results)
 
-                with _standard_spans.persist(suffix="results") as persist_span:
+                # Phase 6: single persist — create request, store results, update status
+                with _standard_spans.persist() as persist_span:
+                    request_record = await self.repository.create_request(
+                        model_id=service_id,
+                        source_language=original_source_lang,
+                        target_language=original_target_lang,
+                        text_length=total_text_length,
+                        user_id=user_id,
+                        api_key_id=api_key_id,
+                        session_id=session_id,
+                    )
+                    request_id = request_record.id
                     persist_span.set_attribute("nmt.request_id", str(request_id))
+                    persist_span.add_event(
+                        "nmt.db.request_created",
+                        {"request_id": str(request_id)},
+                    )
+
                     stored = await self._persist_translation_results(
                         request_id=request_id,
                         results=results,
@@ -304,6 +306,13 @@ class NMTService:
                         request_id=request_id,
                         status="completed",
                         processing_time=processing_time,
+                    )
+                    persist_span.add_event(
+                        "nmt.db.request_completed",
+                        {
+                            "request_id": str(request_id),
+                            "processing_time_seconds": processing_time,
+                        },
                     )
 
                 # Required parent span attributes that are only known at the end
