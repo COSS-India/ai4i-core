@@ -28,26 +28,7 @@ from app.clients.triton_client import ASRTritonClient
 from ai4icore_exceptions import TritonInferenceError
 from ai4icore_telemetry import StandardSpanManager
 
-# OpenTelemetry for tracing
-try:
-    from opentelemetry import trace
-    from opentelemetry.trace import Status, StatusCode
-    TRACING_AVAILABLE = True
-except ImportError:
-    TRACING_AVAILABLE = False
-    trace = None
-    Status = None
-    StatusCode = None
-
 logger = logging.getLogger(__name__)
-
-# Get tracer for manual span creation
-tracer = None
-if TRACING_AVAILABLE and trace:
-    try:
-        tracer = trace.get_tracer("asr-service")
-    except Exception:
-        tracer = None
 
 _standard_spans = StandardSpanManager("asr")
 
@@ -227,13 +208,6 @@ class ASRService:
                 f"Note: English ('en') is not supported by this Indic language ASR model."
             )
 
-        # Use resolved model name from Model Management (REQUIRED)
-        if not self.resolved_model_name:
-            raise TritonInferenceError(
-                f"Model name not resolved via Model Management for serviceId: {service_id}. "
-                f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
-            )
-        model_name = self.resolved_model_name
         standard_rate = 16000
 
         model_id_for_db = service_id
@@ -244,10 +218,13 @@ class ASRService:
             )
 
         input_count = len(request.audio or [])
+        audio_format_value = (
+            request.config.audioFormat.value if request.config.audioFormat else None
+        )
 
         with _standard_spans.inference(
             service_id=service_id,
-            model_name=model_name,
+            model_name=None,
             input_count=input_count,
             input_type="audio",
             user_id=user_id,
@@ -256,23 +233,11 @@ class ASRService:
             extra_attrs={
                 "asr.language": language,
                 "asr.best_token_count": best_token_count,
+                "asr.sampling_rate": standard_rate,
+                "asr.audio_format": audio_format_value,
             },
         ) as parent_span:
-            with _standard_spans.persist() as persist_span:
-                db_request = await self.repository.create_request(
-                    model_id=model_id_for_db,
-                    language=language,
-                    user_id=user_id,
-                    api_key_id=api_key_id,
-                    session_id=session_id,
-                )
-                persist_span.set_attribute("asr.request_id", str(db_request.id))
-
-            logger.info(
-                "Created ASR request %s for %s audio inputs", db_request.id, input_count
-            )
-
-            # Phase 2: preprocess
+            # Phase 2: preprocess (bytes, decode, resample, VAD / chunking)
             preprocessed: List[Tuple[int, List[np.ndarray], list]] = []
             with _standard_spans.preprocess() as preprocess_span:
                 preprocess_span.set_attribute("asr.input_count", input_count)
@@ -313,6 +278,54 @@ class ASRService:
                             f"Failed to preprocess audio input {audio_idx + 1}: {e}"
                         ) from e
 
+                total_input_audio_seconds = 0.0
+                for _audio_idx, audio_chunks, _speech_timestamps in preprocessed:
+                    total_input_audio_seconds += sum(
+                        len(chunk) / float(standard_rate) for chunk in audio_chunks
+                    )
+                preprocess_span.set_attribute(
+                    "asr.input.audio_duration_seconds", total_input_audio_seconds
+                )
+                if parent_span is not None:
+                    try:
+                        parent_span.set_attribute(
+                            "asr.input.audio_duration_seconds",
+                            total_input_audio_seconds,
+                        )
+                    except Exception:
+                        pass
+
+            # Phase 3: resolve model (from Model Management / dependency injection)
+            model_name: str
+            with _standard_spans.resolve_model() as resolve_span:
+                if not self.resolved_model_name:
+                    raise TritonInferenceError(
+                        f"Model name not resolved via Model Management for serviceId: {service_id}. "
+                        f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+                    )
+                model_name = self.resolved_model_name
+                resolve_span.set_attribute("asr.model_name", model_name)
+                if parent_span is not None:
+                    try:
+                        parent_span.set_attribute("asr.model_name", model_name)
+                    except Exception:
+                        pass
+
+            # Phase 6a: persist — create request record
+            with _standard_spans.persist(suffix="request") as persist_span:
+                db_request = await self.repository.create_request(
+                    model_id=model_id_for_db,
+                    language=language,
+                    user_id=user_id,
+                    api_key_id=api_key_id,
+                    session_id=session_id,
+                )
+                persist_span.set_attribute("asr.request_id", str(db_request.id))
+
+            logger.info(
+                "Created ASR request %s for %s audio inputs", db_request.id, input_count
+            )
+
             # Phase 4: triton inference
             inferred: List[Tuple[int, List[dict], list]] = []
             with _standard_spans.triton_inference() as triton_span:
@@ -342,6 +355,14 @@ class ASRService:
 
                             inputs, outputs = self.triton_client.get_asr_io_for_triton(
                                 batch, service_id, language, best_token_count
+                            )
+                            triton_span.add_event(
+                                "asr.prepare_triton_inputs.completed",
+                                {
+                                    "audio_index": audio_idx,
+                                    "batch_index": batch_index,
+                                    "batch_size": len(batch),
+                                },
                             )
                             triton_response = self.triton_client.send_triton_request(
                                 model_name, inputs, outputs
@@ -405,6 +426,16 @@ class ASRService:
                                         )
                                 except Exception:
                                     continue
+
+                            triton_span.add_event(
+                                "asr.extract_transcripts.completed",
+                                {
+                                    "audio_index": audio_idx,
+                                    "batch_index": batch_index,
+                                    "raw_result_count": len(transcripts_flat),
+                                    "line_count": len(transcript_lines),
+                                },
+                            )
 
                             triton_span.add_event(
                                 "asr.triton.batch.completed",
@@ -478,15 +509,28 @@ class ASRService:
                         {"audio_index": audio_idx, "char_length": len(transcript)},
                     )
 
+                total_out_chars = sum(len(o.source) for o in response.output)
+                total_out_words = sum(count_words(o.source) for o in response.output)
                 post_span.set_attribute("asr.output_count", len(response.output))
+                post_span.set_attribute(
+                    "asr.output.character_length", total_out_chars
+                )
+                post_span.set_attribute("asr.output.word_count", total_out_words)
                 if parent_span is not None:
                     try:
                         parent_span.set_attribute("asr.output_count", len(response.output))
+                        parent_span.set_attribute(
+                            "asr.output.character_length", total_out_chars
+                        )
+                        parent_span.set_attribute(
+                            "asr.output.word_count", total_out_words
+                        )
                     except Exception:
                         pass
 
-            # Phase 6: persist results + update status
-            with _standard_spans.persist() as persist_span:
+            # Phase 6b: persist — store results and finalize request
+            with _standard_spans.persist(suffix="results") as persist_span:
+                persist_span.set_attribute("asr.request_id", str(db_request.id))
                 for audio_idx, transcript, _n_best_tokens_list, processed_transcript_lines in finalized:
                     await self.repository.create_result(
                         request_id=db_request.id,
@@ -510,7 +554,6 @@ class ASRService:
                 await self.repository.update_request_status(
                     db_request.id, "completed", processing_time
                 )
-                persist_span.set_attribute("asr.processing_time_seconds", processing_time)
 
             return response
 
