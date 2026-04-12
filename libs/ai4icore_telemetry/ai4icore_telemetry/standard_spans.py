@@ -82,9 +82,9 @@ class StandardSpanManager:
     - Repo migration status (gradual rollout):
       - Migrated to StandardSpanManager phases: nmt-service, asr-service, tts-service,
         transliteration-service, ocr-service, audio-lang-detection-service,
-        speaker-diarization-service, language-diarization-service.
-      - Not yet migrated (still primarily uses raw tracer spans): ner-service,
-        language-detection-service (and others).
+        speaker-diarization-service, language-diarization-service,
+        language-detection-service, ner-service.
+      - Not yet migrated (still primarily uses raw tracer spans): (others as applicable).
     """
 
     def __init__(self, service_prefix: str, tracer_name: Optional[str] = None):
