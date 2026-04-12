@@ -194,7 +194,13 @@ class StandardSpanManager:
                 yield span
                 return
         with self._tracer.start_as_current_span(self._svc_key("preprocess")) as span:
-            yield span
+            try:
+                yield span
+                span.set_status(Status(StatusCode.OK))
+            except Exception as e:
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+                raise
 
     @contextmanager
     def resolve_model(self) -> Iterator[Any]:
@@ -203,7 +209,13 @@ class StandardSpanManager:
                 yield span
                 return
         with self._tracer.start_as_current_span(self._svc_key("resolve_model")) as span:
-            yield span
+            try:
+                yield span
+                span.set_status(Status(StatusCode.OK))
+            except Exception as e:
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+                raise
 
     @contextmanager
     def triton_inference(self) -> Iterator[Any]:
@@ -212,7 +224,13 @@ class StandardSpanManager:
                 yield span
                 return
         with self._tracer.start_as_current_span(self._svc_key("triton_inference")) as span:
-            yield span
+            try:
+                yield span
+                span.set_status(Status(StatusCode.OK))
+            except Exception as e:
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+                raise
 
     @contextmanager
     def postprocess(self) -> Iterator[Any]:
@@ -221,7 +239,13 @@ class StandardSpanManager:
                 yield span
                 return
         with self._tracer.start_as_current_span(self._svc_key("postprocess")) as span:
-            yield span
+            try:
+                yield span
+                span.set_status(Status(StatusCode.OK))
+            except Exception as e:
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+                raise
 
     @contextmanager
     def persist(self, *, suffix: Optional[str] = None) -> Iterator[Any]:
@@ -237,4 +261,10 @@ class StandardSpanManager:
                 yield span
                 return
         with self._tracer.start_as_current_span(self._svc_key(phase)) as span:
-            yield span
+            try:
+                yield span
+                span.set_status(Status(StatusCode.OK))
+            except Exception as e:
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+                raise
