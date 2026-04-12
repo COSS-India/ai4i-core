@@ -80,10 +80,10 @@ class StandardSpanManager:
     - It does NOT change business logic or enforce how services resolve model/client/db, etc.
     - If OpenTelemetry is not available, all context managers become no-ops.
     - Repo migration status (gradual rollout):
-      - Migrated to StandardSpanManager phases: nmt-service, speaker-diarization-service,
-        language-diarization-service.
+      - Migrated to StandardSpanManager phases: nmt-service, asr-service, tts-service,
+        speaker-diarization-service, language-diarization-service.
       - Not yet migrated (still primarily uses raw tracer spans): asr-service, ocr-service,
-        tts-service, ner-service, language-detection-service, transliteration-service,
+        ner-service, language-detection-service, transliteration-service,
         audio-lang-detection-service (and others).
     """
 
