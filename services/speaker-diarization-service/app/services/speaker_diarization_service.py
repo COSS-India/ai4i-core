@@ -5,11 +5,10 @@ Core business logic for Speaker Diarization inference.
 import base64
 import logging
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import UUID
 
 import requests
-from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from ai4icore_telemetry import StandardSpanManager
@@ -26,7 +25,6 @@ from app.clients.triton_client import SpeakerDiarizationTritonClient
 from ai4icore_exceptions import TritonInferenceError
 
 logger = logging.getLogger(__name__)
-tracer = trace.get_tracer("speaker-diarization-service")
 _standard_spans = StandardSpanManager("speaker-diarization")
 
 
@@ -54,12 +52,7 @@ class SpeakerDiarizationService:
         self.model_name = model_name
 
     def _resolve_audio_base64(self, audio: AudioInput) -> Optional[str]:
-        """
-        Resolve an audio into base64:
-
-        - If audioContent is provided, use it directly
-        - Else, download from audioUri and base64-encode it
-        """
+        """Resolve an audio into base64 (content or download from URI)."""
         if audio.audioContent:
             return audio.audioContent
 
@@ -69,7 +62,9 @@ class SpeakerDiarizationService:
                 resp.raise_for_status()
                 return base64.b64encode(resp.content).decode("utf-8")
             except Exception as exc:
-                logger.error("Failed to download audio from %s: %s", audio.audioUri, exc)
+                logger.error(
+                    "Failed to download audio from %s: %s", audio.audioUri, exc
+                )
                 return None
 
         return None
@@ -93,8 +88,7 @@ class SpeakerDiarizationService:
         """
         Async speaker diarization inference entrypoint.
 
-        Creates database request record, processes inference, logs results, and updates status.
-        OpenTelemetry's tracer.start_as_current_span() is a no-op when tracing isn't configured.
+        Phases: preprocess → resolve_model → triton_inference → postprocess → persist.
         """
         start_time = time.time()
         request_id: Optional[UUID] = None
@@ -102,10 +96,11 @@ class SpeakerDiarizationService:
 
         service_id = request.config.serviceId if request.config else None
         input_count = len(request.audio or [])
+        model_name = self.model_name
 
         with _standard_spans.inference(
             service_id=service_id,
-            model_name=self.model_name,
+            model_name=None,
             input_count=input_count,
             input_type="audio",
             user_id=user_id,
@@ -114,12 +109,19 @@ class SpeakerDiarizationService:
         ) as parent_span:
             try:
                 resolved_audio: List[Optional[str]] = []
-
                 with _standard_spans.preprocess() as preprocess_span:
-                    preprocess_span.set_attribute("speaker-diarization.input_count", input_count)
+                    preprocess_span.set_attribute(
+                        "speaker-diarization.input_count", input_count
+                    )
+                    total_audio_bytes = 0
                     for audio_idx, audio_item in enumerate(request.audio or []):
                         audio_base64 = self._resolve_audio_base64(audio_item)
                         resolved_audio.append(audio_base64)
+                        if audio_base64:
+                            try:
+                                total_audio_bytes += len(base64.b64decode(audio_base64))
+                            except Exception:
+                                pass
                         preprocess_span.add_event(
                             "speaker-diarization.audio.resolved",
                             {
@@ -127,54 +129,60 @@ class SpeakerDiarizationService:
                                 "has_content": bool(audio_item.audioContent),
                                 "has_uri": bool(audio_item.audioUri),
                                 "resolved": bool(audio_base64),
-                                "audio_size_bytes": len(audio_base64) if audio_base64 else 0,
+                                "audio_size_bytes": len(audio_base64)
+                                if audio_base64
+                                else 0,
                             },
                         )
+                    preprocess_span.set_attribute(
+                        "speaker-diarization.input.audio_bytes_total",
+                        total_audio_bytes,
+                    )
+                    if parent_span is not None:
+                        try:
+                            parent_span.set_attribute(
+                                "speaker-diarization.input.audio_bytes_total",
+                                total_audio_bytes,
+                            )
+                        except Exception:
+                            pass
 
-                with _standard_spans.persist() as persist_span:
-                    # Create request record
-                    try:
-                        request_record = await self.repository.create_request(
-                            model_id=service_id,
-                            audio_duration=None,
-                            num_speakers=None,
-                            user_id=user_id,
-                            api_key_id=api_key_id,
-                            session_id=session_id,
-                        )
-                        request_id = request_record.id
-                        persist_span.set_attribute("speaker-diarization.request_id", str(request_id))
-                    except Exception as e:
-                        persist_span.add_event(
-                            "speaker-diarization.db.create_request.failed",
-                            {"error.type": type(e).__name__, "error.message": str(e)},
-                        )
-                        logger.error("Failed to create request record: %s", e)
+                with _standard_spans.resolve_model() as resolve_span:
+                    resolve_span.set_attribute(
+                        "speaker-diarization.model_name", model_name
+                    )
+                    if parent_span is not None:
+                        try:
+                            parent_span.set_attribute(
+                                "speaker-diarization.model_name", model_name
+                            )
+                        except Exception:
+                            pass
 
-                output_list: List[SpeakerDiarizationOutput] = []
+                diarization_raw: List[Optional[Dict]] = [None] * len(resolved_audio)
 
                 with _standard_spans.triton_inference() as triton_span:
-                    triton_span.set_attribute("speaker-diarization.batch_size", input_count)
+                    triton_span.set_attribute(
+                        "speaker-diarization.batch_size", input_count
+                    )
                     for audio_idx, audio_base64 in enumerate(resolved_audio):
                         if not audio_base64:
-                            output_list.append(self._empty_output())
                             continue
 
                         triton_span.add_event(
                             "speaker-diarization.audio.inference.started",
                             {"audio_index": audio_idx},
                         )
-
-                        # num_speakers will be auto-detected by the model if not provided
                         num_speakers = None
-
                         try:
-                            diarization_data = self.triton_client.run_speaker_diarization_inference(
-                                audio_base64, num_speakers, model_name=self.model_name
+                            diarization_data = (
+                                self.triton_client.run_speaker_diarization_inference(
+                                    audio_base64,
+                                    num_speakers,
+                                    model_name=model_name,
+                                )
                             )
-
                             if not diarization_data:
-                                output_list.append(self._empty_output())
                                 triton_span.add_event(
                                     "speaker-diarization.audio.inference.empty_result",
                                     {"audio_index": audio_idx},
@@ -182,41 +190,13 @@ class SpeakerDiarizationService:
                                 continue
 
                             raw_segments = diarization_data.get("segments", [])
+                            diarization_raw[audio_idx] = diarization_data
                             triton_span.add_event(
                                 "speaker-diarization.audio.inference.completed",
-                                {"audio_index": audio_idx, "segment_count": len(raw_segments)},
-                            )
-
-                            segments_list: List[Segment] = []
-                            speakers_set = set()
-
-                            for seg in raw_segments:
-                                speaker = seg.get("speaker", "")
-                                seg_start = float(seg.get("start_time", 0.0))
-                                seg_end = float(seg.get("end_time", 0.0))
-                                duration = seg_end - seg_start
-
-                                if speaker:
-                                    speakers_set.add(speaker)
-
-                                segments_list.append(
-                                    Segment(
-                                        start_time=seg_start,
-                                        end_time=seg_end,
-                                        duration=duration,
-                                        speaker=speaker,
-                                    )
-                                )
-
-                            segments_list.sort(key=lambda x: x.start_time)
-
-                            output_list.append(
-                                SpeakerDiarizationOutput(
-                                    total_segments=len(segments_list),
-                                    num_speakers=len(speakers_set),
-                                    speakers=sorted(list(speakers_set)),
-                                    segments=segments_list,
-                                )
+                                {
+                                    "audio_index": audio_idx,
+                                    "segment_count": len(raw_segments),
+                                },
                             )
                         except TritonInferenceError as exc:
                             has_errors = True
@@ -230,8 +210,9 @@ class SpeakerDiarizationService:
                             )
                             triton_span.set_status(Status(StatusCode.ERROR, str(exc)))
                             triton_span.record_exception(exc)
-                            logger.error("Speaker Diarization Triton inference failed: %s", exc)
-                            output_list.append(self._empty_output())
+                            logger.error(
+                                "Speaker Diarization Triton inference failed: %s", exc
+                            )
                         except Exception as exc:
                             has_errors = True
                             triton_span.add_event(
@@ -249,15 +230,89 @@ class SpeakerDiarizationService:
                                 exc,
                                 exc_info=True,
                             )
-                            output_list.append(self._empty_output())
 
+                output_list: List[SpeakerDiarizationOutput] = []
                 with _standard_spans.postprocess() as post_span:
-                    post_span.set_attribute("speaker-diarization.output_count", len(output_list))
-                    post_span.set_attribute("speaker-diarization.has_errors", has_errors)
+                    for audio_idx in range(len(resolved_audio)):
+                        if not resolved_audio[audio_idx]:
+                            output_list.append(self._empty_output())
+                            continue
 
-                # Persist results + update status in one persist phase (Phase 6).
-                # Per-item try/continue: one failed create_result must not skip the rest (same single span; events for detail).
+                        diarization_data = diarization_raw[audio_idx]
+                        if not diarization_data:
+                            output_list.append(self._empty_output())
+                            continue
+
+                        raw_segments = diarization_data.get("segments", [])
+                        segments_list: List[Segment] = []
+                        speakers_set = set()
+
+                        for seg in raw_segments:
+                            speaker = seg.get("speaker", "")
+                            seg_start = float(seg.get("start_time", 0.0))
+                            seg_end = float(seg.get("end_time", 0.0))
+                            duration = seg_end - seg_start
+
+                            if speaker:
+                                speakers_set.add(speaker)
+
+                            segments_list.append(
+                                Segment(
+                                    start_time=seg_start,
+                                    end_time=seg_end,
+                                    duration=duration,
+                                    speaker=speaker,
+                                )
+                            )
+
+                        segments_list.sort(key=lambda x: x.start_time)
+
+                        output_list.append(
+                            SpeakerDiarizationOutput(
+                                total_segments=len(segments_list),
+                                num_speakers=len(speakers_set),
+                                speakers=sorted(list(speakers_set)),
+                                segments=segments_list,
+                            )
+                        )
+
+                    post_span.set_attribute(
+                        "speaker-diarization.output_count", len(output_list)
+                    )
+                    post_span.set_attribute(
+                        "speaker-diarization.has_errors", has_errors
+                    )
+
+                processing_time = time.time() - start_time
+
                 with _standard_spans.persist() as persist_span:
+                    try:
+                        request_record = await self.repository.create_request(
+                            model_id=service_id,
+                            audio_duration=None,
+                            num_speakers=None,
+                            user_id=user_id,
+                            api_key_id=api_key_id,
+                            session_id=session_id,
+                        )
+                        request_id = request_record.id
+                        persist_span.set_attribute(
+                            "speaker-diarization.request_id", str(request_id)
+                        )
+                        persist_span.add_event(
+                            "speaker-diarization.db.request_created",
+                            {"request_id": str(request_id)},
+                        )
+                    except Exception as e:
+                        persist_span.add_event(
+                            "speaker-diarization.db.create_request.failed",
+                            {
+                                "error.type": type(e).__name__,
+                                "error.message": str(e),
+                            },
+                        )
+                        logger.error("Failed to create request record: %s", e)
+
                     if request_id:
                         db_results_saved = 0
                         for audio_idx, out in enumerate(output_list):
@@ -279,6 +334,10 @@ class SpeakerDiarizationService:
                                     segments=segments_dict,
                                 )
                                 db_results_saved += 1
+                                persist_span.add_event(
+                                    "speaker-diarization.db.result.created",
+                                    {"audio_index": audio_idx},
+                                )
                             except Exception as e:
                                 has_errors = True
                                 persist_span.add_event(
@@ -295,31 +354,39 @@ class SpeakerDiarizationService:
                                     e,
                                 )
                         persist_span.set_attribute(
-                            "speaker-diarization.db_results_created", db_results_saved
+                            "speaker-diarization.db_results_created",
+                            db_results_saved,
                         )
                         persist_span.set_attribute(
-                            "speaker-diarization.db_results_expected", len(output_list)
+                            "speaker-diarization.db_results_expected",
+                            len(output_list),
                         )
 
                         try:
-                            processing_time = time.time() - start_time
                             status_str = "failed" if has_errors else "completed"
                             await self.repository.update_request_status(
                                 request_id=request_id,
                                 status=status_str,
                                 processing_time=processing_time,
                             )
-                            persist_span.set_attribute(
-                                "speaker-diarization.request_status", status_str
+                            persist_span.add_event(
+                                "speaker-diarization.db.request_completed",
+                                {
+                                    "request_id": str(request_id),
+                                    "status": status_str,
+                                    "processing_time_seconds": processing_time,
+                                },
                             )
                         except Exception as e:
                             persist_span.add_event(
                                 "speaker-diarization.db.update_status.failed",
-                                {"error.type": type(e).__name__, "error.message": str(e)},
+                                {
+                                    "error.type": type(e).__name__,
+                                    "error.message": str(e),
+                                },
                             )
                             logger.error("Failed to update request status: %s", e)
 
-                # Create response config
                 response_config = None
                 if request.config and request.config.serviceId:
                     response_config = SpeakerDiarizationResponseConfig(
@@ -327,10 +394,11 @@ class SpeakerDiarizationService:
                         language=None,
                     )
 
-                # Required parent span attribute (output_count) may be known only here
                 if parent_span is not None:
                     try:
-                        parent_span.set_attribute("speaker-diarization.output_count", len(output_list))
+                        parent_span.set_attribute(
+                            "speaker-diarization.output_count", len(output_list)
+                        )
                     except Exception:
                         pass
 
@@ -340,10 +408,6 @@ class SpeakerDiarizationService:
                     config=response_config,
                 )
             except Exception as e:
-                if parent_span is not None:
-                    parent_span.set_status(Status(StatusCode.ERROR, str(e)))
-                    parent_span.record_exception(e)
-
                 logger.error("Speaker diarization inference failed: %s", e)
 
                 if request_id:
@@ -354,6 +418,24 @@ class SpeakerDiarizationService:
                     except Exception as update_error:
                         logger.error(
                             "Failed to update request status: %s", update_error
+                        )
+                else:
+                    try:
+                        dr = await self.repository.create_request(
+                            model_id=service_id,
+                            audio_duration=None,
+                            num_speakers=None,
+                            user_id=user_id,
+                            api_key_id=api_key_id,
+                            session_id=session_id,
+                        )
+                        await self.repository.update_request_status(
+                            dr.id, "failed", error_message=str(e)
+                        )
+                    except Exception as db_err:
+                        logger.error(
+                            "speaker-diarization: failed to record failed request: %s",
+                            db_err,
                         )
 
                 raise
