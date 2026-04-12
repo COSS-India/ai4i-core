@@ -382,17 +382,32 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
   }
   // Main service operations (OCR, NMT, etc.) - check for POST /api/v1/ocr/inference or ocr.inference
   else if (opName.includes("/api/v1/ocr/inference") || opName.includes("/api/v1/nmt/inference") ||
-           opName === "ocr.inference" || opName === "nmt.inference" || 
+           opName.includes("/api/v1/transliteration/inference") ||
+           opName === "ocr.inference" || opName === "nmt.inference" ||
+           opName === "transliteration.inference" ||
+           opName === "audio-lang-detection.inference" ||
+           opName === "speaker-diarization.inference" ||
+           opName === "language-diarization.inference" ||
            (opName.includes("post") && opName.includes("inference") && !serviceName.includes("gateway"))) {
     category = "processing";
     isImportant = true;
     isTopLevel = true;
     icon = FiCpu;
-    const serviceId = getTag("ocr.service_id") || getTag("nmt.service_id") || getTag("service_id");
+    const serviceId = getTag("ocr.service_id") || getTag("nmt.service_id") ||
+           getTag("transliteration.service_id") ||
+           getTag("speaker-diarization.service_id") ||
+           getTag("language-diarization.service_id") ||
+           getTag("service_id");
     const imageCount = getTag("ocr.image_count");
-    const outputCount = getTag("ocr.output_count") || getTag("nmt.output_count");
-    const sourceLang = getTag("ocr.source_language") || getTag("nmt.source_language");
-    const targetLang = getTag("nmt.target_language");
+    const outputCount = getTag("ocr.output_count") || getTag("nmt.output_count") ||
+           getTag("transliteration.output_count") ||
+           getTag("audio-lang-detection.output_count") ||
+           getTag("speaker-diarization.output_count") ||
+           getTag("language-diarization.output_count");
+    const sourceLang = getTag("ocr.source_language") || getTag("nmt.source_language") ||
+           getTag("transliteration.source_language");
+    const targetLang = getTag("nmt.target_language") ||
+           getTag("transliteration.target_language");
     // Phase 1 is the proposed {svc}.inference span — display the span name verbatim (e.g., nmt.inference)
     displayName = span.operationName;
     let descParts = ["Processes the request"];
@@ -2331,6 +2346,10 @@ const TracesPage: React.FC = () => {
                                        tagKey.startsWith('http.request') ||
                                        tagKey.startsWith('nmt.') ||
                                        tagKey.startsWith('ocr.') ||
+                                       tagKey.startsWith('transliteration.') ||
+                                       tagKey.startsWith('audio-lang-detection.') ||
+                                       tagKey.startsWith('speaker-diarization.') ||
+                                       tagKey.startsWith('language-diarization.') ||
                                        tagKey.startsWith('tts.') ||
                                        tagKey.startsWith('asr.') ||
                                        tagKey.startsWith('triton.') ||
@@ -2495,7 +2514,7 @@ const TracesPage: React.FC = () => {
                                 // High priority: client IP (important for request tracking)
                                 if (key === "client.ip" || key === "http.client_ip") return 1.5;
                                 // High priority: service-specific tags (including triton tags for AI Model Inference)
-                                if (key.startsWith("nmt.") || key.startsWith("ocr.") || key.startsWith("tts.") || key.startsWith("asr.") || key.startsWith("triton.")) return 2;
+                                if (key.startsWith("nmt.") || key.startsWith("ocr.") || key.startsWith("transliteration.") || key.startsWith("audio-lang-detection.") || key.startsWith("speaker-diarization.") || key.startsWith("language-diarization.") || key.startsWith("tts.") || key.startsWith("asr.") || key.startsWith("triton.")) return 2;
                                 if (key === "http.status_code" || key === "otel.status_code") return 3;
                                 if (key === "organization") return 4;
                                 if (key === "correlation.id") return 5;
