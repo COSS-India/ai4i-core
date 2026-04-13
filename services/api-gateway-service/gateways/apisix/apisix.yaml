@@ -1812,8 +1812,9 @@
       allow_credential: true
     proxy-rewrite:
       headers:
-        X-Try-It: 'true'
-        X-Gateway: apisix
+        set:
+          X-Try-It: 'true'
+          X-Gateway: apisix
     limit-count:
       count: 5
       key: http_x_try_it_ratelimit_key
