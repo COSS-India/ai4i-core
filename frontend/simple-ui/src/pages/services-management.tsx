@@ -38,7 +38,7 @@ import {
 } from "@chakra-ui/react";
 import Head from "next/head";
 import { SearchIcon, ViewIcon, DeleteIcon } from "@chakra-ui/icons";
-import { FaUpload } from "react-icons/fa";
+import { FaUpload, FaDownload } from "react-icons/fa";
 import { useRouter } from "next/router";
 import { useQueryClient } from "@tanstack/react-query";
 import React, { useState, useEffect, useRef, useMemo } from "react";
@@ -1101,7 +1101,7 @@ const ServicesManagementPage: React.FC = () => {
                                           <Tooltip label="Unpublish" placement="top" hasArrow>
                                             <IconButton
                                               aria-label="Unpublish"
-                                              icon={<FaUpload />}
+                                              icon={<FaDownload />}
                                               size="sm"
                                               variant="ghost"
                                               colorScheme="red"
@@ -1396,7 +1396,7 @@ const ServicesManagementPage: React.FC = () => {
                                       <Tooltip label="Unpublish" placement="top" hasArrow>
                                         <IconButton
                                           aria-label="Unpublish"
-                                          icon={<FaUpload />}
+                                          icon={<FaDownload />}
                                           size="sm"
                                           colorScheme="red"
                                           variant="outline"

@@ -86,6 +86,10 @@ export const apiEndpoints = {
     redact: '/api/v1/pii/redact',
     domains: '/api/v1/pii/domains',
   },
+  policy: {
+    /** Gateway prefix; service mounts routes at /v1 (see policy-service main.py). */
+    base: '/api/v1/policy-service',
+ },
 } as const;
 
 // Create Axios instance with standard timeout
@@ -274,6 +278,9 @@ apiClient.interceptors.request.use(
     const isObservabilityEndpoint = url.includes('/api/v1/telemetry');
     const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
     const isFeatureFlagsEndpoint = url.includes('/api/v1/feature-flags');
+    const isPolicyServiceEndpoint = url.includes('/api/v1/policy-service');
+    const pathNoQuery = (url.split('?')[0] || '').toLowerCase();
+    const isPolicyServiceHealthPath = pathNoQuery.endsWith('/api/v1/policy-service/health');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
     
@@ -285,7 +292,8 @@ apiClient.interceptors.request.use(
                         isNEREndpoint || isOCREndpoint || isTransliterationEndpoint ||
                         isObservabilityEndpoint ||
                         isMultiTenantEndpoint ||
-                        isFeatureFlagsEndpoint;
+                        isFeatureFlagsEndpoint ||
+                        (isPolicyServiceEndpoint && !isPolicyServiceHealthPath);
     
     // Proactively refresh token if it's expiring soon (skip for refresh and login endpoints)
     if ((requiresJWT || (isAuthEndpoint && !isAuthRefreshEndpoint)) && !isAuthRefreshEndpoint) {
@@ -364,6 +372,7 @@ apiClient.interceptors.response.use(
                                      url.includes('/api/v1/language-diarization') ||
                                      url.includes('/api/v1/audio-lang-detection') ||
                                      url.includes('/api/v1/telemetry') ||
+                                     url.includes('/api/v1/policy-service') ||
                                      isModelManagementEndpoint ||
                                      isMultiTenantEndpoint;
             

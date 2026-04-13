@@ -9,6 +9,9 @@ import { useTokenRefresh } from './useTokenRefresh';
 // Broadcast auth state changes so other hook instances (e.g., Header) can react immediately
 const AUTH_UPDATED_EVENT = 'auth:updated';
 
+/** Written when the app ends the session locally so other tabs on the same origin clear auth too */
+const AUTH_SESSION_REVOKED_STORAGE_KEY = 'ai4i:auth:session-revoked';
+
 // Shared init promise: only one getCurrentUser() + listApiKeys() run for all useAuth() instances.
 // This prevents N components (Header, Sidebar, AuthGuard, pages, useFeatureFlag hooks) from each
 // calling auth/me and listApiKeys on every load.
@@ -43,6 +46,24 @@ function runAuthInitOnce(): Promise<void> {
 // Reset shared init so that after logout a future load can run init again (e.g. new login).
 export function resetAuthInitPromise(): void {
   authInitPromise = null;
+}
+
+/**
+ * End the session in this browser only: clear tokens and stored user, do not call the auth logout API.
+ * Other tabs receive a storage event and sign out as well.
+ */
+export function forceFrontendSessionEnd(): void {
+  if (typeof window === 'undefined') return;
+  authService.clearAuthTokens();
+  authService.clearStoredUser();
+  resetAuthInitPromise();
+  window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
+  try {
+    localStorage.setItem(AUTH_SESSION_REVOKED_STORAGE_KEY, String(Date.now()));
+  } catch {
+    // private mode / blocked storage — still redirect below
+  }
+  window.location.assign('/auth');
 }
 
 export const useAuth = () => {
@@ -112,10 +133,34 @@ export const useAuth = () => {
       }
     };
 
+    const handleSessionRevokedFromStorage = (event: StorageEvent) => {
+      if (event.key !== AUTH_SESSION_REVOKED_STORAGE_KEY || event.newValue == null) return;
+      authService.clearAuthTokens();
+      authService.clearStoredUser();
+      resetAuthInitPromise();
+      setAuthState({
+        user: null,
+        accessToken: null,
+        refreshToken: null,
+        isAuthenticated: false,
+        isLoading: false,
+        error: null,
+      });
+      window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
+      const path = window.location?.pathname ?? '';
+      if (!path.startsWith('/auth')) {
+        window.location.assign('/auth');
+      }
+    };
+
     initializeAuth();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', handleSessionRevokedFromStorage);
+    }
     return () => {
       if (typeof window !== 'undefined') {
         window.removeEventListener(AUTH_UPDATED_EVENT, handleAuthUpdated as EventListener);
+        window.removeEventListener('storage', handleSessionRevokedFromStorage);
       }
     };
   }, []);
