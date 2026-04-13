@@ -196,6 +196,17 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PolicyDetailOut" }
+    delete:
+      tags: [Policy Service]
+      summary: Delete policy
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: policy_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Deleted }
 
   /api/v1/policy-service/policies/{policy_id}/status:
     patch:
