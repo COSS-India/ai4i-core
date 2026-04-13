@@ -90,7 +90,7 @@ class OCRService:
 
         with _standard_spans.inference(
             service_id=service_id,
-            model_name=None,
+            model_name=model_name,
             input_count=input_count,
             input_type="image",
             user_id=user_id,
@@ -101,17 +101,22 @@ class OCRService:
             try:
                 images_b64: List[str] = []
                 with _standard_spans.preprocess() as preprocess_span:
+                    preprocess_span.set_attribute("ocr.preprocess.modality", "image")
+                    preprocess_span.set_attribute(
+                        "ocr.preprocess.operations",
+                        "resolve_image_base64(download_if_uri),approx_image_bytes_from_b64",
+                    )
                     resolved_count = 0
                     total_image_bytes = 0
                     for img_idx, img in enumerate(request.image):
                         if img.imageContent:
                             preprocess_span.add_event(
-                                "ocr.image.resolve",
+                                "ocr.preprocess.image.resolve",
                                 {"image_index": img_idx, "source": "content"},
                             )
                         elif img.imageUri:
                             preprocess_span.add_event(
-                                "ocr.image.resolve",
+                                "ocr.preprocess.image.resolve",
                                 {
                                     "image_index": img_idx,
                                     "source": "uri",
@@ -120,7 +125,7 @@ class OCRService:
                             )
                         else:
                             preprocess_span.add_event(
-                                "ocr.image.resolve",
+                                "ocr.preprocess.image.resolve",
                                 {"image_index": img_idx, "source": "none"},
                             )
 
@@ -130,18 +135,33 @@ class OCRService:
                         else:
                             images_b64.append(resolved)
                             resolved_count += 1
-                            total_image_bytes += self._approx_image_bytes_from_b64(resolved)
+                            total_image_bytes += self._approx_image_bytes_from_b64(
+                                resolved
+                            )
 
-                    preprocess_span.set_attribute("ocr.input_count", input_count)
-                    preprocess_span.set_attribute("ocr.resolved_count", resolved_count)
                     preprocess_span.set_attribute(
-                        "ocr.failed_count", input_count - resolved_count
+                        "ocr.preprocess.image_count", input_count
                     )
                     preprocess_span.set_attribute(
-                        "ocr.input.total_image_bytes", total_image_bytes
+                        "ocr.preprocess.resolved_count", resolved_count
                     )
                     preprocess_span.set_attribute(
-                        "ocr.input.image_count", input_count
+                        "ocr.preprocess.failed_count", input_count - resolved_count
+                    )
+                    preprocess_span.set_attribute(
+                        "ocr.preprocess.total_image_bytes", total_image_bytes
+                    )
+                    preprocess_span.set_attribute(
+                        "ocr.preprocess.completed_count", len(images_b64)
+                    )
+                    preprocess_span.add_event(
+                        "ocr.preprocess.completed",
+                        {
+                            "image_count": input_count,
+                            "resolved_count": resolved_count,
+                            "failed_count": input_count - resolved_count,
+                            "total_image_bytes": total_image_bytes,
+                        },
                     )
                     if parent_span is not None:
                         try:
@@ -155,7 +175,24 @@ class OCRService:
                             pass
 
                 with _standard_spans.resolve_model() as resolve_span:
-                    resolve_span.set_attribute("ocr.model_name", model_name)
+                    resolve_span.set_attribute(
+                        "ocr.resolve_model.resolution_source",
+                        "configured_on_service",
+                    )
+                    resolve_span.set_attribute(
+                        "ocr.resolve_model.model_name", model_name
+                    )
+                    try:
+                        resolve_span.set_attribute(
+                            "ocr.resolve_model.triton_endpoint",
+                            getattr(self.triton_client, "triton_url", None),
+                        )
+                    except Exception:
+                        pass
+                    resolve_span.add_event(
+                        "ocr.resolve_model.completed",
+                        {"model_name": model_name},
+                    )
                     if parent_span is not None:
                         try:
                             parent_span.set_attribute("ocr.model_name", model_name)
@@ -170,27 +207,33 @@ class OCRService:
                     try:
                         with _standard_spans.triton_inference() as triton_span:
                             triton_span.set_attribute(
-                                "ocr.batch_size", len(non_empty_images)
+                                "ocr.triton_inference.task", "ocr"
+                            )
+                            triton_span.set_attribute(
+                                "ocr.triton_inference.model_name", model_name
+                            )
+                            triton_span.set_attribute(
+                                "ocr.triton_inference.batch_size", len(non_empty_images)
                             )
                             triton_span.add_event(
-                                "ocr.prepare_triton_inputs.completed",
+                                "ocr.triton_inference.prepare_io.completed",
                                 {"batch_size": len(non_empty_images)},
                             )
                             ocr_results = self.triton_client.run_ocr_batch(
                                 non_empty_images
                             )
                             triton_span.set_attribute(
-                                "ocr.results_count", len(ocr_results)
+                                "ocr.triton_inference.results_count", len(ocr_results)
                             )
                             triton_span.add_event(
-                                "ocr.extract_results.completed",
+                                "ocr.triton_inference.extract_outputs.completed",
                                 {"result_count": len(ocr_results)},
                             )
                     except TritonInferenceError as exc:
                         if parent_span is not None:
                             try:
                                 parent_span.add_event(
-                                    "ocr.triton_failed",
+                                    "ocr.triton_inference.failed",
                                     {
                                         "error.type": type(exc).__name__,
                                         "error.message": str(exc),
@@ -204,6 +247,10 @@ class OCRService:
                             for _ in request.image
                         ]
                         with _standard_spans.persist() as persist_span:
+                            persist_span.set_attribute(
+                                "ocr.db.operations",
+                                "ocr_requests.insert,ocr_requests.status_update",
+                            )
                             db_request = await self.repository.create_request(
                                 model_id=service_id,
                                 language=language,
@@ -214,12 +261,28 @@ class OCRService:
                             )
                             request_id = db_request.id
                             persist_span.set_attribute(
-                                "ocr.request_id", str(request_id)
+                                "ocr.db.ocr_request.id", str(request_id)
+                            )
+                            persist_span.set_attribute("ocr.request_id", str(request_id))
+                            persist_span.add_event(
+                                "ocr.db.ocr_request.insert",
+                                {
+                                    "table": "ocr_requests",
+                                    "request_id": str(request_id),
+                                    "model_id": service_id,
+                                    "language": language,
+                                    "image_count": len(request.image),
+                                    "initial_status": "processing",
+                                },
                             )
                             await self.repository.update_request_status(
                                 db_request.id,
                                 "failed",
                                 error_message=str(exc),
+                            )
+                            persist_span.add_event(
+                                "ocr.db.ocr_request.status_update",
+                                {"request_id": str(request_id), "status": "failed"},
                             )
                         if parent_span is not None:
                             try:
@@ -255,7 +318,18 @@ class OCRService:
                         if full_text:
                             successful_outputs += 1
                     build_span.set_attribute(
-                        "ocr.successful_outputs", successful_outputs
+                        "ocr.postprocess.successful_outputs", successful_outputs
+                    )
+                    build_span.set_attribute(
+                        "ocr.postprocess.output_character_length",
+                        sum(len(o.source or "") for o in outputs),
+                    )
+                    build_span.add_event(
+                        "ocr.postprocess.completed",
+                        {
+                            "output_count": len(outputs),
+                            "successful_outputs": successful_outputs,
+                        },
                     )
                     if parent_span is not None:
                         try:
@@ -266,6 +340,10 @@ class OCRService:
                             pass
 
                 with _standard_spans.persist() as persist_span:
+                    persist_span.set_attribute(
+                        "ocr.db.operations",
+                        "ocr_requests.insert,ocr_results.insert_per_output,ocr_requests.status_update",
+                    )
                     db_request = await self.repository.create_request(
                         model_id=service_id,
                         language=language,
@@ -275,12 +353,14 @@ class OCRService:
                         session_id=session_id,
                     )
                     request_id = db_request.id
+                    persist_span.set_attribute("ocr.db.ocr_request.id", str(request_id))
                     persist_span.set_attribute("ocr.request_id", str(request_id))
                     persist_span.add_event(
-                        "ocr.db.request_created",
-                        {"request_id": str(request_id)},
+                        "ocr.db.ocr_request.insert",
+                        {"table": "ocr_requests", "request_id": str(request_id)},
                     )
 
+                    inserted_results = 0
                     for output in outputs:
                         if output.source:
                             await self.repository.create_result(
@@ -288,19 +368,27 @@ class OCRService:
                                 extracted_text=output.source,
                                 page_count=1,
                             )
+                            inserted_results += 1
                             persist_span.add_event(
-                                "ocr.db.result.created",
-                                {"request_id": str(request_id)},
+                                "ocr.db.ocr_result.insert",
+                                {
+                                    "table": "ocr_results",
+                                    "request_id": str(request_id),
+                                },
                             )
+                    persist_span.set_attribute(
+                        "ocr.db.ocr_result.inserted_count", inserted_results
+                    )
 
                     processing_time = time.time() - start_time
                     await self.repository.update_request_status(
                         db_request.id, "completed", processing_time
                     )
                     persist_span.add_event(
-                        "ocr.db.request_completed",
+                        "ocr.db.ocr_request.status_update",
                         {
                             "request_id": str(request_id),
+                            "status": "completed",
                             "processing_time_seconds": processing_time,
                         },
                     )
