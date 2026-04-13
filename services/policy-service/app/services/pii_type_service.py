@@ -81,10 +81,18 @@ class PiiTypeService:
 
     async def delete(self, pii_type_id: UUID) -> None:
         obj = await self.get(pii_type_id)
-        if await self.repo.has_active_policy_links(pii_type_id):
+        active_links, inactive_links = await self.repo.get_policy_link_counts(pii_type_id)
+        if active_links > 0 or inactive_links > 0:
             raise HTTPException(
                 status_code=409,
-                detail={"code": "CONFLICT", "message": "PII type is linked to active policies. Unlink first."},
+                detail={
+                    "code": "CONFLICT",
+                    "message": (
+                        "PII type is linked to policies. "
+                        f"Active links: {active_links}, inactive links: {inactive_links}. "
+                        "Unlink first."
+                    ),
+                },
             )
         await self.repo.delete(obj)
 
