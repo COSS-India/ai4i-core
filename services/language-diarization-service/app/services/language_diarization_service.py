@@ -9,9 +9,7 @@ from typing import Dict, List, Optional
 from uuid import UUID
 
 import requests
-from opentelemetry.trace import Status, StatusCode
-
-from ai4icore_telemetry import StandardSpanManager
+from ai4icore_telemetry import StandardSpanManager, Status, StatusCode
 from app.schemas.inference import (
     AudioInput,
     LanguageDiarizationInferenceRequest,
@@ -382,6 +380,11 @@ class LanguageDiarizationService:
                                 },
                             )
                             logger.error("Failed to update request status: %s", e)
+
+            if has_errors:
+                _standard_spans.note_partial_inference_failure(
+                    "One or more audio inputs failed during Triton inference or DB result persistence"
+                )
 
             if parent_span is not None:
                 try:

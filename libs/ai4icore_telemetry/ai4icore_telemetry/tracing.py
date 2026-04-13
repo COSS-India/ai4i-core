@@ -296,6 +296,23 @@ if TRACING_AVAILABLE:
             """Force flush the base exporter."""
             return self.base_exporter.force_flush(timeout_millis)
 
+else:
+    class FilteringSpanExporter:  # type: ignore[no-redef]
+        """No-op exporter when OpenTelemetry SDK components failed to import."""
+
+        def __init__(self, base_exporter=None, service_name: Optional[str] = None):
+            self.base_exporter = base_exporter
+            self.service_name = service_name
+
+        def export(self, spans):  # noqa: ANN001
+            return True
+
+        def shutdown(self):
+            return None
+
+        def force_flush(self, timeout_millis: int = 30000):
+            return True
+
 
 def get_tracer(service_name: str) -> Optional[object]:
     """

@@ -9,9 +9,7 @@ from typing import Dict, List, Optional
 from uuid import UUID
 
 import requests
-from opentelemetry.trace import Status, StatusCode
-
-from ai4icore_telemetry import StandardSpanManager
+from ai4icore_telemetry import StandardSpanManager, Status, StatusCode
 from app.schemas.inference import (
     AudioInput,
     Segment,

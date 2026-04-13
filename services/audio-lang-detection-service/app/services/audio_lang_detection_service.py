@@ -9,9 +9,7 @@ from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
 import requests
-from opentelemetry.trace import Status, StatusCode
-
-from ai4icore_telemetry import StandardSpanManager
+from ai4icore_telemetry import StandardSpanManager, Status, StatusCode
 from app.schemas.inference import (
     AudioInput,
     AudioLangDetectionInferenceRequest,
@@ -220,6 +218,11 @@ class AudioLangDetectionService:
                         )
                         triton_span.set_status(Status(StatusCode.ERROR, str(exc)))
                         triton_span.record_exception(exc)
+
+            if has_errors:
+                _standard_spans.note_partial_inference_failure(
+                    "One or more audio inputs failed during Triton inference"
+                )
 
             inferred_rows: List[Tuple[int, str, float, dict]] = []
             output_list: List[AudioLangDetectionOutput] = []

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, Optional
 
@@ -28,10 +29,26 @@ try:
     _TRACING_AVAILABLE = True
 except Exception:  # pragma: no cover
     trace = None  # type: ignore
-    Status = None  # type: ignore
-    StatusCode = None  # type: ignore
+
+    class _StubStatus:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    class _StubStatusCode:
+        UNSET = 0
+        OK = 1
+        ERROR = 2
+
+    Status = _StubStatus  # type: ignore[misc, assignment]
+    StatusCode = _StubStatusCode  # type: ignore[misc, assignment]
     Span = None  # type: ignore
     _TRACING_AVAILABLE = False
+
+
+# Set by StandardSpanManager.note_partial_inference_failure() before the inference block exits.
+_inference_partial_message: ContextVar[Optional[str]] = ContextVar(
+    "ai4i_inference_partial_message", default=None
+)
 
 
 class _NoOpSpan:
@@ -139,6 +156,14 @@ class StandardSpanManager:
         span.set_attribute(self._svc_key("processing_time_seconds"), processing_time_seconds)
         span.set_attribute(self._svc_key("status"), status)
 
+    def note_partial_inference_failure(self, message: str) -> None:
+        """
+        Call while inside ``with manager.inference(...)`` when some sub-steps failed but the
+        handler returns a normal response (no exception). The parent inference span will end
+        with ERROR status instead of OK so traces match partial-failure semantics.
+        """
+        _inference_partial_message.set(message)
+
     @contextmanager
     def inference(
         self,
@@ -161,7 +186,10 @@ class StandardSpanManager:
         """
         if not self._tracer:
             with _noop_span_context() as span:
-                yield span
+                try:
+                    yield span
+                finally:
+                    _inference_partial_message.set(None)
                 return
 
         ctx = _InferenceContext(start_time=time.time())
@@ -179,9 +207,17 @@ class StandardSpanManager:
             )
             try:
                 yield span
-                self._finalize_inference_span(span, ctx, "success")
-                span.set_status(Status(StatusCode.OK))
+                partial_msg = _inference_partial_message.get()
+                _inference_partial_message.set(None)
+                if partial_msg:
+                    span.set_attribute(self._svc_key("has_partial_errors"), True)
+                    self._finalize_inference_span(span, ctx, "partial_error")
+                    span.set_status(Status(StatusCode.ERROR, partial_msg))
+                else:
+                    self._finalize_inference_span(span, ctx, "success")
+                    span.set_status(Status(StatusCode.OK))
             except Exception as e:
+                _inference_partial_message.set(None)
                 self._finalize_inference_span(span, ctx, "error")
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.record_exception(e)

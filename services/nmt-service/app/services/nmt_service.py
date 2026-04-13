@@ -12,9 +12,6 @@ from uuid import UUID
 
 import httpx
 import numpy as np
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
-
 from app.schemas.inference import NMTInferenceRequest, NMTInferenceResponse, TranslationOutput
 from app.repositories.nmt_repository import NMTRepository
 from app.clients.triton_client import NMTTritonClient
@@ -32,10 +29,9 @@ from ai4icore_exceptions import (
     ModelNotFoundError,
     ServiceUnavailableError,
 )
-from ai4icore_telemetry import StandardSpanManager
+from ai4icore_telemetry import StandardSpanManager, Status, StatusCode
 
 logger = logging.getLogger(__name__)
-tracer = trace.get_tracer("nmt-service")
 _standard_spans = StandardSpanManager("nmt")
 
 
