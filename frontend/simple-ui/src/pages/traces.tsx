@@ -270,6 +270,12 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       } else if (opName.startsWith("language-detection.")) {
         description =
           "DB: create language_detection_requests, one language_detection_results row per input segment (lang + script + confidence), set request completed.";
+      } else if (opName.startsWith("transliteration.")) {
+        description =
+          "DB: create transliteration_requests, one transliteration_results row per input (string or suggestion list), set request completed.";
+      } else if (opName.startsWith("language-diarization.")) {
+        description =
+          "DB: create language_diarization_requests, one language_diarization_results row per audio (segments JSON), set request completed (may be partial-failure).";
       } else {
         description =
           "Stores request/results and updates status in the database (single persist span).";

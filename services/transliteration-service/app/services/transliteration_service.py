@@ -4,7 +4,7 @@ Core business logic for Transliteration inference.
 
 import logging
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 from app.schemas.inference import (
@@ -65,7 +65,7 @@ class TransliterationService:
 
         with _standard_spans.inference(
             service_id=service_id,
-            model_name=None,
+            model_name=model_name,
             input_count=input_count,
             input_type="text",
             user_id=user_id,
@@ -85,6 +85,13 @@ class TransliterationService:
 
                 input_texts: List[str] = []
                 with _standard_spans.preprocess() as preprocess_span:
+                    preprocess_span.set_attribute(
+                        "transliteration.preprocess.modality", "text"
+                    )
+                    preprocess_span.set_attribute(
+                        "transliteration.preprocess.operations",
+                        "newline_to_space,trim,empty_ok",
+                    )
                     for text_input in request.input:
                         normalized = (
                             text_input.source.replace("\n", " ").strip()
@@ -95,13 +102,22 @@ class TransliterationService:
                     total_text_length = sum(len(t) for t in input_texts)
                     total_input_words = sum(_count_words(t) for t in input_texts)
                     preprocess_span.set_attribute(
-                        "transliteration.preprocessed_count", len(input_texts)
+                        "transliteration.preprocess.segment_count", len(input_texts)
                     )
                     preprocess_span.set_attribute(
-                        "transliteration.input.character_length", total_text_length
+                        "transliteration.preprocess.input_character_length",
+                        total_text_length,
                     )
                     preprocess_span.set_attribute(
-                        "transliteration.input.word_count", total_input_words
+                        "transliteration.preprocess.input_word_count", total_input_words
+                    )
+                    preprocess_span.add_event(
+                        "transliteration.preprocess.completed",
+                        {
+                            "segment_count": len(input_texts),
+                            "input_character_length": total_text_length,
+                            "input_word_count": total_input_words,
+                        },
                     )
                     if parent_span is not None:
                         try:
@@ -118,7 +134,22 @@ class TransliterationService:
 
                 with _standard_spans.resolve_model() as resolve_span:
                     resolve_span.set_attribute(
-                        "transliteration.model_name", model_name
+                        "transliteration.resolve_model.resolution_source",
+                        "configured_on_service",
+                    )
+                    resolve_span.set_attribute(
+                        "transliteration.resolve_model.model_name", model_name
+                    )
+                    try:
+                        resolve_span.set_attribute(
+                            "transliteration.resolve_model.triton_endpoint",
+                            getattr(self.triton_client, "triton_url", None),
+                        )
+                    except Exception:
+                        pass
+                    resolve_span.add_event(
+                        "transliteration.resolve_model.completed",
+                        {"model_name": model_name},
                     )
                     if parent_span is not None:
                         try:
@@ -134,17 +165,30 @@ class TransliterationService:
 
                 with _standard_spans.triton_inference() as triton_span:
                     triton_span.set_attribute(
-                        "transliteration.batch_size", max_batch_size
+                        "transliteration.triton_inference.task", "transliteration"
                     )
                     triton_span.set_attribute(
-                        "transliteration.batch_count", batch_count
+                        "transliteration.triton_inference.model_name", model_name
+                    )
+                    triton_span.set_attribute(
+                        "transliteration.triton_inference.max_batch_size",
+                        max_batch_size,
+                    )
+                    triton_span.set_attribute(
+                        "transliteration.triton_inference.batch_count", batch_count
+                    )
+                    triton_span.set_attribute(
+                        "transliteration.triton_inference.is_sentence", bool(is_sentence)
+                    )
+                    triton_span.set_attribute(
+                        "transliteration.triton_inference.top_k", int(top_k)
                     )
 
                     for i in range(0, len(input_texts), max_batch_size):
                         batch = input_texts[i : i + max_batch_size]
                         batch_index = i // max_batch_size
                         triton_span.add_event(
-                            "transliteration.batch.started",
+                            "transliteration.triton_inference.batch.started",
                             {
                                 "batch_index": batch_index,
                                 "batch_size": len(batch),
@@ -161,16 +205,29 @@ class TransliterationService:
                                 )
                             )
                             triton_span.add_event(
-                                "transliteration.prepare_triton_inputs.completed",
+                                "transliteration.triton_inference.prepare_io.completed",
                                 {
                                     "batch_index": batch_index,
                                     "batch_size": len(batch),
+                                    "input_tensor_count": len(inputs),
+                                    "output_tensor_count": len(outputs),
                                 },
                             )
+                            trace_attributes: Dict[str, object] = {
+                                "transliteration.triton_inference.batch_index": batch_index,
+                                "transliteration.triton_inference.batch_size": len(batch),
+                                "transliteration.triton_inference.batch_count": batch_count,
+                                "transliteration.triton_inference.model_name": model_name,
+                                "transliteration.triton_inference.top_k": int(top_k),
+                                "transliteration.triton_inference.is_sentence": bool(
+                                    is_sentence
+                                ),
+                            }
                             response = self.triton_client.send_triton_request(
                                 model_name=model_name,
                                 inputs=inputs,
                                 outputs=outputs,
+                                trace_attributes=trace_attributes,
                             )
                             encoded_result = response.as_numpy("OUTPUT_TEXT")
                             if encoded_result is None:
@@ -196,14 +253,14 @@ class TransliterationService:
 
                             output_batch.extend(batch_results)
                             triton_span.add_event(
-                                "transliteration.extract_results.completed",
+                                "transliteration.triton_inference.extract_outputs.completed",
                                 {
                                     "batch_index": batch_index,
                                     "result_count": len(batch_results),
                                 },
                             )
                             triton_span.add_event(
-                                "transliteration.batch.completed",
+                                "transliteration.triton_inference.batch.completed",
                                 {
                                     "batch_index": batch_index,
                                     "result_count": len(batch_results),
@@ -227,6 +284,9 @@ class TransliterationService:
 
                 results: List[TransliterationOutput] = []
                 with _standard_spans.postprocess() as post_span:
+                    post_span.set_attribute(
+                        "transliteration.postprocess.expected_count", len(input_texts)
+                    )
                     for source_text, result_list in zip(input_texts, output_batch):
                         if not source_text:
                             transliterated = source_text
@@ -247,15 +307,23 @@ class TransliterationService:
                     total_out_chars = sum(len(str(r.target)) for r in results)
                     total_out_words = sum(_count_words(str(r.target)) for r in results)
                     post_span.set_attribute(
-                        "transliteration.output.character_length",
+                        "transliteration.postprocess.output_character_length",
                         total_out_chars,
                     )
                     post_span.set_attribute(
-                        "transliteration.output.word_count",
+                        "transliteration.postprocess.output_word_count",
                         total_out_words,
                     )
                     post_span.set_attribute(
-                        "transliteration.formatted_count", len(results)
+                        "transliteration.postprocess.output_count", len(results)
+                    )
+                    post_span.add_event(
+                        "transliteration.postprocess.completed",
+                        {
+                            "output_count": len(results),
+                            "output_character_length": total_out_chars,
+                            "output_word_count": total_out_words,
+                        },
                     )
                     if parent_span is not None:
                         try:
@@ -273,6 +341,10 @@ class TransliterationService:
                 response = TransliterationInferenceResponse(output=results)
 
                 with _standard_spans.persist() as persist_span:
+                    persist_span.set_attribute(
+                        "transliteration.db.operations",
+                        "transliteration_requests.insert,transliteration_results.insert_per_item,transliteration_requests.status_update",
+                    )
                     request_record = await self.repository.create_request(
                         model_id=service_id,
                         source_language=source_lang,
@@ -286,23 +358,33 @@ class TransliterationService:
                     )
                     request_id = request_record.id
                     persist_span.set_attribute(
+                        "transliteration.db.transliteration_request.id",
+                        str(request_id),
+                    )
+                    persist_span.set_attribute(
                         "transliteration.request_id", str(request_id)
                     )
                     persist_span.add_event(
-                        "transliteration.db.request_created",
-                        {"request_id": str(request_id)},
+                        "transliteration.db.transliteration_request.insert",
+                        {"table": "transliteration_requests", "request_id": str(request_id)},
                     )
 
+                    inserted_results = 0
                     for idx, result in enumerate(results):
                         await self.repository.create_result(
                             request_id=request_id,
                             transliterated_text=result.target,
                             source_text=result.source,
                         )
+                        inserted_results += 1
                         persist_span.add_event(
-                            "transliteration.db.result.created",
+                            "transliteration.db.transliteration_result.insert",
                             {"result_index": idx, "request_id": str(request_id)},
                         )
+                    persist_span.set_attribute(
+                        "transliteration.db.transliteration_result.inserted_count",
+                        inserted_results,
+                    )
 
                     processing_time = time.time() - start_time
                     await self.repository.update_request_status(
@@ -311,9 +393,10 @@ class TransliterationService:
                         processing_time=processing_time,
                     )
                     persist_span.add_event(
-                        "transliteration.db.request_completed",
+                        "transliteration.db.transliteration_request.status_update",
                         {
                             "request_id": str(request_id),
+                            "status": "completed",
                             "processing_time_seconds": processing_time,
                         },
                     )
