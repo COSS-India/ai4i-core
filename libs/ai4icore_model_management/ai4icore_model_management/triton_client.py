@@ -29,6 +29,7 @@ from tritonclient.utils import (
 )
 
 from ai4icore_exceptions import TritonInferenceError
+from ai4icore_env import app_env
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,7 @@ class TritonClient:
         """Lazy-initialised httpx client."""
         if self._client is None:
             logger.info("Initializing Triton httpx client for: %s", self.triton_url)
-            self._client = httpx.Client(timeout=self.timeout)
+            self._client = httpx.Client(timeout=self.timeout, verify=app_env.inference_ssl_verify)
         return self._client
 
     # ------------------------------------------------------------------
