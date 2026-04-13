@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from ai4icore_exceptions import TritonInferenceError
+from ai4icore_env import app_env
 from ai4icore_model_management.triton_client import _accumulate_inference_time
 
 logger = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ class LLMTritonClient:
     def client(self) -> httpx.AsyncClient:
         """Lazy initialization of HTTP client."""
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self.timeout)
+            self._client = httpx.AsyncClient(timeout=self.timeout, verify=app_env.inference_ssl_verify)
         return self._client
 
     def get_llm_io_for_triton(
