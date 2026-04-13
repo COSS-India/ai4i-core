@@ -129,6 +129,7 @@ function normalizeServiceValue(raw: string): string {
   if (!v0) return v0;
   let v = v0.replace(/_+/g, "-").replace(/\/+/g, "-");
   if (v.endsWith("-service")) v = v.slice(0, -"-service".length);
+  if (v === "audio-lang-detection") v = "audio-language-detection";
   return v;
 }
 
@@ -1155,7 +1156,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 ? titleCase(v.signal.replace(/_/g, " "))
                 : v.alert_type ? alertTypeLabel(v.alert_type) : "—";
               const targetLabel = v.service && v.service.length > 0
-                ? v.service.map((s) => TARGET_SERVICES.find((t) => t.value === s)?.label ?? s).join(", ")
+                ? v.service.map((s) => TARGET_SERVICES.find((t) => t.value === normalizeServiceValue(s))?.label ?? s).join(", ")
                 : "All services";
               const conditionThreshold = v.condition_operator && v.threshold_value != null
                 ? `${v.condition_operator} ${v.threshold_value} ${v.threshold_unit ?? ""}`.trim()
