@@ -7,14 +7,11 @@ import asyncio
 import json
 import logging
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 import httpx
 import numpy as np
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
-
 from app.schemas.inference import NMTInferenceRequest, NMTInferenceResponse, TranslationOutput
 from app.repositories.nmt_repository import NMTRepository
 from app.clients.triton_client import NMTTritonClient
@@ -32,9 +29,10 @@ from ai4icore_exceptions import (
     ModelNotFoundError,
     ServiceUnavailableError,
 )
+from ai4icore_telemetry import StandardSpanManager, Status, StatusCode
 
 logger = logging.getLogger(__name__)
-tracer = trace.get_tracer("nmt-service")
+_standard_spans = StandardSpanManager("nmt")
 
 
 def _count_words(text: str) -> int:
@@ -93,50 +91,295 @@ class NMTService:
         auth_headers: Optional[Dict[str, str]] = None,
         http_request: Optional[Request] = None,
     ) -> NMTInferenceResponse:
-        """Run NMT inference with tracing and fallback retry."""
+        """Run NMT inference with StandardSpanManager phases and fallback retry."""
         start_time = time.time()
         request_id = None
 
-        with tracer.start_as_current_span("nmt.process_batch") as span:
+        service_id = (
+            getattr(http_request.state, "service_id", None) if http_request else None
+        ) or request.config.serviceId
+        source_lang = request.config.language.sourceLanguage
+        target_lang = request.config.language.targetLanguage
+
+        original_source_lang = source_lang
+        original_target_lang = target_lang
+
+        if request.config.language.sourceScriptCode:
+            source_lang += "_" + request.config.language.sourceScriptCode
+        if request.config.language.targetScriptCode:
+            target_lang += "_" + request.config.language.targetScriptCode
+
+        input_count = len(request.input or [])
+        input_texts: List[str] = []
+        total_text_length = 0
+        total_input_words = 0
+        total_output_characters = 0
+        total_output_words = 0
+        model_name: Optional[str] = None
+
+        with _standard_spans.inference(
+            service_id=service_id,
+            model_name=None,  # set after resolution
+            input_count=input_count,
+            input_type="text",
+            user_id=user_id,
+            api_key_id=api_key_id,
+            session_id=session_id,
+            extra_attrs={
+                # Service-type extras (text) — set early for discoverability
+                "nmt.source_language": original_source_lang,
+                "nmt.target_language": original_target_lang,
+            },
+        ) as parent_span:
             try:
-                service_id = (
-                    getattr(http_request.state, "service_id", None) if http_request else None
-                ) or request.config.serviceId
-                source_lang = request.config.language.sourceLanguage
-                target_lang = request.config.language.targetLanguage
-
-                span.set_attribute("nmt.total_inputs", len(request.input))
-                span.set_attribute("nmt.service_id", service_id)
-                span.set_attribute("nmt.source_language", source_lang)
-                span.set_attribute("nmt.target_language", target_lang)
-
-                # Resolve model name
-                with tracer.start_as_current_span("nmt.get_model_name") as model_span:
-                    model_name = await self.get_model_name(service_id, auth_headers)
-                    model_span.set_attribute("nmt.model_name", model_name)
-
-                original_source_lang = source_lang
-                original_target_lang = target_lang
-
-                # Handle script codes
-                if request.config.language.sourceScriptCode:
-                    source_lang += "_" + request.config.language.sourceScriptCode
-                if request.config.language.targetScriptCode:
-                    target_lang += "_" + request.config.language.targetScriptCode
-
-                # Preprocess
-                with tracer.start_as_current_span("nmt.preprocess_texts") as pp_span:
+                with _standard_spans.preprocess() as preprocess_span:
+                    preprocess_span.set_attribute("nmt.preprocess.modality", "text")
+                    preprocess_span.set_attribute(
+                        "nmt.preprocess.operations_applied",
+                        "normalize_newlines_to_space,strip_whitespace,empty_source_to_single_space",
+                    )
                     input_texts = [
                         (ti.source.replace("\n", " ").strip() if ti.source else " ")
-                        for ti in request.input
+                        for ti in (request.input or [])
                     ]
                     total_text_length = sum(len(t) for t in input_texts)
                     total_input_words = sum(_count_words(t) for t in input_texts)
-                    pp_span.set_attribute("nmt.total_text_length", total_text_length)
-                    pp_span.set_attribute("nmt.input.word_count", total_input_words)
+                    preprocess_span.set_attribute(
+                        "nmt.input.character_length", total_text_length
+                    )
+                    preprocess_span.set_attribute(
+                        "nmt.input.word_count", total_input_words
+                    )
+                    preprocess_span.set_attribute(
+                        "nmt.preprocessed_count", len(input_texts)
+                    )
+                    preprocess_span.add_event(
+                        "nmt.preprocess.text_normalized",
+                        {
+                            "segment_count": len(input_texts),
+                            "newline_to_space": True,
+                            "strip_edges": True,
+                            "empty_fallback": "single_space",
+                        },
+                    )
 
-                # DB request record
-                with tracer.start_as_current_span("nmt.create_db_request"):
+                    # Also stamp required text extras onto the parent {svc}.inference span
+                    if parent_span is not None:
+                        try:
+                            parent_span.set_attribute(
+                                "nmt.input.character_length", total_text_length
+                            )
+                            parent_span.set_attribute(
+                                "nmt.input.word_count", total_input_words
+                            )
+                        except Exception:
+                            pass
+
+                with _standard_spans.resolve_model() as resolve_span:
+                    resolve_span.set_attribute(
+                        "nmt.resolve_model.lookup_service_id", service_id
+                    )
+                    model_name = await self.get_model_name(service_id, auth_headers)
+                    resolve_span.set_attribute(
+                        "nmt.resolve_model.registry_model_name", model_name
+                    )
+
+                    triton_client = await self.get_triton_client(service_id, auth_headers)
+                    resolve_span.set_attribute("nmt.resolve_model.triton_client_ready", True)
+
+                    service_entry = await self._get_service_registry_entry(
+                        service_id, auth_headers
+                    )
+                    endpoint = service_entry[0] if service_entry else ""
+                    resolve_span.set_attribute(
+                        "nmt.resolve_model.triton_infer_endpoint", endpoint
+                    )
+
+                    # Required attribute on the parent {svc}.inference span
+                    if parent_span is not None:
+                        try:
+                            parent_span.set_attribute("nmt.model_name", model_name)
+                        except Exception:
+                            pass
+
+                    effective_model = model_name
+                    if effective_model and "indictrans" in effective_model.lower():
+                        effective_model = "nmt"
+
+                    resolve_span.set_attribute(
+                        "nmt.resolve_model.triton_invoke_model_name", effective_model
+                    )
+                    if model_name != effective_model:
+                        resolve_span.set_attribute(
+                            "nmt.resolve_model.invoke_model_alias_applied", True
+                        )
+                    resolve_span.add_event(
+                        "nmt.resolve_model.completed",
+                        {
+                            "registry_model_name": model_name,
+                            "triton_invoke_model_name": effective_model,
+                            "infer_endpoint_configured": bool(endpoint),
+                            "triton_client_ready": True,
+                        },
+                    )
+
+                max_batch_size = 90
+                output_batch: list = []
+                batch_count = (len(input_texts) + max_batch_size - 1) // max_batch_size
+
+                with _standard_spans.triton_inference() as triton_span:
+                    triton_span.set_attribute("nmt.triton_inference.task", "translation")
+                    triton_span.set_attribute(
+                        "nmt.triton_inference.source_language", source_lang
+                    )
+                    triton_span.set_attribute(
+                        "nmt.triton_inference.target_language", target_lang
+                    )
+                    triton_span.set_attribute(
+                        "nmt.triton_inference.segment_count", len(input_texts)
+                    )
+                    triton_span.set_attribute(
+                        "nmt.triton_inference.max_batch_size", max_batch_size
+                    )
+                    triton_span.set_attribute(
+                        "nmt.triton_inference.batch_iteration_count", batch_count
+                    )
+                    triton_span.set_attribute(
+                        "nmt.triton_inference.triton_invoke_model_name", effective_model
+                    )
+                    triton_span.set_attribute(
+                        "nmt.triton_inference.io_schema",
+                        "INPUT_TEXT,INPUT_LANGUAGE_ID,OUTPUT_LANGUAGE_ID -> OUTPUT_TEXT",
+                    )
+                    triton_span.add_event(
+                        "nmt.triton_inference.phase_started",
+                        {
+                            "steps": "prepare_io,triton.inference_per_batch,extract_OUTPUT_TEXT",
+                            "batch_iterations": batch_count,
+                        },
+                    )
+
+                    for i in range(0, len(input_texts), max_batch_size):
+                        batch = input_texts[i : i + max_batch_size]
+                        batch_index = i // max_batch_size
+                        triton_span.add_event(
+                            "nmt.triton_inference.batch_started",
+                            {"batch_index": batch_index, "batch_size": len(batch)},
+                        )
+                        try:
+                            inputs, outputs = triton_client.get_translation_io_for_triton(
+                                batch, source_lang, target_lang
+                            )
+                            triton_span.add_event(
+                                "nmt.triton_inference.prepare_io.completed",
+                                {
+                                    "batch_index": batch_index,
+                                    "batch_size": len(batch),
+                                    "input_tensors": "INPUT_TEXT,INPUT_LANGUAGE_ID,OUTPUT_LANGUAGE_ID",
+                                    "output_tensors": "OUTPUT_TEXT",
+                                },
+                            )
+                            response = triton_client.send_triton_request(
+                                model_name=effective_model,
+                                inputs=inputs,
+                                outputs=outputs,
+                                trace_attributes={
+                                    "triton.parent_phase": "nmt.triton_inference",
+                                    "triton.loop.batch_index": batch_index,
+                                    "triton.loop.batch_size": len(batch),
+                                    "nmt.source_language_id": source_lang,
+                                    "nmt.target_language_id": target_lang,
+                                },
+                            )
+                            encoded_result = response.as_numpy("OUTPUT_TEXT")
+                            if encoded_result is None:
+                                encoded_result = np.array([])
+                            batch_results = encoded_result.tolist()
+                            output_batch.extend(batch_results)
+                            triton_span.add_event(
+                                "nmt.triton_inference.extract_raw_outputs.completed",
+                                {
+                                    "batch_index": batch_index,
+                                    "output_tensor": "OUTPUT_TEXT",
+                                    "raw_result_count": len(batch_results),
+                                },
+                            )
+                            triton_span.add_event(
+                                "nmt.triton_inference.batch_completed",
+                                {
+                                    "batch_index": batch_index,
+                                    "raw_result_count": len(batch_results),
+                                },
+                            )
+                        except Exception as e:
+                            triton_span.set_status(Status(StatusCode.ERROR, str(e)))
+                            triton_span.record_exception(e)
+                            raise TritonInferenceError(f"Triton inference failed: {e}")
+
+                with _standard_spans.postprocess() as post_span:
+                    post_span.set_attribute("nmt.postprocess.modality", "text")
+                    post_span.set_attribute(
+                        "nmt.postprocess.operations_applied",
+                        "decode_first_OUTPUT_TEXT_cell_bytes_utf8_or_scalar,pair_with_source_zip,build_TranslationOutput_list",
+                    )
+                    post_span.set_attribute(
+                        "nmt.postprocess.raw_triton_cell_count", len(output_batch)
+                    )
+                    post_span.set_attribute(
+                        "nmt.postprocess.source_segment_count", len(input_texts)
+                    )
+                    post_span.add_event(
+                        "nmt.postprocess.parse_raw_outputs.started",
+                        {
+                            "raw_cell_count": len(output_batch),
+                            "source_segment_count": len(input_texts),
+                        },
+                    )
+                    results = self._format_results(input_texts, output_batch)
+                    total_output_characters = sum(len(r.target) for r in results)
+                    total_output_words = sum(_count_words(r.target) for r in results)
+                    post_span.set_attribute(
+                        "nmt.postprocess.translation_pair_count", len(results)
+                    )
+                    post_span.set_attribute(
+                        "nmt.output.character_length", total_output_characters
+                    )
+                    post_span.set_attribute(
+                        "nmt.output.word_count", total_output_words
+                    )
+                    post_span.set_attribute("nmt.formatted_count", len(results))
+                    post_span.add_event(
+                        "nmt.postprocess.decode_and_pair.completed",
+                        {
+                            "pair_count": len(results),
+                            "bytes_to_utf8_when_needed": True,
+                        },
+                    )
+                    post_span.add_event(
+                        "nmt.postprocess.api_response_objects.built",
+                        {"translation_output_count": len(results)},
+                    )
+
+                    # Also stamp required text extras onto the parent {svc}.inference span
+                    if parent_span is not None:
+                        try:
+                            parent_span.set_attribute(
+                                "nmt.output.character_length", total_output_characters
+                            )
+                            parent_span.set_attribute(
+                                "nmt.output.word_count", total_output_words
+                            )
+                        except Exception:
+                            pass
+
+                nmt_response = NMTInferenceResponse(output=results)
+
+                # Phase 6: single persist — create request, store results, update status
+                with _standard_spans.persist() as persist_span:
+                    persist_span.set_attribute(
+                        "nmt.db.operations",
+                        "nmt_requests.insert,nmt_results.bulk_insert,nmt_requests.status_update",
+                    )
                     request_record = await self.repository.create_request(
                         model_id=service_id,
                         source_language=original_source_lang,
@@ -147,46 +390,35 @@ class NMTService:
                         session_id=session_id,
                     )
                     request_id = request_record.id
+                    persist_span.set_attribute("nmt.db.nmt_request.id", str(request_id))
+                    persist_span.set_attribute("nmt.request_id", str(request_id))
+                    persist_span.set_attribute("nmt.db.nmt_request.model_id", service_id)
+                    persist_span.set_attribute(
+                        "nmt.db.nmt_request.source_language", original_source_lang
+                    )
+                    persist_span.set_attribute(
+                        "nmt.db.nmt_request.target_language", original_target_lang
+                    )
+                    persist_span.set_attribute(
+                        "nmt.db.nmt_request.text_length", total_text_length
+                    )
+                    persist_span.set_attribute(
+                        "nmt.db.nmt_request.status_after_insert", "processing"
+                    )
+                    persist_span.add_event(
+                        "nmt.db.nmt_request.insert",
+                        {
+                            "table": "nmt_requests",
+                            "request_id": str(request_id),
+                            "model_id": service_id,
+                            "source_language": original_source_lang,
+                            "target_language": original_target_lang,
+                            "text_length": total_text_length,
+                            "initial_status": "processing",
+                        },
+                    )
 
-                # Batch inference
-                max_batch_size = 90
-                output_batch: list = []
-
-                for i in range(0, len(input_texts), max_batch_size):
-                    batch = input_texts[i : i + max_batch_size]
-                    with tracer.start_as_current_span("nmt.process_batch_item") as batch_span:
-                        batch_span.set_attribute("nmt.batch_index", i // max_batch_size)
-                        batch_span.set_attribute("nmt.batch_size", len(batch))
-                        try:
-                            triton_client = await self.get_triton_client(service_id, auth_headers)
-
-                            # Map indictrans -> nmt
-                            effective_model = model_name
-                            if effective_model and "indictrans" in effective_model.lower():
-                                effective_model = "nmt"
-
-                            inputs, outputs = triton_client.get_translation_io_for_triton(
-                                batch, source_lang, target_lang
-                            )
-                            response = triton_client.send_triton_request(
-                                model_name=effective_model, inputs=inputs, outputs=outputs
-                            )
-                            encoded_result = response.as_numpy("OUTPUT_TEXT")
-                            if encoded_result is None:
-                                encoded_result = np.array([])
-                            output_batch.extend(encoded_result.tolist())
-                        except Exception as e:
-                            batch_span.set_status(Status(StatusCode.ERROR, str(e)))
-                            batch_span.record_exception(e)
-                            raise TritonInferenceError(f"Triton inference failed: {e}")
-
-                # Format response
-                results = self._format_results(input_texts, output_batch)
-                nmt_response = NMTInferenceResponse(output=results)
-
-                # Persist (PII-redacted when configured)
-                with tracer.start_as_current_span("nmt.create_db_results"):
-                    stored = await self._persist_translation_results(
+                    stored, persist_db_meta = await self._persist_translation_results(
                         request_id=request_id,
                         results=results,
                         original_source_lang=original_source_lang,
@@ -194,50 +426,145 @@ class NMTService:
                         auth_headers=auth_headers,
                         http_request=http_request,
                     )
-                if http_request is not None:
-                    http_request.state.persisted_translation_results = stored
+                    persist_span.set_attribute(
+                        "nmt.db.nmt_result.bulk_insert_row_count",
+                        persist_db_meta["bulk_row_count"],
+                    )
+                    persist_span.set_attribute(
+                        "nmt.pii_redact.base_url_configured",
+                        persist_db_meta["pii_redact_base_url_configured"],
+                    )
+                    persist_span.set_attribute(
+                        "nmt.pii_redact.source_lang_eligible",
+                        persist_db_meta["pii_redact_source_lang_eligible"],
+                    )
+                    persist_span.set_attribute(
+                        "nmt.pii_redact.target_lang_eligible",
+                        persist_db_meta["pii_redact_target_lang_eligible"],
+                    )
+                    persist_span.set_attribute(
+                        "nmt.pii_redact.applied_per_text_pair",
+                        persist_db_meta["pii_redact_applied_per_text_pair"],
+                    )
+                    persist_span.add_event(
+                        "nmt.db.nmt_result.bulk_insert",
+                        {
+                            "table": "nmt_results",
+                            "request_id": str(request_id),
+                            "row_count": persist_db_meta["bulk_row_count"],
+                            "pii_redact_applied": persist_db_meta[
+                                "pii_redact_applied_per_text_pair"
+                            ],
+                        },
+                    )
+                    if http_request is not None:
+                        http_request.state.persisted_translation_results = stored
+
+                    processing_time = time.time() - start_time
+                    await self.repository.update_request_status(
+                        request_id=request_id,
+                        status="completed",
+                        processing_time=processing_time,
+                    )
+                    persist_span.set_attribute(
+                        "nmt.db.nmt_request.final_status", "completed"
+                    )
+                    persist_span.set_attribute(
+                        "nmt.db.nmt_request.processing_time_seconds",
+                        processing_time,
+                    )
+                    persist_span.add_event(
+                        "nmt.db.nmt_request.status_update",
+                        {
+                            "table": "nmt_requests",
+                            "request_id": str(request_id),
+                            "status": "completed",
+                            "processing_time_seconds": processing_time,
+                        },
+                    )
+
+                # Required parent span attributes that are only known at the end
+                if parent_span is not None:
+                    try:
+                        parent_span.set_attribute("nmt.output_count", len(results))
+                    except Exception:
+                        pass
 
                 processing_time = time.time() - start_time
-                await self.repository.update_request_status(request_id=request_id, status="completed", processing_time=processing_time)
-
-                total_output_characters = sum(len(r.target) for r in results)
-                total_output_words = sum(_count_words(r.target) for r in results)
-                span.set_attribute("nmt.processing_time_seconds", processing_time)
-                span.set_attribute("nmt.output.character_length", total_output_characters)
-                span.set_attribute("nmt.output.word_count", total_output_words)
-
                 logger.info(
                     "NMT inference completed",
                     extra={
                         "request_id": str(request_id),
                         "processing_time_seconds": processing_time,
                         "service_id": service_id,
-                        "input_details": {"character_length": total_text_length, "word_count": total_input_words},
-                        "output_details": {"character_length": total_output_characters, "word_count": total_output_words},
+                        "input_details": {
+                            "character_length": total_text_length,
+                            "word_count": total_input_words,
+                        },
+                        "output_details": {
+                            "character_length": total_output_characters,
+                            "word_count": total_output_words,
+                        },
                     },
                 )
                 return nmt_response
 
             except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError) as exc:
-                # ── Fallback retry ──
-                fallback_service_id = getattr(http_request.state, "fallback_service_id", None) if http_request else None
+                if parent_span is not None:
+                    try:
+                        if parent_span.is_recording():
+                            parent_span.add_event(
+                                "nmt.primary_service_failed",
+                                {
+                                    "error.type": type(exc).__name__,
+                                    "error.message": str(exc),
+                                },
+                            )
+                    except Exception:
+                        pass
+
+                fallback_service_id = (
+                    getattr(http_request.state, "fallback_service_id", None)
+                    if http_request
+                    else None
+                )
                 original_service_id = request.config.serviceId
 
                 if fallback_service_id and fallback_service_id != original_service_id:
                     logger.warning(
                         "NMT: Primary service failed, attempting fallback",
-                        extra={"primary_service_id": original_service_id, "fallback_service_id": fallback_service_id, "error": str(exc)},
+                        extra={
+                            "primary_service_id": original_service_id,
+                            "fallback_service_id": fallback_service_id,
+                            "error": str(exc),
+                        },
                     )
+                    if parent_span is not None:
+                        try:
+                            if parent_span.is_recording():
+                                parent_span.add_event(
+                                    "nmt.fallback_attempt",
+                                    {"fallback_service_id": fallback_service_id},
+                                )
+                        except Exception:
+                            pass
                     try:
                         from app.services.smr_service import SMRService
+
                         smr_svc = SMRService()
-                        triton_endpoint, triton_api_key, triton_model_name = await smr_svc.switch_to_fallback(
-                            request, http_request, fallback_service_id
+                        triton_endpoint, triton_api_key, triton_model_name = (
+                            await smr_svc.switch_to_fallback(
+                                request, http_request, fallback_service_id
+                            )
                         )
                         fallback_nmt = self._build_fallback_service(
-                            http_request, fallback_service_id, triton_endpoint, triton_api_key, triton_model_name,
+                            http_request,
+                            fallback_service_id,
+                            triton_endpoint,
+                            triton_api_key,
+                            triton_model_name,
                         )
-                        return await fallback_nmt.run_inference(
+                        out = await fallback_nmt.run_inference(
                             request=request,
                             user_id=user_id,
                             api_key_id=api_key_id,
@@ -245,24 +572,48 @@ class NMTService:
                             auth_headers=auth_headers,
                             http_request=http_request,
                         )
+                        if parent_span is not None:
+                            try:
+                                if parent_span.is_recording():
+                                    parent_span.add_event(
+                                        "nmt.fallback_succeeded",
+                                        {"fallback_service_id": fallback_service_id},
+                                    )
+                                    parent_span.set_attribute(
+                                        "nmt.fallback_service_id", fallback_service_id
+                                    )
+                            except Exception:
+                                pass
+                        return out
                     except Exception as fallback_err:
+                        if parent_span is not None:
+                            try:
+                                if parent_span.is_recording():
+                                    parent_span.add_event(
+                                        "nmt.fallback_failed",
+                                        {
+                                            "error.type": type(fallback_err).__name__,
+                                            "error.message": str(fallback_err),
+                                        },
+                                    )
+                            except Exception:
+                                pass
                         combined = (
                             f"Primary service ({original_service_id}) failed: {exc}. "
                             f"Fallback service ({fallback_service_id}) also failed: {fallback_err}"
                         )
                         raise TritonInferenceError(combined) from fallback_err
 
-                # No fallback available
                 self._mark_failed(request_id, str(exc))
                 raise
 
             except Exception as exc:
-                span.set_status(Status(StatusCode.ERROR, str(exc)))
-                span.record_exception(exc)
+                # Still inside nmt.inference; StandardSpanManager.inference() records span
+                # status when this propagates, after _mark_failed.
                 self._mark_failed(request_id, str(exc))
                 if isinstance(exc, TextProcessingError):
                     raise
-                raise TextProcessingError(f"NMT inference failed: {exc}")
+                raise TextProcessingError(f"NMT inference failed: {exc}") from exc
 
     # ──────────────────────────────────────────────
     # Triton client / model resolution (cached)
@@ -430,7 +781,7 @@ class NMTService:
         original_target_lang: str,
         auth_headers: Optional[Dict[str, str]],
         http_request: Optional[Request],
-    ) -> List[Dict[str, str]]:
+    ) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
         tenant_id = getattr(http_request.state, "tenant_id", None) if http_request else None
         tenant_header = str(tenant_id) if tenant_id else None
 
@@ -440,6 +791,13 @@ class NMTService:
         tgt_ok = bool(tgt_lang) and tgt_lang in PII_SUPPORTED_LANG_CODES
 
         stored_results: List[Dict[str, str]] = []
+        meta: Dict[str, Any] = {
+            "bulk_row_count": 0,
+            "pii_redact_base_url_configured": bool(self.pii_redact_base_url),
+            "pii_redact_source_lang_eligible": src_ok,
+            "pii_redact_target_lang_eligible": tgt_ok,
+            "pii_redact_applied_per_text_pair": False,
+        }
 
         if not self.pii_redact_base_url or (not src_ok and not tgt_ok):
             rows = []
@@ -448,7 +806,8 @@ class NMTService:
                 stored_results.append({"source_text": r.source, "translated_text": r.target})
             if rows:
                 await self.repository.create_results_bulk(request_id=request_id, rows=rows)
-            return stored_results
+                meta["bulk_row_count"] = len(rows)
+            return stored_results, meta
 
         async def _maybe_redact(text: str, lang: str, supported: bool) -> str:
             if not supported or not text:
@@ -464,6 +823,7 @@ class NMTService:
                 logger.warning("PII redact failed; storing raw: %s", exc)
                 return text
 
+        meta["pii_redact_applied_per_text_pair"] = True
         rows = []
         for r in results:
             src_stored, tgt_stored = await asyncio.gather(
@@ -474,7 +834,8 @@ class NMTService:
             stored_results.append({"source_text": src_stored, "translated_text": tgt_stored})
         if rows:
             await self.repository.create_results_bulk(request_id=request_id, rows=rows)
-        return stored_results
+            meta["bulk_row_count"] = len(rows)
+        return stored_results, meta
 
     # ──────────────────────────────────────────────
     # Internal helpers

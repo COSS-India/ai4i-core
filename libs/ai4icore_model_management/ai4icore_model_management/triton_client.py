@@ -17,7 +17,7 @@ Usage:
 import logging
 import time
 from contextvars import ContextVar
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 import httpx
 import numpy as np
@@ -177,23 +177,43 @@ class TritonClient:
         outputs: List[InferRequestedOutput],
         headers: Optional[Dict[str, str]] = None,
         model_version: str = "1",
+        *,
+        trace_attributes: Optional[Dict[str, Union[str, int, float, bool]]] = None,
     ) -> InferResult:
         """POST the inference payload directly to *self.triton_url*.
 
         *model_name* and *model_version* are retained for logging / tracing
         only -- they do **not** alter the URL.
+
+        *trace_attributes*: optional extra attributes on the ``triton.inference`` span
+        (e.g. batch loop index for multi-call phases).
         """
         start = time.perf_counter()
         try:
             if _OTEL_AVAILABLE:
-                return self._send_traced(model_name, inputs, outputs, headers, model_version)
+                return self._send_traced(
+                    model_name,
+                    inputs,
+                    outputs,
+                    headers,
+                    model_version,
+                    trace_attributes,
+                )
             return self._send_impl(model_name, inputs, outputs, headers, model_version)
         finally:
             _accumulate_inference_time((time.perf_counter() - start) * 1000)
 
     # -- traced wrapper ------------------------------------------------
 
-    def _send_traced(self, model_name, inputs, outputs, headers, model_version):
+    def _send_traced(
+        self,
+        model_name,
+        inputs,
+        outputs,
+        headers,
+        model_version,
+        trace_attributes: Optional[Dict[str, Union[str, int, float, bool]]] = None,
+    ):
         tracer = trace.get_tracer("ai4icore_model_management")
         with tracer.start_as_current_span("triton.inference") as span:
             span.set_attribute("triton.model_name", model_name)
@@ -202,7 +222,41 @@ class TritonClient:
             span.set_attribute("triton.input_count", len(inputs))
             span.set_attribute("triton.output_count", len(outputs))
             span.set_attribute("triton.timeout_seconds", self.timeout)
-            span.add_event("triton.inference.start", {"model": model_name})
+            span.set_attribute(
+                "triton.input_tensor_names",
+                ",".join(inp.name() for inp in inputs),
+            )
+            span.set_attribute(
+                "triton.output_tensor_names",
+                ",".join(out.name() for out in outputs),
+            )
+            if inputs:
+                shape = inputs[0].shape()
+                if shape:
+                    span.set_attribute("triton.request_batch_size", int(shape[0]))
+            span.set_attribute(
+                "triton.phase",
+                "http_post_infer_parse_response",
+            )
+            if trace_attributes:
+                for attr_key, attr_val in trace_attributes.items():
+                    if attr_val is None:
+                        continue
+                    try:
+                        span.set_attribute(attr_key, attr_val)
+                    except (TypeError, ValueError):
+                        logger.debug(
+                            "Skipping triton.inference attribute %s (unsupported type)",
+                            attr_key,
+                        )
+            span.add_event(
+                "triton.inference.start",
+                {
+                    "model": model_name,
+                    "input_tensors": ",".join(inp.name() for inp in inputs),
+                    "output_tensors": ",".join(out.name() for out in outputs),
+                },
+            )
             try:
                 result = self._send_impl(model_name, inputs, outputs, headers, model_version)
                 span.set_attribute("triton.status", "success")
