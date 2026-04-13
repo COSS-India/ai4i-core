@@ -124,7 +124,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
           "Text: TTS-specific normalization, then chunk long lines (~400 chars) for per-chunk synthesis (no audio input or VAD).";
       } else if (opName.startsWith("asr.")) {
         description =
-          "Audio: decode/prepare audio bytes for transcription (no OCR/image steps).";
+          "Audio: fetch bytes (base64/URI), decode to mono 16 kHz, optional VAD chunking before ASR (no image/OCR).";
       } else if (opName.startsWith("ner.") || opName.startsWith("transliteration.")) {
         description =
           "Text: normalize and prepare token sequences for the model.";
@@ -162,7 +162,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
           "Confirms TTS model name and endpoint (usually precached from model management when the service starts; same phase as dynamic lookup elsewhere).";
       } else if (opName.startsWith("asr.")) {
         description =
-          "Resolves the ASR Triton model and endpoint for this request.";
+          "Confirms ASR model name and endpoint (typically precached from model management at service startup).";
       } else if (opName.startsWith("transliteration.")) {
         description =
           "Resolves the transliteration Triton model and endpoint.";
@@ -195,7 +195,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
           "Prepare image batch tensors, call triton.inference, read raw OCR outputs.";
       } else if (opName.startsWith("asr.")) {
         description =
-          "Prepare audio tensors, call triton.inference, read raw transcripts.";
+          "Batch AUDIO_SIGNAL tensors, call triton.inference, decode TRANSCRIPTS JSON/text per chunk (may loop batches per audio).";
       } else if (opName.startsWith("ner.") || opName.startsWith("language-detection.") || opName.startsWith("transliteration.")) {
         description =
           "Prepare text tensors, call triton.inference, read raw model outputs.";
@@ -225,7 +225,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
           "Parse OCR model output (e.g. JSON/text), normalize, build OCR response objects.";
       } else if (opName.startsWith("asr.")) {
         description =
-          "Format transcripts, timestamps, or confidence into the ASR API response.";
+          "Optional text post-processors, then build plain / SRT / WebVTT transcript strings and TranscriptOutput list.";
       } else if (opName.startsWith("ner.") || opName.startsWith("language-detection.") || opName.startsWith("transliteration.")) {
         description =
           "Parse model outputs into entities, labels, or transliteration response objects.";
@@ -249,6 +249,9 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       } else if (opName.startsWith("nmt.")) {
         description =
           "DB: create nmt_requests, bulk nmt_results (with optional PII redact), update request status.";
+      } else if (opName.startsWith("asr.")) {
+        description =
+          "DB: create asr_requests, one asr_results row per audio input (transcript + timestamps), set request completed.";
       } else {
         description =
           "Stores request/results and updates status in the database (single persist span).";
