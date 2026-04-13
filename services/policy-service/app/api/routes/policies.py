@@ -4,6 +4,7 @@ GET    /policies
 POST   /policies
 GET    /policies/{policy_id}
 PUT    /policies/{policy_id}
+DELETE /policies/{policy_id}
 PATCH  /policies/{policy_id}/status
 """
 from typing import Optional
@@ -93,6 +94,12 @@ async def update_policy(request: Request, policy_id: UUID, body: PolicyUpdate, s
     obj = await svc.update(policy_id, body, auth_header=auth_header)
     # Build explicit output to include linked PII type details (label + mask_format)
     return _build_detail(obj)
+
+
+@router.delete("/{policy_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete policy")
+async def delete_policy(request: Request, policy_id: UUID, svc: PolicyService = Depends(_svc)):
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+    await svc.delete(policy_id, auth_header=auth_header)
 
 
 @router.patch("/{policy_id}/status", summary="Toggle active / inactive")
