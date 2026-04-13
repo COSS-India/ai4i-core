@@ -2784,8 +2784,7 @@ const TracesPage: React.FC = () => {
                                   processed.category === "phase.persist" &&
                                   (key.includes(".db.") ||
                                     key.includes("request_id") ||
-                                    key.includes("pii_redact"))1.03s
-
+                                    key.includes("pii_redact"))
                                 ) {
                                   return 0.25;
                                 }
