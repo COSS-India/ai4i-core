@@ -7,8 +7,6 @@ import time
 from typing import List, Optional
 
 import numpy as np
-from opentelemetry.trace import Status, StatusCode
-
 from app.schemas.inference import (
     TransliterationInferenceRequest,
     TransliterationInferenceResponse,
@@ -18,7 +16,7 @@ from app.repositories.transliteration_repository import TransliterationRepositor
 from app.clients.triton_client import TransliterationTritonClient
 from app.services.text_service import TextService
 from ai4icore_exceptions import TritonInferenceError
-from ai4icore_telemetry import StandardSpanManager
+from ai4icore_telemetry import StandardSpanManager, Status, StatusCode
 
 logger = logging.getLogger(__name__)
 _standard_spans = StandardSpanManager("transliteration")

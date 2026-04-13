@@ -13,8 +13,6 @@ from typing import Any, List, Optional
 import numpy as np
 from scipy.io import wavfile
 from pydub import AudioSegment
-from opentelemetry.trace import Status, StatusCode
-
 from app.schemas.inference import (
     TTSInferenceRequest,
     TTSInferenceResponse,
@@ -26,7 +24,7 @@ from app.services.audio_service import AudioService
 from app.services.text_service import TextService
 from app.clients.triton_client import TTSTritonClient
 from ai4icore_exceptions import TritonInferenceError
-from ai4icore_telemetry import StandardSpanManager
+from ai4icore_telemetry import StandardSpanManager, Status, StatusCode
 
 logger = logging.getLogger(__name__)
 _standard_spans = StandardSpanManager("tts")
@@ -304,24 +302,7 @@ class TTSService:
                             logger.error(
                                 f"Failed to process text input {input_idx + 1}: {e}"
                             )
-                            try:
-                                dr = await self.repository.create_request(
-                                    model_id=service_id,
-                                    voice_id=gender,
-                                    language=language,
-                                    text_length=total_text_length,
-                                    user_id=user_id,
-                                    api_key_id=api_key_id,
-                                    session_id=session_id,
-                                )
-                                await self.repository.update_request_status(
-                                    dr.id, "failed", error_message=str(e)
-                                )
-                            except Exception as db_err:
-                                logger.error(
-                                    "TTS: failed to record failed request in DB: %s",
-                                    db_err,
-                                )
+                            # DB failure recording: single path in outer ``except`` (avoids duplicate rows).
                             raise
 
                 total_audio_duration = None
