@@ -2,7 +2,7 @@
 from typing import Optional, Sequence
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.orm import PiiType
@@ -72,16 +72,26 @@ class PiiTypeRepository:
         await self.db.delete(obj)
         await self.db.commit()
 
-    async def has_active_policy_links(self, pii_type_id: UUID) -> bool:
+    async def get_policy_link_counts(self, pii_type_id: UUID) -> tuple[int, int]:
         from app.models.orm import PolicyPiiType, PiiPolicy
+
+        # Return active/inactive counts separately (instead of a boolean) so callers can:
+        # 1) show precise conflict messages to operators, and
+        # 2) support future differentiated behaviors (e.g., conditional force-delete for inactive-only links).
         stmt = (
-            select(func.count())
+            select(
+                func.coalesce(
+                    func.sum(case((PiiPolicy.is_active == True, 1), else_=0)),  # noqa: E712
+                    0,
+                ),
+                func.coalesce(
+                    func.sum(case((PiiPolicy.is_active == False, 1), else_=0)),  # noqa: E712
+                    0,
+                ),
+            )
             .select_from(PolicyPiiType)
             .join(PiiPolicy, PiiPolicy.policy_id == PolicyPiiType.policy_id)
-            .where(
-                PolicyPiiType.pii_type_id == pii_type_id,
-                PiiPolicy.is_active == True,  # noqa: E712
-            )
+            .where(PolicyPiiType.pii_type_id == pii_type_id)
         )
-        count = (await self.db.execute(stmt)).scalar_one()
-        return count > 0
+        active_count, inactive_count = (await self.db.execute(stmt)).one()
+        return int(active_count), int(inactive_count)

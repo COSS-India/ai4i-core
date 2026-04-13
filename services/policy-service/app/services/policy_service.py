@@ -147,7 +147,17 @@ class PolicyService:
         await self.repo.update(obj, {"is_active": data.is_active})
         return {"is_active": data.is_active}
 
-    async def delete(self, policy_id: UUID) -> None:
+    async def delete(self, policy_id: UUID, auth_header: Optional[str] = None) -> None:
+        """
+        Delete a policy entity.
+
+        Expected delete effects (via ORM/DB constraints):
+        - remove tenant mappings (`tenant_policy`) for the policy
+        - remove policy-to-PII links (`policy_pii_types`) for the policy
+        - keep `pii_types` master records intact
+        """
+        # Keep mutating operations consistent with create/update auth handling.
+        await _validated_forward_auth_header(auth_header)
         obj = await self.get(policy_id)
         await self.repo.delete(obj)
 
