@@ -55,6 +55,10 @@ function normalizeServiceForUi(raw: string): string {
 
   // Normalize separators/suffixes commonly seen in backend identifiers
   const base = v0.replace(/_+/g, "-").replace(/\/+/g, "-");
+  const baseNoService = base.endsWith("-service") ? base.slice(0, -"-service".length) : base;
+  if (baseNoService === "audio-lang-detection" || baseNoService === "audio-language-detection") {
+    return "audio-language-detection";
+  }
   const candidates = [
     base,
     base.endsWith("-service") ? base.slice(0, -"-service".length) : base,
@@ -82,6 +86,10 @@ function normalizeServiceForApi(raw: string): string {
   const v0 = String(raw ?? "").trim().toLowerCase();
   if (!v0 || v0 === "all") return v0;
   const v = v0.replace(/_+/g, "-").replace(/\/+/g, "-");
+  const base = v.endsWith("-service") ? v.slice(0, -"-service".length) : v;
+  if (base === "audio-language-detection" || base === "audio-lang-detection") {
+    return "audio-lang-detection-service";
+  }
   return v.endsWith("-service") ? v : `${v}-service`;
 }
 
