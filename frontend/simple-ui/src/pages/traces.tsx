@@ -67,6 +67,10 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     return tag ? String(tag.value) : null;
   };
 
+  /** e.g. nmt.inference, tts.inference, language-detection.inference — not triton.inference */
+  const isStandardSvcInferenceOp =
+    /^[a-z0-9-]+\.inference$/.test(opName) && !opName.startsWith("triton.");
+
   // Determine category and importance
   let category = "other";
   let displayName = span.operationName;
@@ -80,6 +84,8 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
   // --- Standard 7-phase lifecycle spans (Telemetry Step Standardization) ---
   // Make these appear as distinct steps in the Trace UI instead of collapsing them
   // under generic "processing/routing/database" buckets.
+  //
+  // {svc}.inference (Phase 1 parent + Phase 7 on close) is categorized under "processing" below — not listed here.
   //
   // Examples:
   // - nmt.preprocess / ocr.preprocess / tts.preprocess
@@ -488,17 +494,11 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     displayName = span.operationName;
     description = "Internal authentication check";
   }
-  // Main service operations (OCR, NMT, etc.) - check for POST /api/v1/ocr/inference or ocr.inference
-  else if (opName.includes("/api/v1/ocr/inference") || opName.includes("/api/v1/nmt/inference") ||
+  // Main service operations — {svc}.inference (Telemetry Phase 1 parent; Phase 7 finalizes on close)
+  else if (isStandardSvcInferenceOp ||
+           opName.includes("/api/v1/ocr/inference") || opName.includes("/api/v1/nmt/inference") ||
            opName.includes("/api/v1/transliteration/inference") ||
-           opName === "ocr.inference" || opName === "nmt.inference" ||
-           opName === "transliteration.inference" ||
-           opName === "audio-lang-detection.inference" ||
-           opName === "speaker-diarization.inference" ||
-           opName === "language-diarization.inference" ||
-           opName === "language-detection.inference" ||
-           opName === "ner.inference" ||
-           opName === "pipeline.inference" ||
+           opName.includes("/api/v1/tts/inference") || opName.includes("/api/v1/asr/inference") ||
            (opName.includes("post") && opName.includes("inference") && !serviceName.includes("gateway"))) {
     category = "processing";
     isImportant = true;
@@ -506,6 +506,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     icon = FiCpu;
     const serviceId = getTag("ocr.service_id") || getTag("nmt.service_id") ||
            getTag("transliteration.service_id") ||
+           getTag("tts.service_id") || getTag("asr.service_id") ||
            getTag("speaker-diarization.service_id") ||
            getTag("language-diarization.service_id") ||
            getTag("language-detection.service_id") ||
@@ -515,6 +516,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     const imageCount = getTag("ocr.image_count");
     const outputCount = getTag("ocr.output_count") || getTag("nmt.output_count") ||
            getTag("transliteration.output_count") ||
+           getTag("tts.output_count") || getTag("asr.output_count") ||
            getTag("audio-lang-detection.output_count") ||
            getTag("speaker-diarization.output_count") ||
            getTag("language-diarization.output_count") ||
@@ -526,15 +528,36 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
            getTag("ner.source_language");
     const targetLang = getTag("nmt.target_language") ||
            getTag("transliteration.target_language");
-    // Phase 1 is the proposed {svc}.inference span — display the span name verbatim (e.g., nmt.inference)
     displayName = span.operationName;
-    let descParts = ["Processes the request"];
-    if (serviceId) descParts.push(`using ${serviceId}`);
-    if (imageCount) descParts.push(`(${imageCount} image${parseInt(imageCount) !== 1 ? "s" : ""})`);
-    if (sourceLang && targetLang) descParts.push(`from ${sourceLang} to ${targetLang}`);
-    else if (sourceLang) descParts.push(`(source: ${sourceLang})`);
-    if (outputCount) descParts.push(`→ ${outputCount} output${parseInt(outputCount) !== 1 ? "s" : ""}`);
-    description = descParts.join(" ");
+    // Telemetry Step Standardization: same span is Phase 1 (entry) and Phase 7 (final attrs on close).
+    let phaseDesc =
+      "Phase 1 — service inference entry (parent span). Phases 2–6 are child spans (preprocess → resolve_model → triton_inference → postprocess → persist). Phase 7 — when this span ends, final metrics are set here ({svc}.processing_time_seconds, {svc}.status).";
+    if (isStandardSvcInferenceOp) {
+      if (opName.startsWith("nmt.")) {
+        phaseDesc =
+          "Phase 1 & 7 (NMT): parent span for the translation request; children run the standard phases; on close, records processing time and status.";
+      } else if (opName.startsWith("tts.")) {
+        phaseDesc =
+          "Phase 1 & 7 (TTS): parent span for synthesis; children run preprocess → … → persist; on close, finalizes duration and status.";
+      } else if (opName.startsWith("asr.")) {
+        phaseDesc =
+          "Phase 1 & 7 (ASR): parent span for transcription; children run the standard phases; on close, finalizes timing and status.";
+      } else if (opName.startsWith("ocr.")) {
+        phaseDesc =
+          "Phase 1 & 7 (OCR): parent span for the OCR request; children run the standard phases; on close, finalizes timing and status.";
+      } else if (opName.startsWith("pipeline.")) {
+        phaseDesc =
+          "Phase 1 & 7 (Pipeline): parent span for pipeline orchestration; sub-task spans follow the same lifecycle pattern where applicable.";
+      }
+    }
+    const contextBits: string[] = [];
+    if (serviceId) contextBits.push(`service_id ${serviceId}`);
+    if (imageCount) contextBits.push(`${imageCount} image(s)`);
+    if (sourceLang && targetLang) contextBits.push(`${sourceLang} → ${targetLang}`);
+    else if (sourceLang) contextBits.push(`source ${sourceLang}`);
+    if (outputCount) contextBits.push(`${outputCount} output(s)`);
+    description =
+      phaseDesc + (contextBits.length > 0 ? ` Tags: ${contextBits.join(", ")}.` : "");
   }
   // Skip API gateway POST spans - they're just wrappers
   else if (serviceName.includes("gateway") && (opName.includes("post") || opName.includes("http"))) {
@@ -1114,7 +1137,8 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     });
   };
 
-  // Phase 7 per Telemetry Step Standardization: final metrics on {svc}.inference — no separate span or UI row.
+  // Phase 7 (Telemetry Step Standardization): {svc}.processing_time_seconds and {svc}.status are set when
+  // {svc}.inference ends — no separate span; see categorizeSpan description for that parent span.
 
   // If we have too few spans, include some important non-top-level ones
   if (sorted.length < 3) {
@@ -1510,6 +1534,16 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
     const tag = tags.find(t => t.key.toLowerCase() === key.toLowerCase());
     return tag ? String(tag.value) : null;
   };
+  const opLc = (processed.span.operationName || "").toLowerCase();
+  const isStandardSvcInferenceName =
+    /^[a-z0-9-]+\.inference$/.test(opLc) && !opLc.startsWith("triton.");
+  const isHttpInferenceRoute =
+    opLc.includes("/api/v1/nmt/inference") ||
+    opLc.includes("/api/v1/ocr/inference") ||
+    opLc.includes("/api/v1/transliteration/inference") ||
+    opLc.includes("/api/v1/tts/inference") ||
+    opLc.includes("/api/v1/asr/inference") ||
+    (opLc.includes("post") && opLc.includes("inference") && opLc.includes("/api/v1/"));
 
   // If there's an error, return simple error indicator
   // (detailed error will be shown in separate section)
@@ -1563,6 +1597,23 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
         return desc.trim();
       } else if (processed.displayName.includes("Request Processing")) {
         return "This step receives and initializes the request. It validates the request format and prepares it for processing through the system.";
+      } else if (isStandardSvcInferenceName || isHttpInferenceRoute) {
+        const task =
+          opLc.includes("nmt") || opLc.startsWith("nmt.")
+            ? "NMT translation"
+            : opLc.includes("tts") || opLc.startsWith("tts.")
+              ? "TTS synthesis"
+              : opLc.includes("asr") || opLc.startsWith("asr.")
+                ? "ASR transcription"
+                : opLc.includes("ocr") || opLc.startsWith("ocr.")
+                  ? "OCR"
+                  : opLc.includes("pipeline") || opLc.startsWith("pipeline.")
+                    ? "pipeline"
+                    : "inference";
+        return (
+          `One ${task} request. This span wraps the whole call (telemetry phases 1 & 7: start here; duration and status when it ends). ` +
+          `Child spans—preprocess → resolve_model → triton_inference → postprocess → persist—run in order under this parent.`
+        );
       }
       return "This step processes the request data and performs the necessary computations to generate the response.";
 
@@ -2387,7 +2438,9 @@ const TracesPage: React.FC = () => {
                                   </Badge>
                                 </HStack>
                                     <Text fontSize="xs" color={processed.hasError ? "red.700" : "gray.600"} pl={6} fontWeight={processed.hasError ? "medium" : "normal"}>
-                                      {processed.hasError && processed.errorMessage ? `❌ ${processed.errorMessage}` : processed.description}
+                                      {processed.hasError && processed.errorMessage
+                                        ? `❌ ${processed.errorMessage}`
+                                        : getUserFriendlyDescription(processed)}
                                 </Text>
                           </Box>
                                 );
@@ -2731,7 +2784,8 @@ const TracesPage: React.FC = () => {
                                   processed.category === "phase.persist" &&
                                   (key.includes(".db.") ||
                                     key.includes("request_id") ||
-                                    key.includes("pii_redact"))
+                                    key.includes("pii_redact"))1.03s
+
                                 ) {
                                   return 0.25;
                                 }
