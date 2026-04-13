@@ -618,6 +618,11 @@
       "description": "Login (public)"
     },
     {
+      "endpoint": "POST:/api/v1/auth/guest/login",
+      "permissionRequired": null,
+      "description": "Guest login (public; uses GUEST_EMAIL and GUEST_PASSWORD env)"
+    },
+    {
       "endpoint": "POST:/api/v1/auth/register",
       "permissionRequired": null,
       "description": "Register (public)"

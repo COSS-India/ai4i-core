@@ -291,6 +291,14 @@ services:
           - POST
           - OPTIONS
 
+      - name: auth-guest-login-route
+        paths:
+          - /api/v1/auth/guest/login
+        strip_path: false
+        methods:
+          - POST
+          - OPTIONS
+
       - name: auth-register-route
         paths:
           - /api/v1/auth/register
