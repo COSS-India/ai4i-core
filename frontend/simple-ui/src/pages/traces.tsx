@@ -67,6 +67,10 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     return tag ? String(tag.value) : null;
   };
 
+  /** e.g. nmt.inference, tts.inference, language-detection.inference — not triton.inference */
+  const isStandardSvcInferenceOp =
+    /^[a-z0-9-]+\.inference$/.test(opName) && !opName.startsWith("triton.");
+
   // Determine category and importance
   let category = "other";
   let displayName = span.operationName;
@@ -76,6 +80,180 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
   let isTopLevel = false; // Flag for top-level operations
   let hasError = false;
   let errorMessage: string | undefined = undefined;
+
+  // --- Standard 7-phase lifecycle spans (Telemetry Step Standardization) ---
+  // Make these appear as distinct steps in the Trace UI instead of collapsing them
+  // under generic "processing/routing/database" buckets.
+  //
+  // {svc}.inference (Phase 1 parent + Phase 7 on close) is categorized under "processing" below — not listed here.
+  //
+  // Examples:
+  // - nmt.preprocess / ocr.preprocess / tts.preprocess
+  // - nmt.resolve_model (optional)
+  // - nmt.triton_inference (phase wrapper) containing internal triton.inference (leaf)
+  // - nmt.postprocess
+  // - nmt.persist | nmt.persist_request | nmt.persist_results (split DB phases)
+  const isPersistPhaseSpan =
+    opName.endsWith(".persist") ||
+    opName.endsWith(".persist_request") ||
+    opName.endsWith(".persist_results");
+  const isStandardPhaseSpan =
+    opName.endsWith(".preprocess") ||
+    opName.endsWith(".resolve_model") ||
+    opName.endsWith(".triton_inference") ||
+    opName.endsWith(".postprocess") ||
+    isPersistPhaseSpan;
+
+  if (isStandardPhaseSpan) {
+    isImportant = true;
+    isTopLevel = false;
+
+    if (opName.endsWith(".preprocess")) {
+      category = "phase.preprocess";
+      // Use the proposed span name verbatim (e.g., nmt.preprocess)
+      displayName = span.operationName;
+      // Service-specific: match Telemetry Step Standardization (text vs image vs audio prep)
+      if (opName.startsWith("nmt.")) {
+        description =
+          "Text: normalize source strings (newlines→spaces, trim, empty segment→space). No base64, media download, chunking, or VAD.";
+      } else if (opName.startsWith("ocr.")) {
+        description =
+          "Images: resolve inputs (e.g. download or decode base64), prepare tensors for inference.";
+      } else if (opName.startsWith("tts.")) {
+        description =
+          "Text: normalize and chunk for synthesis (no audio download or VAD).";
+      } else if (opName.startsWith("asr.")) {
+        description =
+          "Audio: decode/prepare audio bytes for transcription (no OCR/image steps).";
+      } else if (opName.startsWith("ner.") || opName.startsWith("transliteration.")) {
+        description =
+          "Text: normalize and prepare token sequences for the model.";
+      } else if (opName.startsWith("language-detection.")) {
+        description =
+          "Text: prepare segments for language detection.";
+      } else if (opName.startsWith("speaker-diarization.")) {
+        description =
+          "Audio: load/prepare audio for diarization (who spoke when).";
+      } else if (opName.startsWith("language-diarization.")) {
+        description =
+          "Audio: load/prepare audio for language diarization.";
+      } else if (opName.startsWith("audio-lang-detection.")) {
+        description =
+          "Audio: load/prepare audio for spoken language detection.";
+      } else if (opName.startsWith("pipeline.")) {
+        description =
+          "Pipeline: validate and normalize task inputs before orchestration.";
+      } else {
+        description = "Prepares inputs for inference (service-specific).";
+      }
+      icon = FiCpu;
+    } else if (opName.endsWith(".resolve_model")) {
+      category = "phase.resolve_model";
+      // Use the proposed span name verbatim (e.g., nmt.resolve_model)
+      displayName = span.operationName;
+      if (opName.startsWith("nmt.")) {
+        description =
+          "Looks up registry/Triton model name and infer URL for this service_id, builds the Triton client, applies invoke-name aliases (e.g. indictrans→nmt).";
+      } else if (opName.startsWith("ocr.")) {
+        description =
+          "Resolves the OCR Triton model name used for inference.";
+      } else if (opName.startsWith("tts.")) {
+        description =
+          "Resolves the TTS model name from service configuration or model management.";
+      } else if (opName.startsWith("asr.")) {
+        description =
+          "Resolves the ASR Triton model and endpoint for this request.";
+      } else if (opName.startsWith("transliteration.")) {
+        description =
+          "Resolves the transliteration Triton model and endpoint.";
+      } else if (opName.startsWith("ner.") || opName.startsWith("language-detection.")) {
+        description =
+          "Resolves the Triton model and endpoint for this text task.";
+      } else if (opName.startsWith("speaker-diarization.") || opName.startsWith("language-diarization.") || opName.startsWith("audio-lang-detection.")) {
+        description =
+          "Resolves the Triton model and endpoint for this audio task.";
+      } else if (opName.startsWith("pipeline.")) {
+        description =
+          "Resolves models or endpoints needed for pipeline orchestration.";
+      } else {
+        description =
+          "Looks up Triton model name and endpoint (skip or shorten if the model is hardcoded).";
+      }
+      icon = FiGlobe;
+    } else if (opName.endsWith(".triton_inference")) {
+      category = "phase.triton_inference";
+      // Use the proposed span name verbatim (e.g., nmt.triton_inference)
+      displayName = span.operationName;
+      if (opName.startsWith("nmt.")) {
+        description =
+          "Prepare NMT tensors per batch, call triton.inference (HTTP infer), read raw OUTPUT_TEXT; repeats for large segment counts.";
+      } else if (opName.startsWith("tts.")) {
+        description =
+          "Prepare TTS tensors per chunk, call triton.inference, read raw audio output.";
+      } else if (opName.startsWith("ocr.")) {
+        description =
+          "Prepare image batch tensors, call triton.inference, read raw OCR outputs.";
+      } else if (opName.startsWith("asr.")) {
+        description =
+          "Prepare audio tensors, call triton.inference, read raw transcripts.";
+      } else if (opName.startsWith("ner.") || opName.startsWith("language-detection.") || opName.startsWith("transliteration.")) {
+        description =
+          "Prepare text tensors, call triton.inference, read raw model outputs.";
+      } else if (opName.startsWith("speaker-diarization.") || opName.startsWith("language-diarization.") || opName.startsWith("audio-lang-detection.")) {
+        description =
+          "Prepare audio tensors, call triton.inference, read raw outputs.";
+      } else if (opName.startsWith("pipeline.")) {
+        description =
+          "Delegated Triton work inside a pipeline task (if any).";
+      } else {
+        description =
+          "Prepare Triton inputs, call triton.inference, extract raw outputs (may loop per batch).";
+      }
+      icon = FiCpu;
+    } else if (opName.endsWith(".postprocess")) {
+      category = "phase.postprocess";
+      // Use the proposed span name verbatim (e.g., nmt.postprocess)
+      displayName = span.operationName;
+      if (opName.startsWith("nmt.")) {
+        description =
+          "Text: decode each Triton OUTPUT_TEXT cell (bytes→UTF-8 or scalar), pair with preprocessed source segments, build TranslationOutput list for the API (no audio resample/encode).";
+      } else if (opName.startsWith("tts.")) {
+        description =
+          "Audio: concatenate chunks, resample, adjust duration, convert format, base64-encode, build audio response objects.";
+      } else if (opName.startsWith("ocr.")) {
+        description =
+          "Parse OCR model output (e.g. JSON/text), normalize, build OCR response objects.";
+      } else if (opName.startsWith("asr.")) {
+        description =
+          "Format transcripts, timestamps, or confidence into the ASR API response.";
+      } else if (opName.startsWith("ner.") || opName.startsWith("language-detection.") || opName.startsWith("transliteration.")) {
+        description =
+          "Parse model outputs into entities, labels, or transliteration response objects.";
+      } else if (opName.startsWith("speaker-diarization.") || opName.startsWith("language-diarization.") || opName.startsWith("audio-lang-detection.")) {
+        description =
+          "Turn raw diarization / lang-detection outputs into API-friendly segments or labels.";
+      } else if (opName.startsWith("pipeline.")) {
+        description =
+          "Shape pipeline task results for the orchestration response.";
+      } else {
+        description =
+          "Parse results, resample or convert where applicable, encode if needed, build response objects.";
+      }
+      icon = FiSettings;
+    } else if (isPersistPhaseSpan) {
+      category = "phase.persist";
+      displayName = span.operationName;
+      description = "Stores request/results and updates status in the database";
+      icon = FiDatabase;
+    }
+  }
+  // Hide internal Triton leaf span from the main step list (still available in technical details)
+  else if (opName === "triton.inference") {
+    category = "triton";
+    isImportant = false;
+    icon = FiCpu;
+    displayName = span.operationName;
+  }
 
   // Check for errors in span
   const checkForErrors = () => {
@@ -259,28 +437,31 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
   
   checkForErrors();
 
-  // Authentication & Authorization - show request.authorize or auth.validate
-  if (opName === "request.authorize" || (opName.includes("authorize") && !opName.includes("decision") && !opName.includes("check"))) {
-    category = "auth";
-    isImportant = true;
-    isTopLevel = true;
-    icon = FiShield;
-    const authMethod = getTag("auth.method") || getTag("auth_source") || "API Key";
-    const org = getTag("organization");
-    const authResult = getTag("auth.decision.result");
-    const authValid = getTag("auth.valid");
-    
-    // Check if authorization failed
-    if (authResult && (authResult.toLowerCase().includes("reject") || authResult.toLowerCase().includes("deny") || authResult.toLowerCase().includes("fail"))) {
-      hasError = true;
-      errorMessage = `Authorization failed: ${authResult}`;
-    } else if (authValid && String(authValid).toLowerCase() === "false") {
-      hasError = true;
-      errorMessage = "Authorization validation failed";
+  // IMPORTANT: If this span is one of the standardized phase spans, keep its categorization.
+  // Do not override it with the generic rules below.
+  if (!isStandardPhaseSpan && opName !== "triton.inference") {
+    // Authentication & Authorization - show request.authorize or auth.validate
+    if (opName === "request.authorize" || (opName.includes("authorize") && !opName.includes("decision") && !opName.includes("check"))) {
+      category = "auth";
+      isImportant = true;
+      isTopLevel = true;
+      icon = FiShield;
+      const authMethod = getTag("auth.method") || getTag("auth_source") || "API Key";
+      const org = getTag("organization");
+      const authResult = getTag("auth.decision.result");
+      const authValid = getTag("auth.valid");
+      
+      // Check if authorization failed
+      if (authResult && (authResult.toLowerCase().includes("reject") || authResult.toLowerCase().includes("deny") || authResult.toLowerCase().includes("fail"))) {
+        hasError = true;
+        errorMessage = `Authorization failed: ${authResult}`;
+      } else if (authValid && String(authValid).toLowerCase() === "false") {
+        hasError = true;
+        errorMessage = "Authorization validation failed";
+      }
+      displayName = "Request Authorization";
+      description = `Validates authentication credentials using ${authMethod}${org ? ` for ${org}` : ""}`;
     }
-    displayName = "Request Authorization";
-    description = `Validates authentication credentials using ${authMethod}${org ? ` for ${org}` : ""}`;
-  }
   // Also show auth.validate if it's a top-level operation
   else if (opName.includes("auth.validate") && !opName.includes("decision") && !opName.includes("check")) {
     category = "auth";
@@ -304,6 +485,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     displayName = "Authentication Validation";
     description = `Validates authentication credentials using ${authMethod}${org ? ` for ${org}` : ""}`;
   }
+  // end: generic categorization overrides (only for non-standard spans)
   // Skip nested auth decision spans - they're redundant
   else if (opName.includes("auth.decision") || (opName.includes("auth") && opName.includes("check"))) {
     category = "auth";
@@ -312,27 +494,70 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     displayName = span.operationName;
     description = "Internal authentication check";
   }
-  // Main service operations (OCR, NMT, etc.) - check for POST /api/v1/ocr/inference or ocr.inference
-  else if (opName.includes("/api/v1/ocr/inference") || opName.includes("/api/v1/nmt/inference") ||
-           opName === "ocr.inference" || opName === "nmt.inference" || 
+  // Main service operations — {svc}.inference (Telemetry Phase 1 parent; Phase 7 finalizes on close)
+  else if (isStandardSvcInferenceOp ||
+           opName.includes("/api/v1/ocr/inference") || opName.includes("/api/v1/nmt/inference") ||
+           opName.includes("/api/v1/transliteration/inference") ||
+           opName.includes("/api/v1/tts/inference") || opName.includes("/api/v1/asr/inference") ||
            (opName.includes("post") && opName.includes("inference") && !serviceName.includes("gateway"))) {
     category = "processing";
     isImportant = true;
     isTopLevel = true;
     icon = FiCpu;
-    const serviceId = getTag("ocr.service_id") || getTag("nmt.service_id") || getTag("service_id");
+    const serviceId = getTag("ocr.service_id") || getTag("nmt.service_id") ||
+           getTag("transliteration.service_id") ||
+           getTag("tts.service_id") || getTag("asr.service_id") ||
+           getTag("speaker-diarization.service_id") ||
+           getTag("language-diarization.service_id") ||
+           getTag("language-detection.service_id") ||
+           getTag("ner.service_id") ||
+           getTag("pipeline.task_types") ||
+           getTag("service_id");
     const imageCount = getTag("ocr.image_count");
-    const outputCount = getTag("ocr.output_count") || getTag("nmt.output_count");
-    const sourceLang = getTag("ocr.source_language") || getTag("nmt.source_language");
-    const targetLang = getTag("nmt.target_language");
-    displayName = serviceName.includes("ocr") ? "OCR Processing" : serviceName.includes("nmt") ? "Translation Processing" : "Request Processing";
-    let descParts = ["Processes the request"];
-    if (serviceId) descParts.push(`using ${serviceId}`);
-    if (imageCount) descParts.push(`(${imageCount} image${parseInt(imageCount) !== 1 ? "s" : ""})`);
-    if (sourceLang && targetLang) descParts.push(`from ${sourceLang} to ${targetLang}`);
-    else if (sourceLang) descParts.push(`(source: ${sourceLang})`);
-    if (outputCount) descParts.push(`→ ${outputCount} output${parseInt(outputCount) !== 1 ? "s" : ""}`);
-    description = descParts.join(" ");
+    const outputCount = getTag("ocr.output_count") || getTag("nmt.output_count") ||
+           getTag("transliteration.output_count") ||
+           getTag("tts.output_count") || getTag("asr.output_count") ||
+           getTag("audio-lang-detection.output_count") ||
+           getTag("speaker-diarization.output_count") ||
+           getTag("language-diarization.output_count") ||
+           getTag("language-detection.output_count") ||
+           getTag("ner.output_count") ||
+           getTag("pipeline.output_count");
+    const sourceLang = getTag("ocr.source_language") || getTag("nmt.source_language") ||
+           getTag("transliteration.source_language") ||
+           getTag("ner.source_language");
+    const targetLang = getTag("nmt.target_language") ||
+           getTag("transliteration.target_language");
+    displayName = span.operationName;
+    // Telemetry Step Standardization: same span is Phase 1 (entry) and Phase 7 (final attrs on close).
+    let phaseDesc =
+      "Phase 1 — service inference entry (parent span). Phases 2–6 are child spans (preprocess → resolve_model → triton_inference → postprocess → persist). Phase 7 — when this span ends, final metrics are set here ({svc}.processing_time_seconds, {svc}.status).";
+    if (isStandardSvcInferenceOp) {
+      if (opName.startsWith("nmt.")) {
+        phaseDesc =
+          "Phase 1 & 7 (NMT): parent span for the translation request; children run the standard phases; on close, records processing time and status.";
+      } else if (opName.startsWith("tts.")) {
+        phaseDesc =
+          "Phase 1 & 7 (TTS): parent span for synthesis; children run preprocess → … → persist; on close, finalizes duration and status.";
+      } else if (opName.startsWith("asr.")) {
+        phaseDesc =
+          "Phase 1 & 7 (ASR): parent span for transcription; children run the standard phases; on close, finalizes timing and status.";
+      } else if (opName.startsWith("ocr.")) {
+        phaseDesc =
+          "Phase 1 & 7 (OCR): parent span for the OCR request; children run the standard phases; on close, finalizes timing and status.";
+      } else if (opName.startsWith("pipeline.")) {
+        phaseDesc =
+          "Phase 1 & 7 (Pipeline): parent span for pipeline orchestration; sub-task spans follow the same lifecycle pattern where applicable.";
+      }
+    }
+    const contextBits: string[] = [];
+    if (serviceId) contextBits.push(`service_id ${serviceId}`);
+    if (imageCount) contextBits.push(`${imageCount} image(s)`);
+    if (sourceLang && targetLang) contextBits.push(`${sourceLang} → ${targetLang}`);
+    else if (sourceLang) contextBits.push(`source ${sourceLang}`);
+    if (outputCount) contextBits.push(`${outputCount} output(s)`);
+    description =
+      phaseDesc + (contextBits.length > 0 ? ` Tags: ${contextBits.join(", ")}.` : "");
   }
   // Skip API gateway POST spans - they're just wrappers
   else if (serviceName.includes("gateway") && (opName.includes("post") || opName.includes("http"))) {
@@ -572,6 +797,8 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       description = `Processes ${displayName}`;
     }
   }
+
+  } // <-- closes: if (!isStandardPhaseSpan && opName !== "triton.inference")
 
   // Check for request.reject operations - mark as important and error
   if (opName.includes("reject") || opName.includes("request.reject")) {
@@ -909,6 +1136,9 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       }
     });
   };
+
+  // Phase 7 (Telemetry Step Standardization): {svc}.processing_time_seconds and {svc}.status are set when
+  // {svc}.inference ends — no separate span; see categorizeSpan description for that parent span.
 
   // If we have too few spans, include some important non-top-level ones
   if (sorted.length < 3) {
@@ -1304,6 +1534,16 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
     const tag = tags.find(t => t.key.toLowerCase() === key.toLowerCase());
     return tag ? String(tag.value) : null;
   };
+  const opLc = (processed.span.operationName || "").toLowerCase();
+  const isStandardSvcInferenceName =
+    /^[a-z0-9-]+\.inference$/.test(opLc) && !opLc.startsWith("triton.");
+  const isHttpInferenceRoute =
+    opLc.includes("/api/v1/nmt/inference") ||
+    opLc.includes("/api/v1/ocr/inference") ||
+    opLc.includes("/api/v1/transliteration/inference") ||
+    opLc.includes("/api/v1/tts/inference") ||
+    opLc.includes("/api/v1/asr/inference") ||
+    (opLc.includes("post") && opLc.includes("inference") && opLc.includes("/api/v1/"));
 
   // If there's an error, return simple error indicator
   // (detailed error will be shown in separate section)
@@ -1357,6 +1597,23 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
         return desc.trim();
       } else if (processed.displayName.includes("Request Processing")) {
         return "This step receives and initializes the request. It validates the request format and prepares it for processing through the system.";
+      } else if (isStandardSvcInferenceName || isHttpInferenceRoute) {
+        const task =
+          opLc.includes("nmt") || opLc.startsWith("nmt.")
+            ? "NMT translation"
+            : opLc.includes("tts") || opLc.startsWith("tts.")
+              ? "TTS synthesis"
+              : opLc.includes("asr") || opLc.startsWith("asr.")
+                ? "ASR transcription"
+                : opLc.includes("ocr") || opLc.startsWith("ocr.")
+                  ? "OCR"
+                  : opLc.includes("pipeline") || opLc.startsWith("pipeline.")
+                    ? "pipeline"
+                    : "inference";
+        return (
+          `One ${task} request. This span wraps the whole call (telemetry phases 1 & 7: start here; duration and status when it ends). ` +
+          `Child spans—preprocess → resolve_model → triton_inference → postprocess → persist—run in order under this parent.`
+        );
       }
       return "This step processes the request data and performs the necessary computations to generate the response.";
 
@@ -2181,7 +2438,9 @@ const TracesPage: React.FC = () => {
                                   </Badge>
                                 </HStack>
                                     <Text fontSize="xs" color={processed.hasError ? "red.700" : "gray.600"} pl={6} fontWeight={processed.hasError ? "medium" : "normal"}>
-                                      {processed.hasError && processed.errorMessage ? `❌ ${processed.errorMessage}` : processed.description}
+                                      {processed.hasError && processed.errorMessage
+                                        ? `❌ ${processed.errorMessage}`
+                                        : getUserFriendlyDescription(processed)}
                                 </Text>
                           </Box>
                                 );
@@ -2244,20 +2503,125 @@ const TracesPage: React.FC = () => {
                               'http.target', 'http.url', 'http.user_agent', 'correlation.header'
                             ]);
                             
+                            const isServiceDomainTag = (tagKey: string): boolean =>
+                              tagKey.startsWith('nmt.') ||
+                              tagKey.startsWith('ocr.') ||
+                              tagKey.startsWith('transliteration.') ||
+                              tagKey.startsWith('audio-lang-detection.') ||
+                              tagKey.startsWith('speaker-diarization.') ||
+                              tagKey.startsWith('language-diarization.') ||
+                              tagKey.startsWith('language-detection.') ||
+                              tagKey.startsWith('ner.') ||
+                              tagKey.startsWith('pipeline.') ||
+                              tagKey.startsWith('tts.') ||
+                              tagKey.startsWith('asr.');
+
+                            /** Merge only parent tags that belong to that phase (Telemetry Step Standardization). */
+                            const shouldIncludeParentTagForStandardPhase = (
+                              tagKey: string,
+                              spanCategory: string
+                            ): boolean => {
+                              const infra =
+                                tagKey === 'correlation.id' ||
+                                tagKey === 'organization' ||
+                                tagKey.startsWith('user.') ||
+                                tagKey.startsWith('session.') ||
+                                tagKey.startsWith('api_key') ||
+                                tagKey.includes('tenant') ||
+                                tagKey === 'client.ip' ||
+                                tagKey === 'http.client_ip';
+
+                              if (spanCategory === 'phase.persist') {
+                                if (infra) return true;
+                                if (tagKey.endsWith('.service_id')) return true;
+                                // Persist span should carry DB attrs from the exporter; do not pull input/output/model from ancestors.
+                                if (isServiceDomainTag(tagKey)) return false;
+                                return false;
+                              }
+
+                              if (spanCategory === 'phase.preprocess') {
+                                if (infra) return true;
+                                if (tagKey.endsWith('.service_id')) return true;
+                                if (tagKey.includes('source_language') || tagKey.includes('target_language')) return true;
+                                if (
+                                  tagKey.includes('.input.') ||
+                                  tagKey.includes('input_count') ||
+                                  tagKey.includes('input_size') ||
+                                  tagKey.includes('request.size') ||
+                                  tagKey.startsWith('http.request') ||
+                                  tagKey.includes('input_type')
+                                )
+                                  return true;
+                                if (tagKey.includes('audio_format') || tagKey.includes('sampling_rate')) return true;
+                                if (tagKey.includes('image_count') || tagKey.includes('image_bytes')) return true;
+                                if (isServiceDomainTag(tagKey)) {
+                                  if (tagKey.includes('.output.') || tagKey.includes('output_count')) return false;
+                                  if (tagKey.includes('.db_') || tagKey.includes('request_id')) return false;
+                                  if (tagKey.endsWith('.model_name') || tagKey.includes('triton_endpoint')) return false;
+                                  if (
+                                    tagKey.endsWith('.processing_time_seconds') ||
+                                    tagKey.endsWith('.status')
+                                  )
+                                    return false;
+                                  return true;
+                                }
+                                if (tagKey.startsWith('triton.')) return false;
+                                return false;
+                              }
+
+                              if (spanCategory === 'phase.resolve_model') {
+                                if (infra) return true;
+                                // Span exporter should set *.resolve_model.* / model endpoint attrs; do not pull
+                                // inference context (languages, input_type, service_id) from ancestors.
+                                if (isServiceDomainTag(tagKey)) return false;
+                                return false;
+                              }
+
+                              if (spanCategory === 'phase.triton_inference') {
+                                if (infra) return true;
+                                // Phase span should carry *.triton_inference.* from the exporter; do not merge
+                                // generic inference attrs from ancestors (languages, service_id, etc.).
+                                if (isServiceDomainTag(tagKey)) return false;
+                                if (tagKey.startsWith('triton.')) return false;
+                                return false;
+                              }
+
+                              if (spanCategory === 'phase.postprocess') {
+                                if (infra) return true;
+                                // Postprocess span owns *.postprocess.* and *.output.* from the exporter only.
+                                if (isServiceDomainTag(tagKey)) return false;
+                                if (tagKey.startsWith('triton.')) return false;
+                                return false;
+                              }
+
+                              return false;
+                            };
+
                             // Helper function to determine if a parent tag should be included
                             const shouldIncludeParentTag = (tagKey: string, spanCategory: string): boolean => {
                               // Always exclude redundant HTTP metadata from parent spans
                               if (redundantHttpTags.has(tagKey)) return false;
-                              
+
+                              if (spanCategory.startsWith('phase.')) {
+                                return shouldIncludeParentTagForStandardPhase(tagKey, spanCategory);
+                              }
+
                               // For processing spans, include input/output data from parents
                               if (spanCategory === 'processing') {
-                                return tagKey.includes('.input.') || 
-                                       tagKey.includes('input_count') || 
+                                return tagKey.includes('.input.') ||
+                                       tagKey.includes('input_count') ||
                                        tagKey.includes('input_size') ||
                                        tagKey.includes('request.size') ||
                                        tagKey.startsWith('http.request') ||
                                        tagKey.startsWith('nmt.') ||
                                        tagKey.startsWith('ocr.') ||
+                                       tagKey.startsWith('transliteration.') ||
+                                       tagKey.startsWith('audio-lang-detection.') ||
+                                       tagKey.startsWith('speaker-diarization.') ||
+                                       tagKey.startsWith('language-diarization.') ||
+                                       tagKey.startsWith('language-detection.') ||
+                                       tagKey.startsWith('ner.') ||
+                                       tagKey.startsWith('pipeline.') ||
                                        tagKey.startsWith('tts.') ||
                                        tagKey.startsWith('asr.') ||
                                        tagKey.startsWith('triton.') ||
@@ -2267,7 +2631,7 @@ const TracesPage: React.FC = () => {
                                        tagKey === 'client.ip' ||
                                        tagKey === 'http.client_ip';
                               }
-                              
+
                               // For auth spans, include auth-related and organization tags
                               if (spanCategory === 'auth') {
                                 return tagKey.startsWith('auth.') ||
@@ -2277,7 +2641,7 @@ const TracesPage: React.FC = () => {
                                        tagKey === 'client.ip' ||
                                        tagKey === 'http.client_ip';
                               }
-                              
+
                               // For other spans, only include essential tags
                               return tagKey === 'correlation.id' ||
                                      tagKey === 'organization' ||
@@ -2337,9 +2701,14 @@ const TracesPage: React.FC = () => {
                               });
                             };
                             
-                            // Collect triton and internal tags from all child spans
-                            const visitedChildren = new Set<string>();
-                            collectTagsFromChildren(processed.span.spanID, visitedChildren);
+                            // Collect triton and internal tags from all child spans.
+                            // Exception: for the standard Triton phase span (e.g., nmt.triton_inference),
+                            // keep child tags separated so the UI can show triton.inference as an indented child
+                            // with its own technical details.
+                            if (processed.category !== "phase.triton_inference") {
+                              const visitedChildren = new Set<string>();
+                              collectTagsFromChildren(processed.span.spanID, visitedChildren);
+                            }
                             
                             const relevantTags = allTags.filter((t: { key: string; value: any }) => {
                               const key = t.key.toLowerCase();
@@ -2411,13 +2780,47 @@ const TracesPage: React.FC = () => {
                                   if (key.includes("error") || key.includes("exception")) return -1;
                                   if (key === "db.statement" || key === "db.system") return 0;
                                 }
+                                if (
+                                  processed.category === "phase.persist" &&
+                                  (key.includes(".db.") ||
+                                    key.includes("request_id") ||
+                                    key.includes("pii_redact"))
+                                ) {
+                                  return 0.25;
+                                }
+                                if (
+                                  processed.category === "phase.resolve_model" &&
+                                  (key.includes("resolve_model") ||
+                                    key.includes("model_name") ||
+                                    key.includes("triton_endpoint") ||
+                                    key.includes("infer_endpoint") ||
+                                    key.includes("triton_client"))
+                                ) {
+                                  return 0.25;
+                                }
+                                if (
+                                  processed.category === "phase.triton_inference" &&
+                                  (key.includes("triton_inference") ||
+                                    key.startsWith("triton."))
+                                ) {
+                                  return 0.25;
+                                }
+                                if (
+                                  processed.category === "phase.postprocess" &&
+                                  (key.includes("postprocess") ||
+                                    key.includes(".output.") ||
+                                    key.includes("output_count") ||
+                                    key.includes("formatted_count"))
+                                ) {
+                                  return 0.25;
+                                }
                                 // Highest priority: input-related tags (most important for understanding the request)
                                 if (key.includes(".input.") || key.includes("input_count") || key.includes("input_size") || 
                                     key.includes("request.size") || key.startsWith("http.request")) return 1;
                                 // High priority: client IP (important for request tracking)
                                 if (key === "client.ip" || key === "http.client_ip") return 1.5;
                                 // High priority: service-specific tags (including triton tags for AI Model Inference)
-                                if (key.startsWith("nmt.") || key.startsWith("ocr.") || key.startsWith("tts.") || key.startsWith("asr.") || key.startsWith("triton.")) return 2;
+                                if (key.startsWith("nmt.") || key.startsWith("ocr.") || key.startsWith("transliteration.") || key.startsWith("audio-lang-detection.") || key.startsWith("speaker-diarization.") || key.startsWith("language-diarization.") || key.startsWith("language-detection.") || key.startsWith("ner.") || key.startsWith("pipeline.") || key.startsWith("tts.") || key.startsWith("asr.") || key.startsWith("triton.")) return 2;
                                 if (key === "http.status_code" || key === "otel.status_code") return 3;
                                 if (key === "organization") return 4;
                                 if (key === "correlation.id") return 5;
@@ -2783,6 +3186,7 @@ const TracesPage: React.FC = () => {
                                                 Technical Information:
                                 </Text>
                                             </HStack>
+
                                             <VStack spacing={2} align="stretch">
                                               {relevantTags.map((tag: { key: string; value: any }, tagIdx: number) => (
                                                 <Box
@@ -2820,6 +3224,112 @@ const TracesPage: React.FC = () => {
                                                 </Box>
                                               ))}
                                             </VStack>
+
+                                            {/* Internal child span (e.g., triton.inference) as a separate, indented "mini span card" */}
+                                            {/* Keep it visually isolated from the parent tag list */}
+                                            {processed.category === "phase.triton_inference" && (
+                                              <Box mt={6} pt={4} borderTop="1px solid" borderTopColor="gray.200">
+                                                <HStack spacing={2} mb={2} align="center">
+                                                  <Icon as={FiLayers} color="gray.600" boxSize={3} />
+                                                  <Text fontSize="xs" color="gray.700" fontWeight="semibold">
+                                                    Internal child spans:
+                                                  </Text>
+                                                </HStack>
+
+                                                {(spanRelationships.childSpans.get(processed.span.spanID) || [])
+                                                  .map((childId: string) => spanRelationships.spanMap.get(childId))
+                                                  .filter((s: any) => s && String(s.operationName).toLowerCase() === "triton.inference")
+                                                  .map((s: any, i: number) => (
+                                                    <Card
+                                                      key={i}
+                                                      bg="white"
+                                                      border="1px"
+                                                      borderColor="gray.200"
+                                                      boxShadow="sm"
+                                                      ml={6} // visual indent under parent span
+                                                    >
+                                                      <CardBody py={2}>
+                                                        <HStack justify="space-between" align="center">
+                                                          <HStack spacing={2} align="center">
+                                                            <Text fontSize="sm" fontFamily="mono" color="gray.800" fontWeight="semibold">
+                                                              {s.operationName}
+                                                            </Text>
+                                                          </HStack>
+                                                          <Badge fontSize="xs" colorScheme="blue">
+                                                            {formatDuration(s.duration)}
+                                                          </Badge>
+                                                        </HStack>
+
+                                                        <Button
+                                                          mt={2}
+                                                          variant="outline"
+                                                          colorScheme="gray"
+                                                          width="full"
+                                                          h="22px"
+                                                          minH="22px"
+                                                          maxH="22px"
+                                                          fontSize="10px"
+                                                          px={2}
+                                                          py={0}
+                                                          lineHeight="1.2"
+                                                          leftIcon={<Icon as={expandedTags.has(s.spanID) ? FiEyeOff : FiEye} boxSize={2.5} />}
+                                                          onClick={() => {
+                                                            const spanId = s.spanID;
+                                                            const newExpanded = new Set(expandedTags);
+                                                            if (newExpanded.has(spanId)) newExpanded.delete(spanId);
+                                                            else newExpanded.add(spanId);
+                                                            setExpandedTags(newExpanded);
+                                                          }}
+                                                        >
+                                                          {expandedTags.has(s.spanID)
+                                                            ? "Hide Technical Details"
+                                                            : `Show Technical Details (${(s.tags || []).length} tags)`}
+                                                        </Button>
+
+                                                        <Collapse in={expandedTags.has(s.spanID)} animateOpacity>
+                                                          <Box mt={3} p={3} bg="gray.50" borderRadius="md" border="1px" borderColor="gray.200">
+                                                            <VStack spacing={2} align="stretch">
+                                                              {(s.tags || []).map((tag: { key: string; value: any }, tagIdx: number) => (
+                                                                <Box
+                                                                  key={tagIdx}
+                                                                  p={2}
+                                                                  bg="white"
+                                                                  borderRadius="sm"
+                                                                  border="1px"
+                                                                  borderColor="gray.200"
+                                                                >
+                                                                  <HStack spacing={2} align="start">
+                                                                    <Text
+                                                                      fontSize="xs"
+                                                                      color="gray.600"
+                                                                      fontWeight="medium"
+                                                                      minW="140px"
+                                                                      textTransform="uppercase"
+                                                                      letterSpacing="0.5px"
+                                                                    >
+                                                                      {tag.key}:
+                                                                    </Text>
+                                                                    <Text
+                                                                      color="gray.800"
+                                                                      fontFamily="mono"
+                                                                      fontSize="xs"
+                                                                      wordBreak="break-word"
+                                                                      whiteSpace="pre-wrap"
+                                                                      flex={1}
+                                                                    >
+                                                                      {formatTagValue(tag.key, tag.value)}
+                                                                    </Text>
+                                                                  </HStack>
+                                                                </Box>
+                                                              ))}
+                                                            </VStack>
+                                                          </Box>
+                                                        </Collapse>
+                                                      </CardBody>
+                                                    </Card>
+                                                  ))}
+                                              </Box>
+                                            )}
                                           </Box>
                                         </Collapse>
                                       </Box>
