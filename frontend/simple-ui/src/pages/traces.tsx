@@ -267,6 +267,9 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       } else if (opName.startsWith("ner.")) {
         description =
           "DB: create ner_requests, one ner_results row per prediction (entities JSON + source text), set request completed.";
+      } else if (opName.startsWith("language-detection.")) {
+        description =
+          "DB: create language_detection_requests, one language_detection_results row per input segment (lang + script + confidence), set request completed.";
       } else {
         description =
           "Stores request/results and updates status in the database (single persist span).";
@@ -327,8 +330,19 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     // Priority 3: Check for database error descriptions
     const dbStatementTag = tags.find(t => t.key === "db.statement");
     
-    // Priority 4: Check for generic error tags
-    const errorTag = tags.find(t => t.key === "error" || (t.key.toLowerCase().includes("error") && !t.key.toLowerCase().includes("message") && !t.key.toLowerCase().includes("reason")));
+    // Priority 4: Check for generic error indicator tags.
+    //
+    // IMPORTANT: do NOT treat arbitrary keys containing "error" as actual errors.
+    // Example: `language-detection.postprocess.parsed_error_count=0` is a *metric*,
+    // not a failure signal, but naive substring matching would incorrectly flag it.
+    const errorTag = tags.find(t => {
+      const k = (t.key || "").toLowerCase();
+      if (k === "error") return true;
+      if (k.startsWith("error.")) return true;
+      if (k.startsWith("exception.")) return true;
+      if (k.startsWith("otel.error")) return true;
+      return false;
+    });
     const statusCode = tags.find(t => t.key === "otel.status_code" || t.key === "http.status_code");
     const rejectTag = tags.find(t => t.key.toLowerCase().includes("reject") && t.key.toLowerCase() !== "reject.reason");
     const httpStatus = tags.find(t => t.key === "http.status_code");
@@ -445,18 +459,19 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       const errorLog = span.logs.find((log: any) => {
         if (log.fields) {
           return log.fields.some((f: any) => 
-            f.key === "error" || 
-            f.key === "level" && String(f.value).toLowerCase() === "error" ||
-            String(f.value).toLowerCase().includes("error") ||
-            String(f.value).toLowerCase().includes("failed") ||
-            String(f.value).toLowerCase().includes("reject")
+            f.key === "error" ||
+            f.key === "exception" ||
+            (f.key === "level" && String(f.value).toLowerCase() === "error") ||
+            (f.key === "otel.status_code" && String(f.value) === "ERROR")
           );
         }
         return false;
       });
       if (errorLog) {
         hasError = true;
-        const errorField = errorLog.fields.find((f: any) => f.key === "error" || f.key === "message");
+        const errorField = errorLog.fields.find((f: any) =>
+          f.key === "error" || f.key === "exception" || f.key === "message"
+        );
         errorMessage = errorField ? String(errorField.value) : "Error occurred during processing";
       }
     }
