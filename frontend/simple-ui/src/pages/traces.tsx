@@ -121,11 +121,14 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
           "Images: resolve inputs (e.g. download or decode base64), prepare tensors for inference.";
       } else if (opName.startsWith("tts.")) {
         description =
-          "Text: normalize and chunk for synthesis (no audio download or VAD).";
+          "Text: TTS-specific normalization, then chunk long lines (~400 chars) for per-chunk synthesis (no audio input or VAD).";
       } else if (opName.startsWith("asr.")) {
         description =
-          "Audio: decode/prepare audio bytes for transcription (no OCR/image steps).";
-      } else if (opName.startsWith("ner.") || opName.startsWith("transliteration.")) {
+          "Audio: fetch bytes (base64/URI), decode to mono 16 kHz, optional VAD chunking before ASR (no image/OCR).";
+      } else if (opName.startsWith("ner.")) {
+        description =
+          "Text: normalize each input line (newlines→space, trim) for batched NER; same pattern as NMT text prep, no audio/image.";
+      } else if (opName.startsWith("transliteration.")) {
         description =
           "Text: normalize and prepare token sequences for the model.";
       } else if (opName.startsWith("language-detection.")) {
@@ -159,14 +162,17 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
           "Resolves the OCR Triton model name used for inference.";
       } else if (opName.startsWith("tts.")) {
         description =
-          "Resolves the TTS model name from service configuration or model management.";
+          "Confirms TTS model name and endpoint (usually precached from model management when the service starts; same phase as dynamic lookup elsewhere).";
       } else if (opName.startsWith("asr.")) {
         description =
-          "Resolves the ASR Triton model and endpoint for this request.";
+          "Confirms ASR model name and endpoint (typically precached from model management at service startup).";
       } else if (opName.startsWith("transliteration.")) {
         description =
           "Resolves the transliteration Triton model and endpoint.";
-      } else if (opName.startsWith("ner.") || opName.startsWith("language-detection.")) {
+      } else if (opName.startsWith("ner.")) {
+        description =
+          "Confirms NER Triton model name and endpoint (configured on the NER service instance).";
+      } else if (opName.startsWith("language-detection.")) {
         description =
           "Resolves the Triton model and endpoint for this text task.";
       } else if (opName.startsWith("speaker-diarization.") || opName.startsWith("language-diarization.") || opName.startsWith("audio-lang-detection.")) {
@@ -195,8 +201,11 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
           "Prepare image batch tensors, call triton.inference, read raw OCR outputs.";
       } else if (opName.startsWith("asr.")) {
         description =
-          "Prepare audio tensors, call triton.inference, read raw transcripts.";
-      } else if (opName.startsWith("ner.") || opName.startsWith("language-detection.") || opName.startsWith("transliteration.")) {
+          "Batch AUDIO_SIGNAL tensors, call triton.inference, decode TRANSCRIPTS JSON/text per chunk (may loop batches per audio).";
+      } else if (opName.startsWith("ner.")) {
+        description =
+          "Batch INPUT_TEXT + LANG_ID, single triton.inference, read OUTPUT_TEXT (JSON entity payload).";
+      } else if (opName.startsWith("language-detection.") || opName.startsWith("transliteration.")) {
         description =
           "Prepare text tensors, call triton.inference, read raw model outputs.";
       } else if (opName.startsWith("speaker-diarization.") || opName.startsWith("language-diarization.") || opName.startsWith("audio-lang-detection.")) {
@@ -225,8 +234,11 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
           "Parse OCR model output (e.g. JSON/text), normalize, build OCR response objects.";
       } else if (opName.startsWith("asr.")) {
         description =
-          "Format transcripts, timestamps, or confidence into the ASR API response.";
-      } else if (opName.startsWith("ner.") || opName.startsWith("language-detection.") || opName.startsWith("transliteration.")) {
+          "Optional text post-processors, then build plain / SRT / WebVTT transcript strings and TranscriptOutput list.";
+      } else if (opName.startsWith("ner.")) {
+        description =
+          "Parse OUTPUT_TEXT JSON, align BIO-style predictions to words, build NerPrediction / NerTokenPrediction list.";
+      } else if (opName.startsWith("language-detection.") || opName.startsWith("transliteration.")) {
         description =
           "Parse model outputs into entities, labels, or transliteration response objects.";
       } else if (opName.startsWith("speaker-diarization.") || opName.startsWith("language-diarization.") || opName.startsWith("audio-lang-detection.")) {
@@ -243,7 +255,37 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     } else if (isPersistPhaseSpan) {
       category = "phase.persist";
       displayName = span.operationName;
-      description = "Stores request/results and updates status in the database";
+      if (opName.startsWith("tts.")) {
+        description =
+          "DB: create tts_requests row, insert tts_results (duration, format, sample rate, size; audio preview path), set request completed.";
+      } else if (opName.startsWith("nmt.")) {
+        description =
+          "DB: create nmt_requests, bulk nmt_results (with optional PII redact), update request status.";
+      } else if (opName.startsWith("asr.")) {
+        description =
+          "DB: create asr_requests, one asr_results row per audio input (transcript + timestamps), set request completed.";
+      } else if (opName.startsWith("ner.")) {
+        description =
+          "DB: create ner_requests, one ner_results row per prediction (entities JSON + source text), set request completed.";
+      } else if (opName.startsWith("language-detection.")) {
+        description =
+          "DB: create language_detection_requests, one language_detection_results row per input segment (lang + script + confidence), set request completed.";
+      } else if (opName.startsWith("transliteration.")) {
+        description =
+          "DB: create transliteration_requests, one transliteration_results row per input (string or suggestion list), set request completed.";
+      } else if (opName.startsWith("language-diarization.")) {
+        description =
+          "DB: create language_diarization_requests, one language_diarization_results row per audio (segments JSON), set request completed (may be partial-failure).";
+      } else if (opName.startsWith("speaker-diarization.")) {
+        description =
+          "DB: create speaker_diarization_requests, one speaker_diarization_results row per audio (segments JSON + speaker list), set request completed (may be partial-failure).";
+      } else if (opName.startsWith("audio-lang-detection.")) {
+        description =
+          "DB: create audio_lang_detection_requests, one audio_lang_detection_results row per audio (lang + confidence + scores JSON), set request completed (may be partial-failure).";
+      } else {
+        description =
+          "Stores request/results and updates status in the database (single persist span).";
+      }
       icon = FiDatabase;
     }
   }
@@ -300,8 +342,19 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     // Priority 3: Check for database error descriptions
     const dbStatementTag = tags.find(t => t.key === "db.statement");
     
-    // Priority 4: Check for generic error tags
-    const errorTag = tags.find(t => t.key === "error" || (t.key.toLowerCase().includes("error") && !t.key.toLowerCase().includes("message") && !t.key.toLowerCase().includes("reason")));
+    // Priority 4: Check for generic error indicator tags.
+    //
+    // IMPORTANT: do NOT treat arbitrary keys containing "error" as actual errors.
+    // Example: `language-detection.postprocess.parsed_error_count=0` is a *metric*,
+    // not a failure signal, but naive substring matching would incorrectly flag it.
+    const errorTag = tags.find(t => {
+      const k = (t.key || "").toLowerCase();
+      if (k === "error") return true;
+      if (k.startsWith("error.")) return true;
+      if (k.startsWith("exception.")) return true;
+      if (k.startsWith("otel.error")) return true;
+      return false;
+    });
     const statusCode = tags.find(t => t.key === "otel.status_code" || t.key === "http.status_code");
     const rejectTag = tags.find(t => t.key.toLowerCase().includes("reject") && t.key.toLowerCase() !== "reject.reason");
     const httpStatus = tags.find(t => t.key === "http.status_code");
@@ -418,18 +471,19 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       const errorLog = span.logs.find((log: any) => {
         if (log.fields) {
           return log.fields.some((f: any) => 
-            f.key === "error" || 
-            f.key === "level" && String(f.value).toLowerCase() === "error" ||
-            String(f.value).toLowerCase().includes("error") ||
-            String(f.value).toLowerCase().includes("failed") ||
-            String(f.value).toLowerCase().includes("reject")
+            f.key === "error" ||
+            f.key === "exception" ||
+            (f.key === "level" && String(f.value).toLowerCase() === "error") ||
+            (f.key === "otel.status_code" && String(f.value) === "ERROR")
           );
         }
         return false;
       });
       if (errorLog) {
         hasError = true;
-        const errorField = errorLog.fields.find((f: any) => f.key === "error" || f.key === "message");
+        const errorField = errorLog.fields.find((f: any) =>
+          f.key === "error" || f.key === "exception" || f.key === "message"
+        );
         errorMessage = errorField ? String(errorField.value) : "Error occurred during processing";
       }
     }
@@ -1543,6 +1597,7 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
     opLc.includes("/api/v1/transliteration/inference") ||
     opLc.includes("/api/v1/tts/inference") ||
     opLc.includes("/api/v1/asr/inference") ||
+    opLc.includes("/api/v1/ner/inference") ||
     (opLc.includes("post") && opLc.includes("inference") && opLc.includes("/api/v1/"));
 
   // If there's an error, return simple error indicator
@@ -1607,9 +1662,11 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
                 ? "ASR transcription"
                 : opLc.includes("ocr") || opLc.startsWith("ocr.")
                   ? "OCR"
-                  : opLc.includes("pipeline") || opLc.startsWith("pipeline.")
-                    ? "pipeline"
-                    : "inference";
+                  : opLc.includes("ner") || opLc.startsWith("ner.")
+                    ? "NER"
+                    : opLc.includes("pipeline") || opLc.startsWith("pipeline.")
+                      ? "pipeline"
+                      : "inference";
         return (
           `One ${task} request. This span wraps the whole call (telemetry phases 1 & 7: start here; duration and status when it ends). ` +
           `Child spans—preprocess → resolve_model → triton_inference → postprocess → persist—run in order under this parent.`
