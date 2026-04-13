@@ -125,7 +125,10 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       } else if (opName.startsWith("asr.")) {
         description =
           "Audio: fetch bytes (base64/URI), decode to mono 16 kHz, optional VAD chunking before ASR (no image/OCR).";
-      } else if (opName.startsWith("ner.") || opName.startsWith("transliteration.")) {
+      } else if (opName.startsWith("ner.")) {
+        description =
+          "Text: normalize each input line (newlines→space, trim) for batched NER; same pattern as NMT text prep, no audio/image.";
+      } else if (opName.startsWith("transliteration.")) {
         description =
           "Text: normalize and prepare token sequences for the model.";
       } else if (opName.startsWith("language-detection.")) {
@@ -166,7 +169,10 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       } else if (opName.startsWith("transliteration.")) {
         description =
           "Resolves the transliteration Triton model and endpoint.";
-      } else if (opName.startsWith("ner.") || opName.startsWith("language-detection.")) {
+      } else if (opName.startsWith("ner.")) {
+        description =
+          "Confirms NER Triton model name and endpoint (configured on the NER service instance).";
+      } else if (opName.startsWith("language-detection.")) {
         description =
           "Resolves the Triton model and endpoint for this text task.";
       } else if (opName.startsWith("speaker-diarization.") || opName.startsWith("language-diarization.") || opName.startsWith("audio-lang-detection.")) {
@@ -196,7 +202,10 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       } else if (opName.startsWith("asr.")) {
         description =
           "Batch AUDIO_SIGNAL tensors, call triton.inference, decode TRANSCRIPTS JSON/text per chunk (may loop batches per audio).";
-      } else if (opName.startsWith("ner.") || opName.startsWith("language-detection.") || opName.startsWith("transliteration.")) {
+      } else if (opName.startsWith("ner.")) {
+        description =
+          "Batch INPUT_TEXT + LANG_ID, single triton.inference, read OUTPUT_TEXT (JSON entity payload).";
+      } else if (opName.startsWith("language-detection.") || opName.startsWith("transliteration.")) {
         description =
           "Prepare text tensors, call triton.inference, read raw model outputs.";
       } else if (opName.startsWith("speaker-diarization.") || opName.startsWith("language-diarization.") || opName.startsWith("audio-lang-detection.")) {
@@ -226,7 +235,10 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       } else if (opName.startsWith("asr.")) {
         description =
           "Optional text post-processors, then build plain / SRT / WebVTT transcript strings and TranscriptOutput list.";
-      } else if (opName.startsWith("ner.") || opName.startsWith("language-detection.") || opName.startsWith("transliteration.")) {
+      } else if (opName.startsWith("ner.")) {
+        description =
+          "Parse OUTPUT_TEXT JSON, align BIO-style predictions to words, build NerPrediction / NerTokenPrediction list.";
+      } else if (opName.startsWith("language-detection.") || opName.startsWith("transliteration.")) {
         description =
           "Parse model outputs into entities, labels, or transliteration response objects.";
       } else if (opName.startsWith("speaker-diarization.") || opName.startsWith("language-diarization.") || opName.startsWith("audio-lang-detection.")) {
@@ -252,6 +264,9 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       } else if (opName.startsWith("asr.")) {
         description =
           "DB: create asr_requests, one asr_results row per audio input (transcript + timestamps), set request completed.";
+      } else if (opName.startsWith("ner.")) {
+        description =
+          "DB: create ner_requests, one ner_results row per prediction (entities JSON + source text), set request completed.";
       } else {
         description =
           "Stores request/results and updates status in the database (single persist span).";
@@ -1555,6 +1570,7 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
     opLc.includes("/api/v1/transliteration/inference") ||
     opLc.includes("/api/v1/tts/inference") ||
     opLc.includes("/api/v1/asr/inference") ||
+    opLc.includes("/api/v1/ner/inference") ||
     (opLc.includes("post") && opLc.includes("inference") && opLc.includes("/api/v1/"));
 
   // If there's an error, return simple error indicator
@@ -1619,9 +1635,11 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
                 ? "ASR transcription"
                 : opLc.includes("ocr") || opLc.startsWith("ocr.")
                   ? "OCR"
-                  : opLc.includes("pipeline") || opLc.startsWith("pipeline.")
-                    ? "pipeline"
-                    : "inference";
+                  : opLc.includes("ner") || opLc.startsWith("ner.")
+                    ? "NER"
+                    : opLc.includes("pipeline") || opLc.startsWith("pipeline.")
+                      ? "pipeline"
+                      : "inference";
         return (
           `One ${task} request. This span wraps the whole call (telemetry phases 1 & 7: start here; duration and status when it ends). ` +
           `Child spans—preprocess → resolve_model → triton_inference → postprocess → persist—run in order under this parent.`
