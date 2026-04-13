@@ -7,7 +7,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 import httpx
@@ -137,6 +137,11 @@ class NMTService:
         ) as parent_span:
             try:
                 with _standard_spans.preprocess() as preprocess_span:
+                    preprocess_span.set_attribute("nmt.preprocess.modality", "text")
+                    preprocess_span.set_attribute(
+                        "nmt.preprocess.operations_applied",
+                        "normalize_newlines_to_space,strip_whitespace,empty_source_to_single_space",
+                    )
                     input_texts = [
                         (ti.source.replace("\n", " ").strip() if ti.source else " ")
                         for ti in (request.input or [])
@@ -152,6 +157,15 @@ class NMTService:
                     preprocess_span.set_attribute(
                         "nmt.preprocessed_count", len(input_texts)
                     )
+                    preprocess_span.add_event(
+                        "nmt.preprocess.text_normalized",
+                        {
+                            "segment_count": len(input_texts),
+                            "newline_to_space": True,
+                            "strip_edges": True,
+                            "empty_fallback": "single_space",
+                        },
+                    )
 
                     # Also stamp required text extras onto the parent {svc}.inference span
                     if parent_span is not None:
@@ -166,15 +180,24 @@ class NMTService:
                             pass
 
                 with _standard_spans.resolve_model() as resolve_span:
+                    resolve_span.set_attribute(
+                        "nmt.resolve_model.lookup_service_id", service_id
+                    )
                     model_name = await self.get_model_name(service_id, auth_headers)
-                    resolve_span.set_attribute("nmt.model_name", model_name)
+                    resolve_span.set_attribute(
+                        "nmt.resolve_model.registry_model_name", model_name
+                    )
 
                     triton_client = await self.get_triton_client(service_id, auth_headers)
+                    resolve_span.set_attribute("nmt.resolve_model.triton_client_ready", True)
+
                     service_entry = await self._get_service_registry_entry(
                         service_id, auth_headers
                     )
                     endpoint = service_entry[0] if service_entry else ""
-                    resolve_span.set_attribute("nmt.triton_endpoint", endpoint)
+                    resolve_span.set_attribute(
+                        "nmt.resolve_model.triton_infer_endpoint", endpoint
+                    )
 
                     # Required attribute on the parent {svc}.inference span
                     if parent_span is not None:
@@ -187,19 +210,64 @@ class NMTService:
                     if effective_model and "indictrans" in effective_model.lower():
                         effective_model = "nmt"
 
+                    resolve_span.set_attribute(
+                        "nmt.resolve_model.triton_invoke_model_name", effective_model
+                    )
+                    if model_name != effective_model:
+                        resolve_span.set_attribute(
+                            "nmt.resolve_model.invoke_model_alias_applied", True
+                        )
+                    resolve_span.add_event(
+                        "nmt.resolve_model.completed",
+                        {
+                            "registry_model_name": model_name,
+                            "triton_invoke_model_name": effective_model,
+                            "infer_endpoint_configured": bool(endpoint),
+                            "triton_client_ready": True,
+                        },
+                    )
+
                 max_batch_size = 90
                 output_batch: list = []
                 batch_count = (len(input_texts) + max_batch_size - 1) // max_batch_size
 
                 with _standard_spans.triton_inference() as triton_span:
-                    triton_span.set_attribute("nmt.batch_count", batch_count)
-                    triton_span.set_attribute("nmt.max_batch_size", max_batch_size)
+                    triton_span.set_attribute("nmt.triton_inference.task", "translation")
+                    triton_span.set_attribute(
+                        "nmt.triton_inference.source_language", source_lang
+                    )
+                    triton_span.set_attribute(
+                        "nmt.triton_inference.target_language", target_lang
+                    )
+                    triton_span.set_attribute(
+                        "nmt.triton_inference.segment_count", len(input_texts)
+                    )
+                    triton_span.set_attribute(
+                        "nmt.triton_inference.max_batch_size", max_batch_size
+                    )
+                    triton_span.set_attribute(
+                        "nmt.triton_inference.batch_iteration_count", batch_count
+                    )
+                    triton_span.set_attribute(
+                        "nmt.triton_inference.triton_invoke_model_name", effective_model
+                    )
+                    triton_span.set_attribute(
+                        "nmt.triton_inference.io_schema",
+                        "INPUT_TEXT,INPUT_LANGUAGE_ID,OUTPUT_LANGUAGE_ID -> OUTPUT_TEXT",
+                    )
+                    triton_span.add_event(
+                        "nmt.triton_inference.phase_started",
+                        {
+                            "steps": "prepare_io,triton.inference_per_batch,extract_OUTPUT_TEXT",
+                            "batch_iterations": batch_count,
+                        },
+                    )
 
                     for i in range(0, len(input_texts), max_batch_size):
                         batch = input_texts[i : i + max_batch_size]
                         batch_index = i // max_batch_size
                         triton_span.add_event(
-                            "nmt.batch.started",
+                            "nmt.triton_inference.batch_started",
                             {"batch_index": batch_index, "batch_size": len(batch)},
                         )
                         try:
@@ -207,16 +275,25 @@ class NMTService:
                                 batch, source_lang, target_lang
                             )
                             triton_span.add_event(
-                                "nmt.prepare_triton_inputs.completed",
+                                "nmt.triton_inference.prepare_io.completed",
                                 {
                                     "batch_index": batch_index,
                                     "batch_size": len(batch),
+                                    "input_tensors": "INPUT_TEXT,INPUT_LANGUAGE_ID,OUTPUT_LANGUAGE_ID",
+                                    "output_tensors": "OUTPUT_TEXT",
                                 },
                             )
                             response = triton_client.send_triton_request(
                                 model_name=effective_model,
                                 inputs=inputs,
                                 outputs=outputs,
+                                trace_attributes={
+                                    "triton.parent_phase": "nmt.triton_inference",
+                                    "triton.loop.batch_index": batch_index,
+                                    "triton.loop.batch_size": len(batch),
+                                    "nmt.source_language_id": source_lang,
+                                    "nmt.target_language_id": target_lang,
+                                },
                             )
                             encoded_result = response.as_numpy("OUTPUT_TEXT")
                             if encoded_result is None:
@@ -224,17 +301,18 @@ class NMTService:
                             batch_results = encoded_result.tolist()
                             output_batch.extend(batch_results)
                             triton_span.add_event(
-                                "nmt.extract_results.completed",
+                                "nmt.triton_inference.extract_raw_outputs.completed",
                                 {
                                     "batch_index": batch_index,
-                                    "result_count": len(batch_results),
+                                    "output_tensor": "OUTPUT_TEXT",
+                                    "raw_result_count": len(batch_results),
                                 },
                             )
                             triton_span.add_event(
-                                "nmt.batch.completed",
+                                "nmt.triton_inference.batch_completed",
                                 {
                                     "batch_index": batch_index,
-                                    "result_count": len(batch_results),
+                                    "raw_result_count": len(batch_results),
                                 },
                             )
                         except Exception as e:
@@ -243,9 +321,30 @@ class NMTService:
                             raise TritonInferenceError(f"Triton inference failed: {e}")
 
                 with _standard_spans.postprocess() as post_span:
+                    post_span.set_attribute("nmt.postprocess.modality", "text")
+                    post_span.set_attribute(
+                        "nmt.postprocess.operations_applied",
+                        "decode_first_OUTPUT_TEXT_cell_bytes_utf8_or_scalar,pair_with_source_zip,build_TranslationOutput_list",
+                    )
+                    post_span.set_attribute(
+                        "nmt.postprocess.raw_triton_cell_count", len(output_batch)
+                    )
+                    post_span.set_attribute(
+                        "nmt.postprocess.source_segment_count", len(input_texts)
+                    )
+                    post_span.add_event(
+                        "nmt.postprocess.parse_raw_outputs.started",
+                        {
+                            "raw_cell_count": len(output_batch),
+                            "source_segment_count": len(input_texts),
+                        },
+                    )
                     results = self._format_results(input_texts, output_batch)
                     total_output_characters = sum(len(r.target) for r in results)
                     total_output_words = sum(_count_words(r.target) for r in results)
+                    post_span.set_attribute(
+                        "nmt.postprocess.translation_pair_count", len(results)
+                    )
                     post_span.set_attribute(
                         "nmt.output.character_length", total_output_characters
                     )
@@ -253,6 +352,17 @@ class NMTService:
                         "nmt.output.word_count", total_output_words
                     )
                     post_span.set_attribute("nmt.formatted_count", len(results))
+                    post_span.add_event(
+                        "nmt.postprocess.decode_and_pair.completed",
+                        {
+                            "pair_count": len(results),
+                            "bytes_to_utf8_when_needed": True,
+                        },
+                    )
+                    post_span.add_event(
+                        "nmt.postprocess.api_response_objects.built",
+                        {"translation_output_count": len(results)},
+                    )
 
                     # Also stamp required text extras onto the parent {svc}.inference span
                     if parent_span is not None:
@@ -270,6 +380,10 @@ class NMTService:
 
                 # Phase 6: single persist — create request, store results, update status
                 with _standard_spans.persist() as persist_span:
+                    persist_span.set_attribute(
+                        "nmt.db.operations",
+                        "nmt_requests.insert,nmt_results.bulk_insert,nmt_requests.status_update",
+                    )
                     request_record = await self.repository.create_request(
                         model_id=service_id,
                         source_language=original_source_lang,
@@ -280,13 +394,35 @@ class NMTService:
                         session_id=session_id,
                     )
                     request_id = request_record.id
+                    persist_span.set_attribute("nmt.db.nmt_request.id", str(request_id))
                     persist_span.set_attribute("nmt.request_id", str(request_id))
+                    persist_span.set_attribute("nmt.db.nmt_request.model_id", service_id)
+                    persist_span.set_attribute(
+                        "nmt.db.nmt_request.source_language", original_source_lang
+                    )
+                    persist_span.set_attribute(
+                        "nmt.db.nmt_request.target_language", original_target_lang
+                    )
+                    persist_span.set_attribute(
+                        "nmt.db.nmt_request.text_length", total_text_length
+                    )
+                    persist_span.set_attribute(
+                        "nmt.db.nmt_request.status_after_insert", "processing"
+                    )
                     persist_span.add_event(
-                        "nmt.db.request_created",
-                        {"request_id": str(request_id)},
+                        "nmt.db.nmt_request.insert",
+                        {
+                            "table": "nmt_requests",
+                            "request_id": str(request_id),
+                            "model_id": service_id,
+                            "source_language": original_source_lang,
+                            "target_language": original_target_lang,
+                            "text_length": total_text_length,
+                            "initial_status": "processing",
+                        },
                     )
 
-                    stored = await self._persist_translation_results(
+                    stored, persist_db_meta = await self._persist_translation_results(
                         request_id=request_id,
                         results=results,
                         original_source_lang=original_source_lang,
@@ -294,9 +430,36 @@ class NMTService:
                         auth_headers=auth_headers,
                         http_request=http_request,
                     )
-                    persist_span.set_attribute("nmt.db_results_created", len(results))
                     persist_span.set_attribute(
-                        "nmt.db_results_redacted_count", len(stored)
+                        "nmt.db.nmt_result.bulk_insert_row_count",
+                        persist_db_meta["bulk_row_count"],
+                    )
+                    persist_span.set_attribute(
+                        "nmt.pii_redact.base_url_configured",
+                        persist_db_meta["pii_redact_base_url_configured"],
+                    )
+                    persist_span.set_attribute(
+                        "nmt.pii_redact.source_lang_eligible",
+                        persist_db_meta["pii_redact_source_lang_eligible"],
+                    )
+                    persist_span.set_attribute(
+                        "nmt.pii_redact.target_lang_eligible",
+                        persist_db_meta["pii_redact_target_lang_eligible"],
+                    )
+                    persist_span.set_attribute(
+                        "nmt.pii_redact.applied_per_text_pair",
+                        persist_db_meta["pii_redact_applied_per_text_pair"],
+                    )
+                    persist_span.add_event(
+                        "nmt.db.nmt_result.bulk_insert",
+                        {
+                            "table": "nmt_results",
+                            "request_id": str(request_id),
+                            "row_count": persist_db_meta["bulk_row_count"],
+                            "pii_redact_applied": persist_db_meta[
+                                "pii_redact_applied_per_text_pair"
+                            ],
+                        },
                     )
                     if http_request is not None:
                         http_request.state.persisted_translation_results = stored
@@ -307,10 +470,19 @@ class NMTService:
                         status="completed",
                         processing_time=processing_time,
                     )
+                    persist_span.set_attribute(
+                        "nmt.db.nmt_request.final_status", "completed"
+                    )
+                    persist_span.set_attribute(
+                        "nmt.db.nmt_request.processing_time_seconds",
+                        processing_time,
+                    )
                     persist_span.add_event(
-                        "nmt.db.request_completed",
+                        "nmt.db.nmt_request.status_update",
                         {
+                            "table": "nmt_requests",
                             "request_id": str(request_id),
+                            "status": "completed",
                             "processing_time_seconds": processing_time,
                         },
                     )
@@ -613,7 +785,7 @@ class NMTService:
         original_target_lang: str,
         auth_headers: Optional[Dict[str, str]],
         http_request: Optional[Request],
-    ) -> List[Dict[str, str]]:
+    ) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
         tenant_id = getattr(http_request.state, "tenant_id", None) if http_request else None
         tenant_header = str(tenant_id) if tenant_id else None
 
@@ -623,6 +795,13 @@ class NMTService:
         tgt_ok = bool(tgt_lang) and tgt_lang in PII_SUPPORTED_LANG_CODES
 
         stored_results: List[Dict[str, str]] = []
+        meta: Dict[str, Any] = {
+            "bulk_row_count": 0,
+            "pii_redact_base_url_configured": bool(self.pii_redact_base_url),
+            "pii_redact_source_lang_eligible": src_ok,
+            "pii_redact_target_lang_eligible": tgt_ok,
+            "pii_redact_applied_per_text_pair": False,
+        }
 
         if not self.pii_redact_base_url or (not src_ok and not tgt_ok):
             rows = []
@@ -631,7 +810,8 @@ class NMTService:
                 stored_results.append({"source_text": r.source, "translated_text": r.target})
             if rows:
                 await self.repository.create_results_bulk(request_id=request_id, rows=rows)
-            return stored_results
+                meta["bulk_row_count"] = len(rows)
+            return stored_results, meta
 
         async def _maybe_redact(text: str, lang: str, supported: bool) -> str:
             if not supported or not text:
@@ -647,6 +827,7 @@ class NMTService:
                 logger.warning("PII redact failed; storing raw: %s", exc)
                 return text
 
+        meta["pii_redact_applied_per_text_pair"] = True
         rows = []
         for r in results:
             src_stored, tgt_stored = await asyncio.gather(
@@ -657,7 +838,8 @@ class NMTService:
             stored_results.append({"source_text": src_stored, "translated_text": tgt_stored})
         if rows:
             await self.repository.create_results_bulk(request_id=request_id, rows=rows)
-        return stored_results
+            meta["bulk_row_count"] = len(rows)
+        return stored_results, meta
 
     # ──────────────────────────────────────────────
     # Internal helpers

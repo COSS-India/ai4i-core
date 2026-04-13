@@ -83,7 +83,7 @@ class StandardSpanManager:
       - Migrated to StandardSpanManager phases: nmt-service, asr-service, tts-service,
         transliteration-service, ocr-service, audio-lang-detection-service,
         speaker-diarization-service, language-diarization-service,
-        language-detection-service, ner-service.
+        language-detection-service, ner-service, pipeline-service.
       - Not yet migrated (still primarily uses raw tracer spans): (others as applicable).
     """
 
