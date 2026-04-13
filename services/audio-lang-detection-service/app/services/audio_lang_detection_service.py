@@ -100,7 +100,7 @@ class AudioLangDetectionService:
 
         with _standard_spans.inference(
             service_id=service_id,
-            model_name=None,
+            model_name=model_name,
             input_count=input_count,
             input_type="audio",
             user_id=user_id,
@@ -110,7 +110,14 @@ class AudioLangDetectionService:
             resolved_audio: List[Optional[str]] = []
             with _standard_spans.preprocess() as preprocess_span:
                 preprocess_span.set_attribute(
-                    "audio-lang-detection.input_count", input_count
+                    "audio-lang-detection.preprocess.modality", "audio"
+                )
+                preprocess_span.set_attribute(
+                    "audio-lang-detection.preprocess.operations",
+                    "resolve_audio_base64(download_if_uri),base64_decode_size_estimate",
+                )
+                preprocess_span.set_attribute(
+                    "audio-lang-detection.preprocess.audio_count", input_count
                 )
                 total_audio_bytes = 0
                 for idx, audio_item in enumerate(request.audio or []):
@@ -122,7 +129,7 @@ class AudioLangDetectionService:
                         except Exception:
                             pass
                     preprocess_span.add_event(
-                        "audio-lang-detection.audio.resolved",
+                        "audio-lang-detection.preprocess.audio.resolved",
                         {
                             "audio_index": idx,
                             "has_content": bool(audio_item.audioContent),
@@ -132,7 +139,16 @@ class AudioLangDetectionService:
                         },
                     )
                 preprocess_span.set_attribute(
-                    "audio-lang-detection.input.audio_bytes_total", total_audio_bytes
+                    "audio-lang-detection.preprocess.audio_bytes_total",
+                    total_audio_bytes,
+                )
+                preprocess_span.add_event(
+                    "audio-lang-detection.preprocess.completed",
+                    {
+                        "audio_count": input_count,
+                        "audio_bytes_total": total_audio_bytes,
+                        "resolved_count": sum(1 for a in resolved_audio if a),
+                    },
                 )
                 if parent_span is not None:
                     try:
@@ -145,7 +161,22 @@ class AudioLangDetectionService:
 
             with _standard_spans.resolve_model() as resolve_span:
                 resolve_span.set_attribute(
-                    "audio-lang-detection.model_name", model_name
+                    "audio-lang-detection.resolve_model.resolution_source",
+                    "configured_on_service",
+                )
+                resolve_span.set_attribute(
+                    "audio-lang-detection.resolve_model.model_name", model_name
+                )
+                try:
+                    resolve_span.set_attribute(
+                        "audio-lang-detection.resolve_model.triton_endpoint",
+                        getattr(self.triton_client, "triton_url", None),
+                    )
+                except Exception:
+                    pass
+                resolve_span.add_event(
+                    "audio-lang-detection.resolve_model.completed",
+                    {"model_name": model_name},
                 )
                 if parent_span is not None:
                     try:
@@ -160,14 +191,22 @@ class AudioLangDetectionService:
 
             with _standard_spans.triton_inference() as triton_span:
                 triton_span.set_attribute(
-                    "audio-lang-detection.input_count", input_count
+                    "audio-lang-detection.triton_inference.task",
+                    "audio_language_detection",
+                )
+                triton_span.set_attribute(
+                    "audio-lang-detection.triton_inference.model_name",
+                    model_name,
+                )
+                triton_span.set_attribute(
+                    "audio-lang-detection.triton_inference.audio_count", input_count
                 )
                 for idx, audio_base64 in enumerate(resolved_audio):
                     if not audio_base64:
                         continue
 
                     triton_span.add_event(
-                        "audio-lang-detection.audio.inference.started",
+                        "audio-lang-detection.triton_inference.item.started",
                         {"audio_index": idx},
                     )
                     try:
@@ -178,7 +217,7 @@ class AudioLangDetectionService:
                         )
                         if not detection_data:
                             triton_span.add_event(
-                                "audio-lang-detection.audio.inference.empty_result",
+                                "audio-lang-detection.triton_inference.item.empty_result",
                                 {"audio_index": idx},
                             )
                             continue
@@ -187,7 +226,7 @@ class AudioLangDetectionService:
                         language_code = detection_data.get("language_code", "")
                         confidence = detection_data.get("confidence", 0.0)
                         triton_span.add_event(
-                            "audio-lang-detection.audio.inference.completed",
+                            "audio-lang-detection.triton_inference.item.completed",
                             {
                                 "audio_index": idx,
                                 "detected_language": language_code,
@@ -197,7 +236,7 @@ class AudioLangDetectionService:
                     except TritonInferenceError as exc:
                         has_errors = True
                         triton_span.add_event(
-                            "audio-lang-detection.audio.inference.failed",
+                            "audio-lang-detection.triton_inference.item.failed",
                             {
                                 "audio_index": idx,
                                 "error.type": "TritonInferenceError",
@@ -209,7 +248,7 @@ class AudioLangDetectionService:
                     except Exception as exc:
                         has_errors = True
                         triton_span.add_event(
-                            "audio-lang-detection.audio.inference.failed",
+                            "audio-lang-detection.triton_inference.item.failed",
                             {
                                 "audio_index": idx,
                                 "error.type": type(exc).__name__,
@@ -228,6 +267,10 @@ class AudioLangDetectionService:
             output_list: List[AudioLangDetectionOutput] = []
 
             with _standard_spans.postprocess() as post_span:
+                post_span.set_attribute(
+                    "audio-lang-detection.postprocess.expected_count",
+                    len(resolved_audio),
+                )
                 for idx in range(len(resolved_audio)):
                     if not resolved_audio[idx]:
                         output_list.append(self._empty_output())
@@ -260,15 +303,28 @@ class AudioLangDetectionService:
                     )
 
                 post_span.set_attribute(
-                    "audio-lang-detection.formatted_count", len(output_list)
+                    "audio-lang-detection.postprocess.output_count", len(output_list)
                 )
                 post_span.set_attribute(
-                    "audio-lang-detection.db_candidate_count", len(inferred_rows)
+                    "audio-lang-detection.postprocess.db_candidate_count",
+                    len(inferred_rows),
+                )
+                post_span.add_event(
+                    "audio-lang-detection.postprocess.completed",
+                    {
+                        "output_count": len(output_list),
+                        "db_candidate_count": len(inferred_rows),
+                        "has_errors": bool(has_errors),
+                    },
                 )
 
             processing_time = time.time() - start_time
 
             with _standard_spans.persist() as persist_span:
+                persist_span.set_attribute(
+                    "audio-lang-detection.db.operations",
+                    "audio_lang_detection_requests.insert,audio_lang_detection_results.insert_per_audio,audio_lang_detection_requests.status_update",
+                )
                 try:
                     request_record = await self.repository.create_request(
                         model_id=service_id,
@@ -279,15 +335,19 @@ class AudioLangDetectionService:
                     )
                     request_id = request_record.id
                     persist_span.set_attribute(
+                        "audio-lang-detection.db.audio_lang_detection_request.id",
+                        str(request_id),
+                    )
+                    persist_span.set_attribute(
                         "audio-lang-detection.request_id", str(request_id)
                     )
                     persist_span.add_event(
-                        "audio-lang-detection.db.request_created",
-                        {"request_id": str(request_id)},
+                        "audio-lang-detection.db.audio_lang_detection_request.insert",
+                        {"table": "audio_lang_detection_requests", "request_id": str(request_id)},
                     )
                 except Exception as e:
                     persist_span.add_event(
-                        "audio-lang-detection.db.create_request.failed",
+                        "audio-lang-detection.db.audio_lang_detection_request.insert_failed",
                         {
                             "error.type": type(e).__name__,
                             "error.message": str(e),
@@ -295,6 +355,7 @@ class AudioLangDetectionService:
                     )
 
                 if request_id:
+                    inserted_results = 0
                     for idx, language_code, confidence, all_scores_data in inferred_rows:
                         try:
                             await self.repository.create_result(
@@ -303,19 +364,28 @@ class AudioLangDetectionService:
                                 confidence=confidence,
                                 all_scores=all_scores_data,
                             )
+                            inserted_results += 1
                             persist_span.add_event(
-                                "audio-lang-detection.db.result.created",
+                                "audio-lang-detection.db.audio_lang_detection_result.insert",
                                 {"audio_index": idx},
                             )
                         except Exception as e:
                             persist_span.add_event(
-                                "audio-lang-detection.db.result.failed",
+                                "audio-lang-detection.db.audio_lang_detection_result.insert_failed",
                                 {
                                     "audio_index": idx,
                                     "error.type": type(e).__name__,
                                     "error.message": str(e),
                                 },
                             )
+                    persist_span.set_attribute(
+                        "audio-lang-detection.db.audio_lang_detection_result.inserted_count",
+                        inserted_results,
+                    )
+                    persist_span.set_attribute(
+                        "audio-lang-detection.db.audio_lang_detection_result.expected_count",
+                        len(inferred_rows),
+                    )
 
                     try:
                         status_str = "failed" if has_errors else "completed"
@@ -325,7 +395,7 @@ class AudioLangDetectionService:
                             processing_time=processing_time,
                         )
                         persist_span.add_event(
-                            "audio-lang-detection.db.request_completed",
+                            "audio-lang-detection.db.audio_lang_detection_request.status_update",
                             {
                                 "request_id": str(request_id),
                                 "status": status_str,
@@ -334,7 +404,7 @@ class AudioLangDetectionService:
                         )
                     except Exception as e:
                         persist_span.add_event(
-                            "audio-lang-detection.db.update_status.failed",
+                            "audio-lang-detection.db.audio_lang_detection_request.status_update_failed",
                             {
                                 "error.type": type(e).__name__,
                                 "error.message": str(e),
