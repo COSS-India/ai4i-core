@@ -281,7 +281,7 @@ const NERPage: React.FC = () => {
                 <Select
                   value={sourceLanguage}
                   onChange={(e) => setSourceLanguage(e.target.value)}
-                  isDisabled={fetching}
+                  isDisabled={fetching || !selectedServiceId}
                   size="md"
                   placeholder="Select"
                   borderColor="gray.300"
@@ -315,7 +315,7 @@ const NERPage: React.FC = () => {
                   onChange={(e) => setInputText(e.target.value)}
                   placeholder="Enter text to identify entities..."
                   rows={6}
-                  isDisabled={fetching}
+                  isDisabled={fetching || !selectedServiceId}
                   bg="white"
                   maxLength={MAX_TEXT_LENGTH}
                   borderColor={inputText.length > MAX_TEXT_LENGTH ? "red.400" : "gray.300"}

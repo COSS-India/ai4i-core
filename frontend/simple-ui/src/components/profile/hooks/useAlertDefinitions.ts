@@ -7,6 +7,7 @@ import type {
   AlertDefinitionUpdate,
   AlertAnnotation,
 } from "../../../types/alerting";
+import { TARGET_SERVICES } from "../../../types/alerting";
 
 const DEFAULT_THRESHOLD_UNIT = "%"; // overridden to "ms" when signal is latency
 
@@ -45,6 +46,68 @@ const EMPTY_CREATE_FORM: AlertDefinitionCreate = {
 
 const EMPTY_UPDATE_FORM: AlertDefinitionUpdate = {};
 
+function normalizeServiceForUi(raw: string): string {
+  const v0 = String(raw ?? "").trim().toLowerCase();
+  if (!v0) return v0;
+
+  const allowed = TARGET_SERVICES.map((s) => s.value);
+  const allowedSet = new Set(allowed);
+
+  // Normalize separators/suffixes commonly seen in backend identifiers
+  const base = v0.replace(/_+/g, "-").replace(/\/+/g, "-");
+  const baseNoService = base.endsWith("-service") ? base.slice(0, -"-service".length) : base;
+  if (baseNoService === "audio-lang-detection" || baseNoService === "audio-language-detection") {
+    return "audio-language-detection";
+  }
+  const candidates = [
+    base,
+    base.endsWith("-service") ? base.slice(0, -"-service".length) : base,
+    base.endsWith("-svc") ? base.slice(0, -"-svc".length) : base,
+    base.replace(/-lang-/g, "-language-"),
+    base.replace(/-language-/g, "-lang-"),
+  ];
+
+  for (const c of candidates) {
+    if (allowedSet.has(c)) return c;
+  }
+
+  // Heuristic: if the backend string contains an allowed token, pick it.
+  // Example: "asr-service" => "asr"
+  for (const token of allowed) {
+    const re = new RegExp(`(^|[-_/])${token}($|[-_/])`);
+    if (re.test(base)) return token;
+  }
+
+  // Fallback: keep the best-effort normalized value.
+  return candidates[0];
+}
+
+function normalizeServiceForApi(raw: string): string {
+  const v0 = String(raw ?? "").trim().toLowerCase();
+  if (!v0 || v0 === "all") return v0;
+  const v = v0.replace(/_+/g, "-").replace(/\/+/g, "-");
+  const base = v.endsWith("-service") ? v.slice(0, -"-service".length) : v;
+  if (base === "audio-language-detection" || base === "audio-lang-detection") {
+    return "audio-lang-detection-service";
+  }
+  return v.endsWith("-service") ? v : `${v}-service`;
+}
+
+function extractServicesFromPromql(expr: string | null | undefined): string[] {
+  const text = String(expr ?? "");
+  if (!text) return [];
+  const out: string[] = [];
+  const re = /service\s*=\s*"([^"]+)"/g;
+  let match: RegExpExecArray | null = re.exec(text);
+  while (match) {
+    if (match[1]) out.push(match[1]);
+    match = re.exec(text);
+  }
+  return out;
+}
+
+const ALL_SERVICE_PAYLOAD_VALUES = TARGET_SERVICES.map((s) => normalizeServiceForApi(s.value));
+
 export function useAlertDefinitions() {
   const toast = useToast();
 
@@ -78,6 +141,7 @@ export function useAlertDefinitions() {
   const [updateAnnotations, setUpdateAnnotations] = useState<
     AlertAnnotation[]
   >([]);
+  const [updateErrors, setUpdateErrors] = useState<Record<string, string>>({});
 
   // Delete dialog
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
@@ -190,9 +254,11 @@ export function useAlertDefinitions() {
       // Infrastructure always monitors all services — send empty array (backend treats as all)
       const isInfra = (createForm.category ?? "application") === "infrastructure";
       const hasAll = serviceList.includes("all");
-      const servicePayload = isInfra || hasAll || serviceList.length === 0
+      const servicePayload = isInfra || serviceList.length === 0
         ? []
-        : serviceList.filter((s) => s !== "all");
+        : hasAll
+          ? ALL_SERVICE_PAYLOAD_VALUES
+        : serviceList.filter((s) => s !== "all").map(normalizeServiceForApi);
 
       const payload: AlertDefinitionCreate = {
         name: createForm.name.trim(),
@@ -248,36 +314,63 @@ export function useAlertDefinitions() {
   };
 
   // ---- Update ----
-  const openUpdate = (item: AlertDefinition) => {
-    setUpdateItem(item);
-    const category = item.category ?? "application";
-    const evalInterval = item.evaluation_interval ?? "30s";
-    const forDuration = normalizeForDuration(evalInterval, item.for_duration ?? "5m");
+  const openUpdate = async (item: AlertDefinition) => {
+    let fullItem: AlertDefinition = item;
+    try {
+      // Fetch full definition because list payloads may omit target/service details.
+      fullItem = await alertingService.getDefinition(item.id);
+    } catch {
+      // Fallback to list row item so the drawer still opens.
+      fullItem = item;
+    }
+
+    setUpdateItem(fullItem);
+    const category = fullItem.category ?? "application";
+    const evalInterval = fullItem.evaluation_interval ?? "30s";
+    const forDuration = normalizeForDuration(evalInterval, fullItem.for_duration ?? "5m");
+    // Prefer detail payload, but if detail omits service, fall back to list row payload.
+    // If both are missing/empty, infer from promql (service="...") as a last resort.
+    let resolvedService: string[] | null | undefined =
+      Array.isArray(fullItem.service) || fullItem.service === null
+        ? fullItem.service
+        : item.service;
+    const inferredServices = extractServicesFromPromql(fullItem.promql_expr ?? item.promql_expr);
+    if (
+      category !== "infrastructure" &&
+      (!Array.isArray(resolvedService) || resolvedService.length === 0) &&
+      inferredServices.length > 0
+    ) {
+      resolvedService = inferredServices;
+    }
+
     // Backend uses [] to mean "all services". For update UI, represent that explicitly so the
     // target selector shows populated values instead of appearing empty.
     const serviceFormValue =
       category === "infrastructure"
         ? undefined
-        : Array.isArray(item.service) && item.service.length === 0
+        : Array.isArray(resolvedService) && resolvedService.length === 0
           ? ["all"]
-          : item.service ?? undefined;
+          : Array.isArray(resolvedService)
+            ? resolvedService.map(normalizeServiceForUi)
+            : resolvedService ?? undefined;
     setUpdateForm({
-      description: item.description ?? "",
+      description: fullItem.description ?? "",
       category,
-      severity: item.severity ?? "warning",
-      urgency: item.urgency ?? "medium",
-      sub_category: item.sub_category ?? undefined,
-      signal: item.signal ?? undefined,
-      signal_metric: item.signal_metric ?? undefined,
-      condition_operator: item.condition_operator ?? undefined,
-      threshold_value: item.threshold_value ?? undefined,
-      threshold_unit: item.threshold_unit ?? undefined,
+      severity: fullItem.severity ?? "warning",
+      urgency: fullItem.urgency ?? "medium",
+      sub_category: fullItem.sub_category ?? undefined,
+      signal: fullItem.signal ?? undefined,
+      signal_metric: fullItem.signal_metric ?? undefined,
+      condition_operator: fullItem.condition_operator ?? undefined,
+      threshold_value: fullItem.threshold_value ?? undefined,
+      threshold_unit: fullItem.threshold_unit ?? undefined,
       service: serviceFormValue,
       evaluation_interval: evalInterval,
       for_duration: forDuration,
-      enabled: item.enabled,
+      enabled: fullItem.enabled,
     });
-    setUpdateAnnotations(item.annotations ? [...item.annotations] : []);
+    setUpdateAnnotations(fullItem.annotations ? [...fullItem.annotations] : []);
+    setUpdateErrors({});
     setIsUpdateOpen(true);
   };
   const closeUpdate = () => {
@@ -285,9 +378,68 @@ export function useAlertDefinitions() {
     setUpdateItem(null);
     setUpdateForm(EMPTY_UPDATE_FORM);
     setUpdateAnnotations([]);
+    setUpdateErrors({});
   };
+
+  const validateUpdateForm = useCallback(
+    (form: AlertDefinitionUpdate, item: AlertDefinition | null, effectiveUiServices: string[]): Record<string, string> => {
+      const errors: Record<string, string> = {};
+      const category = (form.category ?? item?.category ?? "").trim();
+      if (!category) errors.category = "Category is required";
+      const severity = (form.severity ?? item?.severity ?? "").trim();
+      if (!severity) errors.severity = "Severity is required";
+      const subCategory = (form.sub_category ?? item?.sub_category ?? "").trim();
+      if (!subCategory) errors.sub_category = "Subcategory is required";
+      const signal = (form.signal ?? item?.signal ?? "").trim();
+      if (!signal) errors.signal = "Signal is required";
+      const signalMetric = (form.signal_metric ?? item?.signal_metric ?? "").trim();
+      if (!signalMetric) errors.signal_metric = "Signal metric is required";
+      const conditionOp = (form.condition_operator ?? item?.condition_operator ?? "").trim();
+      if (!conditionOp) errors.condition_operator = "Condition is required";
+      const thresholdVal = form.threshold_value ?? item?.threshold_value;
+      if (thresholdVal == null || (typeof thresholdVal === "number" && Number.isNaN(thresholdVal))) {
+        errors.threshold_value = "Threshold value is required";
+      } else if (typeof thresholdVal === "number" && thresholdVal < 0) {
+        errors.threshold_value = "Must be 0 or greater";
+      }
+      const evalInterval = (form.evaluation_interval ?? item?.evaluation_interval ?? "").trim();
+      if (!evalInterval) errors.evaluation_interval = "Evaluation interval is required";
+      const forDuration = (form.for_duration ?? item?.for_duration ?? "").trim();
+      if (!forDuration) errors.for_duration = "For duration is required";
+      if (category !== "infrastructure" && effectiveUiServices.length === 0) {
+        errors.service = "Select at least one target";
+      }
+      return errors;
+    },
+    []
+  );
+
   const handleUpdate = async () => {
     if (!updateItem) return;
+
+    const effectiveUiServices = (() => {
+      if (updateForm.service !== undefined) {
+        return (Array.isArray(updateForm.service) ? updateForm.service : []).filter(Boolean);
+      }
+      const fromItem = (updateItem.service ?? []).map(normalizeServiceForUi).filter(Boolean);
+      if (fromItem.length > 0) return fromItem;
+      return extractServicesFromPromql(updateItem.promql_expr).map(normalizeServiceForUi).filter(Boolean);
+    })();
+
+    setUpdateErrors({});
+    const errors = validateUpdateForm(updateForm, updateItem, effectiveUiServices);
+    if (Object.keys(errors).length > 0) {
+      setUpdateErrors(errors);
+      toast({
+        title: "Validation Error",
+        description: "Please fix the required fields below.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     setIsUpdating(true);
     try {
       const payload: AlertDefinitionUpdate = {};
@@ -301,10 +453,10 @@ export function useAlertDefinitions() {
       if (updateForm.condition_operator !== undefined) payload.condition_operator = updateForm.condition_operator;
       if (updateForm.threshold_value !== undefined) payload.threshold_value = updateForm.threshold_value;
       if (updateForm.threshold_unit !== undefined) payload.threshold_unit = updateForm.threshold_unit;
-      const svc = updateForm.service ?? [];
-      if (updateForm.service !== undefined) {
-        const list = svc.filter((s) => s !== "all");
-        payload.service = list.length === 0 || svc.includes("all") ? [] : list;
+      const svc = effectiveUiServices;
+      if (updateForm.service !== undefined || svc.length > 0) {
+        const list = svc.filter((s) => s !== "all").map(normalizeServiceForApi);
+        payload.service = svc.includes("all") ? ALL_SERVICE_PAYLOAD_VALUES : list;
       }
       if (updateForm.evaluation_interval !== undefined) payload.evaluation_interval = updateForm.evaluation_interval;
       if (updateForm.for_duration !== undefined) payload.for_duration = updateForm.for_duration;
@@ -463,6 +615,7 @@ export function useAlertDefinitions() {
     updateItem,
     updateForm,
     setUpdateForm,
+    updateErrors,
     updateAnnotations,
     setUpdateAnnotations,
     openUpdate,
