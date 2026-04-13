@@ -276,6 +276,12 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       } else if (opName.startsWith("language-diarization.")) {
         description =
           "DB: create language_diarization_requests, one language_diarization_results row per audio (segments JSON), set request completed (may be partial-failure).";
+      } else if (opName.startsWith("speaker-diarization.")) {
+        description =
+          "DB: create speaker_diarization_requests, one speaker_diarization_results row per audio (segments JSON + speaker list), set request completed (may be partial-failure).";
+      } else if (opName.startsWith("audio-lang-detection.")) {
+        description =
+          "DB: create audio_lang_detection_requests, one audio_lang_detection_results row per audio (lang + confidence + scores JSON), set request completed (may be partial-failure).";
       } else {
         description =
           "Stores request/results and updates status in the database (single persist span).";
