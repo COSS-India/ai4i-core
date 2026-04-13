@@ -121,7 +121,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
           "Images: resolve inputs (e.g. download or decode base64), prepare tensors for inference.";
       } else if (opName.startsWith("tts.")) {
         description =
-          "Text: normalize and chunk for synthesis (no audio download or VAD).";
+          "Text: TTS-specific normalization, then chunk long lines (~400 chars) for per-chunk synthesis (no audio input or VAD).";
       } else if (opName.startsWith("asr.")) {
         description =
           "Audio: decode/prepare audio bytes for transcription (no OCR/image steps).";
@@ -159,7 +159,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
           "Resolves the OCR Triton model name used for inference.";
       } else if (opName.startsWith("tts.")) {
         description =
-          "Resolves the TTS model name from service configuration or model management.";
+          "Confirms TTS model name and endpoint (usually precached from model management when the service starts; same phase as dynamic lookup elsewhere).";
       } else if (opName.startsWith("asr.")) {
         description =
           "Resolves the ASR Triton model and endpoint for this request.";
@@ -243,7 +243,16 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     } else if (isPersistPhaseSpan) {
       category = "phase.persist";
       displayName = span.operationName;
-      description = "Stores request/results and updates status in the database";
+      if (opName.startsWith("tts.")) {
+        description =
+          "DB: create tts_requests row, insert tts_results (duration, format, sample rate, size; audio preview path), set request completed.";
+      } else if (opName.startsWith("nmt.")) {
+        description =
+          "DB: create nmt_requests, bulk nmt_results (with optional PII redact), update request status.";
+      } else {
+        description =
+          "Stores request/results and updates status in the database (single persist span).";
+      }
       icon = FiDatabase;
     }
   }

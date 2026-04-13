@@ -110,12 +110,22 @@ class TTSService:
             try:
                 all_chunks: List[List[str]] = []
                 with _standard_spans.preprocess() as preprocess_span:
+                    preprocess_span.set_attribute("tts.preprocess.modality", "text")
+                    preprocess_span.set_attribute(
+                        "tts.preprocess.operations_applied",
+                        "normalize_tts_input,chunk_text_if_over_limit",
+                    )
+                    preprocess_span.set_attribute("tts.preprocess.max_chunk_characters", 400)
                     preprocess_span.set_attribute("tts.input_count", input_count)
                     preprocess_span.set_attribute(
                         "tts.input.character_length", total_input_characters
                     )
                     preprocess_span.set_attribute(
                         "tts.input.word_count", total_input_words
+                    )
+                    preprocess_span.add_event(
+                        "tts.preprocess.phase_started",
+                        {"input_line_count": input_count},
                     )
 
                     for input_idx, text_input in enumerate(request.input):
@@ -131,10 +141,11 @@ class TTSService:
                             chunks = [processed_text]
                         all_chunks.append(chunks)
                         preprocess_span.add_event(
-                            "tts.input_preprocessed",
+                            "tts.preprocess.input_completed",
                             {
                                 "input_index": input_idx,
                                 "chunk_count": len(chunks),
+                                "chunked": len(chunks) > 1,
                                 "duration_ms": (time.perf_counter() - t_preprocess)
                                 * 1000.0,
                             },
@@ -148,7 +159,30 @@ class TTSService:
                             f"with inference endpoint schema."
                         )
                     model_name = self.resolved_model_name
-                    resolve_span.set_attribute("tts.model_name", model_name)
+                    resolve_span.set_attribute(
+                        "tts.resolve_model.lookup_service_id", service_id
+                    )
+                    resolve_span.set_attribute(
+                        "tts.resolve_model.registry_model_name", model_name
+                    )
+                    resolve_span.set_attribute(
+                        "tts.resolve_model.resolution_source",
+                        "model_management_precached_on_service",
+                    )
+                    resolve_span.set_attribute(
+                        "tts.resolve_model.triton_infer_endpoint",
+                        getattr(self.triton_client, "triton_url", "") or "",
+                    )
+                    resolve_span.set_attribute("tts.resolve_model.triton_client_ready", True)
+                    resolve_span.add_event(
+                        "tts.resolve_model.completed",
+                        {
+                            "registry_model_name": model_name,
+                            "endpoint_configured": bool(
+                                getattr(self.triton_client, "triton_url", None)
+                            ),
+                        },
+                    )
                     if parent_span is not None:
                         try:
                             parent_span.set_attribute("tts.model_name", model_name)
@@ -163,7 +197,31 @@ class TTSService:
 
                 with _standard_spans.triton_inference() as triton_span:
                     total_chunks = sum(len(c) for c in all_chunks)
-                    triton_span.set_attribute("tts.chunk_count", total_chunks)
+                    triton_span.set_attribute("tts.triton_inference.task", "synthesis")
+                    triton_span.set_attribute(
+                        "tts.triton_inference.input_line_count", input_count
+                    )
+                    triton_span.set_attribute(
+                        "tts.triton_inference.chunk_invocation_count", total_chunks
+                    )
+                    triton_span.set_attribute(
+                        "tts.triton_inference.triton_invoke_model_name", model_name
+                    )
+                    triton_span.set_attribute(
+                        "tts.triton_inference.io_schema",
+                        "INPUT_TEXT,INPUT_SPEAKER_ID,INPUT_LANGUAGE_ID -> OUTPUT_GENERATED_AUDIO",
+                    )
+                    triton_span.set_attribute(
+                        "tts.triton_inference.source_language", language
+                    )
+                    triton_span.set_attribute("tts.triton_inference.voice_gender", gender)
+                    triton_span.add_event(
+                        "tts.triton_inference.phase_started",
+                        {
+                            "chunk_invocations": total_chunks,
+                            "steps": "prepare_io,triton.inference_per_chunk,read_OUTPUT_GENERATED_AUDIO",
+                        },
+                    )
 
                     for input_idx, _ in enumerate(request.input):
                         for chunk_idx, chunk in enumerate(all_chunks[input_idx]):
@@ -176,17 +234,33 @@ class TTSService:
                                         language=language,
                                     )
                                 )
+                                triton_span.add_event(
+                                    "tts.triton_inference.prepare_io.completed",
+                                    {
+                                        "input_index": input_idx,
+                                        "chunk_index": chunk_idx,
+                                        "input_tensors": "INPUT_TEXT,INPUT_SPEAKER_ID,INPUT_LANGUAGE_ID",
+                                        "output_tensors": "OUTPUT_GENERATED_AUDIO",
+                                    },
+                                )
                                 triton_response = self.triton_client.send_triton_request(
                                     model_name=model_name,
                                     inputs=inputs,
                                     outputs=outputs,
+                                    trace_attributes={
+                                        "triton.parent_phase": "tts.triton_inference",
+                                        "triton.loop.input_index": input_idx,
+                                        "triton.loop.chunk_index": chunk_idx,
+                                        "tts.speaker_id": gender,
+                                        "tts.language_id": language,
+                                    },
                                 )
                                 raw_audio = triton_response.as_numpy(
                                     "OUTPUT_GENERATED_AUDIO"
                                 )[0]
                                 all_raw_audios[input_idx].append(raw_audio)
                                 triton_span.add_event(
-                                    "tts.triton_chunk_completed",
+                                    "tts.triton_inference.chunk_completed",
                                     {
                                         "input_index": input_idx,
                                         "chunk_index": chunk_idx,
@@ -205,7 +279,25 @@ class TTSService:
                 response = TTSInferenceResponse(audio=[])
 
                 with _standard_spans.postprocess() as postprocess_span:
+                    postprocess_span.set_attribute("tts.postprocess.modality", "audio")
+                    postprocess_span.set_attribute(
+                        "tts.postprocess.operations_applied",
+                        "concatenate_chunk_waveforms,resample,stretch_or_pad_to_target_duration,wav_write,optional_format_convert,base64_encode",
+                    )
+                    postprocess_span.set_attribute(
+                        "tts.postprocess.internal_sample_rate_hz", standard_rate
+                    )
+                    postprocess_span.set_attribute(
+                        "tts.postprocess.target_sample_rate_hz", target_sr
+                    )
+                    postprocess_span.set_attribute(
+                        "tts.postprocess.response_audio_format", fmt
+                    )
                     postprocess_span.set_attribute("tts.input_count", input_count)
+                    postprocess_span.add_event(
+                        "tts.postprocess.phase_started",
+                        {"input_line_count": input_count},
+                    )
 
                     for input_idx, text_input in enumerate(request.input):
                         try:
@@ -217,7 +309,7 @@ class TTSService:
                                 else raw_audios[0]
                             )
                             postprocess_span.add_event(
-                                "tts.concatenate_completed",
+                                "tts.postprocess.concatenate_completed",
                                 {
                                     "input_index": input_idx,
                                     "duration_ms": (time.perf_counter() - t0) * 1000.0,
@@ -229,7 +321,7 @@ class TTSService:
                                 raw_audio, standard_rate, target_sr
                             )
                             postprocess_span.add_event(
-                                "tts.resample_completed",
+                                "tts.postprocess.resample_completed",
                                 {
                                     "input_index": input_idx,
                                     "duration_ms": (time.perf_counter() - t0) * 1000.0,
@@ -254,7 +346,7 @@ class TTSService:
                                         final_audio, silence_duration, target_sr
                                     )
                                 postprocess_span.add_event(
-                                    "tts.adjust_duration_completed",
+                                    "tts.postprocess.adjust_duration_completed",
                                     {
                                         "input_index": input_idx,
                                         "duration_ms": (time.perf_counter() - t0)
@@ -280,10 +372,10 @@ class TTSService:
                                 "utf-8"
                             )
                             postprocess_span.add_event(
-                                "tts.convert_encode_completed",
+                                "tts.postprocess.convert_encode_completed",
                                 {
                                     "input_index": input_idx,
-                                    "output_audio_size": len(audio_bytes),
+                                    "output_audio_size_bytes": len(audio_bytes),
                                     "duration_ms": (time.perf_counter() - t0) * 1000.0,
                                 },
                             )
@@ -305,11 +397,23 @@ class TTSService:
                             # DB failure recording: single path in outer ``except`` (avoids duplicate rows).
                             raise
 
+                    postprocess_span.set_attribute(
+                        "tts.postprocess.built_audio_output_count", len(response.audio)
+                    )
+                    postprocess_span.add_event(
+                        "tts.postprocess.completed",
+                        {"audio_output_count": len(response.audio)},
+                    )
+
                 total_audio_duration = None
                 total_audio_size = 0
 
                 # Phase 6: single persist — create request, store results, update status
                 with _standard_spans.persist() as persist_span:
+                    persist_span.set_attribute(
+                        "tts.db.operations",
+                        "tts_requests.insert,tts_results.insert,tts_requests.status_update",
+                    )
                     db_request = await self.repository.create_request(
                         model_id=service_id,
                         voice_id=gender,
@@ -320,10 +424,28 @@ class TTSService:
                         session_id=session_id,
                     )
                     request_id = db_request.id
+                    persist_span.set_attribute("tts.db.tts_request.id", str(request_id))
                     persist_span.set_attribute("tts.request_id", str(request_id))
+                    persist_span.set_attribute("tts.db.tts_request.model_id", service_id)
+                    persist_span.set_attribute("tts.db.tts_request.voice_id", gender)
+                    persist_span.set_attribute("tts.db.tts_request.language", language)
+                    persist_span.set_attribute(
+                        "tts.db.tts_request.text_length", total_text_length
+                    )
+                    persist_span.set_attribute(
+                        "tts.db.tts_request.status_after_insert", "processing"
+                    )
                     persist_span.add_event(
-                        "tts.db.request_created",
-                        {"request_id": str(request_id)},
+                        "tts.db.tts_request.insert",
+                        {
+                            "table": "tts_requests",
+                            "request_id": str(request_id),
+                            "model_id": service_id,
+                            "voice_id": gender,
+                            "language": language,
+                            "text_length": total_text_length,
+                            "initial_status": "processing",
+                        },
                     )
 
                     if response.audio:
@@ -345,6 +467,7 @@ class TTSService:
                     last_encoded = (
                         response.audio[-1].audioContent if response.audio else ""
                     )
+                    preview_len = min(100, len(last_encoded)) if last_encoded else 0
                     await self.repository.create_result(
                         request_id=request_id,
                         audio_file_path=last_encoded[:100] if last_encoded else "",
@@ -353,15 +476,49 @@ class TTSService:
                         sample_rate=target_sr,
                         file_size=total_audio_size,
                     )
+                    persist_span.set_attribute(
+                        "tts.db.tts_result.audio_path_preview_length", preview_len
+                    )
+                    persist_span.set_attribute(
+                        "tts.db.tts_result.audio_duration_seconds",
+                        total_audio_duration or 0.0,
+                    )
+                    persist_span.set_attribute("tts.db.tts_result.audio_format", fmt)
+                    persist_span.set_attribute(
+                        "tts.db.tts_result.sample_rate_hz", target_sr
+                    )
+                    persist_span.set_attribute(
+                        "tts.db.tts_result.file_size_bytes", total_audio_size
+                    )
+                    persist_span.add_event(
+                        "tts.db.tts_result.insert",
+                        {
+                            "table": "tts_results",
+                            "request_id": str(request_id),
+                            "audio_format": fmt,
+                            "sample_rate_hz": target_sr,
+                            "file_size_bytes": total_audio_size,
+                            "audio_duration_seconds": total_audio_duration or 0.0,
+                        },
+                    )
 
                     processing_time = time.time() - start_time
                     await self.repository.update_request_status(
                         request_id, "completed", processing_time=processing_time
                     )
+                    persist_span.set_attribute(
+                        "tts.db.tts_request.final_status", "completed"
+                    )
+                    persist_span.set_attribute(
+                        "tts.db.tts_request.processing_time_seconds",
+                        processing_time,
+                    )
                     persist_span.add_event(
-                        "tts.db.request_completed",
+                        "tts.db.tts_request.status_update",
                         {
+                            "table": "tts_requests",
                             "request_id": str(request_id),
+                            "status": "completed",
                             "processing_time_seconds": processing_time,
                         },
                     )
