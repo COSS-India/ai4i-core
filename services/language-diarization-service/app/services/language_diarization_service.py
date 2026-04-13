@@ -92,7 +92,7 @@ class LanguageDiarizationService:
 
         with _standard_spans.inference(
             service_id=service_id,
-            model_name=None,
+            model_name=_LANG_DIAR_MODEL_NAME,
             input_count=input_count,
             input_type="audio",
             user_id=user_id,
@@ -103,7 +103,14 @@ class LanguageDiarizationService:
 
             with _standard_spans.preprocess() as preprocess_span:
                 preprocess_span.set_attribute(
-                    "language-diarization.input_count", input_count
+                    "language-diarization.preprocess.modality", "audio"
+                )
+                preprocess_span.set_attribute(
+                    "language-diarization.preprocess.operations",
+                    "resolve_audio_base64(download_if_uri),base64_decode_size_estimate",
+                )
+                preprocess_span.set_attribute(
+                    "language-diarization.preprocess.audio_count", input_count
                 )
                 total_audio_bytes = 0
                 for idx, audio_item in enumerate(request.audio):
@@ -115,7 +122,7 @@ class LanguageDiarizationService:
                         except Exception:
                             pass
                     preprocess_span.add_event(
-                        "language-diarization.audio.resolved",
+                        "language-diarization.preprocess.audio.resolved",
                         {
                             "audio_index": idx,
                             "has_content": bool(audio_item.audioContent),
@@ -127,8 +134,16 @@ class LanguageDiarizationService:
                         },
                     )
                 preprocess_span.set_attribute(
-                    "language-diarization.input.audio_bytes_total",
+                    "language-diarization.preprocess.audio_bytes_total",
                     total_audio_bytes,
+                )
+                preprocess_span.add_event(
+                    "language-diarization.preprocess.completed",
+                    {
+                        "audio_count": input_count,
+                        "audio_bytes_total": total_audio_bytes,
+                        "resolved_count": sum(1 for a in resolved_audio if a),
+                    },
                 )
                 if parent_span is not None:
                     try:
@@ -141,7 +156,22 @@ class LanguageDiarizationService:
 
             with _standard_spans.resolve_model() as resolve_span:
                 resolve_span.set_attribute(
-                    "language-diarization.model_name", _LANG_DIAR_MODEL_NAME
+                    "language-diarization.resolve_model.resolution_source",
+                    "constant_in_service",
+                )
+                resolve_span.set_attribute(
+                    "language-diarization.resolve_model.model_name", _LANG_DIAR_MODEL_NAME
+                )
+                try:
+                    resolve_span.set_attribute(
+                        "language-diarization.resolve_model.triton_endpoint",
+                        getattr(self.triton_client, "triton_url", None),
+                    )
+                except Exception:
+                    pass
+                resolve_span.add_event(
+                    "language-diarization.resolve_model.completed",
+                    {"model_name": _LANG_DIAR_MODEL_NAME},
                 )
                 if parent_span is not None:
                     try:
@@ -156,7 +186,15 @@ class LanguageDiarizationService:
 
             with _standard_spans.triton_inference() as triton_span:
                 triton_span.set_attribute(
-                    "language-diarization.input_count", input_count
+                    "language-diarization.triton_inference.task",
+                    "language_diarization",
+                )
+                triton_span.set_attribute(
+                    "language-diarization.triton_inference.model_name",
+                    _LANG_DIAR_MODEL_NAME,
+                )
+                triton_span.set_attribute(
+                    "language-diarization.triton_inference.audio_count", input_count
                 )
                 target_language = ""
                 for idx, audio_base64 in enumerate(resolved_audio):
@@ -164,7 +202,7 @@ class LanguageDiarizationService:
                         continue
 
                     triton_span.add_event(
-                        "language-diarization.audio.inference.started",
+                        "language-diarization.triton_inference.item.started",
                         {"audio_index": idx},
                     )
                     try:
@@ -175,7 +213,7 @@ class LanguageDiarizationService:
                         )
                         if not diarization_data:
                             triton_span.add_event(
-                                "language-diarization.audio.inference.empty_result",
+                                "language-diarization.triton_inference.item.empty_result",
                                 {"audio_index": idx},
                             )
                             continue
@@ -183,7 +221,7 @@ class LanguageDiarizationService:
                         diarization_raw[idx] = diarization_data
                         raw_segments = diarization_data.get("segments", [])
                         triton_span.add_event(
-                            "language-diarization.audio.inference.completed",
+                            "language-diarization.triton_inference.item.completed",
                             {
                                 "audio_index": idx,
                                 "segment_count": len(raw_segments),
@@ -192,7 +230,7 @@ class LanguageDiarizationService:
                     except TritonInferenceError as exc:
                         has_errors = True
                         triton_span.add_event(
-                            "language-diarization.audio.inference.failed",
+                            "language-diarization.triton_inference.item.failed",
                             {
                                 "audio_index": idx,
                                 "error.type": "TritonInferenceError",
@@ -207,7 +245,7 @@ class LanguageDiarizationService:
                     except Exception as exc:
                         has_errors = True
                         triton_span.add_event(
-                            "language-diarization.audio.inference.failed",
+                            "language-diarization.triton_inference.item.failed",
                             {
                                 "audio_index": idx,
                                 "error.type": type(exc).__name__,
@@ -224,6 +262,9 @@ class LanguageDiarizationService:
 
             output_list: List[LanguageDiarizationOutput] = []
             with _standard_spans.postprocess() as post_span:
+                post_span.set_attribute(
+                    "language-diarization.postprocess.expected_count", input_count
+                )
                 for idx in range(input_count):
                     if not resolved_audio[idx]:
                         output_list.append(self._empty_output())
@@ -257,7 +298,7 @@ class LanguageDiarizationService:
                     tgt_lang = diarization_data.get("target_language", "")
 
                     post_span.add_event(
-                        "language-diarization.audio.results.parsed",
+                        "language-diarization.postprocess.item.parsed",
                         {
                             "audio_index": idx,
                             "segment_count": len(segments_list),
@@ -274,13 +315,24 @@ class LanguageDiarizationService:
                     )
 
                 post_span.set_attribute(
-                    "language-diarization.output_count", len(output_list)
+                    "language-diarization.postprocess.output_count", len(output_list)
+                )
+                post_span.add_event(
+                    "language-diarization.postprocess.completed",
+                    {
+                        "output_count": len(output_list),
+                        "has_errors": bool(has_errors),
+                    },
                 )
 
             processing_time = time.time() - start_time
 
             if self.repository:
                 with _standard_spans.persist() as persist_span:
+                    persist_span.set_attribute(
+                        "language-diarization.db.operations",
+                        "language_diarization_requests.insert,language_diarization_results.insert_per_audio,language_diarization_requests.status_update",
+                    )
                     model_id = (
                         request.config.serviceId
                         if request.config
@@ -297,18 +349,22 @@ class LanguageDiarizationService:
                         )
                         request_id = request_record.id
                         persist_span.set_attribute(
+                            "language-diarization.db.language_diarization_request.id",
+                            str(request_id),
+                        )
+                        persist_span.set_attribute(
                             "language-diarization.request_id", str(request_id)
                         )
                         persist_span.add_event(
-                            "language-diarization.db.request_created",
-                            {"request_id": str(request_id)},
+                            "language-diarization.db.language_diarization_request.insert",
+                            {"table": "language_diarization_requests", "request_id": str(request_id)},
                         )
                         logger.info(
                             "Created language diarization request %s", request_id
                         )
                     except Exception as e:
                         persist_span.add_event(
-                            "language-diarization.db.create_request.failed",
+                            "language-diarization.db.language_diarization_request.insert_failed",
                             {
                                 "error.type": type(e).__name__,
                                 "error.message": str(e),
@@ -317,6 +373,7 @@ class LanguageDiarizationService:
                         logger.error("Failed to create request record: %s", e)
 
                     if request_id:
+                        inserted_results = 0
                         for idx, out in enumerate(output_list):
                             try:
                                 segments_dict = [
@@ -335,8 +392,9 @@ class LanguageDiarizationService:
                                     segments=segments_dict,
                                     target_language=out.target_language,
                                 )
+                                inserted_results += 1
                                 persist_span.add_event(
-                                    "language-diarization.db.result.created",
+                                    "language-diarization.db.language_diarization_result.insert",
                                     {
                                         "audio_index": idx,
                                         "segment_count": len(out.segments),
@@ -345,7 +403,7 @@ class LanguageDiarizationService:
                             except Exception as e:
                                 has_errors = True
                                 persist_span.add_event(
-                                    "language-diarization.db.result.failed",
+                                    "language-diarization.db.language_diarization_result.insert_failed",
                                     {
                                         "audio_index": idx,
                                         "error.type": type(e).__name__,
@@ -355,6 +413,10 @@ class LanguageDiarizationService:
                                 logger.error(
                                     "Failed to create result record: %s", e
                                 )
+                        persist_span.set_attribute(
+                            "language-diarization.db.language_diarization_result.inserted_count",
+                            inserted_results,
+                        )
 
                         try:
                             req_status = "failed" if has_errors else "completed"
@@ -364,7 +426,7 @@ class LanguageDiarizationService:
                                 processing_time=processing_time,
                             )
                             persist_span.add_event(
-                                "language-diarization.db.request_completed",
+                                "language-diarization.db.language_diarization_request.status_update",
                                 {
                                     "request_id": str(request_id),
                                     "status": req_status,
@@ -373,7 +435,7 @@ class LanguageDiarizationService:
                             )
                         except Exception as e:
                             persist_span.add_event(
-                                "language-diarization.db.update_status.failed",
+                                "language-diarization.db.language_diarization_request.status_update_failed",
                                 {
                                     "error.type": type(e).__name__,
                                     "error.message": str(e),

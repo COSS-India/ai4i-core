@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import tritonclient.http as http_client
@@ -20,6 +20,43 @@ class LanguageDiarizationTritonClient(TritonClient):
     def __init__(self, triton_url: str, api_key: Optional[str] = None, timeout: float = 300.0):
         super().__init__(triton_url, api_key=api_key)
         self.timeout = timeout
+
+    def send_triton_request(  # type: ignore[override]
+        self,
+        model_name: str,
+        inputs: List[http_client.InferInput],
+        outputs: List[http_client.InferRequestedOutput],
+        headers: Optional[Dict[str, str]] = None,
+        model_version: str = "1",
+        *,
+        trace_attributes: Optional[Dict[str, Union[str, int, float, bool]]] = None,
+        **kwargs: Any,
+    ):
+        """
+        Backward-compatible wrapper.
+
+        Some deployments still run an older `ai4icore_model_management.TritonClient`
+        without the `trace_attributes=` keyword. In that case, we retry without it.
+        """
+        try:
+            return super().send_triton_request(
+                model_name,
+                inputs,
+                outputs,
+                headers=headers,
+                model_version=model_version,
+                trace_attributes=trace_attributes,
+                **kwargs,
+            )
+        except TypeError:
+            return super().send_triton_request(
+                model_name,
+                inputs,
+                outputs,
+                headers=headers,
+                model_version=model_version,
+                **kwargs,
+            )
 
     def get_language_diarization_io_for_triton(
         self, audio_base64: str, target_language: str = ""
@@ -57,10 +94,14 @@ class LanguageDiarizationTritonClient(TritonClient):
         )
 
         try:
+            trace_attributes: Dict[str, object] = {
+                "language-diarization.triton_inference.model_name": "lang_diarization",
+            }
             response = self.send_triton_request(
                 model_name="lang_diarization",
                 inputs=inputs,
                 outputs=outputs,
+                trace_attributes=trace_attributes,
             )
         except Exception as exc:
             logger.error(

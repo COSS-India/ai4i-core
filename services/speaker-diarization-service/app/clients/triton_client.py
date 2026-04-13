@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from tritonclient.http import InferInput, InferRequestedOutput
 
@@ -14,6 +14,43 @@ logger = logging.getLogger(__name__)
 
 class SpeakerDiarizationTritonClient(TritonClient):
     """Triton client with Speaker Diarization-specific I/O preparation."""
+
+    def send_triton_request(  # type: ignore[override]
+        self,
+        model_name: str,
+        inputs: List[InferInput],
+        outputs: List[InferRequestedOutput],
+        headers: Optional[Dict[str, str]] = None,
+        model_version: str = "1",
+        *,
+        trace_attributes: Optional[Dict[str, Union[str, int, float, bool]]] = None,
+        **kwargs: Any,
+    ):
+        """
+        Backward-compatible wrapper.
+
+        Some deployments still run an older `ai4icore_model_management.TritonClient`
+        without the `trace_attributes=` keyword. In that case, we retry without it.
+        """
+        try:
+            return super().send_triton_request(
+                model_name,
+                inputs,
+                outputs,
+                headers=headers,
+                model_version=model_version,
+                trace_attributes=trace_attributes,
+                **kwargs,
+            )
+        except TypeError:
+            return super().send_triton_request(
+                model_name,
+                inputs,
+                outputs,
+                headers=headers,
+                model_version=model_version,
+                **kwargs,
+            )
 
     def get_speaker_diarization_io_for_triton(
         self, audio_base64: str, num_speakers: Optional[int] = None
@@ -49,7 +86,16 @@ class SpeakerDiarizationTritonClient(TritonClient):
             return {}
 
         inputs, outputs = self.get_speaker_diarization_io_for_triton(audio_base64, num_speakers)
-        response = self.send_triton_request(model_name=model_name, inputs=inputs, outputs=outputs)
+        trace_attributes: Dict[str, object] = {
+            "speaker-diarization.triton_inference.model_name": model_name,
+            "speaker-diarization.triton_inference.num_speakers": num_speakers if num_speakers is not None else "",
+        }
+        response = self.send_triton_request(
+            model_name=model_name,
+            inputs=inputs,
+            outputs=outputs,
+            trace_attributes=trace_attributes,
+        )
 
         result = response.as_numpy("DIARIZATION_RESULT")
         if result is None or len(result) == 0:

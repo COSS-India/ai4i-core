@@ -79,24 +79,69 @@ class NerService:
             try:
                 input_texts: List[str] = []
                 with _standard_spans.preprocess() as preprocess_span:
+                    preprocess_span.set_attribute("ner.preprocess.modality", "text")
+                    preprocess_span.set_attribute(
+                        "ner.preprocess.operations_applied",
+                        "normalize_newlines_to_space,strip_whitespace,empty_source_to_single_space",
+                    )
+                    preprocess_span.add_event(
+                        "ner.preprocess.phase_started",
+                        {"input_line_count": input_count},
+                    )
                     for text_input in request.input:
                         normalized = (text_input.source or " ").replace("\n", " ").strip()
                         input_texts.append(normalized)
                     total_text_length = sum(len(text) for text in input_texts)
+                    total_words = sum(len(t.split()) for t in input_texts)
                     preprocess_span.set_attribute("ner.input.character_length", total_text_length)
+                    preprocess_span.set_attribute("ner.input.word_count", total_words)
                     preprocess_span.set_attribute(
                         "ner.preprocessed_count", len(input_texts)
+                    )
+                    preprocess_span.add_event(
+                        "ner.preprocess.text_normalized",
+                        {
+                            "segment_count": len(input_texts),
+                            "newline_to_space": True,
+                            "strip_edges": True,
+                        },
                     )
                     if parent_span is not None:
                         try:
                             parent_span.set_attribute(
                                 "ner.input.character_length", total_text_length
                             )
+                            parent_span.set_attribute(
+                                "ner.input.word_count", total_words
+                            )
                         except Exception:
                             pass
 
                 with _standard_spans.resolve_model() as resolve_span:
-                    resolve_span.set_attribute("ner.model_name", model_name)
+                    resolve_span.set_attribute(
+                        "ner.resolve_model.lookup_service_id", service_id
+                    )
+                    resolve_span.set_attribute(
+                        "ner.resolve_model.registry_model_name", model_name
+                    )
+                    resolve_span.set_attribute(
+                        "ner.resolve_model.resolution_source",
+                        "configured_on_service",
+                    )
+                    resolve_span.set_attribute(
+                        "ner.resolve_model.triton_infer_endpoint",
+                        getattr(self.triton_client, "triton_url", "") or "",
+                    )
+                    resolve_span.set_attribute("ner.resolve_model.triton_client_ready", True)
+                    resolve_span.add_event(
+                        "ner.resolve_model.completed",
+                        {
+                            "registry_model_name": model_name,
+                            "endpoint_configured": bool(
+                                getattr(self.triton_client, "triton_url", None)
+                            ),
+                        },
+                    )
                     if parent_span is not None:
                         try:
                             parent_span.set_attribute("ner.model_name", model_name)
@@ -105,6 +150,26 @@ class NerService:
 
                 decoded_str = ""
                 with _standard_spans.triton_inference() as triton_span:
+                    triton_span.set_attribute("ner.triton_inference.task", "ner")
+                    triton_span.set_attribute(
+                        "ner.triton_inference.triton_invoke_model_name", model_name
+                    )
+                    triton_span.set_attribute(
+                        "ner.triton_inference.io_schema",
+                        "INPUT_TEXT,LANG_ID -> OUTPUT_TEXT",
+                    )
+                    triton_span.set_attribute(
+                        "ner.triton_inference.source_language", language
+                    )
+                    triton_span.set_attribute(
+                        "ner.triton_inference.batch_segment_count", len(input_texts)
+                    )
+                    triton_span.add_event(
+                        "ner.triton_inference.phase_started",
+                        {
+                            "steps": "prepare_io,triton.inference,decode_OUTPUT_TEXT",
+                        },
+                    )
                     try:
                         inputs, outputs = self.triton_client.get_ner_io_for_triton(
                             input_texts, language
@@ -117,8 +182,12 @@ class NerService:
                     triton_span.set_attribute("ner.input_tensor_count", len(inputs))
                     triton_span.set_attribute("ner.output_tensor_count", len(outputs))
                     triton_span.add_event(
-                        "ner.prepare_triton_inputs.completed",
-                        {"batch_size": len(input_texts)},
+                        "ner.triton_inference.prepare_io.completed",
+                        {
+                            "batch_segment_count": len(input_texts),
+                            "input_tensors": "INPUT_TEXT,LANG_ID",
+                            "output_tensors": "OUTPUT_TEXT",
+                        },
                     )
 
                     try:
@@ -126,6 +195,12 @@ class NerService:
                             model_name=model_name,
                             inputs=inputs,
                             outputs=outputs,
+                            trace_attributes={
+                                "triton.parent_phase": "ner.triton_inference",
+                                "triton.loop.batch_index": 0,
+                                "ner.source_language_id": language,
+                                "ner.batch_segment_count": len(input_texts),
+                            },
                         )
                     except TritonInferenceError as exc:
                         triton_span.set_attribute("error.type", "TritonInferenceError")
@@ -163,9 +238,11 @@ class NerService:
                         decoded_str = decoded_str[3:-2]
 
                     decoded_str = decoded_str.replace("\\\\", "\\")
-                    triton_span.set_attribute("ner.decoded_length", len(decoded_str))
+                    triton_span.set_attribute(
+                        "ner.triton_inference.raw_json_string_length", len(decoded_str)
+                    )
                     triton_span.add_event(
-                        "ner.extract_raw_output.completed",
+                        "ner.triton_inference.extract_raw_output.completed",
                         {"decoded_length": len(decoded_str)},
                     )
 
@@ -174,12 +251,21 @@ class NerService:
                 total_entities = 0
 
                 with _standard_spans.postprocess() as post_span:
+                    post_span.set_attribute("ner.postprocess.modality", "text")
+                    post_span.set_attribute(
+                        "ner.postprocess.operations_applied",
+                        "parse_model_json,normalize_output_shape,align_entities_to_word_tokens,build_NerPrediction_list",
+                    )
+                    post_span.add_event(
+                        "ner.postprocess.phase_started",
+                        {"raw_json_length": len(decoded_str)},
+                    )
                     try:
                         parsed_data = json.loads(decoded_str)
-                        post_span.add_event("ner.parse_json.completed", {})
+                        post_span.add_event("ner.postprocess.parse_json.completed", {})
                     except json.JSONDecodeError as e:
                         post_span.add_event(
-                            "ner.parse_json.failed",
+                            "ner.postprocess.parse_json.failed",
                             {"error.type": "JSONDecodeError", "error.message": str(e)},
                         )
                         raise
@@ -193,6 +279,9 @@ class NerService:
                             parsed_data if isinstance(parsed_data, list) else [parsed_data]
                         )
                     post_span.set_attribute("ner.raw_output_count", len(raw_output))
+                    post_span.set_attribute(
+                        "ner.postprocess.model_item_count", len(raw_output)
+                    )
 
                     for item_idx, item in enumerate(raw_output):
                         source_text = item.get("source", "")
@@ -288,7 +377,7 @@ class NerService:
                         total_tokens += len(token_predictions)
                         total_entities += entity_count
                         post_span.add_event(
-                            "ner.item.completed",
+                            "ner.postprocess.item.completed",
                             {
                                 "item_index": item_idx,
                                 "tokens_count": len(token_predictions),
@@ -299,6 +388,17 @@ class NerService:
                     post_span.set_attribute("ner.total_tokens", total_tokens)
                     post_span.set_attribute("ner.total_entities", total_entities)
                     post_span.set_attribute("ner.predictions_count", len(predictions))
+                    post_span.set_attribute(
+                        "ner.postprocess.built_prediction_count", len(predictions)
+                    )
+                    post_span.add_event(
+                        "ner.postprocess.completed",
+                        {
+                            "predictions_count": len(predictions),
+                            "total_tokens": total_tokens,
+                            "total_entities": total_entities,
+                        },
+                    )
 
                     if parent_span is not None:
                         try:
@@ -313,6 +413,10 @@ class NerService:
                 processing_time = time.time() - start_time
 
                 with _standard_spans.persist() as persist_span:
+                    persist_span.set_attribute(
+                        "ner.db.operations",
+                        "ner_requests.insert,ner_results.insert_per_prediction,ner_requests.status_update",
+                    )
                     db_request = await self.repository.create_request(
                         model_id=service_id,
                         language=language,
@@ -322,12 +426,30 @@ class NerService:
                         session_id=session_id,
                     )
                     request_id = db_request.id
-                    persist_span.set_attribute("ner.request_id", str(request_id))
+                    rid = str(request_id)
+                    persist_span.set_attribute("ner.db.ner_request.id", rid)
+                    persist_span.set_attribute("ner.request_id", rid)
+                    persist_span.set_attribute("ner.db.ner_request.model_id", service_id)
+                    persist_span.set_attribute("ner.db.ner_request.language", language)
+                    persist_span.set_attribute(
+                        "ner.db.ner_request.text_length", total_text_length
+                    )
+                    persist_span.set_attribute(
+                        "ner.db.ner_request.status_after_insert", "processing"
+                    )
                     persist_span.add_event(
-                        "ner.db.request_created",
-                        {"request_id": str(request_id)},
+                        "ner.db.ner_request.insert",
+                        {
+                            "table": "ner_requests",
+                            "request_id": rid,
+                            "model_id": service_id,
+                            "language": language,
+                            "text_length": total_text_length,
+                            "initial_status": "processing",
+                        },
                     )
 
+                    result_rows = 0
                     for prediction in predictions:
                         entities_data = {
                             "nerPrediction": [
@@ -346,18 +468,35 @@ class NerService:
                             entities=entities_data,
                             source_text=prediction.source,
                         )
+                        result_rows += 1
                         persist_span.add_event(
-                            "ner.db.result.created",
-                            {"source_length": len(prediction.source)},
+                            "ner.db.ner_result.insert",
+                            {
+                                "table": "ner_results",
+                                "request_id": rid,
+                                "source_length": len(prediction.source),
+                                "token_count": len(prediction.nerPrediction),
+                            },
                         )
+
+                    persist_span.set_attribute("ner.db.ner_result.row_count", result_rows)
 
                     await self.repository.update_request_status(
                         request_id, "completed", processing_time
                     )
+                    persist_span.set_attribute(
+                        "ner.db.ner_request.final_status", "completed"
+                    )
+                    persist_span.set_attribute(
+                        "ner.db.ner_request.processing_time_seconds",
+                        processing_time,
+                    )
                     persist_span.add_event(
-                        "ner.db.request_completed",
+                        "ner.db.ner_request.status_update",
                         {
-                            "request_id": str(request_id),
+                            "table": "ner_requests",
+                            "request_id": rid,
+                            "status": "completed",
                             "processing_time_seconds": processing_time,
                         },
                     )

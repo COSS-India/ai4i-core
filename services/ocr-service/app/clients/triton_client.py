@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from tritonclient.http import InferInput, InferRequestedOutput
 
@@ -28,6 +28,43 @@ class OCRTritonClient(TritonClient):
             raise ValueError("model_name is required and must be resolved via Model Management")
         super().__init__(triton_url, api_key=api_key)
         self.model_name = model_name
+
+    def send_triton_request(  # type: ignore[override]
+        self,
+        model_name: str,
+        inputs: List[InferInput],
+        outputs: List[InferRequestedOutput],
+        headers: Optional[Dict[str, str]] = None,
+        model_version: str = "1",
+        *,
+        trace_attributes: Optional[Dict[str, Union[str, int, float, bool]]] = None,
+        **kwargs: Any,
+    ):
+        """
+        Backward-compatible wrapper.
+
+        Some deployments still run an older `ai4icore_model_management.TritonClient`
+        without the `trace_attributes=` keyword. In that case, we retry without it.
+        """
+        try:
+            return super().send_triton_request(
+                model_name,
+                inputs,
+                outputs,
+                headers=headers,
+                model_version=model_version,
+                trace_attributes=trace_attributes,
+                **kwargs,
+            )
+        except TypeError:
+            return super().send_triton_request(
+                model_name,
+                inputs,
+                outputs,
+                headers=headers,
+                model_version=model_version,
+                **kwargs,
+            )
 
     def get_ocr_io_for_triton(
         self, images_base64: List[str]
@@ -57,10 +94,15 @@ class OCRTritonClient(TritonClient):
         inputs, outputs = self.get_ocr_io_for_triton(images_base64)
 
         try:
+            trace_attributes: Dict[str, object] = {
+                "ocr.triton_inference.batch_size": len(images_base64),
+                "ocr.triton_inference.model_name": self.model_name,
+            }
             response = self.send_triton_request(
                 model_name=self.model_name,
                 inputs=inputs,
                 outputs=outputs,
+                trace_attributes=trace_attributes,
             )
         except Exception as exc:
             logger.error("Triton OCR inference failed: %s", exc, exc_info=True)
