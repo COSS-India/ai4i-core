@@ -97,9 +97,9 @@ async def update_policy(request: Request, policy_id: UUID, body: PolicyUpdate, s
 
 
 @router.delete("/{policy_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete policy")
-async def delete_policy(policy_id: UUID, svc: PolicyService = Depends(_svc)):
-    # Deletes the policy plus tenant/link mappings; pii_types remain in master table.
-    await svc.delete(policy_id)
+async def delete_policy(request: Request, policy_id: UUID, svc: PolicyService = Depends(_svc)):
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+    await svc.delete(policy_id, auth_header=auth_header)
 
 
 @router.patch("/{policy_id}/status", summary="Toggle active / inactive")

@@ -75,6 +75,9 @@ class PiiTypeRepository:
     async def get_policy_link_counts(self, pii_type_id: UUID) -> tuple[int, int]:
         from app.models.orm import PolicyPiiType, PiiPolicy
 
+        # Return active/inactive counts separately (instead of a boolean) so callers can:
+        # 1) show precise conflict messages to operators, and
+        # 2) support future differentiated behaviors (e.g., conditional force-delete for inactive-only links).
         stmt = (
             select(
                 func.coalesce(
@@ -91,4 +94,4 @@ class PiiTypeRepository:
             .where(PolicyPiiType.pii_type_id == pii_type_id)
         )
         active_count, inactive_count = (await self.db.execute(stmt)).one()
-        return int(active_count or 0), int(inactive_count or 0)
+        return int(active_count), int(inactive_count)
