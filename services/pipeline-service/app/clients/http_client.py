@@ -206,12 +206,11 @@ class ServiceClient:
         service_url = f"{self.asr_service_url}/api/v1/asr/inference"
         logger.info(f"🔗 Calling ASR service: {service_url}")
         
-        # Create manual span with proper service name for Jaeger
-        # Use a clear, descriptive name that identifies the service being called
+        # Outbound HTTP span under pipeline.* naming (pipeline.<snake_case>)
         if TRACING_AVAILABLE:
             # Get tracer - use the same service name as the main app to ensure proper nesting
             tracer = trace.get_tracer("pipeline-service")
-            span_name = "ASR Service"
+            span_name = "pipeline.http_asr"
         else:
             tracer = None
             span_name = None
@@ -235,7 +234,7 @@ class ServiceClient:
                         span.set_attribute("asr.request.service_id", request_data["config"]["serviceId"])
                     
                     # Add event for request start
-                    span.add_event("asr.request.start", {
+                    span.add_event("pipeline.http.request_started", {
                         "url": service_url,
                         "service": "asr"
                     })
@@ -259,7 +258,7 @@ class ServiceClient:
                         span.set_attribute("asr.response.output_count", len(result["output"]))
                     
                     # Add event for request completion
-                    span.add_event("asr.request.complete", {
+                    span.add_event("pipeline.http.request_completed", {
                         "status_code": response.status_code,
                         "duration_ms": elapsed_time * 1000
                     })
@@ -371,12 +370,9 @@ class ServiceClient:
         service_url = f"{self.nmt_service_url}/api/v1/nmt/inference"
         logger.info(f"🔗 Calling NMT service: {service_url}")
         
-        # Create manual span with proper service name for Jaeger
-        # Use a clear, descriptive name that identifies the service being called
         if TRACING_AVAILABLE:
-            # Get tracer - use the same service name as the main app to ensure proper nesting
             tracer = trace.get_tracer("pipeline-service")
-            span_name = "NMT Service"
+            span_name = "pipeline.http_nmt"
         else:
             tracer = None
             span_name = None
@@ -407,7 +403,7 @@ class ServiceClient:
                                 span.set_attribute("nmt.request.target_language", lang["targetLanguage"])
                     
                     # Add event for request start
-                    span.add_event("nmt.request.start", {
+                    span.add_event("pipeline.http.request_started", {
                         "url": service_url,
                         "service": "nmt"
                     })
@@ -431,7 +427,7 @@ class ServiceClient:
                         span.set_attribute("nmt.response.output_count", len(result["output"]))
                     
                     # Add event for request completion
-                    span.add_event("nmt.request.complete", {
+                    span.add_event("pipeline.http.request_completed", {
                         "status_code": response.status_code,
                         "duration_ms": elapsed_time * 1000
                     })
@@ -526,12 +522,9 @@ class ServiceClient:
         service_url = f"{self.tts_service_url}/api/v1/tts/inference"
         logger.info(f"🔗 Calling TTS service: {service_url}")
         
-        # Create manual span with proper service name for Jaeger
-        # Use a clear, descriptive name that identifies the service being called
         if TRACING_AVAILABLE:
-            # Get tracer - use the same service name as the main app to ensure proper nesting
             tracer = trace.get_tracer("pipeline-service")
-            span_name = "TTS Service"
+            span_name = "pipeline.http_tts"
         else:
             tracer = None
             span_name = None
@@ -564,7 +557,7 @@ class ServiceClient:
                                 span.set_attribute("tts.request.language", lang["sourceLanguage"])
                     
                     # Add event for request start
-                    span.add_event("tts.request.start", {
+                    span.add_event("pipeline.http.request_started", {
                         "url": service_url,
                         "service": "tts"
                     })
@@ -588,7 +581,7 @@ class ServiceClient:
                         span.set_attribute("tts.response.audio_count", len(result["audio"]))
                     
                     # Add event for request completion
-                    span.add_event("tts.request.complete", {
+                    span.add_event("pipeline.http.request_completed", {
                         "status_code": response.status_code,
                         "duration_ms": elapsed_time * 1000
                     })

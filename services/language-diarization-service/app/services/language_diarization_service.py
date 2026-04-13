@@ -5,14 +5,11 @@ Core business logic for Language Diarization inference.
 import base64
 import logging
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import UUID
 
 import requests
-
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
-
+from ai4icore_telemetry import StandardSpanManager, Status, StatusCode
 from app.schemas.inference import (
     AudioInput,
     LanguageDiarizationInferenceRequest,
@@ -26,7 +23,10 @@ from app.clients.triton_client import LanguageDiarizationTritonClient
 from ai4icore_exceptions import TritonInferenceError
 
 logger = logging.getLogger(__name__)
-tracer = trace.get_tracer("language-diarization-service")
+_standard_spans = StandardSpanManager("language-diarization")
+
+# Triton model name (see LanguageDiarizationTritonClient.send_triton_request)
+_LANG_DIAR_MODEL_NAME = "lang_diarization"
 
 
 class LanguageDiarizationService:
@@ -51,11 +51,7 @@ class LanguageDiarizationService:
         self.repository = repository
 
     def _resolve_audio_base64(self, audio: AudioInput) -> Optional[str]:
-        """Resolve an audio into base64.
-
-        - If audioContent is provided, use it directly
-        - Else, download from audioUri and base64-encode it
-        """
+        """Resolve an audio into base64 (content or download from URI)."""
         if audio.audioContent:
             return audio.audioContent
 
@@ -72,6 +68,13 @@ class LanguageDiarizationService:
 
         return None
 
+    def _empty_output(self, target_language: str = "") -> LanguageDiarizationOutput:
+        return LanguageDiarizationOutput(
+            total_segments=0,
+            segments=[],
+            target_language=target_language,
+        )
+
     async def run_inference(
         self,
         request: LanguageDiarizationInferenceRequest,
@@ -80,184 +83,325 @@ class LanguageDiarizationService:
         session_id: Optional[int] = None,
     ) -> LanguageDiarizationInferenceResponse:
         """Asynchronous language diarization inference entrypoint."""
-        try:
-            return await self._do_inference(request, user_id, api_key_id, session_id)
-        except TritonInferenceError:
-            raise
-
-    async def _do_inference(
-        self,
-        request: LanguageDiarizationInferenceRequest,
-        user_id: Optional[int] = None,
-        api_key_id: Optional[int] = None,
-        session_id: Optional[int] = None,
-    ) -> LanguageDiarizationInferenceResponse:
-        """Internal inference implementation."""
         start_time = time.time()
         request_id: Optional[UUID] = None
         has_errors = False
 
-        # Create request record if repository is available
-        if self.repository:
-            try:
-                model_id = request.config.serviceId if request.config else "lang_diarization"
-                request_record = await self.repository.create_request(
-                    model_id=model_id,
-                    audio_duration=None,
-                    target_language="",
-                    user_id=user_id,
-                    api_key_id=api_key_id,
-                    session_id=session_id,
+        service_id = request.config.serviceId if request.config else None
+        input_count = len(request.audio or [])
+
+        with _standard_spans.inference(
+            service_id=service_id,
+            model_name=None,
+            input_count=input_count,
+            input_type="audio",
+            user_id=user_id,
+            api_key_id=api_key_id,
+            session_id=session_id,
+        ) as parent_span:
+            resolved_audio: List[Optional[str]] = []
+
+            with _standard_spans.preprocess() as preprocess_span:
+                preprocess_span.set_attribute(
+                    "language-diarization.input_count", input_count
                 )
-                request_id = request_record.id
-                logger.info(f"Created language diarization request {request_id}")
-            except Exception as e:
-                logger.error(f"Failed to create request record: {e}")
-
-        output_list: List[LanguageDiarizationOutput] = []
-
-        with tracer.start_as_current_span("language_diarization.process_audio_loop") as audio_loop_span:
-            audio_loop_span.set_attribute("language_diarization.audio_count", len(request.audio))
-
-            for idx, audio_item in enumerate(request.audio):
-                # Resolve audio to base64
-                with tracer.start_as_current_span("language_diarization.resolve_audio") as resolve_span:
+                total_audio_bytes = 0
+                for idx, audio_item in enumerate(request.audio):
                     audio_base64 = self._resolve_audio_base64(audio_item)
-                    resolve_span.set_attribute("language_diarization.audio_index", idx + 1)
-                    resolve_span.set_attribute("language_diarization.has_content", bool(audio_item.audioContent))
-                    resolve_span.set_attribute("language_diarization.has_uri", bool(audio_item.audioUri))
+                    resolved_audio.append(audio_base64)
                     if audio_base64:
-                        resolve_span.set_attribute("language_diarization.audio_size_bytes", len(audio_base64))
-
-                if not audio_base64:
-                    output_list.append(
-                        LanguageDiarizationOutput(
-                            total_segments=0,
-                            segments=[],
-                            target_language="",
-                        )
+                        try:
+                            total_audio_bytes += len(base64.b64decode(audio_base64))
+                        except Exception:
+                            pass
+                    preprocess_span.add_event(
+                        "language-diarization.audio.resolved",
+                        {
+                            "audio_index": idx,
+                            "has_content": bool(audio_item.audioContent),
+                            "has_uri": bool(audio_item.audioUri),
+                            "resolved": bool(audio_base64),
+                            "audio_size_bytes": len(audio_base64)
+                            if audio_base64
+                            else 0,
+                        },
                     )
-                    continue
+                preprocess_span.set_attribute(
+                    "language-diarization.input.audio_bytes_total",
+                    total_audio_bytes,
+                )
+                if parent_span is not None:
+                    try:
+                        parent_span.set_attribute(
+                            "language-diarization.input.audio_bytes_total",
+                            total_audio_bytes,
+                        )
+                    except Exception:
+                        pass
 
+            with _standard_spans.resolve_model() as resolve_span:
+                resolve_span.set_attribute(
+                    "language-diarization.model_name", _LANG_DIAR_MODEL_NAME
+                )
+                if parent_span is not None:
+                    try:
+                        parent_span.set_attribute(
+                            "language-diarization.model_name",
+                            _LANG_DIAR_MODEL_NAME,
+                        )
+                    except Exception:
+                        pass
+
+            diarization_raw: List[Optional[Dict]] = [None] * input_count
+
+            with _standard_spans.triton_inference() as triton_span:
+                triton_span.set_attribute(
+                    "language-diarization.input_count", input_count
+                )
                 target_language = ""
-
-                try:
-                    diarization_data = self.triton_client.run_language_diarization_inference(
-                        audio_base64, target_language
-                    )
-
-                    if not diarization_data:
-                        output_list.append(
-                            LanguageDiarizationOutput(
-                                total_segments=0,
-                                segments=[],
-                                target_language=target_language,
-                            )
-                        )
+                for idx, audio_base64 in enumerate(resolved_audio):
+                    if not audio_base64:
                         continue
 
-                    # Map response to output format
-                    with tracer.start_as_current_span("language_diarization.extract_results") as extract_span:
-                        segments_list: List[LanguageSegment] = []
-
-                        raw_segments = diarization_data.get("segments", [])
-                        for seg in raw_segments:
-                            language = seg.get("language", "")
-                            seg_start = float(seg.get("start_time", 0.0))
-                            seg_end = float(seg.get("end_time", 0.0))
-                            duration = float(seg.get("duration", seg_end - seg_start))
-                            confidence = float(seg.get("confidence", 0.0))
-
-                            segments_list.append(
-                                LanguageSegment(
-                                    start_time=seg_start,
-                                    end_time=seg_end,
-                                    duration=duration,
-                                    language=language,
-                                    confidence=confidence,
-                                )
+                    triton_span.add_event(
+                        "language-diarization.audio.inference.started",
+                        {"audio_index": idx},
+                    )
+                    try:
+                        diarization_data = (
+                            self.triton_client.run_language_diarization_inference(
+                                audio_base64, target_language
                             )
+                        )
+                        if not diarization_data:
+                            triton_span.add_event(
+                                "language-diarization.audio.inference.empty_result",
+                                {"audio_index": idx},
+                            )
+                            continue
 
-                        segments_list.sort(key=lambda x: x.start_time)
-                        target_language = diarization_data.get("target_language", target_language)
+                        diarization_raw[idx] = diarization_data
+                        raw_segments = diarization_data.get("segments", [])
+                        triton_span.add_event(
+                            "language-diarization.audio.inference.completed",
+                            {
+                                "audio_index": idx,
+                                "segment_count": len(raw_segments),
+                            },
+                        )
+                    except TritonInferenceError as exc:
+                        has_errors = True
+                        triton_span.add_event(
+                            "language-diarization.audio.inference.failed",
+                            {
+                                "audio_index": idx,
+                                "error.type": "TritonInferenceError",
+                                "error.message": str(exc),
+                            },
+                        )
+                        triton_span.set_status(Status(StatusCode.ERROR, str(exc)))
+                        triton_span.record_exception(exc)
+                        logger.error(
+                            "Language Diarization Triton inference failed: %s", exc
+                        )
+                    except Exception as exc:
+                        has_errors = True
+                        triton_span.add_event(
+                            "language-diarization.audio.inference.failed",
+                            {
+                                "audio_index": idx,
+                                "error.type": type(exc).__name__,
+                                "error.message": str(exc),
+                            },
+                        )
+                        triton_span.set_status(Status(StatusCode.ERROR, str(exc)))
+                        triton_span.record_exception(exc)
+                        logger.error(
+                            "Error in language diarization inference: %s",
+                            exc,
+                            exc_info=True,
+                        )
 
-                        extract_span.set_attribute("language_diarization.segment_count", len(segments_list))
-                        extract_span.set_attribute("language_diarization.target_language", target_language)
+            output_list: List[LanguageDiarizationOutput] = []
+            with _standard_spans.postprocess() as post_span:
+                for idx in range(input_count):
+                    if not resolved_audio[idx]:
+                        output_list.append(self._empty_output())
+                        continue
 
-                        output = LanguageDiarizationOutput(
+                    diarization_data = diarization_raw[idx]
+                    if not diarization_data:
+                        output_list.append(self._empty_output())
+                        continue
+
+                    segments_list: List[LanguageSegment] = []
+                    raw_segments = diarization_data.get("segments", [])
+                    for seg in raw_segments:
+                        language = seg.get("language", "")
+                        seg_start = float(seg.get("start_time", 0.0))
+                        seg_end = float(seg.get("end_time", 0.0))
+                        duration = float(seg.get("duration", seg_end - seg_start))
+                        confidence = float(seg.get("confidence", 0.0))
+
+                        segments_list.append(
+                            LanguageSegment(
+                                start_time=seg_start,
+                                end_time=seg_end,
+                                duration=duration,
+                                language=language,
+                                confidence=confidence,
+                            )
+                        )
+
+                    segments_list.sort(key=lambda x: x.start_time)
+                    tgt_lang = diarization_data.get("target_language", "")
+
+                    post_span.add_event(
+                        "language-diarization.audio.results.parsed",
+                        {
+                            "audio_index": idx,
+                            "segment_count": len(segments_list),
+                            "target_language": tgt_lang,
+                        },
+                    )
+
+                    output_list.append(
+                        LanguageDiarizationOutput(
                             total_segments=len(segments_list),
                             segments=segments_list,
-                            target_language=target_language,
+                            target_language=tgt_lang,
                         )
-                        output_list.append(output)
+                    )
 
-                    # Persist result
-                    if self.repository and request_id:
+                post_span.set_attribute(
+                    "language-diarization.output_count", len(output_list)
+                )
+
+            processing_time = time.time() - start_time
+
+            if self.repository:
+                with _standard_spans.persist() as persist_span:
+                    model_id = (
+                        request.config.serviceId
+                        if request.config
+                        else "lang_diarization"
+                    )
+                    try:
+                        request_record = await self.repository.create_request(
+                            model_id=model_id,
+                            audio_duration=None,
+                            target_language="",
+                            user_id=user_id,
+                            api_key_id=api_key_id,
+                            session_id=session_id,
+                        )
+                        request_id = request_record.id
+                        persist_span.set_attribute(
+                            "language-diarization.request_id", str(request_id)
+                        )
+                        persist_span.add_event(
+                            "language-diarization.db.request_created",
+                            {"request_id": str(request_id)},
+                        )
+                        logger.info(
+                            "Created language diarization request %s", request_id
+                        )
+                    except Exception as e:
+                        persist_span.add_event(
+                            "language-diarization.db.create_request.failed",
+                            {
+                                "error.type": type(e).__name__,
+                                "error.message": str(e),
+                            },
+                        )
+                        logger.error("Failed to create request record: %s", e)
+
+                    if request_id:
+                        for idx, out in enumerate(output_list):
+                            try:
+                                segments_dict = [
+                                    {
+                                        "start_time": seg.start_time,
+                                        "end_time": seg.end_time,
+                                        "duration": seg.duration,
+                                        "language": seg.language,
+                                        "confidence": seg.confidence,
+                                    }
+                                    for seg in out.segments
+                                ]
+                                await self.repository.create_result(
+                                    request_id=request_id,
+                                    total_segments=out.total_segments,
+                                    segments=segments_dict,
+                                    target_language=out.target_language,
+                                )
+                                persist_span.add_event(
+                                    "language-diarization.db.result.created",
+                                    {
+                                        "audio_index": idx,
+                                        "segment_count": len(out.segments),
+                                    },
+                                )
+                            except Exception as e:
+                                has_errors = True
+                                persist_span.add_event(
+                                    "language-diarization.db.result.failed",
+                                    {
+                                        "audio_index": idx,
+                                        "error.type": type(e).__name__,
+                                        "error.message": str(e),
+                                    },
+                                )
+                                logger.error(
+                                    "Failed to create result record: %s", e
+                                )
+
                         try:
-                            segments_dict = [
-                                {
-                                    "start_time": seg.start_time,
-                                    "end_time": seg.end_time,
-                                    "duration": seg.duration,
-                                    "language": seg.language,
-                                    "confidence": seg.confidence,
-                                }
-                                for seg in segments_list
-                            ]
-                            await self.repository.create_result(
+                            req_status = "failed" if has_errors else "completed"
+                            await self.repository.update_request_status(
                                 request_id=request_id,
-                                total_segments=len(segments_list),
-                                segments=segments_dict,
-                                target_language=target_language,
+                                status=req_status,
+                                processing_time=processing_time,
+                            )
+                            persist_span.add_event(
+                                "language-diarization.db.request_completed",
+                                {
+                                    "request_id": str(request_id),
+                                    "status": req_status,
+                                    "processing_time_seconds": processing_time,
+                                },
                             )
                         except Exception as e:
-                            logger.error(f"Failed to create result record: {e}")
+                            persist_span.add_event(
+                                "language-diarization.db.update_status.failed",
+                                {
+                                    "error.type": type(e).__name__,
+                                    "error.message": str(e),
+                                },
+                            )
+                            logger.error("Failed to update request status: %s", e)
 
-                except TritonInferenceError as exc:
-                    logger.error("Language Diarization Triton inference failed: %s", exc)
-                    has_errors = True
-                    output_list.append(
-                        LanguageDiarizationOutput(
-                            total_segments=0,
-                            segments=[],
-                            target_language=target_language,
-                        )
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "Error in language diarization inference: %s", exc, exc_info=True
-                    )
-                    has_errors = True
-                    output_list.append(
-                        LanguageDiarizationOutput(
-                            total_segments=0,
-                            segments=[],
-                            target_language=target_language,
-                        )
-                    )
-
-        # Update request status
-        if self.repository and request_id:
-            try:
-                processing_time = time.time() - start_time
-                req_status = "failed" if has_errors else "completed"
-                await self.repository.update_request_status(
-                    request_id=request_id,
-                    status=req_status,
-                    processing_time=processing_time,
+            if has_errors:
+                _standard_spans.note_partial_inference_failure(
+                    "One or more audio inputs failed during Triton inference or DB result persistence"
                 )
-            except Exception as e:
-                logger.error(f"Failed to update request status: {e}")
 
-        # Create response config
-        response_config = None
-        if request.config.serviceId:
-            response_config = LanguageDiarizationResponseConfig(
-                serviceId=request.config.serviceId,
+            if parent_span is not None:
+                try:
+                    parent_span.set_attribute(
+                        "language-diarization.output_count", len(output_list)
+                    )
+                except Exception:
+                    pass
+
+            response_config = None
+            if request.config.serviceId:
+                response_config = LanguageDiarizationResponseConfig(
+                    serviceId=request.config.serviceId,
+                )
+
+            return LanguageDiarizationInferenceResponse(
+                taskType="language-diarization",
+                output=output_list,
+                config=response_config,
             )
-
-        return LanguageDiarizationInferenceResponse(
-            taskType="language-diarization",
-            output=output_list,
-            config=response_config,
-        )
