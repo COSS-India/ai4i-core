@@ -2,6 +2,7 @@
 
 import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { getStoredAccessToken } from '../utils/tokenStorage';
+import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 
 // API Base URL from environment.
 // For production this should be set to the browser-facing API gateway URL
@@ -165,14 +166,16 @@ llmApiClient.interceptors.response.use(
     }
     return response;
   },
-  (error: AxiosError) => {
-    // Don't automatically logout on 401 for service endpoints
-    // Let the UI handle the error and show appropriate messages
-    // This prevents users from being logged out on transient auth errors
-    if (error.response) {
-      const { status } = error.response;
+  async (error: AxiosError) => {
+    if (error.response && typeof window !== 'undefined') {
+      const { status, data } = error.response;
+      if (responseIndicatesTenantSuspendedOrInactive(status, data)) {
+        console.warn('LLM: tenant/user inactive — ending session');
+        const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+        forceFrontendSessionEnd();
+        return Promise.reject(error);
+      }
       if (status === 401) {
-        // Log the error but don't logout - let UI handle it
         console.warn('LLM service returned 401 - check authentication');
       }
     }
@@ -214,14 +217,16 @@ asrApiClient.interceptors.response.use(
     }
     return response;
   },
-  (error: AxiosError) => {
-    // Don't automatically logout on 401 for service endpoints
-    // Let the UI handle the error and show appropriate messages
-    // This prevents users from being logged out on transient auth errors
-    if (error.response) {
-      const { status } = error.response;
+  async (error: AxiosError) => {
+    if (error.response && typeof window !== 'undefined') {
+      const { status, data } = error.response;
+      if (responseIndicatesTenantSuspendedOrInactive(status, data)) {
+        console.warn('ASR: tenant/user inactive — ending session');
+        const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+        forceFrontendSessionEnd();
+        return Promise.reject(error);
+      }
       if (status === 401) {
-        // Log the error but don't logout - let UI handle it
         console.warn('ASR service returned 401 - check authentication');
       }
     }
@@ -348,6 +353,18 @@ apiClient.interceptors.response.use(
     // Handle different error types
     if (error.response) {
       const { status, data } = error.response;
+
+      if (
+        typeof window !== 'undefined' &&
+        responseIndicatesTenantSuspendedOrInactive(status, data)
+      ) {
+        console.warn('API: tenant suspended/deactivated or user inactive — ending session');
+        const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+        forceFrontendSessionEnd();
+        return Promise.reject(
+          new Error('Your organization account is no longer active. Please sign in again.')
+        );
+      }
       
       switch (status) {
         case 401:
@@ -483,6 +500,15 @@ apiClient.interceptors.response.use(
                 if (typeof window !== 'undefined') {
                   window.location.href = '/auth';
                 }
+                return Promise.reject(new Error('Session expired. Please sign in again.'));
+              }
+
+              // Multi-tenant APIs back the app shell; any unresolved 401 should end the session
+              // instead of leaving the user on broken pages (e.g. logs, profile).
+              if (isMultiTenantEndpoint) {
+                console.warn('Multi-tenant API returned 401 — ending session');
+                const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+                forceFrontendSessionEnd();
                 return Promise.reject(new Error('Session expired. Please sign in again.'));
               }
               
