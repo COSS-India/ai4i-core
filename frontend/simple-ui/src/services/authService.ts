@@ -30,6 +30,7 @@ import {
   setStoredRefreshToken,
   clearTokenStorage,
 } from '../utils/tokenStorage';
+import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 
 class AuthService {
   private baseUrl: string;
@@ -85,6 +86,21 @@ class AuthService {
         } catch (e) {
           // If JSON parsing fails, use empty object
           errorData = {};
+        }
+
+        if (
+          typeof window !== 'undefined' &&
+          responseIndicatesTenantSuspendedOrInactive(response.status, errorData)
+        ) {
+          try {
+            const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+            forceFrontendSessionEnd();
+          } catch {
+            this.clearAuthTokens();
+            this.clearStoredUser();
+            window.location.assign('/auth');
+          }
+          throw new Error('Your organization account is no longer active. Please sign in again.');
         }
         
         // Extract error message from various possible formats (avoid [object Object] when detail is an object)
