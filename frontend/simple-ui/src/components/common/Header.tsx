@@ -104,7 +104,7 @@ const Header: React.FC = () => {
         setTitle("PII Guardrail");
         break;
       case "/policy-management":
-        setTitle("Policy management");
+        setTitle("Policy Management");
         break;
       case "/auth":
         setTitle("Sign In");
