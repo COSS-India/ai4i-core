@@ -112,7 +112,7 @@ class AuthSettings(BaseSettings):
     # ── Swagger ──
     swagger_server_url: Optional[str] = None
 
-    # ── Guest login (POST /auth/guest/login) ──
+    # ── Guest login (POST /auth/guest/login) — must match guest user email seeded in auth_db ──
     guest_email: Optional[str] = None
     guest_password: Optional[str] = None
 

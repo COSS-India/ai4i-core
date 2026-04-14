@@ -620,7 +620,7 @@
     {
       "endpoint": "POST:/api/v1/auth/guest/login",
       "permissionRequired": null,
-      "description": "Guest login (public; uses GUEST_EMAIL and GUEST_PASSWORD env)"
+      "description": "Guest login (public; GUEST_EMAIL and GUEST_PASSWORD env)"
     },
     {
       "endpoint": "POST:/api/v1/auth/register",
