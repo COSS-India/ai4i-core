@@ -4,7 +4,7 @@ Role, Permission, UserRole, RolePermission queries.
 
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.role import Permission, Role, RolePermission, UserRole
@@ -117,6 +117,26 @@ class RoleRepository:
             select(RolePermission.permission_id).where(RolePermission.role_id == role_id)
         )
         return list(result.scalars().all())
+
+    async def delete_role_permissions_for_permission_ids(
+        self, role_id: int, permission_ids: list[int]
+    ) -> None:
+        """Remove links for this role where permission_id is in the given set."""
+        if not permission_ids:
+            return
+        await self._db.execute(
+            delete(RolePermission).where(
+                RolePermission.role_id == role_id,
+                RolePermission.permission_id.in_(permission_ids),
+            )
+        )
+        await self._db.flush()
+
+    async def insert_role_permissions(self, role_id: int, permission_ids: list[int]) -> None:
+        """Insert role_permission rows (caller ensures no duplicates / PK conflicts)."""
+        for pid in permission_ids:
+            self._db.add(RolePermission(role_id=role_id, permission_id=pid))
+        await self._db.flush()
 
     async def commit(self) -> None:
         await self._db.commit()
