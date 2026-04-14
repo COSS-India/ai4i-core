@@ -1,0 +1,5145 @@
+{
+  "id": null,
+  "uid": "alert-validation-dashboard",
+  "title": "Alert Validation Dashboard",
+  "description": "Dashboard to validate active alert rules by visualizing the same PromQL expressions used in alert_management.py. Covers latency (P50/P99), error rates (4xx/5xx/overall), and system resource metrics (CPU/memory/disk).",
+  "tags": [
+    "alert-validation",
+    "ai4icore",
+    "monitoring",
+    "alerts"
+  ],
+  "style": "dark",
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "schemaVersion": 42,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "tenant",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(telemetry_obsv_requests_total, tenant)",
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [],
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "refresh": 1,
+        "regex": "",
+        "sort": 1,
+        "hide": 0
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Overall Latency",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Overall P50 Latency",
+      "description": "Median (50th percentile) request latency across all inference endpoints, filtered by tenant. Matches the application/latency PromQL in alert_management.py.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", tenant=~\"$tenant\"}[5m])))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "s",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "red",
+                "value": 2.0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "textMode": "auto",
+        "wideLayout": true,
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "pluginVersion": "10.0.0"
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Overall P99 Latency",
+      "description": "99th percentile request latency across all inference endpoints. Same pattern as alert_management.py application/latency with quantile=0.99.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", tenant=~\"$tenant\"}[5m])))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "s",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1.0
+              },
+              {
+                "color": "red",
+                "value": 5.0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "textMode": "auto",
+        "wideLayout": true,
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "pluginVersion": "10.0.0"
+    },
+    {
+      "id": 16,
+      "type": "row",
+      "title": "Per-Service P50 Latency",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "collapsed": true,
+      "panels": [
+        {
+          "id": 4,
+          "type": "stat",
+          "title": "ASR",
+          "description": "P50 Latency for asr-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 7
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"asr-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 5,
+          "type": "stat",
+          "title": "NMT",
+          "description": "P50 Latency for nmt-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 7
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"nmt-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 6,
+          "type": "stat",
+          "title": "TTS",
+          "description": "P50 Latency for tts-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 7
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"tts-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 7,
+          "type": "stat",
+          "title": "OCR",
+          "description": "P50 Latency for ocr-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 7
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"ocr-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 8,
+          "type": "stat",
+          "title": "NER",
+          "description": "P50 Latency for ner-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 7
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"ner-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 9,
+          "type": "stat",
+          "title": "Transliteration",
+          "description": "P50 Latency for transliteration-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 7
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"transliteration-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 10,
+          "type": "stat",
+          "title": "Lang Detection",
+          "description": "P50 Latency for language-detection-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 11
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"language-detection-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 11,
+          "type": "stat",
+          "title": "Audio Lang Detection",
+          "description": "P50 Latency for audio-lang-detection-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 11
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"audio-lang-detection-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 12,
+          "type": "stat",
+          "title": "Lang Diarization",
+          "description": "P50 Latency for language-diarization-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 11
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"language-diarization-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 13,
+          "type": "stat",
+          "title": "Speaker Diarization",
+          "description": "P50 Latency for speaker-diarization-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 11
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"speaker-diarization-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 14,
+          "type": "stat",
+          "title": "LLM",
+          "description": "P50 Latency for llm-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 11
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"llm-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 15,
+          "type": "stat",
+          "title": "Pipeline",
+          "description": "P50 Latency for pipeline-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 11
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"pipeline-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        }
+      ]
+    },
+    {
+      "id": 29,
+      "type": "row",
+      "title": "Per-Service P99 Latency",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "collapsed": true,
+      "panels": [
+        {
+          "id": 17,
+          "type": "stat",
+          "title": "ASR",
+          "description": "P99 Latency for asr-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"asr-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1.0
+                  },
+                  {
+                    "color": "red",
+                    "value": 5.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 18,
+          "type": "stat",
+          "title": "NMT",
+          "description": "P99 Latency for nmt-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"nmt-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1.0
+                  },
+                  {
+                    "color": "red",
+                    "value": 5.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 19,
+          "type": "stat",
+          "title": "TTS",
+          "description": "P99 Latency for tts-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"tts-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1.0
+                  },
+                  {
+                    "color": "red",
+                    "value": 5.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 20,
+          "type": "stat",
+          "title": "OCR",
+          "description": "P99 Latency for ocr-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"ocr-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1.0
+                  },
+                  {
+                    "color": "red",
+                    "value": 5.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 21,
+          "type": "stat",
+          "title": "NER",
+          "description": "P99 Latency for ner-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"ner-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1.0
+                  },
+                  {
+                    "color": "red",
+                    "value": 5.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 22,
+          "type": "stat",
+          "title": "Transliteration",
+          "description": "P99 Latency for transliteration-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"transliteration-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1.0
+                  },
+                  {
+                    "color": "red",
+                    "value": 5.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 23,
+          "type": "stat",
+          "title": "Lang Detection",
+          "description": "P99 Latency for language-detection-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 12
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"language-detection-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1.0
+                  },
+                  {
+                    "color": "red",
+                    "value": 5.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 24,
+          "type": "stat",
+          "title": "Audio Lang Detection",
+          "description": "P99 Latency for audio-lang-detection-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 12
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"audio-lang-detection-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1.0
+                  },
+                  {
+                    "color": "red",
+                    "value": 5.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 25,
+          "type": "stat",
+          "title": "Lang Diarization",
+          "description": "P99 Latency for language-diarization-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 12
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"language-diarization-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1.0
+                  },
+                  {
+                    "color": "red",
+                    "value": 5.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 26,
+          "type": "stat",
+          "title": "Speaker Diarization",
+          "description": "P99 Latency for speaker-diarization-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 12
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"speaker-diarization-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1.0
+                  },
+                  {
+                    "color": "red",
+                    "value": 5.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 27,
+          "type": "stat",
+          "title": "LLM",
+          "description": "P99 Latency for llm-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 12
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"llm-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1.0
+                  },
+                  {
+                    "color": "red",
+                    "value": 5.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 28,
+          "type": "stat",
+          "title": "Pipeline",
+          "description": "P99 Latency for pipeline-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 12
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\", service=\"pipeline-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "s",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1.0
+                  },
+                  {
+                    "color": "red",
+                    "value": 5.0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "row",
+      "title": "Overall Error Rate",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 31,
+      "type": "stat",
+      "title": "4xx Error Rate",
+      "description": "Client error rate (4xx) as percentage of total requests on inference endpoints. Uses telemetry_obsv_requests_total{status_code=~\"4..\"} matching alert_management.py pattern.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"4..\", endpoint=~\"/.*inference.*\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", tenant=~\"$tenant\"}[5m])))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "percent",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "textMode": "auto",
+        "wideLayout": true,
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "pluginVersion": "10.0.0"
+    },
+    {
+      "id": 32,
+      "type": "stat",
+      "title": "5xx Error Rate",
+      "description": "Server error rate (5xx) as percentage of total requests on inference endpoints. Uses telemetry_obsv_requests_total{status_code=~\"5..\"} matching alert_management.py pattern.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"5..\", endpoint=~\"/.*inference.*\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", tenant=~\"$tenant\"}[5m])))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "percent",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "textMode": "auto",
+        "wideLayout": true,
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "pluginVersion": "10.0.0"
+    },
+    {
+      "id": 33,
+      "type": "stat",
+      "title": "Overall Error Rate",
+      "description": "Combined error rate (any non-success response) as percentage of total requests on inference endpoints. Counts all requests where status_code is not 200 or 201.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code!~\"200|201\", endpoint=~\"/.*inference.*\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", tenant=~\"$tenant\"}[5m])))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "percent",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "textMode": "auto",
+        "wideLayout": true,
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "pluginVersion": "10.0.0"
+    },
+    {
+      "id": 46,
+      "type": "row",
+      "title": "Per-Service Overall Error Rate",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "collapsed": true,
+      "panels": [
+        {
+          "id": 34,
+          "type": "stat",
+          "title": "ASR",
+          "description": "Overall Error Rate for asr-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 15
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code!~\"200|201\", endpoint=~\"/.*inference.*\", service=\"asr-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"asr-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 35,
+          "type": "stat",
+          "title": "NMT",
+          "description": "Overall Error Rate for nmt-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 15
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code!~\"200|201\", endpoint=~\"/.*inference.*\", service=\"nmt-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"nmt-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 36,
+          "type": "stat",
+          "title": "TTS",
+          "description": "Overall Error Rate for tts-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 15
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code!~\"200|201\", endpoint=~\"/.*inference.*\", service=\"tts-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"tts-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 37,
+          "type": "stat",
+          "title": "OCR",
+          "description": "Overall Error Rate for ocr-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 15
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code!~\"200|201\", endpoint=~\"/.*inference.*\", service=\"ocr-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"ocr-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 38,
+          "type": "stat",
+          "title": "NER",
+          "description": "Overall Error Rate for ner-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 15
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code!~\"200|201\", endpoint=~\"/.*inference.*\", service=\"ner-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"ner-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 39,
+          "type": "stat",
+          "title": "Transliteration",
+          "description": "Overall Error Rate for transliteration-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 15
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code!~\"200|201\", endpoint=~\"/.*inference.*\", service=\"transliteration-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"transliteration-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 40,
+          "type": "stat",
+          "title": "Lang Detection",
+          "description": "Overall Error Rate for language-detection-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 19
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code!~\"200|201\", endpoint=~\"/.*inference.*\", service=\"language-detection-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"language-detection-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 41,
+          "type": "stat",
+          "title": "Audio Lang Detection",
+          "description": "Overall Error Rate for audio-lang-detection-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 19
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code!~\"200|201\", endpoint=~\"/.*inference.*\", service=\"audio-lang-detection-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"audio-lang-detection-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 42,
+          "type": "stat",
+          "title": "Lang Diarization",
+          "description": "Overall Error Rate for language-diarization-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 19
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code!~\"200|201\", endpoint=~\"/.*inference.*\", service=\"language-diarization-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"language-diarization-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 43,
+          "type": "stat",
+          "title": "Speaker Diarization",
+          "description": "Overall Error Rate for speaker-diarization-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 19
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code!~\"200|201\", endpoint=~\"/.*inference.*\", service=\"speaker-diarization-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"speaker-diarization-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 44,
+          "type": "stat",
+          "title": "LLM",
+          "description": "Overall Error Rate for llm-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 19
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code!~\"200|201\", endpoint=~\"/.*inference.*\", service=\"llm-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"llm-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 45,
+          "type": "stat",
+          "title": "Pipeline",
+          "description": "Overall Error Rate for pipeline-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 19
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code!~\"200|201\", endpoint=~\"/.*inference.*\", service=\"pipeline-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"pipeline-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        }
+      ]
+    },
+    {
+      "id": 59,
+      "type": "row",
+      "title": "Per-Service 4xx Error Rate",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
+      "collapsed": true,
+      "panels": [
+        {
+          "id": 47,
+          "type": "stat",
+          "title": "ASR",
+          "description": "4xx Error Rate for asr-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 16
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"4..\", endpoint=~\"/.*inference.*\", service=\"asr-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"asr-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 48,
+          "type": "stat",
+          "title": "NMT",
+          "description": "4xx Error Rate for nmt-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 16
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"4..\", endpoint=~\"/.*inference.*\", service=\"nmt-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"nmt-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 49,
+          "type": "stat",
+          "title": "TTS",
+          "description": "4xx Error Rate for tts-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 16
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"4..\", endpoint=~\"/.*inference.*\", service=\"tts-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"tts-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 50,
+          "type": "stat",
+          "title": "OCR",
+          "description": "4xx Error Rate for ocr-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 16
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"4..\", endpoint=~\"/.*inference.*\", service=\"ocr-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"ocr-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 51,
+          "type": "stat",
+          "title": "NER",
+          "description": "4xx Error Rate for ner-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 16
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"4..\", endpoint=~\"/.*inference.*\", service=\"ner-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"ner-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 52,
+          "type": "stat",
+          "title": "Transliteration",
+          "description": "4xx Error Rate for transliteration-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 16
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"4..\", endpoint=~\"/.*inference.*\", service=\"transliteration-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"transliteration-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 53,
+          "type": "stat",
+          "title": "Lang Detection",
+          "description": "4xx Error Rate for language-detection-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 20
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"4..\", endpoint=~\"/.*inference.*\", service=\"language-detection-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"language-detection-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 54,
+          "type": "stat",
+          "title": "Audio Lang Detection",
+          "description": "4xx Error Rate for audio-lang-detection-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 20
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"4..\", endpoint=~\"/.*inference.*\", service=\"audio-lang-detection-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"audio-lang-detection-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 55,
+          "type": "stat",
+          "title": "Lang Diarization",
+          "description": "4xx Error Rate for language-diarization-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 20
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"4..\", endpoint=~\"/.*inference.*\", service=\"language-diarization-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"language-diarization-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 56,
+          "type": "stat",
+          "title": "Speaker Diarization",
+          "description": "4xx Error Rate for speaker-diarization-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 20
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"4..\", endpoint=~\"/.*inference.*\", service=\"speaker-diarization-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"speaker-diarization-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 57,
+          "type": "stat",
+          "title": "LLM",
+          "description": "4xx Error Rate for llm-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 20
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"4..\", endpoint=~\"/.*inference.*\", service=\"llm-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"llm-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 58,
+          "type": "stat",
+          "title": "Pipeline",
+          "description": "4xx Error Rate for pipeline-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 20
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"4..\", endpoint=~\"/.*inference.*\", service=\"pipeline-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"pipeline-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  },
+                  {
+                    "color": "red",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        }
+      ]
+    },
+    {
+      "id": 72,
+      "type": "row",
+      "title": "Per-Service 5xx Error Rate",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "collapsed": true,
+      "panels": [
+        {
+          "id": 60,
+          "type": "stat",
+          "title": "ASR",
+          "description": "5xx Error Rate for asr-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 17
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"5..\", endpoint=~\"/.*inference.*\", service=\"asr-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"asr-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 61,
+          "type": "stat",
+          "title": "NMT",
+          "description": "5xx Error Rate for nmt-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 17
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"5..\", endpoint=~\"/.*inference.*\", service=\"nmt-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"nmt-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 62,
+          "type": "stat",
+          "title": "TTS",
+          "description": "5xx Error Rate for tts-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 17
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"5..\", endpoint=~\"/.*inference.*\", service=\"tts-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"tts-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 63,
+          "type": "stat",
+          "title": "OCR",
+          "description": "5xx Error Rate for ocr-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 17
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"5..\", endpoint=~\"/.*inference.*\", service=\"ocr-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"ocr-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 64,
+          "type": "stat",
+          "title": "NER",
+          "description": "5xx Error Rate for ner-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 17
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"5..\", endpoint=~\"/.*inference.*\", service=\"ner-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"ner-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 65,
+          "type": "stat",
+          "title": "Transliteration",
+          "description": "5xx Error Rate for transliteration-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 17
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"5..\", endpoint=~\"/.*inference.*\", service=\"transliteration-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"transliteration-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 66,
+          "type": "stat",
+          "title": "Lang Detection",
+          "description": "5xx Error Rate for language-detection-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 21
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"5..\", endpoint=~\"/.*inference.*\", service=\"language-detection-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"language-detection-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 67,
+          "type": "stat",
+          "title": "Audio Lang Detection",
+          "description": "5xx Error Rate for audio-lang-detection-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 21
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"5..\", endpoint=~\"/.*inference.*\", service=\"audio-lang-detection-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"audio-lang-detection-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 68,
+          "type": "stat",
+          "title": "Lang Diarization",
+          "description": "5xx Error Rate for language-diarization-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 21
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"5..\", endpoint=~\"/.*inference.*\", service=\"language-diarization-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"language-diarization-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 69,
+          "type": "stat",
+          "title": "Speaker Diarization",
+          "description": "5xx Error Rate for speaker-diarization-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 21
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"5..\", endpoint=~\"/.*inference.*\", service=\"speaker-diarization-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"speaker-diarization-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 70,
+          "type": "stat",
+          "title": "LLM",
+          "description": "5xx Error Rate for llm-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 21
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"5..\", endpoint=~\"/.*inference.*\", service=\"llm-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"llm-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        },
+        {
+          "id": 71,
+          "type": "stat",
+          "title": "Pipeline",
+          "description": "5xx Error Rate for pipeline-service",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 21
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "editorMode": "code",
+              "expr": "100 * (sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{status_code=~\"5..\", endpoint=~\"/.*inference.*\", service=\"pipeline-service\", tenant=~\"$tenant\"}[5m])) / sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{endpoint=~\"/.*inference.*\", service=\"pipeline-service\", tenant=~\"$tenant\"}[5m])))",
+              "instant": true,
+              "range": false,
+              "legendFormat": "__auto",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "percent",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": ""
+            },
+            "textMode": "auto",
+            "wideLayout": true,
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "pluginVersion": "10.0.0"
+        }
+      ]
+    },
+    {
+      "id": 73,
+      "type": "row",
+      "title": "System Resources",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 74,
+      "type": "gauge",
+      "title": "CPU Usage",
+      "description": "Current CPU utilization. Matches alert_management.py infrastructure/cpu expression exactly: 100 * (1 - idle/total).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 18
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "100 * (1 - (sum(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) / sum(rate(node_cpu_seconds_total[5m]))))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "orientation": "auto",
+        "text": {}
+      },
+      "pluginVersion": "10.0.0"
+    },
+    {
+      "id": 75,
+      "type": "gauge",
+      "title": "Memory Usage",
+      "description": "Current memory usage. Matches alert_management.py infrastructure/memory expression exactly: max(100 * (1 - MemAvailable / MemTotal)).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 18
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "orientation": "auto",
+        "text": {}
+      },
+      "pluginVersion": "10.0.0"
+    },
+    {
+      "id": 76,
+      "type": "gauge",
+      "title": "Disk Usage",
+      "description": "Root filesystem disk usage. Matches alert_management.py infrastructure/disk expression exactly: max(100 * (1 - avail/size)) with fstype!~\"tmpfs|ramfs|overlay\".",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 18
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(100 * (1 - (node_filesystem_avail_bytes{fstype!~\"tmpfs|ramfs|overlay\", mountpoint=\"/\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|ramfs|overlay\", mountpoint=\"/\"})))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "orientation": "auto",
+        "text": {}
+      },
+      "pluginVersion": "10.0.0"
+    }
+  ],
+  "weekStart": ""
+}
