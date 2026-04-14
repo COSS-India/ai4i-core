@@ -25,7 +25,6 @@ import {
   Spinner,
   Flex,
   IconButton,
-  useColorModeValue,
   Card,
   CardBody,
   SimpleGrid,
@@ -55,7 +54,7 @@ import {
 } from "../services/observabilityService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 import { listTenants, getViewTenant } from "../services/multiTenantService";
-import { TablePaginationBar } from "../components/common/TableControls";
+import { TablePaginationBar, useAdminTableSurface } from "../components/common/TableControls";
 
 /**
  * Convert datetime-local format (YYYY-MM-DDTHH:mm) to ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
@@ -156,10 +155,7 @@ const LogsPage: React.FC = () => {
   // Kept for reference (e.g. display purposes); no longer drives access logic
   const tenantIdFromToken = getTenantIdFromToken();
   
-  const cardBg = useColorModeValue("white", "gray.800");
-  const borderColor = useColorModeValue("gray.200", "gray.700");
-  const theadBg = useColorModeValue("gray.50", "gray.700");
-  const rowHoverBg = useColorModeValue("gray.50", "gray.800");
+  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor } = useAdminTableSurface();
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -1413,9 +1409,9 @@ const LogsPage: React.FC = () => {
                   )}
                   <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
                     <CardBody p={0}>
-                      <TableContainer w="full" overflowX="auto">
-                        <Table variant="simple" size="md" w="full">
-                          <Thead bg={theadBg}>
+                      <TableContainer w="full" maxH="60vh" overflowY="auto" overflowX="auto">
+                        <Table variant="simple" bg={tableBg} size="md" w="full">
+                          <Thead bg={tableHeaderBg}>
                             <Tr>
                               <Th fontWeight="semibold" color="gray.700" py={3}>Timestamp</Th>
                               <Th fontWeight="semibold" color="gray.700">Level</Th>
@@ -1457,7 +1453,7 @@ const LogsPage: React.FC = () => {
                               return (
                                 <Tr 
                                   key={index}
-                                  _hover={{ bg: rowHoverBg }}
+                                  _hover={{ bg: tableRowHoverBg }}
                                   transition="background 0.2s"
                                 >
                                   <Td fontSize="sm" color="gray.600" py={3}>
