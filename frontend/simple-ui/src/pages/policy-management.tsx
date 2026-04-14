@@ -46,7 +46,7 @@ const PolicyManagementPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Policy management - AI4I Platform</title>
+        <title>Policy Management - AI4I Platform</title>
         <meta
           name="description"
           content="PII policies, type library, and policy-service audit logs"
@@ -56,7 +56,7 @@ const PolicyManagementPage: React.FC = () => {
       <ContentLayout>
         <Box maxW="full" mx="auto" py={4} px={{ base: 2, md: 4 }}>
           <Heading size="md" mb={2} color="gray.700">
-            Policy management
+            Policy Management
           </Heading>
           <Text fontSize="sm" color="gray.600" mb={6}>
             Configure detection policies and the PII type library (policy service). Platform

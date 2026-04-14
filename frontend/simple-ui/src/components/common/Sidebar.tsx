@@ -295,7 +295,7 @@ const topNavItems: NavItem[] = [
   },
   {
     id: "policy-management",
-    label: "Policy management",
+    label: "Policy Management",
     path: "/policy-management",
     icon: IoFolderOpenOutline,
     iconSize: 10,

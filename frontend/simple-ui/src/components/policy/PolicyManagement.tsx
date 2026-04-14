@@ -183,7 +183,7 @@ export default function PolicyManagement({ canManage }: PolicyManagementProps) {
     return (
       <Alert status="warning" borderRadius="md">
         <AlertIcon />
-        Policy management requires adopter admin access (ADMIN role). Tenant users cannot
+        Policy Management requires adopter admin access (ADMIN role). Tenant users cannot
         change policies here.
       </Alert>
     );
@@ -213,7 +213,7 @@ export default function PolicyManagement({ canManage }: PolicyManagementProps) {
           }}
           mb={6}
         >
-          <TabList borderBottom="2px solid" borderColor="gray.200" aria-label="Policy management sections">
+          <TabList borderBottom="2px solid" borderColor="gray.200" aria-label="Policy Management sections">
             {POLICY_TAB_CONFIG.map(({ id, label }, idx) => (
               <Tab
                 key={id}
