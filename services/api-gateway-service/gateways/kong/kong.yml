@@ -290,6 +290,28 @@ services:
         methods:
           - POST
           - OPTIONS
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 20
+              policy: local
+              limit_by: ip
+              fault_tolerant: true
+
+      - name: auth-guest-login-route
+        paths:
+          - /api/v1/auth/guest/login
+        strip_path: false
+        methods:
+          - POST
+          - OPTIONS
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 20
+              policy: local
+              limit_by: ip
+              fault_tolerant: true
 
       - name: auth-register-route
         paths:
