@@ -52,6 +52,7 @@ async def get_llm_service(
         triton_url=triton_endpoint,
         api_key=triton_api_key or None,
         timeout=getattr(request.app.state, "triton_timeout", 300.0),
+        ssl_verify=getattr(request.state, "ssl_verify", None),
     )
     return LLMService(
         repository=repository,
