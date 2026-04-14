@@ -28,7 +28,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
         roles = [
             ('ADMIN', 'Administrator with full system access'),
             ('USER', 'Regular user with standard permissions'),
-            ('GUEST', 'Guest user with read-only access'),
+            ('GUEST', 'Guest: own profile read (users.read) + ASR/NMT/TTS inference'),
             ('MODERATOR', 'Moderator with elevated permissions'),
             # Tenant administrator for a specific tenant. Has read access to
             # services/models, can manage API keys, and assign roles, but
@@ -320,7 +320,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
         )
         print("    ✓ Assigned permissions to USER role (from seed script)")
 
-        # GUEST: same as load-seed-data.sh (users.read, users.update)
+        # GUEST: inference-only for ASR / NMT / TTS (see auth_y_guest_default_user_seeder)
         adapter.execute(
             """
             DELETE FROM role_permissions
@@ -334,9 +334,9 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.read',
-              'users.update',
-              'service.read',
-              'apiKey.delete'
+              'asr.inference',
+              'nmt.inference',
+              'tts.inference'
             )
             WHERE r.name = 'GUEST'
             ON CONFLICT (role_id, permission_id) DO NOTHING;
