@@ -9,6 +9,7 @@ The configuration management service provides centralized environment-specific c
 - Dynamic updates via Kafka (`config-updates` topic)
 - Redis caching for performance
 - Audit trail for configuration changes
+- Internal health status contract for routing (Redis-backed)
 - Feature flags using Unleash and OpenFeature
 - Boolean, string, integer, float, and object flag types
 - User targeting and gradual rollouts
@@ -46,8 +47,32 @@ The configuration management service provides centralized environment-specific c
   - GET `/` list flags from Unleash (cached in Redis, environment required)
   - POST `/sync` refresh cache from Unleash
   - **Note**: Flags are managed in Unleash UI only - no create/update/delete endpoints
+- Internal (for inference routing)
+  - GET `/internal/health-status?service_id={service_id}` get cached health state for a service
 - Health
   - GET `/health`, `/ready`, `/live`
+
+## Internal health status (routing contract)
+Config-service runs periodic health probes (see `SERVICE_HEALTH_CHECK_ENABLED` / `SERVICE_HEALTH_CHECK_INTERVAL`) and writes a lightweight snapshot to Redis per service. The internal endpoint serves **cache-only** reads for low latency and to avoid DB queries or live checks on request.
+
+### Endpoint
+- GET `/internal/health-status?service_id={service_id}`
+
+### Response fields
+- `service_id`: service identifier (currently the service name in the registry)
+- `state`: one of `healthy`, `degraded`, `unhealthy`
+- `last_check`: UTC timestamp (ISO-8601) when the snapshot was written
+- `total_instances`: number of instances observed for the service
+- `healthy_instances`: number of instances that were healthy in the last probe
+
+### State semantics
+- `healthy`: all instances were healthy (and at least one instance exists)
+- `degraded`: at least one instance is healthy, but not all
+- `unhealthy`: no healthy instances (includes zero instances)
+
+### Performance characteristics
+- Request path is **Redis GET + JSON parse only** (no DB query, no live probe).
+- Snapshots have a TTL of approximately **2×** the probe interval (minimum 30s), so consumers can treat missing entries as unknown/stale.
 
 ## Configuration
 Key environment variables (see `env.template`):
