@@ -169,10 +169,20 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const applyActiveDomains = async () => {
     try {
       await piiService.activateDomains(Array.from(checkedDomains));
-      alert("Domain activation updated.");
+      toast({
+        title: "Domain activation updated",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
       await fetchAllDomains();
     } catch {
-      alert("Failed to apply domains");
+      toast({
+        title: "Failed to apply domains",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     }
   };
 
@@ -201,15 +211,31 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const handleSaveTenantMapping = async () => {
     const tid = newMapTenantId.trim();
     if (!tid || !newMapDomainId) {
-      alert("Enter tenant ID and choose a domain");
+      toast({
+        title: "Enter tenant ID and choose a domain",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
       return;
     }
     try {
       await piiService.upsertTenantDomainMapping(tid, newMapDomainId);
       setNewMapTenantId("");
       await fetchTenantMappings();
+      toast({
+        title: "Mapping saved",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
     } catch {
-      alert("Failed to save mapping (check domain exists and permissions)");
+      toast({
+        title: "Failed to save mapping (check domain exists and permissions)",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     }
   };
 
@@ -236,8 +262,19 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       await piiService.createDomain(newDomainId);
       setNewDomainId("");
       await fetchAllDomains();
+      toast({
+        title: "Domain created",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
     } catch {
-      alert("Failed to create domain");
+      toast({
+        title: "Failed to create domain",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     }
   };
 
@@ -248,7 +285,12 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       const rules = Array.isArray(res.data.rules) ? (res.data.rules as Rule[]) : [];
       setEditingRules(rules);
     } catch {
-      alert("Failed to load policy");
+      toast({
+        title: "Failed to load policy",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     }
   };
 
@@ -257,12 +299,25 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       const res = await piiService.generateRegex(newExample);
       setNewRegex(res.data.regex);
     } catch {
-      alert("Regex generation failed");
+      toast({
+        title: "Regex generation failed",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     }
   };
 
   const addCustomRule = () => {
-    if (!newEntity) return alert("Entity name required");
+    if (!newEntity) {
+      toast({
+        title: "Entity name required",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
     const rule: Rule = { entity_type: newEntity.toUpperCase(), action: newAction, config: {} };
     if (newRegex.trim()) rule.custom_regex = newRegex;
 
@@ -273,13 +328,31 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   };
 
   const saveConfig = async () => {
-    if (!editingDomainId) return alert("Select a domain to edit");
+    if (!editingDomainId) {
+      toast({
+        title: "Select a domain to edit",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
     try {
       await piiService.deployRules(editingDomainId, editingRules);
-      alert("Policy rules saved.");
+      toast({
+        title: "Policy rules saved",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
       await fetchAllDomains();
     } catch {
-      alert("Save failed");
+      toast({
+        title: "Save failed",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     }
   };
 
@@ -289,7 +362,12 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       const res = await piiService.getAuditLogs(100);
       setAuditLogs(res.data);
     } catch {
-      alert("Failed to load audit logs");
+      toast({
+        title: "Failed to load audit logs",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     } finally {
       setAuditLoading(false);
     }
@@ -647,16 +725,28 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                           </Select>
                         </GridItem>
                         <GridItem colSpan={{ base: 1, md: 6 }}>
-                          <HStack spacing={0}>
+                          <HStack
+                            spacing={3}
+                            align="stretch"
+                            flexWrap={{ base: "wrap", md: "nowrap" }}
+                          >
                             <Input
                               size="sm"
-                              borderRightRadius={0}
+                              flex="1"
+                              minW={{ base: "100%", md: "140px" }}
                               placeholder="AI Example (e.g., A1234567)"
                               value={newExample}
                               onChange={(e) => setNewExample(e.target.value)}
                               bg={cardBg}
                             />
-                            <Button size="sm" borderLeftRadius={0} onClick={() => void generateRegex()}>
+                            <Button
+                              size="sm"
+                              colorScheme="orange"
+                              flexShrink={0}
+                              whiteSpace="nowrap"
+                              px={4}
+                              onClick={() => void generateRegex()}
+                            >
                               Generate Regex
                             </Button>
                           </HStack>
