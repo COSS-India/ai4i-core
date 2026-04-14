@@ -286,7 +286,6 @@
   name: auth-guest-login-route
   priority: 20
   methods:
-  - GET
   - POST
   - OPTIONS
   upstream:
