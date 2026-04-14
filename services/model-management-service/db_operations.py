@@ -927,6 +927,8 @@ async def save_service_to_db(payload: ServiceCreateRequest, created_by: str = No
             model_id=payload_dict.get("modelId"),
             model_version=payload_dict.get("modelVersion"),
             endpoint=payload_dict.get("endpoint"),
+            inference_server_type=payload_dict.get("inferenceServerType", "triton"),
+            ssl_verify=payload_dict.get("sslVerify", True),
             api_key=payload_dict.get("apiKey"),
             health_status=payload_dict.get("healthStatus", {}),
             benchmarks=payload_dict.get("benchmarks", []),
@@ -994,6 +996,10 @@ async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
             db_update["hardware_description"] = request_dict["hardwareDescription"]
         if "endpoint" in request_dict:
             db_update["endpoint"] = request_dict["endpoint"]
+        if "inferenceServerType" in request_dict and request_dict["inferenceServerType"] is not None:
+            db_update["inference_server_type"] = request_dict["inferenceServerType"]
+        if "sslVerify" in request_dict and request_dict["sslVerify"] is not None:
+            db_update["ssl_verify"] = request_dict["sslVerify"]
         if "api_key" in request_dict:
             db_update["api_key"] = request_dict["api_key"]
         if "healthStatus" in request_dict:
@@ -1027,7 +1033,7 @@ async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
             return 0  # Service not found
 
         if not db_update:
-            logger.warning("No valid update fields provided for service update. Valid fields: serviceDescription, hardwareDescription, endpoint, api_key, healthStatus, benchmarks, isPublished. Note: name, modelId, modelVersion are not updatable.")
+            logger.warning("No valid update fields provided for service update. Valid fields: serviceDescription, hardwareDescription, endpoint, inferenceServerType, sslVerify, api_key, healthStatus, benchmarks, isPublished. Note: name, modelId, modelVersion are not updatable.")
             return -1  # No valid fields provided
         
         stmt_update = (
@@ -1069,6 +1075,9 @@ async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
                     "publishedOn": db_service.published_on,
                     "modelId": db_service.model_id,
                     "endpoint": db_service.endpoint,
+                    "inferenceServerType": getattr(db_service, "inference_server_type", None)
+                    or "triton",
+                    "sslVerify": getattr(db_service, "ssl_verify", True),
                     "apiKey": db_service.api_key,
                     "healthStatus": db_service.health_status or {},
                     "benchmarks": db_service.benchmarks or {},
@@ -1213,6 +1222,8 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
             "publishedOn": service.published_on,
             "modelId": service.model_id,
             "endpoint": service.endpoint,
+            "inferenceServerType": getattr(service, "inference_server_type", None) or "triton",
+            "sslVerify": getattr(service, "ssl_verify", True),
             "api_key": service.api_key,
             "healthStatus": service.health_status,
             "benchmarks": service.benchmarks,
@@ -1447,6 +1458,8 @@ async def list_all_services(
                     modelId=service.model_id,
                     # Persist service endpoint and api key details
                     endpoint=getattr(service, "endpoint", None),
+                    inferenceServerType=getattr(service, "inference_server_type", None) or "triton",
+                    sslVerify=getattr(service, "ssl_verify", True),
                     healthStatus=getattr(service, "health_status", None),
                     benchmarks=getattr(service, "benchmarks", None),
                     policy=service_policy,  # Use the policy we fetched above
