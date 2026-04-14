@@ -1628,7 +1628,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               Notification Receivers
             </Heading>
             <HStack spacing={2}>
-              <Button size="sm" colorScheme="green" leftIcon={<AddIcon />} onClick={recvs.openCreate}>Create</Button>
+              <Button size="sm" colorScheme="orange" leftIcon={<AddIcon />} onClick={recvs.openCreate}>
+                Create
+              </Button>
               <Button size="sm" colorScheme="blue" onClick={recvs.fetchReceivers} isLoading={recvs.isLoading} loadingText="Loading...">Refresh</Button>
             </HStack>
           </HStack>

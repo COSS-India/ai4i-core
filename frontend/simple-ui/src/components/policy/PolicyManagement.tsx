@@ -1,14 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  AlertDescription,
   AlertIcon,
   Badge,
   Box,
   Button,
+  Card,
+  CardBody,
+  Center,
   Checkbox,
   CheckboxGroup,
   Flex,
   FormControl,
+  FormHelperText,
   FormLabel,
   Heading,
   HStack,
@@ -21,6 +26,12 @@ import {
   Stack,
   Switch,
   Table,
+  TableContainer,
+  Tab,
+  TabList,
+  TabPanel,
+  TabPanels,
+  Tabs,
   Tbody,
   Td,
   Text,
@@ -33,7 +44,13 @@ import {
   useToast,
   VStack,
 } from "@chakra-ui/react";
-import { CheckIcon, CloseIcon, DeleteIcon, EditIcon, SearchIcon, ViewIcon } from "@chakra-ui/icons";
+import {
+  AddIcon,
+  DeleteIcon,
+  EditIcon,
+  SearchIcon,
+  ViewIcon,
+} from "@chakra-ui/icons";
 import StandardModal from "../common/StandardModal";
 import ConfirmDialog from "../common/ConfirmDialog";
 import {
@@ -49,6 +66,8 @@ import {
   type PiiTypeOut,
   type PolicyOut,
 } from "../../services/policyService";
+import { listTenants } from "../../services/multiTenantService";
+import type { TenantView } from "../../types/multiTenant";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 const AUDIT_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
@@ -56,16 +75,18 @@ const AUDIT_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 /** Set to `true` to show the Audit log tab again. */
 const SHOW_POLICY_AUDIT_TAB = false;
 
-const POLICY_SECTION_TABS = SHOW_POLICY_AUDIT_TAB
+const POLICY_TAB_CONFIG = SHOW_POLICY_AUDIT_TAB
   ? ([
-      ["policies", "Policy definitions"],
-      ["pii", "PII type library"],
-      ["audit", "Audit log"],
+      { id: "policies" as const, label: "Policy definitions" },
+      { id: "pii" as const, label: "PII type library" },
+      { id: "audit" as const, label: "Audit log" },
     ] as const)
   : ([
-      ["policies", "Policy definitions"],
-      ["pii", "PII type library"],
+      { id: "policies" as const, label: "Policy definitions" },
+      { id: "pii" as const, label: "PII type library" },
     ] as const);
+
+type PolicySectionId = (typeof POLICY_TAB_CONFIG)[number]["id"];
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -150,7 +171,7 @@ function PolicyServiceHealthBadge() {
 
 export default function PolicyManagement({ canManage }: PolicyManagementProps) {
   const toast = useToast();
-  const [tab, setTab] = useState<"policies" | "pii" | "audit">("policies");
+  const [tab, setTab] = useState<PolicySectionId>("policies");
 
   useEffect(() => {
     if (!SHOW_POLICY_AUDIT_TAB && tab === "audit") {
@@ -168,6 +189,11 @@ export default function PolicyManagement({ canManage }: PolicyManagementProps) {
     );
   }
 
+  const policySubTabIndex = Math.max(
+    0,
+    POLICY_TAB_CONFIG.findIndex((t) => t.id === tab)
+  );
+
   return (
     <VStack align="stretch" spacing={6}>
       <PolicyServiceHealthBadge />
@@ -178,26 +204,59 @@ export default function PolicyManagement({ canManage }: PolicyManagementProps) {
             ? "Policy definitions, PII type library, and audit trail (policy-service APIs)."
             : "Policy definitions and PII type library (policy-service APIs)."}
         </Text>
-        <HStack spacing={2} flexWrap="wrap" role="tablist" aria-label="Policy management sections">
-          {POLICY_SECTION_TABS.map(([id, label]) => (
-            <Button
-              key={id}
-              size="sm"
-              variant={tab === id ? "solid" : "outline"}
-              colorScheme={tab === id ? "blue" : "gray"}
-              onClick={() => setTab(id)}
-              role="tab"
-              aria-selected={tab === id}
-            >
-              {label}
-            </Button>
-          ))}
-        </HStack>
+        <Tabs
+          variant="unstyled"
+          index={policySubTabIndex}
+          onChange={(idx) => {
+            const next = POLICY_TAB_CONFIG[idx];
+            if (next) setTab(next.id);
+          }}
+          mb={6}
+        >
+          <TabList borderBottom="2px solid" borderColor="gray.200" aria-label="Policy management sections">
+            {POLICY_TAB_CONFIG.map(({ id, label }, idx) => (
+              <Tab
+                key={id}
+                fontWeight="semibold"
+                fontSize="md"
+                color={policySubTabIndex === idx ? "gray.800" : "gray.500"}
+                pb={3}
+                px={5}
+                position="relative"
+                _after={{
+                  content: '""',
+                  position: "absolute",
+                  bottom: "-2px",
+                  left: 0,
+                  right: 0,
+                  height: "3px",
+                  borderRadius: "3px 3px 0 0",
+                  bg: policySubTabIndex === idx ? "orange.500" : "transparent",
+                  transition: "background 0.2s",
+                }}
+                _hover={{ color: "gray.700" }}
+                _focus={{ boxShadow: "none" }}
+                transition="color 0.2s"
+              >
+                {label}
+              </Tab>
+            ))}
+          </TabList>
+          <TabPanels>
+            <TabPanel px={0} pt={6}>
+              <PoliciesPanel toast={toast} />
+            </TabPanel>
+            <TabPanel px={0} pt={6}>
+              <PiiTypesPanel toast={toast} />
+            </TabPanel>
+            {SHOW_POLICY_AUDIT_TAB ? (
+              <TabPanel px={0} pt={6}>
+                <AuditPanel toast={toast} />
+              </TabPanel>
+            ) : null}
+          </TabPanels>
+        </Tabs>
       </Box>
-
-      {tab === "policies" && <PoliciesPanel toast={toast} />}
-      {tab === "pii" && <PiiTypesPanel toast={toast} />}
-      {SHOW_POLICY_AUDIT_TAB && tab === "audit" && <AuditPanel toast={toast} />}
     </VStack>
   );
 }
@@ -218,8 +277,9 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [viewPolicyId, setViewPolicyId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [piiOptions, setPiiOptions] = useState<PiiTypeOut[]>([]);
+  const [policyStatusBusyId, setPolicyStatusBusyId] = useState<string | null>(null);
 
-  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg } = useAdminTableSurface();
+  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor } = useAdminTableSurface();
 
   const loadPiiOptions = useCallback(async () => {
     try {
@@ -344,6 +404,7 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   };
 
   const handleToggleActive = async (row: PolicyOut) => {
+    setPolicyStatusBusyId(row.policy_id);
     try {
       await policyService.setPolicyStatus(row.policy_id, !row.is_active);
       toast({ title: "Status updated", status: "success", duration: 2500 });
@@ -354,6 +415,8 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
         status: "error",
         duration: 4000,
       });
+    } finally {
+      setPolicyStatusBusyId(null);
     }
   };
 
@@ -366,256 +429,272 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
         </Alert>
       )}
 
-      <VStack align="stretch" spacing={4} mb={4}>
-        <TableFilterToolbar
-          hasActiveFilters={hasActiveFilters}
-          onClear={clearAllFilters}
-          align="flex-end"
-          rightContent={
-            <Button size="sm" colorScheme="blue" onClick={openCreate}>
-              New policy
-            </Button>
-          }
-        >
-          <FormControl w={{ base: "full", md: "280px" }}>
-            <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-              Search
-            </FormLabel>
-            <InputGroup>
-              <InputLeftElement pointerEvents="none">
-                <SearchIcon color="gray.400" />
-              </InputLeftElement>
-              <Input
-                placeholder="Search by policy name…"
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setListPage(1);
-                }}
-                bg={cardBg}
-                pl={10}
-                size="sm"
-              />
-            </InputGroup>
-          </FormControl>
-          <FormControl w={{ base: "full", sm: "140px" }}>
-            <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-              Active
-            </FormLabel>
-            <Select
-              size="sm"
-              value={filterActive}
-              onChange={(e) => {
-                setFilterActive(e.target.value);
-                setListPage(1);
-              }}
-              bg={cardBg}
-            >
-              <option value="">All</option>
-              <option value="true">Active</option>
-              <option value="false">Inactive</option>
-            </Select>
-          </FormControl>
-          <FormControl w={{ base: "full", sm: "160px" }}>
-            <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-              Scope
-            </FormLabel>
-            <Select
-              size="sm"
-              value={filterGlobal}
-              onChange={(e) => {
-                setFilterGlobal(e.target.value);
-                setListPage(1);
-              }}
-              bg={cardBg}
-            >
-              <option value="">All</option>
-              <option value="true">Global</option>
-              <option value="false">Tenant-scoped</option>
-            </Select>
-          </FormControl>
-        </TableFilterToolbar>
-        {hasActiveFilters && (
-          <HStack spacing={2} flexWrap="wrap">
-            {searchQuery.trim() && (
-              <Badge
-                colorScheme="blue"
-                fontSize="xs"
-                px={2}
-                py={1}
-                cursor="pointer"
-                onClick={() => {
-                  setSearchQuery("");
-                  setListPage(1);
-                }}
-                _hover={{ opacity: 0.8 }}
-              >
-                Search: &quot;{searchQuery.trim()}&quot; ×
-              </Badge>
-            )}
-            {filterActive && (
-              <Badge
-                colorScheme="gray"
-                fontSize="xs"
-                px={2}
-                py={1}
-                cursor="pointer"
-                onClick={() => {
-                  setFilterActive("");
-                  setListPage(1);
-                }}
-                _hover={{ opacity: 0.8 }}
-              >
-                Active: {filterActive === "true" ? "Active" : "Inactive"} ×
-              </Badge>
-            )}
-            {filterGlobal && (
-              <Badge
-                colorScheme="gray"
-                fontSize="xs"
-                px={2}
-                py={1}
-                cursor="pointer"
-                onClick={() => {
-                  setFilterGlobal("");
-                  setListPage(1);
-                }}
-                _hover={{ opacity: 0.8 }}
-              >
-                Scope: {filterGlobal === "true" ? "Global" : "Tenant-scoped"} ×
-              </Badge>
-            )}
-          </HStack>
-        )}
-      </VStack>
-
-      {loading ? (
-        <Flex justify="center" py={10}>
-          <Spinner />
-        </Flex>
-      ) : filteredPolicies.length === 0 ? (
-        <Box textAlign="center" py={8}>
-          <Text color="gray.500">
-            No results found.
-            {allPolicies.length === 0
-              ? " No policies yet."
-              : " Try adjusting your search or filters."}
-          </Text>
-        </Box>
-      ) : (
-        <Box maxH="60vh" overflowY="auto" overflowX="auto">
-          <Table variant="simple" bg={tableBg} size="sm" w="100%">
-            <Thead bg={tableHeaderBg}>
-              <Tr>
-                <Th>
-                  <TableSortHeader
-                    label="Name"
-                    direction={nameSortDirection}
-                    onAsc={() => {
-                      setSortBy("name");
-                      setNameSortDirection("asc");
-                      setListPage(1);
-                    }}
-                    onDesc={() => {
-                      setSortBy("name");
-                      setNameSortDirection("desc");
-                      setListPage(1);
-                    }}
-                    ascAriaLabel="Sort policies by name ascending"
-                    descAriaLabel="Sort policies by name descending"
-                  />
-                </Th>
-                <Th>Status</Th>
-                <Th>Scope</Th>
-                <Th>Tenants</Th>
-                <Th>Languages</Th>
-                <Th>PII types</Th>
-                <Th>Created</Th>
-                <Th textAlign="right">Actions</Th>
-              </Tr>
-            </Thead>
-            <Tbody>
-              {paginatedPolicies.map((row) => (
-                <Tr
-                  key={row.policy_id}
-                  cursor="pointer"
-                  _hover={{ bg: tableRowHoverBg }}
-                  onClick={() => openPolicyView(row.policy_id)}
-                >
-                  <Td fontWeight="medium">{row.name}</Td>
-                  <Td>
-                    <Badge colorScheme={row.is_active ? "green" : "gray"}>
-                      {row.is_active ? "Active" : "Inactive"}
-                    </Badge>
-                  </Td>
-                  <Td>{row.is_global ? "Global" : "Tenant-scoped"}</Td>
-                  <Td maxW="180px" isTruncated title={(row.tenant_ids ?? []).join(", ")}>
-                    {row.is_global
-                      ? "All tenants"
-                      : (row.tenant_ids?.length ?? 0) > 0
-                        ? row.tenant_ids!.join(", ")
-                        : "—"}
-                  </Td>
-                  <Td>{row.supported_languages?.join(", ") || "—"}</Td>
-                  <Td>{row.pii_types?.length ?? 0}</Td>
-                  <Td whiteSpace="nowrap">{formatDt(row.created_at)}</Td>
-                  <Td textAlign="right" onClick={(e) => e.stopPropagation()}>
-                    <HStack justify="flex-end" spacing={1}>
-                      <Tooltip label="Edit policy" hasArrow placement="top">
-                        <IconButton
-                          aria-label="Edit policy"
-                          icon={<EditIcon />}
-                          size="sm"
-                          variant="ghost"
-                          colorScheme="blue"
-                          _hover={{ bg: "blue.50" }}
-                          onClick={() => openEdit(row.policy_id)}
-                        />
-                      </Tooltip>
-                      <Tooltip
-                        label={row.is_active ? "Deactivate" : "Activate"}
-                        hasArrow
-                        placement="top"
-                      >
-                        <IconButton
-                          aria-label={row.is_active ? "Deactivate policy" : "Activate policy"}
-                          icon={row.is_active ? <CloseIcon /> : <CheckIcon />}
-                          size="sm"
-                          variant="ghost"
-                          colorScheme={row.is_active ? "orange" : "green"}
-                          _hover={{ bg: row.is_active ? "orange.50" : "green.50" }}
-                          onClick={() => void handleToggleActive(row)}
-                        />
-                      </Tooltip>
-                    </HStack>
-                  </Td>
-                </Tr>
-              ))}
-            </Tbody>
-          </Table>
-        </Box>
-      )}
-
-      <TablePaginationBar
-        startRow={startRow}
-        endRow={endRow}
-        totalItems={totalPolicies}
-        page={listPage}
-        totalPages={totalPages}
-        pageSize={listPageSize}
-        pageSizeOptions={PAGE_SIZE_OPTIONS}
-        onPageSizeChange={(s) => {
-          setListPageSize(s);
-          setListPage(1);
-        }}
-        onFirst={() => setListPage(1)}
-        onPrev={() => setListPage((p) => Math.max(1, p - 1))}
-        onNext={() => setListPage((p) => Math.min(totalPages, p + 1))}
-        onLast={() => setListPage(totalPages)}
-        canPrev={listPage > 1}
-        canNext={listPage < totalPages}
+      <Card
         bg={cardBg}
-      />
+        borderWidth="1px"
+        borderColor={borderColor}
+        borderRadius="lg"
+        boxShadow="none"
+      >
+        <CardBody>
+          <VStack spacing={5} align="stretch">
+            <TableFilterToolbar
+              hasActiveFilters={hasActiveFilters}
+              onClear={clearAllFilters}
+              align="flex-end"
+              rightContent={
+                <Button size="sm" colorScheme="orange" leftIcon={<AddIcon />} onClick={openCreate}>
+                  Create policy
+                </Button>
+              }
+            >
+              <FormControl w={{ base: "full", md: "280px" }}>
+                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
+                  Search
+                </FormLabel>
+                <InputGroup>
+                  <InputLeftElement pointerEvents="none">
+                    <SearchIcon color="gray.400" />
+                  </InputLeftElement>
+                  <Input
+                    placeholder="Search by policy name…"
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setListPage(1);
+                    }}
+                    bg={cardBg}
+                    pl={10}
+                    size="sm"
+                  />
+                </InputGroup>
+              </FormControl>
+              <FormControl w={{ base: "full", sm: "140px" }}>
+                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
+                  Active
+                </FormLabel>
+                <Select
+                  size="sm"
+                  value={filterActive}
+                  onChange={(e) => {
+                    setFilterActive(e.target.value);
+                    setListPage(1);
+                  }}
+                  bg={cardBg}
+                >
+                  <option value="">All</option>
+                  <option value="true">Active</option>
+                  <option value="false">Inactive</option>
+                </Select>
+              </FormControl>
+              <FormControl w={{ base: "full", sm: "160px" }}>
+                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
+                  Scope
+                </FormLabel>
+                <Select
+                  size="sm"
+                  value={filterGlobal}
+                  onChange={(e) => {
+                    setFilterGlobal(e.target.value);
+                    setListPage(1);
+                  }}
+                  bg={cardBg}
+                >
+                  <option value="">All</option>
+                  <option value="true">Global</option>
+                  <option value="false">Tenant-scoped</option>
+                </Select>
+              </FormControl>
+              <Box flex="1" minW={0} />
+            </TableFilterToolbar>
+
+            {hasActiveFilters && (
+              <HStack spacing={2} flexWrap="wrap">
+                {searchQuery.trim() && (
+                  <Badge
+                    colorScheme="blue"
+                    fontSize="xs"
+                    px={2}
+                    py={1}
+                    cursor="pointer"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setListPage(1);
+                    }}
+                    _hover={{ opacity: 0.8 }}
+                  >
+                    Search: &quot;{searchQuery.trim()}&quot; ×
+                  </Badge>
+                )}
+                {filterActive && (
+                  <Badge
+                    colorScheme="gray"
+                    fontSize="xs"
+                    px={2}
+                    py={1}
+                    cursor="pointer"
+                    onClick={() => {
+                      setFilterActive("");
+                      setListPage(1);
+                    }}
+                    _hover={{ opacity: 0.8 }}
+                  >
+                    Active: {filterActive === "true" ? "Active" : "Inactive"} ×
+                  </Badge>
+                )}
+                {filterGlobal && (
+                  <Badge
+                    colorScheme="gray"
+                    fontSize="xs"
+                    px={2}
+                    py={1}
+                    cursor="pointer"
+                    onClick={() => {
+                      setFilterGlobal("");
+                      setListPage(1);
+                    }}
+                    _hover={{ opacity: 0.8 }}
+                  >
+                    Scope: {filterGlobal === "true" ? "Global" : "Tenant-scoped"} ×
+                  </Badge>
+                )}
+              </HStack>
+            )}
+
+            {loading ? (
+              <Center py={8}>
+                <VStack spacing={4}>
+                  <Spinner size="lg" color="blue.500" />
+                  <Text color="gray.600">Loading policies…</Text>
+                </VStack>
+              </Center>
+            ) : filteredPolicies.length > 0 ? (
+              <TableContainer maxH="60vh" overflowY="auto" overflowX="auto">
+                <Table variant="simple" bg={tableBg} size="sm" w="100%">
+                  <Thead bg={tableHeaderBg}>
+                    <Tr>
+                      <Th>
+                        <TableSortHeader
+                          label="Name"
+                          direction={nameSortDirection}
+                          onAsc={() => {
+                            setSortBy("name");
+                            setNameSortDirection("asc");
+                            setListPage(1);
+                          }}
+                          onDesc={() => {
+                            setSortBy("name");
+                            setNameSortDirection("desc");
+                            setListPage(1);
+                          }}
+                          ascAriaLabel="Sort policies by name ascending"
+                          descAriaLabel="Sort policies by name descending"
+                        />
+                      </Th>
+                      <Th>Status</Th>
+                      <Th>Scope</Th>
+                      <Th>Tenants</Th>
+                      <Th>Languages</Th>
+                      <Th>PII types</Th>
+                      <Th>Created</Th>
+                      <Th textAlign="right">Actions</Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {paginatedPolicies.map((row) => (
+                      <Tr
+                        key={row.policy_id}
+                        cursor="pointer"
+                        _hover={{ bg: tableRowHoverBg }}
+                        onClick={() => openPolicyView(row.policy_id)}
+                      >
+                        <Td fontWeight="medium">{row.name}</Td>
+                        <Td onClick={(e) => e.stopPropagation()}>
+                          <Tooltip
+                            label={row.is_active ? "Active — turn off to deactivate" : "Inactive — turn on to activate"}
+                            hasArrow
+                            placement="top"
+                          >
+                            <Switch
+                              size="sm"
+                              colorScheme="green"
+                              isChecked={row.is_active}
+                              isDisabled={policyStatusBusyId === row.policy_id}
+                              aria-label={
+                                row.is_active ? `Deactivate policy ${row.name}` : `Activate policy ${row.name}`
+                              }
+                              onChange={() => void handleToggleActive(row)}
+                            />
+                          </Tooltip>
+                        </Td>
+                        <Td>{row.is_global ? "Global" : "Tenant-scoped"}</Td>
+                        <Td maxW="180px" isTruncated title={(row.tenant_ids ?? []).join(", ")}>
+                          {row.is_global
+                            ? "All tenants"
+                            : (row.tenant_ids?.length ?? 0) > 0
+                              ? row.tenant_ids!.join(", ")
+                              : "—"}
+                        </Td>
+                        <Td>{row.supported_languages?.join(", ") || "—"}</Td>
+                        <Td>{row.pii_types?.length ?? 0}</Td>
+                        <Td whiteSpace="nowrap">{formatDt(row.created_at)}</Td>
+                        <Td textAlign="right" onClick={(e) => e.stopPropagation()}>
+                          <HStack justify="flex-end" spacing={1}>
+                            <Tooltip label="Edit policy" hasArrow placement="top">
+                              <IconButton
+                                aria-label="Edit policy"
+                                icon={<EditIcon />}
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="blue"
+                                _hover={{ bg: "blue.50" }}
+                                onClick={() => openEdit(row.policy_id)}
+                              />
+                            </Tooltip>
+                          </HStack>
+                        </Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+              </TableContainer>
+            ) : (
+              <Alert status="info" borderRadius="md">
+                <AlertIcon />
+                <AlertDescription>
+                  {allPolicies.length === 0
+                    ? 'No policies yet. Click "Create policy" to add one.'
+                    : "No policies match the current filters."}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {!loading && filteredPolicies.length > 0 ? (
+              <TablePaginationBar
+                startRow={startRow}
+                endRow={endRow}
+                totalItems={totalPolicies}
+                page={listPage}
+                totalPages={totalPages}
+                pageSize={listPageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSizeChange={(s) => {
+                  setListPageSize(s);
+                  setListPage(1);
+                }}
+                onFirst={() => setListPage(1)}
+                onPrev={() => setListPage((p) => Math.max(1, p - 1))}
+                onNext={() => setListPage((p) => Math.min(totalPages, p + 1))}
+                onLast={() => setListPage(totalPages)}
+                canPrev={listPage > 1}
+                canNext={listPage < totalPages}
+                borderColor={borderColor}
+                bg={cardBg}
+              />
+            ) : null}
+          </VStack>
+        </CardBody>
+      </Card>
 
       <PolicyDetailModal
         isOpen={viewModal.isOpen}
@@ -809,6 +888,37 @@ function PolicyFormModal({
   const [selectedPii, setSelectedPii] = useState<string[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [tenants, setTenants] = useState<TenantView[]>([]);
+  const [tenantsLoading, setTenantsLoading] = useState(false);
+  const [tenantsError, setTenantsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    setTenantsLoading(true);
+    setTenantsError(null);
+    void listTenants()
+      .then((res) => {
+        if (cancelled) return;
+        const list = res.tenants ?? [];
+        setTenants(
+          [...list].sort((a, b) =>
+            (a.organization_name ?? "").localeCompare(b.organization_name ?? "", undefined, {
+              sensitivity: "base",
+            })
+          )
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setTenantsError("Could not load tenants. You can enter a tenant ID below.");
+      })
+      .finally(() => {
+        if (!cancelled) setTenantsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -857,7 +967,7 @@ function PolicyFormModal({
       return;
     }
     if (!policyId && !isGlobal && !tenantId.trim()) {
-      onError("Tenant ID is required for non-global policies");
+      onError("Tenant is required for non-global policies");
       return;
     }
     const pii_types = selectedPii.map((pii_type_id) => ({ pii_type_id }));
@@ -935,16 +1045,60 @@ function PolicyFormModal({
           </FormControl>
           {!isGlobal && (
             <FormControl isRequired={!policyId}>
-              <FormLabel>Tenant ID</FormLabel>
-              <Input
-                placeholder={
-                  policyId
-                    ? "Optional: assign or re-map tenant on save"
-                    : "Required for non-global create"
-                }
-                value={tenantId}
-                onChange={(e) => setTenantId(e.target.value)}
-              />
+              <FormLabel>Tenant</FormLabel>
+              {tenantsLoading ? (
+                <HStack spacing={2} py={2}>
+                  <Spinner size="sm" />
+                  <Text fontSize="sm" color="gray.600">
+                    Loading tenants…
+                  </Text>
+                </HStack>
+              ) : tenantsError || tenants.length === 0 ? (
+                <>
+                  {tenantsError ? (
+                    <Text fontSize="sm" color="red.500" mb={2}>
+                      {tenantsError}
+                    </Text>
+                  ) : (
+                    <Text fontSize="sm" color="gray.600" mb={2}>
+                      No tenants found. Enter a tenant ID manually.
+                    </Text>
+                  )}
+                  <Input
+                    placeholder={
+                      policyId
+                        ? "Optional: tenant UUID"
+                        : "Tenant UUID (required for non-global create)"
+                    }
+                    value={tenantId}
+                    onChange={(e) => setTenantId(e.target.value)}
+                    fontFamily="mono"
+                    fontSize="sm"
+                  />
+                </>
+              ) : (
+                <>
+                  <Select
+                    placeholder="Select organization…"
+                    value={tenantId}
+                    onChange={(e) => setTenantId(e.target.value)}
+                  >
+                    {tenantId && !tenants.some((t) => t.tenant_id === tenantId) ? (
+                      <option value={tenantId}>
+                        Current assignment — {tenantId}
+                      </option>
+                    ) : null}
+                    {tenants.map((t) => (
+                      <option key={t.tenant_id} value={t.tenant_id}>
+                        {t.organization_name || "(Unnamed)"} — {t.tenant_id}
+                      </option>
+                    ))}
+                  </Select>
+                  <FormHelperText>
+                    The policy is stored with the tenant ID. Pick an organization from the list.
+                  </FormHelperText>
+                </>
+              )}
             </FormControl>
           )}
           <FormControl>
@@ -1111,7 +1265,7 @@ function PiiTypesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [saving, setSaving] = useState(false);
   const [piiDetailLoading, setPiiDetailLoading] = useState(false);
 
-  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg } = useAdminTableSurface();
+  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor } = useAdminTableSurface();
 
   const reloadPiiTypes = useCallback(async () => {
     setLoading(true);
@@ -1320,215 +1474,233 @@ function PiiTypesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
         </Alert>
       )}
 
-      <VStack align="stretch" spacing={4} mb={4}>
-        <TableFilterToolbar
-          hasActiveFilters={hasActiveFilters}
-          onClear={clearAllFilters}
-          align="flex-end"
-          rightContent={
-            <Button size="sm" colorScheme="blue" onClick={openCreate}>
-              New PII type
-            </Button>
-          }
-        >
-          <FormControl w={{ base: "full", md: "280px" }}>
-            <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-              Search
-            </FormLabel>
-            <InputGroup>
-              <InputLeftElement pointerEvents="none">
-                <SearchIcon color="gray.400" />
-              </InputLeftElement>
-              <Input
-                placeholder="Search by label or regex…"
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setListPage(1);
-                }}
-                bg={cardBg}
-                pl={10}
-                size="sm"
-              />
-            </InputGroup>
-          </FormControl>
-          <FormControl w={{ base: "full", sm: "160px" }}>
-            <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-              Mask format
-            </FormLabel>
-            <Select
-              size="sm"
-              value={filterMask}
-              onChange={(e) => {
-                setFilterMask(e.target.value);
-                setListPage(1);
-              }}
-              bg={cardBg}
-            >
-              <option value="">All</option>
-              {MASK_OPTIONS.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </Select>
-          </FormControl>
-        </TableFilterToolbar>
-        {hasActiveFilters && (
-          <HStack spacing={2} flexWrap="wrap">
-            {searchQuery.trim() && (
-              <Badge
-                colorScheme="blue"
-                fontSize="xs"
-                px={2}
-                py={1}
-                cursor="pointer"
-                onClick={() => {
-                  setSearchQuery("");
-                  setListPage(1);
-                }}
-                _hover={{ opacity: 0.8 }}
-              >
-                Search: &quot;{searchQuery.trim()}&quot; ×
-              </Badge>
-            )}
-            {filterMask && (
-              <Badge
-                colorScheme="gray"
-                fontSize="xs"
-                px={2}
-                py={1}
-                cursor="pointer"
-                onClick={() => {
-                  setFilterMask("");
-                  setListPage(1);
-                }}
-                _hover={{ opacity: 0.8 }}
-              >
-                Mask: {filterMask} ×
-              </Badge>
-            )}
-          </HStack>
-        )}
-      </VStack>
-
-      {loading ? (
-        <Flex justify="center" py={10}>
-          <Spinner />
-        </Flex>
-      ) : filteredPiiTypes.length === 0 ? (
-        <Box textAlign="center" py={8}>
-          <Text color="gray.500">
-            No results found.
-            {allTypes.length === 0
-              ? " No PII types in the library yet."
-              : " Try adjusting your search or filters."}
-          </Text>
-        </Box>
-      ) : (
-        <Box maxH="60vh" overflowY="auto" overflowX="auto">
-          <Table variant="simple" bg={tableBg} size="sm" w="100%">
-            <Thead bg={tableHeaderBg}>
-              <Tr>
-                <Th>
-                  <TableSortHeader
-                    label="Label"
-                    direction={labelSortDirection}
-                    onAsc={() => {
-                      setSortBy("label");
-                      setLabelSortDirection("asc");
-                      setListPage(1);
-                    }}
-                    onDesc={() => {
-                      setSortBy("label");
-                      setLabelSortDirection("desc");
-                      setListPage(1);
-                    }}
-                    ascAriaLabel="Sort PII types by label ascending"
-                    descAriaLabel="Sort PII types by label descending"
-                  />
-                </Th>
-                <Th>Mask</Th>
-                <Th>Regex</Th>
-                <Th>Created</Th>
-                <Th textAlign="right">Actions</Th>
-              </Tr>
-            </Thead>
-            <Tbody>
-              {paginatedPiiTypes.map((row) => (
-                <Tr
-                  key={row.pii_type_id}
-                  cursor="pointer"
-                  _hover={{ bg: tableRowHoverBg }}
-                  onClick={() => openPiiView(row)}
-                >
-                  <Td fontWeight="medium">{row.pii_type_label}</Td>
-                  <Td>
-                    <Badge>{row.mask_format}</Badge>
-                  </Td>
-                  <Td
-                    maxW="280px"
-                    title={row.regex_pattern}
-                    whiteSpace="nowrap"
-                    overflow="hidden"
-                    textOverflow="ellipsis"
-                  >
-                    {row.regex_pattern}
-                  </Td>
-                  <Td whiteSpace="nowrap">{formatDt(row.created_at)}</Td>
-                  <Td textAlign="right" onClick={(e) => e.stopPropagation()}>
-                    <HStack justify="flex-end" spacing={1}>
-                      <Tooltip label="Edit PII type" hasArrow placement="top">
-                        <IconButton
-                          aria-label="Edit PII type"
-                          icon={<EditIcon />}
-                          size="sm"
-                          variant="ghost"
-                          colorScheme="blue"
-                          _hover={{ bg: "blue.50" }}
-                          onClick={() => openEdit(row)}
-                        />
-                      </Tooltip>
-                      <Tooltip label="Delete PII type" hasArrow placement="top">
-                        <IconButton
-                          aria-label="Delete PII type"
-                          icon={<DeleteIcon />}
-                          size="sm"
-                          variant="ghost"
-                          colorScheme="red"
-                          _hover={{ bg: "red.50" }}
-                          onClick={() => requestDelete(row)}
-                        />
-                      </Tooltip>
-                    </HStack>
-                  </Td>
-                </Tr>
-              ))}
-            </Tbody>
-          </Table>
-        </Box>
-      )}
-
-      <TablePaginationBar
-        startRow={startRow}
-        endRow={endRow}
-        totalItems={totalTypes}
-        page={listPage}
-        totalPages={totalPages}
-        pageSize={listPageSize}
-        pageSizeOptions={PAGE_SIZE_OPTIONS}
-        onPageSizeChange={(s) => {
-          setListPageSize(s);
-          setListPage(1);
-        }}
-        onFirst={() => setListPage(1)}
-        onPrev={() => setListPage((p) => Math.max(1, p - 1))}
-        onNext={() => setListPage((p) => Math.min(totalPages, p + 1))}
-        onLast={() => setListPage(totalPages)}
-        canPrev={listPage > 1}
-        canNext={listPage < totalPages}
+      <Card
         bg={cardBg}
-      />
+        borderWidth="1px"
+        borderColor={borderColor}
+        borderRadius="lg"
+        boxShadow="none"
+      >
+        <CardBody>
+          <VStack spacing={5} align="stretch">
+            <TableFilterToolbar
+              hasActiveFilters={hasActiveFilters}
+              onClear={clearAllFilters}
+              align="flex-end"
+              rightContent={
+                <Button size="sm" colorScheme="orange" leftIcon={<AddIcon />} onClick={openCreate}>
+                  Create PII type
+                </Button>
+              }
+            >
+              <FormControl w={{ base: "full", md: "280px" }}>
+                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
+                  Search
+                </FormLabel>
+                <InputGroup>
+                  <InputLeftElement pointerEvents="none">
+                    <SearchIcon color="gray.400" />
+                  </InputLeftElement>
+                  <Input
+                    placeholder="Search by label or regex…"
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setListPage(1);
+                    }}
+                    bg={cardBg}
+                    pl={10}
+                    size="sm"
+                  />
+                </InputGroup>
+              </FormControl>
+              <FormControl w={{ base: "full", sm: "160px" }}>
+                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
+                  Mask format
+                </FormLabel>
+                <Select
+                  size="sm"
+                  value={filterMask}
+                  onChange={(e) => {
+                    setFilterMask(e.target.value);
+                    setListPage(1);
+                  }}
+                  bg={cardBg}
+                >
+                  <option value="">All</option>
+                  {MASK_OPTIONS.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </Select>
+              </FormControl>
+              <Box flex="1" minW={0} />
+            </TableFilterToolbar>
+
+            {hasActiveFilters && (
+              <HStack spacing={2} flexWrap="wrap">
+                {searchQuery.trim() && (
+                  <Badge
+                    colorScheme="blue"
+                    fontSize="xs"
+                    px={2}
+                    py={1}
+                    cursor="pointer"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setListPage(1);
+                    }}
+                    _hover={{ opacity: 0.8 }}
+                  >
+                    Search: &quot;{searchQuery.trim()}&quot; ×
+                  </Badge>
+                )}
+                {filterMask && (
+                  <Badge
+                    colorScheme="gray"
+                    fontSize="xs"
+                    px={2}
+                    py={1}
+                    cursor="pointer"
+                    onClick={() => {
+                      setFilterMask("");
+                      setListPage(1);
+                    }}
+                    _hover={{ opacity: 0.8 }}
+                  >
+                    Mask: {filterMask} ×
+                  </Badge>
+                )}
+              </HStack>
+            )}
+
+            {loading ? (
+              <Center py={8}>
+                <VStack spacing={4}>
+                  <Spinner size="lg" color="blue.500" />
+                  <Text color="gray.600">Loading PII types…</Text>
+                </VStack>
+              </Center>
+            ) : filteredPiiTypes.length > 0 ? (
+              <TableContainer maxH="60vh" overflowY="auto" overflowX="auto">
+                <Table variant="simple" bg={tableBg} size="sm" w="100%">
+                  <Thead bg={tableHeaderBg}>
+                    <Tr>
+                      <Th>
+                        <TableSortHeader
+                          label="Label"
+                          direction={labelSortDirection}
+                          onAsc={() => {
+                            setSortBy("label");
+                            setLabelSortDirection("asc");
+                            setListPage(1);
+                          }}
+                          onDesc={() => {
+                            setSortBy("label");
+                            setLabelSortDirection("desc");
+                            setListPage(1);
+                          }}
+                          ascAriaLabel="Sort PII types by label ascending"
+                          descAriaLabel="Sort PII types by label descending"
+                        />
+                      </Th>
+                      <Th>Mask</Th>
+                      <Th>Regex</Th>
+                      <Th>Created</Th>
+                      <Th textAlign="right">Actions</Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {paginatedPiiTypes.map((row) => (
+                      <Tr
+                        key={row.pii_type_id}
+                        cursor="pointer"
+                        _hover={{ bg: tableRowHoverBg }}
+                        onClick={() => openPiiView(row)}
+                      >
+                        <Td fontWeight="medium">{row.pii_type_label}</Td>
+                        <Td>
+                          <Badge>{row.mask_format}</Badge>
+                        </Td>
+                        <Td
+                          maxW="280px"
+                          title={row.regex_pattern}
+                          whiteSpace="nowrap"
+                          overflow="hidden"
+                          textOverflow="ellipsis"
+                        >
+                          {row.regex_pattern}
+                        </Td>
+                        <Td whiteSpace="nowrap">{formatDt(row.created_at)}</Td>
+                        <Td textAlign="right" onClick={(e) => e.stopPropagation()}>
+                          <HStack justify="flex-end" spacing={1}>
+                            <Tooltip label="Edit PII type" hasArrow placement="top">
+                              <IconButton
+                                aria-label="Edit PII type"
+                                icon={<EditIcon />}
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="blue"
+                                _hover={{ bg: "blue.50" }}
+                                onClick={() => openEdit(row)}
+                              />
+                            </Tooltip>
+                            <Tooltip label="Delete PII type" hasArrow placement="top">
+                              <IconButton
+                                aria-label="Delete PII type"
+                                icon={<DeleteIcon />}
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="red"
+                                _hover={{ bg: "red.50" }}
+                                onClick={() => requestDelete(row)}
+                              />
+                            </Tooltip>
+                          </HStack>
+                        </Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+              </TableContainer>
+            ) : (
+              <Alert status="info" borderRadius="md">
+                <AlertIcon />
+                <AlertDescription>
+                  {allTypes.length === 0
+                    ? 'No PII types in the library yet. Click "Create PII type" to add one.'
+                    : "No PII types match the current filters."}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {!loading && filteredPiiTypes.length > 0 ? (
+              <TablePaginationBar
+                startRow={startRow}
+                endRow={endRow}
+                totalItems={totalTypes}
+                page={listPage}
+                totalPages={totalPages}
+                pageSize={listPageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSizeChange={(s) => {
+                  setListPageSize(s);
+                  setListPage(1);
+                }}
+                onFirst={() => setListPage(1)}
+                onPrev={() => setListPage((p) => Math.max(1, p - 1))}
+                onNext={() => setListPage((p) => Math.min(totalPages, p + 1))}
+                onLast={() => setListPage(totalPages)}
+                canPrev={listPage > 1}
+                canNext={listPage < totalPages}
+                borderColor={borderColor}
+                bg={cardBg}
+              />
+            ) : null}
+          </VStack>
+        </CardBody>
+      </Card>
 
       <PiiTypeDetailModal
         isOpen={viewModal.isOpen}
