@@ -41,7 +41,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { useQuery } from "@tanstack/react-query";
 import { SearchIcon, RepeatIcon } from "@chakra-ui/icons";
 import ContentLayout from "../components/common/ContentLayout";
-import { useAuth } from "../hooks/useAuth";
+import { useAuth, forceFrontendSessionEnd } from "../hooks/useAuth";
 import { useRouter } from "next/router";
 import { getJwtToken } from "../services/api";
 import { getTenantIdFromToken } from "../utils/helpers";
@@ -399,18 +399,13 @@ const LogsPage: React.FC = () => {
     staleTime: 1 * 60 * 1000, // 1 minute
   });
 
-  // Handle aggregations error
+  // Handle aggregations error — auth/tenant failures end the session (telemetry uses a separate client)
   useEffect(() => {
-    if (aggregationsError && ((aggregationsError as any)?.response?.status === 401 || (aggregationsError as any)?.response?.status === 403)) {
-      toast({
-        title: "Authentication Required",
-        description: "Please log in to view logs.",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+    const status = (aggregationsError as any)?.response?.status;
+    if (aggregationsError && (status === 401 || status === 403)) {
+      forceFrontendSessionEnd();
     }
-  }, [aggregationsError, toast]);
+  }, [aggregationsError]);
 
   // Fetch logs (only if authenticated)
   const {
@@ -553,36 +548,9 @@ const LogsPage: React.FC = () => {
         url: error?.config?.url,
       });
       
-      if (error?.response?.status === 401) {
-        // 401 Unauthorized - redirect to login
-        toast({
-          title: "Authentication Required",
-          description: error?.response?.data?.detail || "Please log in to view logs.",
-          status: "error",
-          duration: 5000,
-          isClosable: true,
-        });
-        router.push("/auth");
-      } else if (error?.response?.status === 403) {
-        // 403 Forbidden - show error message (user is authenticated but lacks permission)
-        let errorMessage = 'Access denied. You must be associated with a tenant to access logs.';
-        if (error?.response?.data?.detail) {
-          const detail = error.response.data.detail;
-          if (typeof detail === 'string') {
-            errorMessage = detail;
-          } else if (typeof detail === 'object') {
-            errorMessage = detail.message || detail.detail || JSON.stringify(detail);
-          } else {
-            errorMessage = String(detail);
-          }
-        }
-        toast({
-          title: "Access Denied",
-          description: errorMessage,
-          status: "error",
-          duration: 8000,
-          isClosable: true,
-        });
+      if (error?.response?.status === 401 || error?.response?.status === 403) {
+        forceFrontendSessionEnd();
+        return;
       } else {
         // Show other errors as toast
         let errorMessage = 'Failed to load logs';
@@ -608,7 +576,7 @@ const LogsPage: React.FC = () => {
         });
       }
     }
-  }, [logsError, router, toast]);
+  }, [logsError, toast]);
 
   // Debug: Log successful responses
   useEffect(() => {
@@ -1021,42 +989,16 @@ const LogsPage: React.FC = () => {
                 </Alert>
               )}
 
-          {/* Show error messages */}
-          {logsError && (
+          {/* Show error messages (401/403 trigger forceFrontendSessionEnd — no inline banner) */}
+          {logsError && (() => {
+            const error = logsError as any;
+            const st = error?.response?.status;
+            if (st === 401 || st === 403) return null;
+            return (
             <Alert status="error">
               <AlertIcon />
               <AlertDescription>
                 {(() => {
-                  const error = logsError as any;
-                  if (error?.response?.status === 401) {
-                    return (
-                      <>
-                        Authentication failed. Please log in again.
-                        <Button
-                          size="sm"
-                          colorScheme="blue"
-                          ml={4}
-                          onClick={() => router.push("/auth")}
-                        >
-                          Log In
-                        </Button>
-                      </>
-                    );
-                  } else if (error?.response?.status === 403) {
-                    // 403 Forbidden - show permission error
-                    let errorMsg = 'Access denied. You must be associated with a tenant to access logs.';
-                    if (error?.response?.data?.detail) {
-                      const detail = error.response.data.detail;
-                      if (typeof detail === 'string') {
-                        errorMsg = detail;
-                      } else if (typeof detail === 'object') {
-                        errorMsg = detail.message || detail.detail || JSON.stringify(detail);
-                      } else {
-                        errorMsg = String(detail);
-                      }
-                    }
-                    return errorMsg;
-                  }
                   let errorMsg = 'Unknown error';
                   if (error?.response?.data?.detail) {
                     const detail = error.response.data.detail;
@@ -1074,15 +1016,21 @@ const LogsPage: React.FC = () => {
                 })()}
               </AlertDescription>
             </Alert>
-          )}
+            );
+          })()}
 
 
-          {aggregationsError && !aggregationsLoading && (
+
+
+          {aggregationsError && !aggregationsLoading && (() => {
+            const error = aggregationsError as any;
+            const st = error?.response?.status;
+            if (st === 401 || st === 403) return null;
+            return (
             <Alert status="warning">
               <AlertIcon />
               <AlertDescription>
                 Failed to load aggregations: {(() => {
-                  const error = aggregationsError as any;
                   if (error?.response?.data?.detail) {
                     const detail = error.response.data.detail;
                     if (typeof detail === 'string') return detail;
@@ -1093,7 +1041,8 @@ const LogsPage: React.FC = () => {
                 })()}
               </AlertDescription>
             </Alert>
-          )}
+            );
+          })()}
 
           {/* Aggregations */}
           {aggregations && (
