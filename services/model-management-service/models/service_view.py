@@ -1,8 +1,10 @@
-from pydantic import BaseModel , field_validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Dict, List, Optional, Any
 from .service_create import ServiceStatus, BenchmarkEntry
 from .model_create import ModelCreateRequest
 from datetime import datetime
+
+from models.inference_server_type import InferenceServerType
 
 class ServiceViewRequest(BaseModel):
     serviceId: str
@@ -16,6 +18,8 @@ class ServiceResponse(BaseModel):
     publishedOn: int
     modelId: str
     endpoint: Optional[str] = None
+    inferenceServerType: str = Field(default=InferenceServerType.triton.value)
+    sslVerify: bool = True
     api_key: Optional[str] = None
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None

@@ -68,6 +68,8 @@ class Service(AppDBBase):
     model_id = Column(String(255), ForeignKey('models.model_id'), nullable=False)
     model_version = Column(String(100), nullable=False)
     endpoint = Column(String(500), nullable=False)
+    inference_server_type = Column(String(32), nullable=False, server_default="triton")
+    ssl_verify = Column(Boolean, nullable=False, server_default="true")
     api_key = Column(String(255))
     health_status = Column(JSONB)
     benchmarks = Column(JSONB)

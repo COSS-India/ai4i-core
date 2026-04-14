@@ -537,6 +537,10 @@ components:
         benchmarks: { type: array, items: { $ref: "#/components/schemas/Benchmark" } }
         submitter: { $ref: "#/components/schemas/Submitter" }
     # ----- Service schemas -----
+    InferenceServerType:
+      type: string
+      enum: [triton, http]
+      description: "Inference backend protocol (Triton HTTP/gRPC entry vs plain HTTP for health and clients)"
     ServiceStatus:
       type: object
       properties:
@@ -563,6 +567,8 @@ components:
         modelId: { type: string }
         modelVersion: { type: string }
         endpoint: { type: string }
+        inferenceServerType: { $ref: "#/components/schemas/InferenceServerType", default: triton }
+        sslVerify: { type: boolean, default: true, description: "Verify TLS certificates when probing or calling the inference endpoint" }
         api_key: { type: string }
         healthStatus: { $ref: "#/components/schemas/ServiceStatus" }
         benchmarks: { type: object, additionalProperties: { type: array, items: { $ref: "#/components/schemas/BenchmarkEntry" } } }
@@ -583,6 +589,8 @@ components:
         hardwareDescription: { type: string }
         publishedOn: { type: integer }
         endpoint: { type: string }
+        inferenceServerType: { $ref: "#/components/schemas/InferenceServerType" }
+        sslVerify: { type: boolean }
         api_key: { type: string }
         languagePair: { $ref: "#/components/schemas/LanguagePair" }
         healthStatus: { $ref: "#/components/schemas/ServiceStatus" }
@@ -600,6 +608,8 @@ components:
         publishedOn: { type: integer }
         modelId: { type: string }
         endpoint: { type: string }
+        inferenceServerType: { $ref: "#/components/schemas/InferenceServerType" }
+        sslVerify: { type: boolean }
         api_key: { type: string }
         healthStatus: { $ref: "#/components/schemas/ServiceStatus" }
         benchmarks: { type: object }
