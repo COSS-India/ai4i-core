@@ -1,5 +1,15 @@
 import React from "react";
-import { Button, HStack, IconButton, Select, Text, Tooltip } from "@chakra-ui/react";
+import { Button, HStack, IconButton, Select, Text, Tooltip, useColorModeValue } from "@chakra-ui/react";
+
+/** Shared light/dark surface tokens for admin data tables (list pages, profile tabs, etc.). */
+export function useAdminTableSurface() {
+  const tableBg = useColorModeValue("white", "gray.800");
+  const tableHeaderBg = useColorModeValue("gray.50", "gray.700");
+  const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
+  const cardBg = useColorModeValue("white", "gray.800");
+  const borderColor = useColorModeValue("gray.200", "gray.700");
+  return { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor };
+}
 import { TriangleDownIcon, TriangleUpIcon } from "@chakra-ui/icons";
 
 type SortDirection = "asc" | "desc";

@@ -25,7 +25,6 @@ import {
   Text,
   VStack,
   HStack,
-  useColorModeValue,
   useDisclosure,
   Tabs,
   TabList,
@@ -56,7 +55,12 @@ import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 import ConfirmDialog from "../components/common/ConfirmDialog";
-import { TableFilterToolbar, TablePaginationBar, TableSortHeader } from "../components/common/TableControls";
+import {
+  TableFilterToolbar,
+  TablePaginationBar,
+  TableSortHeader,
+  useAdminTableSurface,
+} from "../components/common/TableControls";
 
 // TypeScript interfaces for model data
 interface OAuthId {
@@ -234,11 +238,8 @@ const ModelManagementPage: React.FC = () => {
     fetchServices();
   }, []);
 
-  const cardBg = useColorModeValue("white", "gray.800");
-  const cardBorder = useColorModeValue("gray.200", "gray.700");
-  const tableBg = useColorModeValue("white", "gray.800");
-  const tableHeaderBg = useColorModeValue("gray.50", "gray.700");
-  const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
+  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor: cardBorder } =
+    useAdminTableSurface();
 
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
