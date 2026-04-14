@@ -52,14 +52,17 @@ function visitPayload(
       codes.add(String(rec[key]).trim().toUpperCase());
     }
   }
-  for (const key of ['message', 'msg', 'description']) {
-    if (typeof rec[key] === 'string') texts.push(rec[key]);
+  for (const key of ['message', 'msg', 'description'] as const) {
+    const v = rec[key];
+    if (typeof v === 'string') texts.push(v);
   }
   if (rec.detail !== undefined) visitPayload(rec.detail, codes, texts, depth + 1);
 }
 
 function lifecycleCodesMatch(codes: Set<string>): boolean {
-  for (const c of codes) {
+  const list = Array.from(codes);
+  for (let i = 0; i < list.length; i++) {
+    const c = list[i];
     if (LIFECYCLE_ERROR_CODES.has(c)) return true;
     if (
       c.includes('TENANT') &&
