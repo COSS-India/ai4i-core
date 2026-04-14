@@ -35,6 +35,15 @@ from app.services.tenant_service import TenantService
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
+def _client_context(request: Request) -> tuple[str | None, str | None]:
+    ip_address = request.headers.get(
+        "X-Forwarded-For",
+        request.client.host if request.client else None,
+    )
+    user_agent = request.headers.get("User-Agent")
+    return ip_address, user_agent
+
+
 @router.post("/register")
 async def register(
     body: RegisterRequest,
@@ -66,12 +75,31 @@ async def login(
     body: LoginRequest,
     svc: AuthService = Depends(get_auth_service),
 ):
-    ip_address = request.headers.get("X-Forwarded-For", request.client.host if request.client else None)
-    user_agent = request.headers.get("User-Agent")
-
+    ip_address, user_agent = _client_context(request)
     return await svc.login(
         email=body.email,
         password=body.password,
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+
+
+@router.post("/guest/login", response_model=LoginResponse)
+async def guest_login(
+    request: Request,
+    svc: AuthService = Depends(get_auth_service),
+):
+    email = (settings.guest_email or "").strip()
+    password = settings.guest_password
+    if not email or not password:
+        raise HTTPException(
+            status_code=503,
+            detail="Guest login is not configured.",
+        )
+    ip_address, user_agent = _client_context(request)
+    return await svc.login(
+        email=email,
+        password=password,
         ip_address=ip_address,
         user_agent=user_agent,
     )
