@@ -33,3 +33,9 @@ class RoleAssignRequest(BaseSchema):
 class RoleRemoveRequest(BaseSchema):
     user_id: int
     role_name: str
+
+
+class GuestServicesAssignRequest(BaseSchema):
+    """Replace GUEST role inference permissions; other GUEST permissions are unchanged."""
+
+    services: list[str] = Field(default_factory=list)

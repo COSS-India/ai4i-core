@@ -320,7 +320,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
         )
         print("    ✓ Assigned permissions to USER role (from seed script)")
 
-        # GUEST: inference-only for ASR / NMT / TTS (see auth_y_guest_default_user_seeder)
+        # GUEST: users.read + service.read (MM POST /services/{id} for inference) + ASR/NMT/TTS inference
         adapter.execute(
             """
             DELETE FROM role_permissions
@@ -334,6 +334,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.read',
+              'service.read',
               'asr.inference',
               'nmt.inference',
               'tts.inference'
