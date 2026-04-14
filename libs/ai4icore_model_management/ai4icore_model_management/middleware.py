@@ -10,6 +10,7 @@ import time
 import uuid
 from typing import Optional, Dict, Tuple, Any
 
+import httpx
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response, JSONResponse
@@ -114,7 +115,11 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         cache_ttl_seconds: int = 300,
         default_triton_endpoint: Optional[str] = None,
         default_triton_api_key: Optional[str] = None,
-        enabled_paths: list[str] = None
+        enabled_paths: list[str] = None,
+        config_service_url: Optional[str] = None,
+        health_gate_enabled: bool = False,
+        health_gate_timeout_seconds: float = 0.05,
+        health_gate_cache_ttl_seconds: float = 1.0,
     ):
         """
         Initialize middleware
@@ -135,6 +140,13 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         self.default_triton_endpoint = default_triton_endpoint
         self.default_triton_api_key = default_triton_api_key
         self.enabled_paths = enabled_paths or ["/api/v1"]
+
+        self.config_service_url = (config_service_url or "").rstrip("/")
+        self.health_gate_enabled = bool(health_gate_enabled)
+        self.health_gate_timeout_seconds = float(health_gate_timeout_seconds)
+        self.health_gate_cache_ttl_seconds = float(health_gate_cache_ttl_seconds)
+        self._health_client: Optional[httpx.AsyncClient] = None
+        self._health_cache: Dict[str, Tuple[dict, float]] = {}  # service_id -> (payload, expires_at)
         
         # In-memory caches
         self._service_info_cache: Dict[str, Tuple[ServiceInfo, float]] = {}
@@ -145,6 +157,118 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
     def _should_process(self, path: str) -> bool:
         """Check if middleware should process this path"""
         return any(path.startswith(prefix) for prefix in self.enabled_paths)
+
+    async def _get_health_client(self) -> httpx.AsyncClient:
+        """Lazy init pooled HTTP client for health-status pre-flight checks."""
+        if self._health_client is None:
+            self._health_client = httpx.AsyncClient(
+                timeout=self.health_gate_timeout_seconds,
+                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+            )
+        return self._health_client
+
+    async def _fetch_health_status(self, service_id: str) -> dict:
+        """
+        Fetch health status snapshot from config-service.
+
+        Fail-closed callers treat any non-200/exception as unknown.
+        """
+        if not self.config_service_url:
+            raise RuntimeError("config_service_url is not configured")
+        client = await self._get_health_client()
+        url = f"{self.config_service_url}/internal/health-status"
+        resp = await client.get(url, params={"service_id": service_id})
+        resp.raise_for_status()
+        return resp.json()
+
+    async def _preflight_health_gate(self, service_id: str) -> Optional[JSONResponse]:
+        """
+        Pre-flight gate for backend health.
+
+        Contract:
+          - if disabled: no-op
+          - fail-closed: any unknown/unavailable state => 503
+          - healthy/degraded => allow
+          - unhealthy => 503
+        """
+        if not self.health_gate_enabled:
+            return None
+
+        now = time.time()
+        cached = self._health_cache.get(service_id)
+        if cached:
+            payload, expires_at = cached
+            if expires_at > now:
+                state = (payload or {}).get("state")
+                if state == "unhealthy":
+                    return JSONResponse(
+                        status_code=503,
+                        content={
+                            "detail": {
+                                "code": "BACKEND_UNHEALTHY",
+                                "message": "Target backend is unhealthy; refusing inference pre-flight.",
+                                "serviceId": service_id,
+                                "state": state,
+                                "last_check": (payload or {}).get("last_check"),
+                            }
+                        },
+                    )
+                if state in ("healthy", "degraded"):
+                    return None
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "detail": {
+                            "code": "BACKEND_HEALTH_UNKNOWN",
+                            "message": "Target backend health is unknown; refusing inference pre-flight.",
+                            "serviceId": service_id,
+                        }
+                    },
+                )
+            self._health_cache.pop(service_id, None)
+
+        try:
+            payload = await self._fetch_health_status(service_id)
+            expires_at = now + max(self.health_gate_cache_ttl_seconds, 0.0)
+            self._health_cache[service_id] = (payload, expires_at)
+            state = (payload or {}).get("state")
+            if state == "unhealthy":
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "detail": {
+                            "code": "BACKEND_UNHEALTHY",
+                            "message": "Target backend is unhealthy; refusing inference pre-flight.",
+                            "serviceId": service_id,
+                            "state": state,
+                            "last_check": (payload or {}).get("last_check"),
+                        }
+                    },
+                )
+            if state in ("healthy", "degraded"):
+                return None
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": {
+                        "code": "BACKEND_HEALTH_UNKNOWN",
+                        "message": "Target backend health is unknown; refusing inference pre-flight.",
+                        "serviceId": service_id,
+                    }
+                },
+            )
+        except Exception as exc:
+            logger.debug("Health pre-flight check failed (fail-closed) for %r: %s", service_id, exc)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": {
+                        "code": "BACKEND_HEALTH_UNKNOWN",
+                        "message": "Target backend health is unavailable; refusing inference pre-flight.",
+                        "serviceId": service_id,
+                    }
+                },
+            )
     
     async def _get_service_info(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> Optional[ServiceInfo]:
         """Get service info from model management service with caching"""
@@ -432,6 +556,11 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                                 )
                                 if variant.get("api_key") is not None:
                                     request.state.triton_api_key = variant.get("api_key")
+
+                                gate_resp = await self._preflight_health_gate(variant_service_id)
+                                if gate_resp is not None:
+                                    return gate_resp
+
                                 response = await call_next(request)
                                 await self._track_experiment_metric(request, response, start_time)
                                 return response
@@ -441,6 +570,9 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             
             # If we found a serviceId, resolve it (normal path or variant service_id)
             if service_id:
+                gate_resp = await self._preflight_health_gate(service_id)
+                if gate_resp is not None:
+                    return gate_resp
                 # Log removed - middleware handles request/response logging
                 logger.debug(f"Resolving serviceId: {service_id} via Model Management")
                 auth_headers = extract_auth_headers(request)

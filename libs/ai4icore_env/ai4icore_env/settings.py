@@ -184,6 +184,11 @@ class AppEnv(BaseSettings):
     max_active_versions_per_model: int = 5
     allow_deprecated_model_changes: bool = True
     run_inference_test: bool = True
+    # Optional pre-flight health gate (config-service /internal/health-status).
+    # When enabled, inference requests targeting unhealthy backends fail fast with 503.
+    model_management_health_gate_enabled: bool = False
+    model_management_health_gate_timeout_seconds: float = 0.05
+    model_management_health_gate_cache_ttl_seconds: float = 1.0
     # "lenient" (default): 4xx treated as pass (server reachable); "strict": only <400 passes
     endpoint_validation_mode: str = "lenient"
     # Live inference probe timeout (seconds) used by Model Management endpoint validation

@@ -64,7 +64,11 @@ class ModelManagementPlugin:
                 cache_ttl_seconds=self.config.cache_ttl_seconds,
                 default_triton_endpoint=self.config.default_triton_endpoint,
                 default_triton_api_key=self.config.default_triton_api_key,
-                enabled_paths=self.config.middleware_paths
+                enabled_paths=self.config.middleware_paths,
+                config_service_url=self.config.config_service_url,
+                health_gate_enabled=self.config.health_gate_enabled,
+                health_gate_timeout_seconds=self.config.health_gate_timeout_seconds,
+                health_gate_cache_ttl_seconds=self.config.health_gate_cache_ttl_seconds,
             )
             logger.info(
                 f"✅ Model Resolution Middleware registered for paths: {self.config.middleware_paths}"

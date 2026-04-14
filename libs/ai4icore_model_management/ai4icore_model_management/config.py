@@ -62,6 +62,27 @@ class ModelManagementConfig(BaseModel):
         description="URL paths where middleware should run (prefix matching)"
     )
 
+    # Optional pre-flight health gate (config-service /internal/health-status)
+    config_service_url: str = Field(
+        default_factory=lambda: app_env.config_service_url,
+        description="Base URL of Config Service (used for internal health-status contract)"
+    )
+
+    health_gate_enabled: bool = Field(
+        default_factory=lambda: getattr(app_env, "model_management_health_gate_enabled", False),
+        description="When true, block inference for unhealthy/unknown backends with fast 503"
+    )
+
+    health_gate_timeout_seconds: float = Field(
+        default_factory=lambda: getattr(app_env, "model_management_health_gate_timeout_seconds", 0.05),
+        description="Timeout (seconds) for config-service health-status pre-flight check"
+    )
+
+    health_gate_cache_ttl_seconds: float = Field(
+        default_factory=lambda: getattr(app_env, "model_management_health_gate_cache_ttl_seconds", 1.0),
+        description="Small in-memory TTL (seconds) for health-status results to reduce overhead"
+    )
+
     @classmethod
     def from_env(cls) -> "ModelManagementConfig":
         """Create config from environment variables"""
