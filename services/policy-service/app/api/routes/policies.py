@@ -4,6 +4,7 @@ GET    /policies
 POST   /policies
 GET    /policies/{policy_id}
 PUT    /policies/{policy_id}
+DELETE /policies/{policy_id}
 PATCH  /policies/{policy_id}/status
 """
 from typing import Optional
@@ -42,11 +43,14 @@ async def list_policies(
     limit: int = Query(20, ge=1, le=100),
     svc: PolicyService = Depends(_svc),
 ):
-    rows, total = await svc.list(is_global=is_global, is_active=is_active, search=search, page=page, limit=limit)
+    rows, total, tenant_ids_by_policy = await svc.list(
+        is_global=is_global, is_active=is_active, search=search, page=page, limit=limit
+    )
     # Build list response explicitly (PolicyOut includes pii_types details)
     data: list[PolicyOut] = []
     for row in rows:
         links = row.pii_types or []
+        tenant_ids = tenant_ids_by_policy.get(row.policy_id, [])
         data.append(
             PolicyOut(
                 policy_id=row.policy_id,
@@ -55,8 +59,7 @@ async def list_policies(
                 is_active=row.is_active,
                 is_global=row.is_global,
                 supported_languages=row.supported_languages or [],
-                tenant_id=None,
-                pii_types_count=len(links),
+                tenant_ids=tenant_ids,
                 pii_types=[
                     PolicyPiiTypeOut(
                         pii_type_id=link.pii_type_id,
@@ -93,6 +96,12 @@ async def update_policy(request: Request, policy_id: UUID, body: PolicyUpdate, s
     return _build_detail(obj)
 
 
+@router.delete("/{policy_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete policy")
+async def delete_policy(request: Request, policy_id: UUID, svc: PolicyService = Depends(_svc)):
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+    await svc.delete(policy_id, auth_header=auth_header)
+
+
 @router.patch("/{policy_id}/status", summary="Toggle active / inactive")
 async def set_policy_status(
     policy_id: UUID, body: PolicyStatusUpdate, svc: PolicyService = Depends(_svc)
@@ -104,6 +113,18 @@ async def set_policy_status(
 
 def _build_detail(policy) -> PolicyDetailOut:
     from app.models.schemas import PolicyPiiTypeOut
+    # Fail fast if tenant_policies was not eager-loaded (async lazy-load can raise MissingGreenlet,
+    # and silent fallbacks can hide repository/query bugs).
+    try:
+        from sqlalchemy import inspect
+
+        attr_state = inspect(policy).attrs.tenant_policies
+        if not attr_state.loaded:
+            raise ValueError("Policy tenant_policies relationship was not eager-loaded")
+    except Exception:
+        # If SQLAlchemy inspection isn't available for some reason, fall back to a strict attribute check.
+        if not hasattr(policy, "tenant_policies"):
+            raise ValueError("Policy object is missing required tenant_policies relationship")
     pii_types_out = []
     for link in (policy.pii_types or []):
         pii_types_out.append(
@@ -113,6 +134,7 @@ def _build_detail(policy) -> PolicyDetailOut:
                 mask_format=link.pii_type.mask_format,
             )
         )
+    tenant_ids = [tp.tenant_id for tp in (policy.tenant_policies or []) if tp.tenant_id]
     return PolicyDetailOut(
         policy_id=policy.policy_id,
         name=policy.name,
@@ -120,6 +142,7 @@ def _build_detail(policy) -> PolicyDetailOut:
         is_active=policy.is_active,
         is_global=policy.is_global,
         supported_languages=policy.supported_languages or [],
+        tenant_ids=tenant_ids,
         pii_types=pii_types_out,
         created_at=policy.created_at,
     )

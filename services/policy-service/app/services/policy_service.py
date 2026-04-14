@@ -37,7 +37,7 @@ async def _validated_forward_auth_header(auth_header: Optional[str]) -> Optional
     if not token:
         raise HTTPException(
             status_code=401,
-            detail={"error": {"code": "UNAUTHORIZED", "message": "Empty authorization token"}},
+            detail={"code": "UNAUTHORIZED", "message": "Empty authorization token"},
         )
 
     # Initialize JWKS lazily (same pattern as the shared AuthProvider).
@@ -64,29 +64,32 @@ class PolicyService:
         search: Optional[str],
         page: int,
         limit: int,
-    ) -> tuple[Sequence[PiiPolicy], int]:
-        return await self.repo.list(
+    ) -> tuple[Sequence[PiiPolicy], int, dict[UUID, list[str]]]:
+        rows, total = await self.repo.list(
             is_global=is_global, is_active=is_active, search=search,
             page=page, limit=min(limit, 100),
         )
+        policy_ids = [row.policy_id for row in rows]
+        tenant_ids_by_policy = await self.repo.list_tenant_ids_for_policies(policy_ids)
+        return rows, total, tenant_ids_by_policy
 
     async def get(self, policy_id: UUID) -> PiiPolicy:
         obj = await self.repo.get(policy_id)
         if not obj:
-            raise HTTPException(status_code=404, detail={"error": {"code": "NOT_FOUND", "message": "Policy not found"}})
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Policy not found"})
         return obj
 
     async def get_detail(self, policy_id: UUID) -> PiiPolicy:
         obj = await self.repo.get_with_pii_types(policy_id)
         if not obj:
-            raise HTTPException(status_code=404, detail={"error": {"code": "NOT_FOUND", "message": "Policy not found"}})
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "Policy not found"})
         return obj
 
     async def create(self, data: PolicyCreate, auth_header: Optional[str] = None) -> PiiPolicy:
         if await self.repo.get_by_name(data.name):
             raise HTTPException(
                 status_code=409,
-                detail={"error": {"code": "CONFLICT", "message": "Policy name already exists"}},
+                detail={"code": "CONFLICT", "message": "Policy name already exists"},
             )
 
         # Validate tenant_id (non-global) against active tenants list
@@ -126,7 +129,6 @@ class PolicyService:
         # If pii_types is provided (including empty list), replace the linked set
         if data.pii_types is not None:
             await self._validate_and_add_links(policy_id, data.pii_types, replace=True)
-            updated = await self.repo.get_with_pii_types(policy_id)
 
         # Handle is_global switch and optional tenant_id mapping
         if data.is_global is True:
@@ -137,14 +139,25 @@ class PolicyService:
             if not existing:
                 await self.tenant_repo.assign(data.tenant_id, policy_id)
 
-        return updated
+        # Always return a fully eager-loaded entity to avoid async lazy-load issues in response builders.
+        return await self.repo.get_with_pii_types(policy_id)
 
     async def set_status(self, policy_id: UUID, data: PolicyStatusUpdate) -> dict:
         obj = await self.get(policy_id)
         await self.repo.update(obj, {"is_active": data.is_active})
         return {"is_active": data.is_active}
 
-    async def delete(self, policy_id: UUID) -> None:
+    async def delete(self, policy_id: UUID, auth_header: Optional[str] = None) -> None:
+        """
+        Delete a policy entity.
+
+        Expected delete effects (via ORM/DB constraints):
+        - remove tenant mappings (`tenant_policy`) for the policy
+        - remove policy-to-PII links (`policy_pii_types`) for the policy
+        - keep `pii_types` master records intact
+        """
+        # Keep mutating operations consistent with create/update auth handling.
+        await _validated_forward_auth_header(auth_header)
         obj = await self.get(policy_id)
         await self.repo.delete(obj)
 
@@ -155,7 +168,7 @@ class PolicyService:
             if not pii_type:
                 raise HTTPException(
                     status_code=404,
-                    detail={"error": {"code": "NOT_FOUND", "message": f"pii_type_id {link.pii_type_id} not found"}},
+                    detail={"code": "NOT_FOUND", "message": f"pii_type_id {link.pii_type_id} not found"},
                 )
             validated.append({"pii_type_id": link.pii_type_id})
 
@@ -182,13 +195,11 @@ class PolicyService:
             raise HTTPException(
                 status_code=500,
                 detail={
-                    "error": {
-                        "code": "CONFIG_ERROR",
-                        "message": (
-                            "multi_tenant_service_url is not configured "
-                            "(set multi_tenant_service_url or multi_tenant_service_scheme/name/port)"
-                        ),
-                    }
+                    "code": "CONFIG_ERROR",
+                    "message": (
+                        "multi_tenant_service_url is not configured "
+                        "(set multi_tenant_service_url or multi_tenant_service_scheme/name/port)"
+                    ),
                 },
             )
         # Multi-tenant-feature runs with root-level prefixes (e.g. /admin/...)
@@ -199,18 +210,33 @@ class PolicyService:
         validated = await _validated_forward_auth_header(auth_header)
         if validated:
             headers["Authorization"] = validated
-        async with httpx.AsyncClient(timeout=app_env.policy_service_http_timeout) as client:
-            resp = await client.get(primary_url, headers=headers)
-            if resp.status_code == 404:
-                resp = await client.get(gateway_url, headers=headers)
+        try:
+            async with httpx.AsyncClient(timeout=app_env.policy_service_http_timeout) as client:
+                resp = await client.get(primary_url, headers=headers)
+                if resp.status_code == 404:
+                    resp = await client.get(gateway_url, headers=headers)
+        except httpx.TimeoutException:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "TENANT_SERVICE_TIMEOUT",
+                    "message": "Timed out fetching tenants from multi-tenant service",
+                },
+            )
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "TENANT_SERVICE_ERROR",
+                    "message": f"Failed to reach multi-tenant service: {type(e).__name__}",
+                },
+            )
         if resp.status_code >= 400:
             raise HTTPException(
                 status_code=502,
                 detail={
-                    "error": {
-                        "code": "TENANT_SERVICE_ERROR",
-                        "message": f"Failed to fetch tenants (status {resp.status_code})",
-                    }
+                    "code": "TENANT_SERVICE_ERROR",
+                    "message": f"Failed to fetch tenants (status {resp.status_code})",
                 },
             )
         try:
@@ -220,10 +246,8 @@ class PolicyService:
             raise HTTPException(
                 status_code=502,
                 detail={
-                    "error": {
-                        "code": "TENANT_SERVICE_ERROR",
-                        "message": "Failed to parse tenants response as JSON",
-                    }
+                    "code": "TENANT_SERVICE_ERROR",
+                    "message": "Failed to parse tenants response as JSON",
                 },
             )
         tenants = data.get("tenants") or []
@@ -241,10 +265,8 @@ class PolicyService:
             raise HTTPException(
                 status_code=422,
                 detail={
-                    "error": {
-                        "code": "VALIDATION_ERROR",
-                        "message": "Invalid or inactive tenant_id",
-                        "details": [{"field": "tenant_id", "issue": "Tenant must be ACTIVE in multi-tenant service"}],
-                    }
+                    "code": "VALIDATION_ERROR",
+                    "message": "Invalid or inactive tenant_id",
+                    "details": [{"field": "tenant_id", "issue": "Tenant must be ACTIVE in multi-tenant service"}],
                 },
             )

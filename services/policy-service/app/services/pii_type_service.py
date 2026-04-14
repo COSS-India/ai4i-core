@@ -33,7 +33,7 @@ class PiiTypeService:
     async def get(self, pii_type_id: UUID) -> PiiType:
         obj = await self.repo.get(pii_type_id)
         if not obj:
-            raise HTTPException(status_code=404, detail={"error": {"code": "NOT_FOUND", "message": "PII type not found"}})
+            raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": "PII type not found"})
         return obj
 
     async def create(self, data: PiiTypeCreate) -> PiiType:
@@ -42,13 +42,11 @@ class PiiTypeService:
             raise HTTPException(
                 status_code=422,
                 detail={
-                    "error": {
-                        "code": "VALIDATION_ERROR",
-                        "message": "Unsupported mask_format",
-                        "details": [
-                            {"field": "mask_format", "issue": f"Allowed: {', '.join(ALLOWED_MASK_TYPES)}"}
-                        ],
-                    }
+                    "code": "VALIDATION_ERROR",
+                    "message": "Unsupported mask_format",
+                    "details": [
+                        {"field": "mask_format", "issue": f"Allowed: {', '.join(ALLOWED_MASK_TYPES)}"}
+                    ],
                 },
             )
         # validate regex against example_values
@@ -58,7 +56,7 @@ class PiiTypeService:
         if existing:
             raise HTTPException(
                 status_code=409,
-                detail={"error": {"code": "CONFLICT", "message": "pii_type_label already exists"}},
+                detail={"code": "CONFLICT", "message": "pii_type_label already exists"},
             )
         payload = data.model_dump(exclude={"example_values"})
         return await self.repo.create(payload)
@@ -73,7 +71,7 @@ class PiiTypeService:
             if existing and existing.pii_type_id != obj.pii_type_id:
                 raise HTTPException(
                     status_code=409,
-                    detail={"error": {"code": "CONFLICT", "message": "pii_type_label already exists"}},
+                    detail={"code": "CONFLICT", "message": "pii_type_label already exists"},
                 )
 
         if "regex_pattern" in updates:
@@ -83,10 +81,18 @@ class PiiTypeService:
 
     async def delete(self, pii_type_id: UUID) -> None:
         obj = await self.get(pii_type_id)
-        if await self.repo.has_active_policy_links(pii_type_id):
+        active_links, inactive_links = await self.repo.get_policy_link_counts(pii_type_id)
+        if active_links > 0 or inactive_links > 0:
             raise HTTPException(
                 status_code=409,
-                detail={"error": {"code": "CONFLICT", "message": "PII type is linked to active policies. Unlink first."}},
+                detail={
+                    "code": "CONFLICT",
+                    "message": (
+                        "PII type is linked to policies. "
+                        f"Active links: {active_links}, inactive links: {inactive_links}. "
+                        "Unlink first."
+                    ),
+                },
             )
         await self.repo.delete(obj)
 
@@ -97,12 +103,12 @@ class PiiTypeService:
         if not isinstance(pattern, str) or not pattern.strip():
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": "VALIDATION_ERROR", "message": "regex_pattern must be a non-empty string"}},
+                detail={"code": "VALIDATION_ERROR", "message": "regex_pattern must be a non-empty string"},
             )
         if len(pattern) > 1024:
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": "VALIDATION_ERROR", "message": "regex_pattern is too long (max 1024 chars)"}},
+                detail={"code": "VALIDATION_ERROR", "message": "regex_pattern is too long (max 1024 chars)"},
             )
 
         try:
@@ -115,7 +121,7 @@ class PiiTypeService:
         except Exception as exc:
             raise HTTPException(
                 status_code=400,
-                detail={"error": {"code": "VALIDATION_ERROR", "message": f"Invalid regex: {exc}"}},
+                detail={"code": "VALIDATION_ERROR", "message": f"Invalid regex: {exc}"},
             ) from exc
 
         mismatches = []
@@ -130,10 +136,8 @@ class PiiTypeService:
                     raise HTTPException(
                         status_code=400,
                         detail={
-                            "error": {
-                                "code": "VALIDATION_ERROR",
-                                "message": "Regex evaluation timed out (pattern too complex)",
-                            }
+                            "code": "VALIDATION_ERROR",
+                            "message": "Regex evaluation timed out (pattern too complex)",
                         },
                     )
         else:
@@ -143,10 +147,8 @@ class PiiTypeService:
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "error": {
-                        "code": "VALIDATION_ERROR",
-                        "message": "Regex did not match some example_values",
-                        "details": [{"field": "example_values", "issue": f"no match: {v}"} for v in mismatches],
-                    }
+                    "code": "VALIDATION_ERROR",
+                    "message": "Regex did not match some example_values",
+                    "details": [{"field": "example_values", "issue": f"no match: {v}"} for v in mismatches],
                 },
             )

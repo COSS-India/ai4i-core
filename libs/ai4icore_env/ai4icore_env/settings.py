@@ -127,6 +127,8 @@ class AppEnv(BaseSettings):
     triton_api_key: Optional[str] = None         # credential
     triton_timeout: float = 300.0
     triton_endpoint_cache_ttl: int = 300
+    # Global default for TLS certificate verification on inference clients.
+    inference_ssl_verify: bool = True
 
     # ── Per-service Triton endpoints (seeded into model_management_db) ──
     triton_endpoint_asr: str = ""

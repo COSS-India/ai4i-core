@@ -618,6 +618,11 @@
       "description": "Login (public)"
     },
     {
+      "endpoint": "POST:/api/v1/auth/guest/login",
+      "permissionRequired": null,
+      "description": "Guest login (public; GUEST_EMAIL and GUEST_PASSWORD env)"
+    },
+    {
       "endpoint": "POST:/api/v1/auth/register",
       "permissionRequired": null,
       "description": "Register (public)"
@@ -646,6 +651,16 @@
       "endpoint": "POST:/api/v1/auth/change-password",
       "permissionRequired": "users.update",
       "description": "Change password (requires users.update)"
+    },
+    {
+      "endpoint": "POST:/api/v1/auth/sessions/revoke-by-tenant/{tenant_id}",
+      "permissionRequired": null,
+      "description": "Admin-only: revoke all sessions for a tenant"
+    },
+    {
+      "endpoint": "POST:/api/v1/auth/sessions/revoke-by-users",
+      "permissionRequired": null,
+      "description": "Admin-only: revoke all sessions for selected users"
     },
     {
       "endpoint": "GET:/api/v1/auth/me",

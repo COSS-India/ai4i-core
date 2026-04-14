@@ -27,7 +27,7 @@ from app.services.role_service import RoleService
 from app.services.session_service import SessionService
 from app.services.token_service import TokenService
 
-from app.services.tenant_service import TenantService
+from app.services.tenant_service import TenantService, is_suspended_or_deactivated
 
 logger = logging.getLogger(__name__)
 
@@ -51,19 +51,8 @@ class AuthService:
         self._cache = cache_service
         self._tenants = tenant_service
 
-    def _is_suspended_or_deactivated(self, status_val: str | None) -> bool:
-        if not status_val:
-            return False
-        # Normalize for inconsistent storage formats (Enum string, whitespace, casing).
-        status = str(status_val).strip().upper()
-        # Handle cases like "TenantStatus.SUSPENDED"
-        if "." in status:
-            status = status.split(".")[-1]
-        return status in {"SUSPENDED", "DEACTIVATED"}
-
-    def _format_tenant_inactive_message(self, tenant_status: str) -> str:
-        # Keep punctuation/spacing exactly as requested.
-        return f"tenant is {tenant_status.lower()} , please contact your platform admin"
+    def _format_tenant_inactive_message(self) -> str:
+        return "Tenant access is restricted. Contact your administrator."
 
     def _format_user_inactive_message(self, user_status: str) -> str:
         # Keep spelling exactly as requested (including "cotact").
@@ -146,7 +135,7 @@ class AuthService:
                     tenant_status_attempted_fallback,
                     debug_info,
                 )
-        if self._is_suspended_or_deactivated(tenant_status):
+        if is_suspended_or_deactivated(tenant_status):
             logger.info(
                 "Blocking login: tenant suspended/deactivated (tenant_id=%s status=%s user_id=%s)",
                 tenant_id,
@@ -154,7 +143,7 @@ class AuthService:
                 user.id,
             )
             raise AuthorizationError(
-                message=self._format_tenant_inactive_message(str(tenant_status)),
+                message=self._format_tenant_inactive_message(),
                 code="TENANT_INACTIVE",
             )
 
@@ -169,7 +158,7 @@ class AuthService:
                 tenant_id,
                 user.id,
             )
-        if self._is_suspended_or_deactivated(tenant_user_status):
+        if is_suspended_or_deactivated(tenant_user_status):
             logger.info(
                 "Blocking login: tenant user suspended/deactivated (tenant_id=%s tenant_user_status=%s user_id=%s)",
                 tenant_id,

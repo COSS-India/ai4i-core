@@ -2,6 +2,7 @@
 
 import axios, { AxiosInstance } from 'axios';
 import { getJwtToken } from './api';
+import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 
 // Telemetry service runs on port 8084 (different from API gateway on 8080)
 const TELEMETRY_SERVICE_URL = process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL ;
@@ -32,7 +33,7 @@ observabilityClient.interceptors.request.use(
 // Add response interceptor for error logging
 observabilityClient.interceptors.response.use(
   (response: any) => response,
-  (error: any) => {
+  async (error: any) => {
     console.error('Observability API error:', {
       url: error.config?.url,
       status: error.response?.status,
@@ -40,6 +41,25 @@ observabilityClient.interceptors.response.use(
       data: error.response?.data,
       message: error.message,
     });
+    const status = error.response?.status;
+    const data = error.response?.data;
+    const tenantLifecycle =
+      typeof status === 'number' &&
+      responseIndicatesTenantSuspendedOrInactive(status, data);
+    if (
+      typeof window !== 'undefined' &&
+      (tenantLifecycle || status === 401 || status === 403)
+    ) {
+      try {
+        const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+        forceFrontendSessionEnd();
+      } catch {
+        const { default: authService } = await import('./authService');
+        authService.clearAuthTokens();
+        authService.clearStoredUser();
+        window.location.assign('/auth');
+      }
+    }
     return Promise.reject(error);
   }
 );

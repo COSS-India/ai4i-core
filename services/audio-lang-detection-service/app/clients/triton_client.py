@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from tritonclient.http import InferInput, InferRequestedOutput
 
@@ -14,6 +14,43 @@ logger = logging.getLogger(__name__)
 
 class AudioLangDetectionTritonClient(TritonClient):
     """Triton client with Audio Language Detection-specific I/O preparation."""
+
+    def send_triton_request(  # type: ignore[override]
+        self,
+        model_name: str,
+        inputs: List[InferInput],
+        outputs: List[InferRequestedOutput],
+        headers: Optional[Dict[str, str]] = None,
+        model_version: str = "1",
+        *,
+        trace_attributes: Optional[Dict[str, Union[str, int, float, bool]]] = None,
+        **kwargs: Any,
+    ):
+        """
+        Backward-compatible wrapper.
+
+        Some deployments still run an older `ai4icore_model_management.TritonClient`
+        without the `trace_attributes=` keyword. In that case, we retry without it.
+        """
+        try:
+            return super().send_triton_request(
+                model_name,
+                inputs,
+                outputs,
+                headers=headers,
+                model_version=model_version,
+                trace_attributes=trace_attributes,
+                **kwargs,
+            )
+        except TypeError:
+            return super().send_triton_request(
+                model_name,
+                inputs,
+                outputs,
+                headers=headers,
+                model_version=model_version,
+                **kwargs,
+            )
 
     def get_audio_lang_detection_io_for_triton(
         self, audio_base64: str
@@ -56,7 +93,15 @@ class AudioLangDetectionTritonClient(TritonClient):
             return empty_result
 
         inputs, outputs = self.get_audio_lang_detection_io_for_triton(audio_base64)
-        response = self.send_triton_request(model_name=model_name, inputs=inputs, outputs=outputs)
+        trace_attributes: Dict[str, object] = {
+            "audio-lang-detection.triton_inference.model_name": model_name,
+        }
+        response = self.send_triton_request(
+            model_name=model_name,
+            inputs=inputs,
+            outputs=outputs,
+            trace_attributes=trace_attributes,
+        )
 
         # Parse response
         language_code_result = response.as_numpy("LANGUAGE_CODE")

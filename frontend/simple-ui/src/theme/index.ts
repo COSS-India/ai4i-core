@@ -22,6 +22,19 @@ const customTheme = extendTheme({
       100: "#1A202C",
       200: "#2D3748",
     },
+    /** Primary “create” actions — terracotta solid (toolbar create buttons). */
+    create: {
+      50: "#fdf6f2",
+      100: "#fae8df",
+      200: "#f3d0c0",
+      300: "#e8b092",
+      400: "#d9895c",
+      500: "#C06C38",
+      600: "#a85a30",
+      700: "#8b4a28",
+      800: "#723d23",
+      900: "#5e331e",
+    },
   },
   fonts: {
     heading: "Inter, sans-serif",

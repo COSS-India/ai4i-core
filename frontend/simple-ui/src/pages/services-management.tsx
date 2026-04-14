@@ -24,7 +24,6 @@ import {
   Text,
   VStack,
   HStack,
-  useColorModeValue,
   Tabs,
   TabList,
   TabPanels,
@@ -38,7 +37,7 @@ import {
 } from "@chakra-ui/react";
 import Head from "next/head";
 import { SearchIcon, ViewIcon, DeleteIcon } from "@chakra-ui/icons";
-import { FaUpload } from "react-icons/fa";
+import { FaUpload, FaDownload } from "react-icons/fa";
 import { useRouter } from "next/router";
 import { useQueryClient } from "@tanstack/react-query";
 import React, { useState, useEffect, useRef, useMemo } from "react";
@@ -57,7 +56,12 @@ import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 import ConfirmDialog from "../components/common/ConfirmDialog";
-import { TableFilterToolbar, TablePaginationBar, TableSortHeader } from "../components/common/TableControls";
+import {
+  TableFilterToolbar,
+  TablePaginationBar,
+  TableSortHeader,
+  useAdminTableSurface,
+} from "../components/common/TableControls";
 
 type ModelSummary = {
   modelId?: string;
@@ -350,11 +354,8 @@ const ServicesManagementPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.query, models]);
 
-  const cardBg = useColorModeValue("white", "gray.800");
-  const cardBorder = useColorModeValue("gray.200", "gray.700");
-  const tableBg = useColorModeValue("white", "gray.800");
-  const tableHeaderBg = useColorModeValue("gray.50", "gray.700");
-  const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
+  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor: cardBorder } =
+    useAdminTableSurface();
 
   // Dropdown options: active models only (no deprecated). Include preselected from query only if not deprecated and not already in list.
   const preselectedNotDeprecated =
@@ -1101,7 +1102,7 @@ const ServicesManagementPage: React.FC = () => {
                                           <Tooltip label="Unpublish" placement="top" hasArrow>
                                             <IconButton
                                               aria-label="Unpublish"
-                                              icon={<FaUpload />}
+                                              icon={<FaDownload />}
                                               size="sm"
                                               variant="ghost"
                                               colorScheme="red"
@@ -1396,7 +1397,7 @@ const ServicesManagementPage: React.FC = () => {
                                       <Tooltip label="Unpublish" placement="top" hasArrow>
                                         <IconButton
                                           aria-label="Unpublish"
-                                          icon={<FaUpload />}
+                                          icon={<FaDownload />}
                                           size="sm"
                                           colorScheme="red"
                                           variant="outline"

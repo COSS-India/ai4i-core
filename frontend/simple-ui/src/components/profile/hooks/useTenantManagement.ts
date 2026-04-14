@@ -1,6 +1,7 @@
 // Tenant Management: state (model) + handlers (controller) for Multi Tenant tab
 
 import { useState, useEffect, useRef, useMemo } from "react";
+import { forceFrontendSessionEnd } from "../../../hooks/useAuth";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import * as multiTenantService from "../../../services/multiTenantService";
 import { extractErrorInfo } from "../../../utils/errorHandler";
@@ -46,6 +47,11 @@ function applyTenantStatusToUsers(users: TenantUserView[], tenantStatus?: string
   return users.map((u) => ({ ...u, status: tenantStatus }));
 }
 
+/** Auth role name for tenant administrators (matches auth-service / tenant list). */
+function isTenantAdminRoleForSessionEnd(role?: string): boolean {
+  return (role ?? "").trim().toUpperCase() === "TENANT ADMIN";
+}
+
 /** Keep only active services from /list/services response. */
 function getActiveServices(services: ServiceView[] | null | undefined): ServiceView[] {
   return (services ?? []).filter((svc) => svc?.is_active === true);
@@ -53,7 +59,7 @@ function getActiveServices(services: ServiceView[] | null | undefined): ServiceV
 
 export interface UseTenantManagementOptions {
   /** Current user from useAuth(); used to set initial sub-view and to filter list users by tenant */
-  user: { id?: number; is_superuser?: boolean; is_tenant?: boolean; tenant_id?: string | null } | null;
+  user: { id?: number; is_superuser?: boolean; is_tenant?: boolean; tenant_id?: string | null; roles?: string[] } | null;
 }
 
 export function useTenantManagement(options: UseTenantManagementOptions) {
@@ -676,7 +682,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const handleOpenUserStatus = (u: TenantUserView, newStatus: "ACTIVE" | "SUSPENDED" | "DEACTIVATED") => {
-    setStatusUpdateTarget({ type: "user", tenant_id: u.tenant_id, user_id: u.user_id, currentStatus: u.status });
+    setStatusUpdateTarget({ type: "user", tenant_id: u.tenant_id, user_id: u.user_id, currentStatus: u.status, role: u.role });
     setStatusUpdateNewStatus(newStatus);
     setIsStatusDialogOpen(true);
   };
@@ -699,6 +705,26 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           status: statusUpdateNewStatus as "ACTIVE" | "SUSPENDED" | "DEACTIVATED",
         });
         toast({ title: "User status updated", status: "success", isClosable: true });
+        const endedStatus = statusUpdateNewStatus === "SUSPENDED" || statusUpdateNewStatus === "DEACTIVATED";
+        const tenantAdminFromMe = Boolean(
+          user?.roles?.some((r) => (r ?? "").trim().toUpperCase() === "TENANT ADMIN")
+        );
+        const isCurrentTenantAdmin =
+          endedStatus &&
+          user?.id != null &&
+          statusUpdateTarget.user_id === user.id &&
+          (isTenantAdminRoleForSessionEnd(statusUpdateTarget.role) || tenantAdminFromMe);
+        if (isCurrentTenantAdmin) {
+          toast({
+            title: "Signed out",
+            description: "Your tenant admin account is no longer active. Sign in again when it is reactivated.",
+            status: "warning",
+            isClosable: true,
+            duration: 6000,
+          });
+          forceFrontendSessionEnd();
+          return;
+        }
         await refreshTenantAndUserLists(statusUpdateTarget.tenant_id);
       }
       setIsStatusDialogOpen(false);

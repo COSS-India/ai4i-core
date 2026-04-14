@@ -54,7 +54,7 @@ export const createModel = async (modelData: any): Promise<any> => {
     const response = await apiClient.post<any>('/api/v1/model-management/models', modelData);
     return response.data;
   } catch (error: any) {
-    console.error('Create model error:', error);
+    console.error('Register model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
     throw error;
   }
