@@ -19,7 +19,6 @@ import {
   FormErrorMessage,
   VStack,
   HStack,
-  useColorModeValue,
   Spinner,
   Center,
   Alert,
@@ -56,7 +55,12 @@ import { useAuth } from "../../hooks/useAuth";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import { TENANT_USER_ROLE_OPTIONS } from "./types";
 import ConfirmDialog from "../common/ConfirmDialog";
-import { TableFilterToolbar, TablePaginationBar, TableSortHeader } from "../common/TableControls";
+import {
+  TableFilterToolbar,
+  TablePaginationBar,
+  TableSortHeader,
+  useAdminTableSurface,
+} from "../common/TableControls";
 import StandardModal from "../common/StandardModal";
 import type { TenantUserView } from "../../types/multiTenant";
 
@@ -94,6 +98,9 @@ function TenantDetailUsersPanel(props: {
     onDeleteUser,
     TENANT_USER_ROLE_OPTIONS: roleOptions,
   } = props;
+
+  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor: panelBorder } =
+    useAdminTableSurface();
 
   const filtered = useMemo(() => {
     const norm = (s: string | undefined) => String(s ?? "").trim();
@@ -159,17 +166,17 @@ function TenantDetailUsersPanel(props: {
                   setUserSearch(e.target.value);
                   setListPage(1);
                 }}
-                bg="white"
+                bg={cardBg}
                 pl={10}
               />
             </InputGroup>
-        <Select size="sm" maxW="140px" value={userFilterRole} onChange={(e) => { setUserFilterRole(e.target.value); setListPage(1); }} bg="white">
+        <Select size="sm" maxW="140px" value={userFilterRole} onChange={(e) => { setUserFilterRole(e.target.value); setListPage(1); }} bg={cardBg}>
           <option value="all">All Roles</option>
           {roleOptions.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </Select>
-        <Select size="sm" maxW="140px" value={userFilterStatus} onChange={(e) => { setUserFilterStatus(e.target.value); setListPage(1); }} bg="white">
+        <Select size="sm" maxW="140px" value={userFilterStatus} onChange={(e) => { setUserFilterStatus(e.target.value); setListPage(1); }} bg={cardBg}>
           <option value="all">All Status</option>
           <option value="ACTIVE">Active</option>
           <option value="PENDING">Pending</option>
@@ -179,9 +186,9 @@ function TenantDetailUsersPanel(props: {
           </TableFilterToolbar>
         );
       })()}
-      <TableContainer>
-        <Table variant="simple" size="sm">
-          <Thead>
+      <TableContainer maxH="60vh" overflowY="auto">
+        <Table variant="simple" bg={tableBg} size="sm" w="100%">
+          <Thead bg={tableHeaderBg}>
             <Tr>
               <Th>
                 <TableSortHeader
@@ -202,7 +209,7 @@ function TenantDetailUsersPanel(props: {
           </Thead>
           <Tbody>
             {paginatedUsers.map((u) => (
-              <Tr key={u.id}>
+              <Tr key={u.id} _hover={{ bg: tableRowHoverBg }}>
                 <Td fontWeight="medium">{u.username || "—"}</Td>
                 <Td fontSize="sm">{u.email}</Td>
                 <Td><Badge colorScheme="blue" fontSize="xs">{u.role ?? "—"}</Badge></Td>
@@ -262,8 +269,8 @@ function TenantDetailUsersPanel(props: {
           onLast={() => setListPage(totalPages)}
           canPrev={listPage > 1}
           canNext={listPage < totalPages}
-          borderColor="gray.200"
-          bg="white"
+          borderColor={panelBorder}
+          bg={cardBg}
         />
       ) : (
         <Text fontSize="sm" color="gray.500">Showing 0 user(s)</Text>
@@ -281,9 +288,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
   const { user } = useAuth();
   const cancelRef = useRef<HTMLButtonElement>(null);
-  const cardBg = useColorModeValue("white", "gray.800");
-  const cardBorder = useColorModeValue("gray.200", "gray.700");
-  const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
+  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor: cardBorder } =
+    useAdminTableSurface();
 
   const tm = useTenantManagement({ user: user ?? null });
   const tenantUserAssignableRoleOptions = useMemo(
@@ -688,9 +694,9 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 </VStack>
               </Center>
             ) : (
-              <TableContainer>
-                <Table variant="simple" size="sm">
-                  <Thead>
+              <TableContainer maxH="60vh" overflowY="auto">
+                <Table variant="simple" bg={tableBg} size="sm" w="100%">
+                  <Thead bg={tableHeaderBg}>
                     <Tr>
                       <Th>
                         <TableSortHeader
@@ -797,9 +803,9 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
               </VStack>
             </Center>
           ) : (
-            <TableContainer>
-              <Table variant="simple" size="sm">
-                <Thead>
+            <TableContainer maxH="60vh" overflowY="auto">
+              <Table variant="simple" bg={tableBg} size="sm" w="100%">
+                <Thead bg={tableHeaderBg}>
                   <Tr>
                     <Th>
                       <TableSortHeader

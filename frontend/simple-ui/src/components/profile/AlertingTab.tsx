@@ -14,7 +14,6 @@ import {
   HStack,
   Text,
   VStack,
-  useColorModeValue,
   Spinner,
   Center,
   Alert,
@@ -102,7 +101,12 @@ import {
   LATENCY_THRESHOLD_UNITS,
   PERCENTAGE_UNIT,
 } from "../../types/alerting";
-import { TableFilterToolbar, TablePaginationBar, TableSortHeader } from "../common/TableControls";
+import {
+  TableFilterToolbar,
+  TablePaginationBar,
+  TableSortHeader,
+  useAdminTableSurface,
+} from "../common/TableControls";
 import StandardModal from "../common/StandardModal";
 
 const EVAL_INTERVALS = ["30s", "1m", "5m"] as const;
@@ -213,8 +217,8 @@ export interface AlertingTabProps {
 }
 
 export default function AlertingTab({ isActive = false }: AlertingTabProps) {
-  const cardBg = useColorModeValue("white", "gray.800");
-  const cardBorder = useColorModeValue("gray.200", "gray.700");
+  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor: cardBorder } =
+    useAdminTableSurface();
   const [subTabIndex, setSubTabIndex] = useState(0);
   const [createRuleDef, setCreateRuleDef] = useState("");
 
@@ -602,9 +606,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </VStack>
               </Center>
             ) : defs.filteredDefinitions.length > 0 ? (
-              <TableContainer>
-                <Table variant="simple" size="sm">
-                  <Thead>
+              <TableContainer maxH="60vh" overflowY="auto">
+                <Table variant="simple" bg={tableBg} size="sm" w="100%">
+                  <Thead bg={tableHeaderBg}>
                     <Tr>
                       <Th>
                         <TableSortHeader
@@ -628,7 +632,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     {paginatedDefinitions.map((d) => (
                       <Tr
                         key={d.id}
-                        _hover={{ bg: "gray.50" }}
+                        _hover={{ bg: tableRowHoverBg }}
                         transition="background 0.15s"
                       >
                         <Td fontWeight="semibold">{d.name}</Td>
@@ -1675,9 +1679,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </VStack>
               </Center>
             ) : sortedReceivers.length > 0 ? (
-              <TableContainer>
-                <Table variant="simple" size="sm">
-                  <Thead>
+              <TableContainer maxH="60vh" overflowY="auto">
+                <Table variant="simple" bg={tableBg} size="sm" w="100%">
+                  <Thead bg={tableHeaderBg}>
                     <Tr>
                       <Th>
                         <TableSortHeader
@@ -1700,7 +1704,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     {paginatedReceivers.map((r) => (
                       <Tr
                         key={r.id}
-                        _hover={{ bg: "gray.50" }}
+                        _hover={{ bg: tableRowHoverBg }}
                         transition="background 0.15s"
                       >
                         <Td fontWeight="semibold" fontSize="sm">{r.receiver_name}</Td>
@@ -2037,9 +2041,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             </VStack>
           </Center>
         ) : rules.filteredRules.length > 0 ? (
-          <TableContainer>
-            <Table variant="simple" size="sm" w="100%">
-              <Thead>
+          <TableContainer maxH="60vh" overflowY="auto">
+            <Table variant="simple" bg={tableBg} size="sm" w="100%">
+              <Thead bg={tableHeaderBg}>
                 <Tr>
                   <Th>
                     <TableSortHeader
@@ -2061,7 +2065,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 {paginatedRules.map((rule) => (
                     <Tr
                       key={rule.id}
-                      _hover={{ bg: "gray.50" }}
+                      _hover={{ bg: tableRowHoverBg }}
                       transition="background 0.15s"
                     >
                       <Td fontWeight="semibold">{rule.rule_name ?? rule.receiver_name}</Td>
@@ -2970,9 +2974,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </VStack>
               </Center>
             ) : history.items.length > 0 ? (
-              <TableContainer>
-                <Table variant="simple" size="sm">
-                  <Thead>
+              <TableContainer maxH="60vh" overflowY="auto">
+                <Table variant="simple" bg={tableBg} size="sm" w="100%">
+                  <Thead bg={tableHeaderBg}>
                     <Tr>
                       <Th>
                         <TableSortHeader
@@ -2993,7 +2997,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   </Thead>
                   <Tbody>
                     {sortedHistoryItems.map((row) => (
-                      <Tr key={row.id} _hover={{ bg: "gray.50" }} transition="background 0.15s">
+                      <Tr key={row.id} _hover={{ bg: tableRowHoverBg }} transition="background 0.15s">
                         <Td fontWeight="semibold" maxW="260px">
                           <Text noOfLines={2} title={row.name}>{row.name}</Text>
                         </Td>
