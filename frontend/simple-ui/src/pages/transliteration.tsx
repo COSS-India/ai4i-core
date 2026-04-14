@@ -289,7 +289,7 @@ const TransliterationPage: React.FC = () => {
                     value={sourceLanguage}
                     onChange={(e) => setSourceLanguage(e.target.value)}
                     placeholder="Select"
-                    isDisabled={fetching}
+                    isDisabled={fetching || !serviceId}
                     size="md"
                   >
                     {languageOptions.map((lang) => (
@@ -309,7 +309,7 @@ const TransliterationPage: React.FC = () => {
                     value={targetLanguage}
                     onChange={(e) => setTargetLanguage(e.target.value)}
                     placeholder="Select"
-                    isDisabled={fetching}
+                    isDisabled={fetching || !serviceId}
                     size="md"
                   >
                     {targetLanguageOptions.map((lang) => (
@@ -331,7 +331,7 @@ const TransliterationPage: React.FC = () => {
                     onChange={(e) => setInputText(e.target.value)}
                     placeholder="Enter text to transliterate..."
                     rows={6}
-                    isDisabled={fetching}
+                    isDisabled={fetching || !serviceId}
                     bg="white"
                     maxLength={MAX_TEXT_LENGTH}
                     borderColor={inputText.length > MAX_TEXT_LENGTH ? "red.400" : "gray.300"}

@@ -12,7 +12,6 @@ import {
   HStack,
   Text,
   VStack,
-  useColorModeValue,
   Spinner,
   Center,
   Alert,
@@ -41,8 +40,14 @@ import {
 } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
 import { useApiKeyManagementTab } from "./hooks/useApiKeyManagementTab";
+import { ViewIcon, EditIcon, DeleteIcon } from "@chakra-ui/icons";
 import UserSearchableSelect from "../common/UserSearchableSelect";
-import { TableFilterToolbar, TablePaginationBar, TableSortHeader } from "../common/TableControls";
+import {
+  TableFilterToolbar,
+  TablePaginationBar,
+  TableSortHeader,
+  useAdminTableSurface,
+} from "../common/TableControls";
 import StandardModal from "../common/StandardModal";
 
 export interface ApiKeyManagementTabProps {
@@ -58,8 +63,8 @@ export default function ApiKeyManagementTab({
 }: ApiKeyManagementTabProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const { user } = useAuth();
-  const cardBg = useColorModeValue("white", "gray.800");
-  const cardBorder = useColorModeValue("gray.200", "gray.700");
+  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor: cardBorder } =
+    useAdminTableSurface();
 
   const mgmt = useApiKeyManagementTab({
     user: user ?? null,
@@ -191,7 +196,7 @@ export default function ApiKeyManagementTab({
                           mgmt.setFilterPermission(e.target.value);
                           setListPage(1);
                         }}
-                        bg="white"
+                        bg={cardBg}
                       >
                         <option value="all">All Permissions</option>
                         {permissionOptions.map((perm) => (
@@ -213,7 +218,7 @@ export default function ApiKeyManagementTab({
                           mgmt.setFilterActive(e.target.value);
                           setListPage(1);
                         }}
-                        bg="white"
+                        bg={cardBg}
                       >
                         <option value="all">All</option>
                         <option value="active">Active</option>
@@ -233,9 +238,9 @@ export default function ApiKeyManagementTab({
                 </VStack>
               </Center>
             ) : mgmt.filteredApiKeys.length > 0 ? (
-              <TableContainer>
-                <Table variant="simple">
-                  <Thead>
+              <TableContainer maxH="60vh" overflowY="auto">
+                <Table variant="simple" bg={tableBg} size="sm" w="100%">
+                  <Thead bg={tableHeaderBg}>
                     <Tr>
                       <Th>
                         <TableSortHeader
@@ -267,7 +272,7 @@ export default function ApiKeyManagementTab({
                         key={key.id}
                         onClick={() => mgmt.handleOpenViewModal(key)}
                         cursor="pointer"
-                        _hover={{ bg: "gray.50" }}
+                        _hover={{ bg: tableRowHoverBg }}
                       >
                         <Td fontWeight="semibold">{key.key_name}</Td>
                         <Td>
@@ -305,48 +310,62 @@ export default function ApiKeyManagementTab({
                             ? new Date(key.expires_at).toLocaleDateString()
                             : "Never"}
                         </Td>
-                        <Td>
-                          <HStack spacing={2}>
-                            <Button
-                              size="xs"
-                              colorScheme="blue"
-                              variant="outline"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                mgmt.handleOpenViewModal(key);
-                              }}
-                            >
-                              View
-                            </Button>
+                        <Td onClick={(e) => e.stopPropagation()}>
+                          <HStack spacing={1}>
+                            <Tooltip label="View details" hasArrow placement="top">
+                              <IconButton
+                                aria-label="View API key"
+                                icon={<ViewIcon />}
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="blue"
+                                _hover={{ bg: "blue.50" }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  mgmt.handleOpenViewModal(key);
+                                }}
+                              />
+                            </Tooltip>
                             <Tooltip
                               hasArrow
-                              label="This API key has been revoked and cannot be reactivated."
-                              isDisabled={key.is_active}
+                              label={
+                                key.is_active
+                                  ? "Update key"
+                                  : "This API key has been revoked and cannot be updated."
+                              }
                             >
-                              <Button
-                                size="xs"
+                              <IconButton
+                                aria-label="Update API key"
+                                icon={<EditIcon />}
+                                size="sm"
+                                variant="ghost"
                                 colorScheme="green"
+                                _hover={{ bg: "green.50" }}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   mgmt.handleOpenUpdateModal(key);
                                 }}
                                 isDisabled={!key.is_active}
-                              >
-                                Update
-                              </Button>
+                              />
                             </Tooltip>
-                            <Button
-                              size="xs"
-                              colorScheme="red"
-                              variant="outline"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                mgmt.handleOpenRevokeModal(key);
-                              }}
-                              isDisabled={!key.is_active}
+                            <Tooltip
+                              hasArrow
+                              label={key.is_active ? "Revoke key" : "Already revoked"}
                             >
-                              Revoke
-                            </Button>
+                              <IconButton
+                                aria-label="Revoke API key"
+                                icon={<DeleteIcon />}
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="red"
+                                _hover={{ bg: "red.50" }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  mgmt.handleOpenRevokeModal(key);
+                                }}
+                                isDisabled={!key.is_active}
+                              />
+                            </Tooltip>
                           </HStack>
                         </Td>
                       </Tr>

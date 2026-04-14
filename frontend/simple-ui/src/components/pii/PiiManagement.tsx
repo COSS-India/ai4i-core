@@ -1,7 +1,57 @@
 import React, { useEffect, useState } from "react";
+import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  Badge,
+  Box,
+  Button,
+  Card,
+  CardBody,
+  Checkbox,
+  Flex,
+  FormControl,
+  FormLabel,
+  GridItem,
+  Heading,
+  HStack,
+  IconButton,
+  Input,
+  InputGroup,
+  InputLeftElement,
+  Select,
+  SimpleGrid,
+  Spinner,
+  Stack,
+  Tab,
+  Table,
+  TableContainer,
+  TabList,
+  TabPanel,
+  TabPanels,
+  Tabs,
+  Tbody,
+  Td,
+  Text,
+  Textarea,
+  Th,
+  Thead,
+  Tooltip,
+  Tr,
+  useColorModeValue,
+  useDisclosure,
+  useToast,
+  VStack,
+} from "@chakra-ui/react";
+import { DeleteIcon, EditIcon, SearchIcon } from "@chakra-ui/icons";
 import { piiService } from "../../services/piiService";
-import styles from "./PiiManagement.module.css";
-import { TableFilterToolbar, TablePaginationBar, TableSortHeader } from "../common/TableControls";
+import {
+  TableFilterToolbar,
+  TablePaginationBar,
+  TableSortHeader,
+  useAdminTableSurface,
+} from "../common/TableControls";
+import StandardModal from "../common/StandardModal";
 
 interface Rule {
   entity_type: string;
@@ -17,6 +67,8 @@ interface Domain {
 }
 
 type PageTab = "admin" | "audit";
+
+type TenantDomainMappingRow = { tenant_id: string; domain_id: string; updated_at?: string };
 
 interface AuditLogRow {
   id: number;
@@ -34,17 +86,41 @@ export interface PiiManagementProps {
   isAdmin?: boolean;
 }
 
+function actionBadgeColorScheme(action: string): string {
+  switch (action) {
+    case "MASK":
+      return "gray";
+    case "HASH":
+      return "red";
+    default:
+      return "blue";
+  }
+}
+
 export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+  const toast = useToast();
+  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor } = useAdminTableSurface();
+  const pageBg = useColorModeValue("gray.50", "gray.900");
+  const mutedText = useColorModeValue("gray.600", "gray.400");
+  const headingColor = useColorModeValue("gray.900", "white");
+  const readOnlyInputBg = useColorModeValue("gray.100", "gray.700");
+  const domainDetail = useDisclosure();
+  const ruleDetail = useDisclosure();
+  const mappingDetail = useDisclosure();
+  const auditTraceDetail = useDisclosure();
+  const [viewDomain, setViewDomain] = useState<Domain | null>(null);
+  const [viewRule, setViewRule] = useState<Rule | null>(null);
+  const [viewMapping, setViewMapping] = useState<TenantDomainMappingRow | null>(null);
+  const [auditDetailJson, setAuditDetailJson] = useState("");
+
   const [activeTab, setActiveTab] = useState<PageTab>("admin");
   const [allDomains, setAllDomains] = useState<Domain[]>([]);
   const [checkedDomains, setCheckedDomains] = useState<Set<string>>(new Set());
   const [newDomainId, setNewDomainId] = useState("");
   const [editingDomainId, setEditingDomainId] = useState<string | null>(null);
   const [editingRules, setEditingRules] = useState<Rule[]>([]);
-  const [tenantMappings, setTenantMappings] = useState<
-    { tenant_id: string; domain_id: string; updated_at?: string }[]
-  >([]);
+  const [tenantMappings, setTenantMappings] = useState<TenantDomainMappingRow[]>([]);
   const [newMapTenantId, setNewMapTenantId] = useState("");
   const [newMapDomainId, setNewMapDomainId] = useState("");
   const [newEntity, setNewEntity] = useState("");
@@ -71,8 +147,6 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
     void fetchAuditLogs();
   }, [isAdmin, activeTab]);
 
-  // Loads domains + tenant mappings on admin-tab entry (mount and when returning from Audit).
-  // Replaces a plain mount effect calling fetchAllDomains/fetchTenantMappings; uses retry + adminDataError.
   useEffect(() => {
     if (!isAdmin || activeTab !== "admin") return;
     void refreshAdminDataWithRetry();
@@ -95,10 +169,20 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const applyActiveDomains = async () => {
     try {
       await piiService.activateDomains(Array.from(checkedDomains));
-      alert("Domain activation updated.");
+      toast({
+        title: "Domain activation updated",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
       await fetchAllDomains();
     } catch {
-      alert("Failed to apply domains");
+      toast({
+        title: "Failed to apply domains",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     }
   };
 
@@ -127,29 +211,48 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const handleSaveTenantMapping = async () => {
     const tid = newMapTenantId.trim();
     if (!tid || !newMapDomainId) {
-      alert("Enter tenant ID and choose a domain");
+      toast({
+        title: "Enter tenant ID and choose a domain",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
       return;
     }
     try {
       await piiService.upsertTenantDomainMapping(tid, newMapDomainId);
       setNewMapTenantId("");
       await fetchTenantMappings();
-    } catch (e) {
-      alert("Failed to save mapping (check domain exists and permissions)");
+      toast({
+        title: "Mapping saved",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+    } catch {
+      toast({
+        title: "Failed to save mapping (check domain exists and permissions)",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     }
   };
 
-  const handleDeleteTenantMapping = async (tenantId: string) => {
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(`Remove mapping for tenant "${tenantId}"?`)
-    )
+  const handleDeleteTenantMapping = async (tenantId: string, onSuccess?: () => void) => {
+    if (typeof window !== "undefined" && !window.confirm(`Remove mapping for tenant "${tenantId}"?`))
       return;
     try {
       await piiService.deleteTenantDomainMapping(tenantId);
       await fetchTenantMappings();
-    } catch (e) {
-      alert("Failed to delete mapping");
+      onSuccess?.();
+    } catch {
+      toast({
+        title: "Failed to delete mapping",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     }
   };
 
@@ -157,10 +260,21 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
     if (!newDomainId) return;
     try {
       await piiService.createDomain(newDomainId);
-      setNewDomainId('');
+      setNewDomainId("");
       await fetchAllDomains();
+      toast({
+        title: "Domain created",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
     } catch {
-      alert("Failed to create domain");
+      toast({
+        title: "Failed to create domain",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     }
   };
 
@@ -171,7 +285,12 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       const rules = Array.isArray(res.data.rules) ? (res.data.rules as Rule[]) : [];
       setEditingRules(rules);
     } catch {
-      alert("Failed to load policy");
+      toast({
+        title: "Failed to load policy",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     }
   };
 
@@ -180,29 +299,60 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       const res = await piiService.generateRegex(newExample);
       setNewRegex(res.data.regex);
     } catch {
-      alert("Regex generation failed");
+      toast({
+        title: "Regex generation failed",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     }
   };
 
   const addCustomRule = () => {
-    if (!newEntity) return alert("Entity name required");
+    if (!newEntity) {
+      toast({
+        title: "Entity name required",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
     const rule: Rule = { entity_type: newEntity.toUpperCase(), action: newAction, config: {} };
     if (newRegex.trim()) rule.custom_regex = newRegex;
-    
+
     setEditingRules([...editingRules, rule]);
-    setNewEntity('');
-    setNewRegex('');
-    setNewExample('');
+    setNewEntity("");
+    setNewRegex("");
+    setNewExample("");
   };
 
   const saveConfig = async () => {
-    if (!editingDomainId) return alert("Select a domain to edit");
+    if (!editingDomainId) {
+      toast({
+        title: "Select a domain to edit",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
     try {
       await piiService.deployRules(editingDomainId, editingRules);
-      alert("Policy rules saved.");
+      toast({
+        title: "Policy rules saved",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
       await fetchAllDomains();
     } catch {
-      alert("Save failed");
+      toast({
+        title: "Save failed",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     }
   };
 
@@ -212,28 +362,28 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       const res = await piiService.getAuditLogs(100);
       setAuditLogs(res.data);
     } catch {
-      alert("Failed to load audit logs");
+      toast({
+        title: "Failed to load audit logs",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
     } finally {
       setAuditLoading(false);
     }
   };
 
-  const removeRule = (index: number) => {
-    setEditingRules(editingRules.filter((_, i) => i !== index));
-  };
-
-  const getActionBadgeColor = (action: string) => {
-    switch (action) {
-      case 'MASK': return 'bg-gray-800 text-white';
-      case 'HASH': return 'bg-red-600 text-white';
-      default: return 'bg-gray-200 text-gray-800';
-    }
+  /** Remove by object identity — matches row in sorted/paginated view to `editingRules`. */
+  const removeRuleForRow = (rule: Rule) => {
+    setEditingRules((prev) => prev.filter((x) => x !== rule));
   };
 
   const activeDomainCount = allDomains.filter((d) => d.is_active).length;
 
   const sortedRules = [...editingRules].sort((a, b) => {
-    const nameCmp = (a.entity_type ?? "").localeCompare(b.entity_type ?? "", undefined, { sensitivity: "base" });
+    const nameCmp = (a.entity_type ?? "").localeCompare(b.entity_type ?? "", undefined, {
+      sensitivity: "base",
+    });
     return rulesSortDirection === "asc" ? nameCmp : -nameCmp;
   });
   const rulesTotal = sortedRules.length;
@@ -245,17 +395,24 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const filteredMappings = tenantMappings.filter((row) => {
     const q = mappingSearch.trim().toLowerCase();
     if (!q) return true;
-    return (row.tenant_id ?? "").toLowerCase().includes(q) || (row.domain_id ?? "").toLowerCase().includes(q);
+    return (
+      (row.tenant_id ?? "").toLowerCase().includes(q) || (row.domain_id ?? "").toLowerCase().includes(q)
+    );
   });
   const sortedMappings = [...filteredMappings].sort((a, b) => {
-    const nameCmp = (a.tenant_id ?? "").localeCompare(b.tenant_id ?? "", undefined, { sensitivity: "base" });
+    const nameCmp = (a.tenant_id ?? "").localeCompare(b.tenant_id ?? "", undefined, {
+      sensitivity: "base",
+    });
     return mappingSortDirection === "asc" ? nameCmp : -nameCmp;
   });
   const mappingsTotal = sortedMappings.length;
   const mappingsTotalPages = Math.max(1, Math.ceil(mappingsTotal / mappingPageSize));
   const mappingsStartRow = mappingsTotal === 0 ? 0 : (mappingPage - 1) * mappingPageSize + 1;
   const mappingsEndRow = Math.min(mappingPage * mappingPageSize, mappingsTotal);
-  const paginatedMappings = sortedMappings.slice((mappingPage - 1) * mappingPageSize, mappingPage * mappingPageSize);
+  const paginatedMappings = sortedMappings.slice(
+    (mappingPage - 1) * mappingPageSize,
+    mappingPage * mappingPageSize
+  );
 
   const filteredAuditLogs = auditLogs.filter((row) => {
     const q = auditSearch.trim().toLowerCase();
@@ -276,7 +433,10 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const auditTotalPages = Math.max(1, Math.ceil(auditTotal / auditPageSize));
   const auditStartRow = auditTotal === 0 ? 0 : (auditPage - 1) * auditPageSize + 1;
   const auditEndRow = Math.min(auditPage * auditPageSize, auditTotal);
-  const paginatedAuditLogs = sortedAuditLogs.slice((auditPage - 1) * auditPageSize, auditPage * auditPageSize);
+  const paginatedAuditLogs = sortedAuditLogs.slice(
+    (auditPage - 1) * auditPageSize,
+    auditPage * auditPageSize
+  );
 
   useEffect(() => {
     if (rulesPage > rulesTotalPages) setRulesPage(rulesTotalPages);
@@ -290,418 +450,930 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
     if (auditPage > auditTotalPages) setAuditPage(auditTotalPages);
   }, [auditPage, auditTotalPages]);
 
+  const tabIndex = activeTab === "admin" ? 0 : 1;
+
+  const openDomainDetail = (d: Domain) => {
+    setViewDomain(d);
+    domainDetail.onOpen();
+  };
+  const closeDomainDetail = () => {
+    domainDetail.onClose();
+    setViewDomain(null);
+  };
+  const openRuleDetail = (r: Rule) => {
+    setViewRule(r);
+    ruleDetail.onOpen();
+  };
+  const closeRuleDetail = () => {
+    ruleDetail.onClose();
+    setViewRule(null);
+  };
+  const openMappingDetail = (m: TenantDomainMappingRow) => {
+    setViewMapping(m);
+    mappingDetail.onOpen();
+  };
+  const closeMappingDetail = () => {
+    mappingDetail.onClose();
+    setViewMapping(null);
+  };
+  const openAuditTraceDetail = (row: AuditLogRow) => {
+    try {
+      setAuditDetailJson(JSON.stringify(row.trace_json ?? row, null, 2));
+    } catch {
+      setAuditDetailJson(String(row.trace_json ?? ""));
+    }
+    auditTraceDetail.onOpen();
+  };
+  const closeAuditTraceDetail = () => {
+    auditTraceDetail.onClose();
+    setAuditDetailJson("");
+  };
+
   if (!isAdmin) {
     return (
-      <div className={`${styles.root} p-6 bg-gray-50 min-h-screen font-sans`}>
-        <div className="bg-white p-5 rounded-lg border shadow-sm">
-          <h2 className="text-sm font-bold text-gray-800 mb-2">PII Management</h2>
-          <p className="text-sm text-gray-600">
-            You do not have access to this page. Admin permissions are required.
-          </p>
-        </div>
-      </div>
+      <Box bg={pageBg} minH="100vh" p={6}>
+        <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+          <CardBody>
+            <Heading size="sm" mb={2}>
+              PII Management
+            </Heading>
+            <Text fontSize="sm" color={mutedText}>
+              You do not have access to this page. Admin permissions are required.
+            </Text>
+          </CardBody>
+        </Card>
+      </Box>
     );
   }
 
   return (
-    <div className={`${styles.root} p-6 bg-gray-50 min-h-screen font-sans`}>
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">PII Management</h1>
-          <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full font-semibold">
+    <Box bg={pageBg} minH="100vh" p={6}>
+      <HStack justify="space-between" mb={2} flexWrap="wrap" gap={2}>
+        <Box>
+          <Heading size="lg" color={headingColor}>
+            PII Management
+          </Heading>
+          <Badge colorScheme="blue" mt={2} fontSize="xs">
             Admin Console
-          </span>
-        </div>
-      </div>
+          </Badge>
+        </Box>
+      </HStack>
 
-      <div className="flex border-b mb-6 space-x-4">
-        <button
-          type="button"
-          className={`pb-2 px-4 font-semibold ${activeTab === 'admin' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
-          onClick={() => setActiveTab('admin')}
-        >
-          Admin
-        </button>
-        <button
-          type="button"
-          className={`pb-2 px-4 font-semibold ${activeTab === 'audit' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
-          onClick={() => setActiveTab('audit')}
-        >
-          Audit Logs
-        </button>
-      </div>
+      <Tabs
+        index={tabIndex}
+        onChange={(i) => setActiveTab(i === 0 ? "admin" : "audit")}
+        colorScheme="blue"
+        variant="enclosed"
+        mt={6}
+      >
+        <TabList>
+          <Tab fontWeight="semibold">Admin</Tab>
+          <Tab fontWeight="semibold">Audit Logs</Tab>
+        </TabList>
 
-      {activeTab === "admin" ? (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-white p-5 rounded-lg border shadow-sm flex flex-col h-[600px]">
-            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 border-b pb-2">
-              Domain Inventory
-            </h2>
-            <div className="flex-1 overflow-y-auto space-y-2 mb-4">
-              {allDomains.map((d) => (
-                <div key={d.domain_id} className="flex justify-between items-center p-2 border rounded hover:bg-gray-50">
-                  <div className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      checked={checkedDomains.has(d.domain_id)}
-                      onChange={() => handleToggleDomainActivate(d.domain_id)}
+        <TabPanels>
+          <TabPanel px={0} pt={6}>
+            <SimpleGrid columns={{ base: 1, md: 3 }} spacing={6}>
+              <Card bg={cardBg} borderWidth="1px" borderColor={borderColor} h={{ base: "auto", md: "600px" }}>
+                <CardBody display="flex" flexDirection="column" h="full">
+                  <Text fontSize="xs" fontWeight="bold" color={mutedText} textTransform="uppercase" letterSpacing="wider" borderBottomWidth="1px" borderColor={borderColor} pb={2} mb={4}>
+                    Domain Inventory
+                  </Text>
+                  <VStack align="stretch" spacing={2} flex="1" overflowY="auto" mb={4}>
+                    {allDomains.map((d) => (
+                      <HStack
+                        key={d.domain_id}
+                        justify="space-between"
+                        p={2}
+                        borderWidth="1px"
+                        borderRadius="md"
+                        borderColor={borderColor}
+                        _hover={{ bg: tableRowHoverBg }}
+                        cursor="pointer"
+                        onClick={() => openDomainDetail(d)}
+                      >
+                        <HStack spacing={3} flex="1" minW={0}>
+                          <Box onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              isChecked={checkedDomains.has(d.domain_id)}
+                              onChange={() => handleToggleDomainActivate(d.domain_id)}
+                            />
+                          </Box>
+                          <Text fontWeight="semibold" fontSize="sm" noOfLines={1}>
+                            {d.domain_id.toUpperCase()}
+                          </Text>
+                        </HStack>
+                        <Box onClick={(e) => e.stopPropagation()}>
+                          <Tooltip label="Edit policy rules" hasArrow placement="top">
+                            <IconButton
+                              aria-label="Edit policy rules for domain"
+                              icon={<EditIcon />}
+                              size="sm"
+                              variant="ghost"
+                              colorScheme="blue"
+                              _hover={{ bg: "blue.50" }}
+                              onClick={() => void loadDomainConfig(d.domain_id)}
+                            />
+                          </Tooltip>
+                        </Box>
+                      </HStack>
+                    ))}
+                  </VStack>
+                  <Button
+                    colorScheme="gray"
+                    isDisabled={checkedDomains.size === 0}
+                    onClick={() => void applyActiveDomains()}
+                    mb={4}
+                  >
+                    Apply Active Domains ({checkedDomains.size})
+                  </Button>
+                  <Box borderTopWidth="1px" borderColor={borderColor} pt={4}>
+                    <Input
+                      size="sm"
+                      placeholder="New domain id"
+                      mb={2}
+                      bg={cardBg}
+                      value={newDomainId}
+                      onChange={(e) => setNewDomainId(e.target.value)}
                     />
-                    <span className="font-semibold text-sm cursor-pointer" onClick={() => loadDomainConfig(d.domain_id)}>
-                      {d.domain_id.toUpperCase()}
-                    </span>
-                  </div>
-                  <button className="text-xs text-blue-600 hover:bg-blue-50 p-1 rounded" onClick={() => loadDomainConfig(d.domain_id)}>
-                    Edit
-                  </button>
-                </div>
-              ))}
-            </div>
-            <button
-              disabled={checkedDomains.size === 0}
-              onClick={applyActiveDomains}
-              className="w-full bg-gray-800 text-white font-bold py-2 rounded disabled:opacity-50 mb-4"
-            >
-              Apply Active Domains ({checkedDomains.size})
-            </button>
-            <div className="border-t pt-4">
-              <input
-                type="text"
-                placeholder="New domain id"
-                className="w-full border rounded p-2 text-sm mb-2"
-                value={newDomainId}
-                onChange={(e) => setNewDomainId(e.target.value)}
-              />
-              <button onClick={handleCreateDomain} className="w-full border border-gray-800 text-gray-800 font-bold py-1.5 rounded text-sm hover:bg-gray-50">
-                Create Domain
-              </button>
-            </div>
-          </div>
+                    <Button size="sm" variant="outline" w="full" onClick={() => void handleCreateDomain()}>
+                      Create Domain
+                    </Button>
+                  </Box>
+                </CardBody>
+              </Card>
 
-          <div className="md:col-span-2 bg-white p-5 rounded-lg border shadow-sm h-[600px] flex flex-col">
-            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 border-b pb-2 flex justify-between items-center">
-              <span>Policy Rules</span>
-              {editingDomainId && <span className="bg-yellow-100 text-yellow-800 px-2 rounded normal-case tracking-normal">Editing: {editingDomainId}</span>}
-            </h2>
+              <GridItem colSpan={{ base: 1, md: 2 }}>
+                <Card bg={cardBg} borderWidth="1px" borderColor={borderColor} h={{ base: "auto", md: "600px" }}>
+                  <CardBody display="flex" flexDirection="column" h="full">
+                    <HStack justify="space-between" borderBottomWidth="1px" borderColor={borderColor} pb={2} mb={4} flexWrap="wrap">
+                      <Text fontSize="xs" fontWeight="bold" color={mutedText} textTransform="uppercase" letterSpacing="wider">
+                        Policy Rules
+                      </Text>
+                      {editingDomainId ? (
+                        <Badge colorScheme="yellow">Editing: {editingDomainId}</Badge>
+                      ) : null}
+                    </HStack>
 
-            <div className="flex-1 overflow-y-auto border rounded bg-gray-50 p-2 mb-4">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-gray-200">
-                  <tr>
-                    <th className="p-2">
-                      <TableSortHeader
-                        label="Entity"
-                        direction={rulesSortDirection}
-                        onAsc={() => { setRulesSortDirection("asc"); setRulesPage(1); }}
-                        onDesc={() => { setRulesSortDirection("desc"); setRulesPage(1); }}
-                        ascAriaLabel="Sort rules by entity ascending"
-                        descAriaLabel="Sort rules by entity descending"
+                    <TableContainer flex="1" maxH="280px" overflowY="auto" mb={4} borderWidth="1px" borderRadius="md" borderColor={borderColor}>
+                      <Table variant="simple" bg={tableBg} size="sm" w="100%">
+                        <Thead bg={tableHeaderBg}>
+                          <Tr>
+                            <Th>
+                              <TableSortHeader
+                                label="Entity"
+                                direction={rulesSortDirection}
+                                onAsc={() => {
+                                  setRulesSortDirection("asc");
+                                  setRulesPage(1);
+                                }}
+                                onDesc={() => {
+                                  setRulesSortDirection("desc");
+                                  setRulesPage(1);
+                                }}
+                                ascAriaLabel="Sort rules by entity ascending"
+                                descAriaLabel="Sort rules by entity descending"
+                              />
+                            </Th>
+                            <Th>Action</Th>
+                            <Th textAlign="right">Delete</Th>
+                          </Tr>
+                        </Thead>
+                        <Tbody>
+                          {paginatedRules.map((r) => (
+                            <Tr
+                              key={`${r.entity_type}-${r.action}-${r.custom_regex ?? ""}`}
+                              cursor="pointer"
+                              _hover={{ bg: tableRowHoverBg }}
+                              onClick={() => openRuleDetail(r)}
+                            >
+                              <Td fontWeight="bold">{r.entity_type}</Td>
+                              <Td>
+                                <Badge colorScheme={actionBadgeColorScheme(r.action)} fontSize="xs">
+                                  {r.action}
+                                </Badge>
+                              </Td>
+                              <Td textAlign="right" onClick={(e) => e.stopPropagation()}>
+                                <Tooltip label="Remove rule" hasArrow>
+                                  <IconButton
+                                    aria-label="Remove rule"
+                                    icon={<DeleteIcon />}
+                                    size="sm"
+                                    variant="ghost"
+                                    colorScheme="red"
+                                    _hover={{ bg: "red.50" }}
+                                    onClick={() => removeRuleForRow(r)}
+                                  />
+                                </Tooltip>
+                              </Td>
+                            </Tr>
+                          ))}
+                          {rulesTotal === 0 ? (
+                            <Tr>
+                              <Td colSpan={3} textAlign="center" color={mutedText} py={6}>
+                                No rules configured for this domain.
+                              </Td>
+                            </Tr>
+                          ) : null}
+                        </Tbody>
+                      </Table>
+                    </TableContainer>
+
+                    {rulesTotal > 0 ? (
+                      <TablePaginationBar
+                        startRow={rulesStartRow}
+                        endRow={rulesEndRow}
+                        totalItems={rulesTotal}
+                        page={rulesPage}
+                        totalPages={rulesTotalPages}
+                        pageSize={rulesPageSize}
+                        pageSizeOptions={PAGE_SIZE_OPTIONS}
+                        onPageSizeChange={(value) => {
+                          setRulesPageSize(value);
+                          setRulesPage(1);
+                        }}
+                        onFirst={() => setRulesPage(1)}
+                        onPrev={() => setRulesPage((p) => Math.max(1, p - 1))}
+                        onNext={() => setRulesPage((p) => Math.min(rulesTotalPages, p + 1))}
+                        onLast={() => setRulesPage(rulesTotalPages)}
+                        canPrev={rulesPage > 1}
+                        canNext={rulesPage < rulesTotalPages}
+                        borderColor={borderColor}
+                        bg={cardBg}
                       />
-                    </th>
-                    <th className="p-2">Action</th>
-                    <th className="p-2">Delete</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginatedRules.map((r, i) => (
-                    <tr key={i} className="border-b bg-white">
-                      <td className="p-2 font-bold">{r.entity_type}</td>
-                      <td className="p-2"><span className="border bg-gray-100 px-2 rounded text-xs">{r.action}</span></td>
-                      <td className="p-2">
-                        <button onClick={() => removeRule((rulesPage - 1) * rulesPageSize + i)} className="text-red-500 hover:underline text-xs">Delete</button>
-                      </td>
-                    </tr>
-                  ))}
-                  {rulesTotal === 0 && (
-                    <tr><td colSpan={3} className="text-center p-4 text-gray-400">No rules configured for this domain.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            {rulesTotal > 0 ? (
-              <TablePaginationBar
-                startRow={rulesStartRow}
-                endRow={rulesEndRow}
-                totalItems={rulesTotal}
-                page={rulesPage}
-                totalPages={rulesTotalPages}
-                pageSize={rulesPageSize}
-                pageSizeOptions={PAGE_SIZE_OPTIONS}
-                onPageSizeChange={(value) => { setRulesPageSize(value); setRulesPage(1); }}
-                onFirst={() => setRulesPage(1)}
-                onPrev={() => setRulesPage((p) => Math.max(1, p - 1))}
-                onNext={() => setRulesPage((p) => Math.min(rulesTotalPages, p + 1))}
-                onLast={() => setRulesPage(rulesTotalPages)}
-                canPrev={rulesPage > 1}
-                canNext={rulesPage < rulesTotalPages}
-                borderColor="#e2e8f0"
-                bg="white"
-              />
-            ) : null}
+                    ) : null}
 
-            <div className="border rounded p-4 mb-4 bg-white">
-              <h6 className="text-sm font-bold text-blue-600 mb-3">Add Custom Rule</h6>
-              <div className="grid grid-cols-12 gap-2 mb-2">
-                <input type="text" placeholder="Entity (e.g., PASSPORT)" className="col-span-3 border rounded px-2 py-1 text-sm" value={newEntity} onChange={e => setNewEntity(e.target.value)} />
-                <select className="col-span-3 border rounded px-2 py-1 text-sm" value={newAction} onChange={e => setNewAction(e.target.value)}>
-                  <option>REDACT_TAG</option><option>MASK</option><option>HASH</option>
-                </select>
-                <div className="col-span-6 flex">
-                  <input type="text" placeholder="AI Example (e.g., A1234567)" className="flex-1 border rounded-l px-2 py-1 text-sm" value={newExample} onChange={e => setNewExample(e.target.value)} />
-                  <button onClick={generateRegex} className="bg-gray-200 border border-l-0 rounded-r px-3 text-sm hover:bg-gray-300">Generate Regex</button>
-                </div>
-              </div>
-              <input type="text" placeholder="Generated Regex / Pattern" readOnly className="w-full border rounded px-2 py-1 text-sm bg-gray-100 font-mono mb-2" value={newRegex} />
-              <button onClick={addCustomRule} className="w-full border border-blue-600 text-blue-600 py-1 rounded hover:bg-blue-50 text-sm font-semibold">
-                Add Rule
-              </button>
-            </div>
+                    <Box borderWidth="1px" borderRadius="md" borderColor={borderColor} p={4} mb={4} bg={cardBg}>
+                      <Text fontSize="sm" fontWeight="bold" color="blue.500" mb={3}>
+                        Add Custom Rule
+                      </Text>
+                      <SimpleGrid columns={{ base: 1, md: 12 }} spacing={2} mb={2}>
+                        <GridItem colSpan={{ base: 1, md: 3 }}>
+                          <Input
+                            size="sm"
+                            placeholder="Entity (e.g., PASSPORT)"
+                            value={newEntity}
+                            onChange={(e) => setNewEntity(e.target.value)}
+                            bg={cardBg}
+                          />
+                        </GridItem>
+                        <GridItem colSpan={{ base: 1, md: 3 }}>
+                          <Select size="sm" value={newAction} onChange={(e) => setNewAction(e.target.value)} bg={cardBg}>
+                            <option>REDACT_TAG</option>
+                            <option>MASK</option>
+                            <option>HASH</option>
+                          </Select>
+                        </GridItem>
+                        <GridItem colSpan={{ base: 1, md: 6 }}>
+                          <HStack
+                            spacing={3}
+                            align="stretch"
+                            flexWrap={{ base: "wrap", md: "nowrap" }}
+                          >
+                            <Input
+                              size="sm"
+                              flex="1"
+                              minW={{ base: "100%", md: "140px" }}
+                              placeholder="AI Example (e.g., A1234567)"
+                              value={newExample}
+                              onChange={(e) => setNewExample(e.target.value)}
+                              bg={cardBg}
+                            />
+                            <Button
+                              size="sm"
+                              colorScheme="orange"
+                              flexShrink={0}
+                              whiteSpace="nowrap"
+                              px={4}
+                              onClick={() => void generateRegex()}
+                            >
+                              Generate Regex
+                            </Button>
+                          </HStack>
+                        </GridItem>
+                      </SimpleGrid>
+                      <Input
+                        size="sm"
+                        placeholder="Generated Regex / Pattern"
+                        readOnly
+                        fontFamily="mono"
+                        mb={2}
+                        bg={readOnlyInputBg}
+                        value={newRegex}
+                      />
+                      <Button size="sm" variant="outline" colorScheme="blue" w="full" onClick={addCustomRule}>
+                        Add Rule
+                      </Button>
+                    </Box>
 
-            <button onClick={saveConfig} className="w-full bg-green-600 text-white font-bold py-2 rounded hover:bg-green-700">
-              Save Policy
-            </button>
-          </div>
+                    <Button colorScheme="green" onClick={() => void saveConfig()}>
+                      Save Policy
+                    </Button>
+                  </CardBody>
+                </Card>
+              </GridItem>
 
-          <div className="md:col-span-3 bg-white p-5 rounded-lg border shadow-sm overflow-x-auto">
-            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4 border-b pb-2">
-              Tenant to Domain Mapping
-            </h2>
-            <div className="flex flex-col sm:flex-row gap-3 items-end flex-wrap mb-4">
-              <div className="flex-1 min-w-[200px]">
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Tenant ID</label>
-                <input
-                  type="text"
-                  placeholder="tenant uuid/slug"
-                  className="w-full border rounded p-2 text-sm"
-                  value={newMapTenantId}
-                  onChange={(e) => setNewMapTenantId(e.target.value)}
-                />
-              </div>
-              <div className="flex-1 min-w-[200px]">
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Domain</label>
-                <select
-                  className="w-full border rounded p-2 text-sm"
-                  value={newMapDomainId}
-                  onChange={(e) => setNewMapDomainId(e.target.value)}
-                >
-                  <option value="">Select domain</option>
-                  {allDomains.map((d) => (
-                    <option key={d.domain_id} value={d.domain_id}>
-                      {d.domain_id}
-                      {d.is_active ? " (active)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <button type="button" onClick={() => void handleSaveTenantMapping()} className="bg-blue-600 text-white font-semibold px-4 py-2 rounded hover:bg-blue-700 text-sm">
-                Save
-              </button>
-              <button type="button" onClick={() => void refreshAdminDataWithRetry()} className="border border-gray-300 px-4 py-2 rounded text-sm hover:bg-gray-50">
-                Refresh
-              </button>
-            </div>
-            {adminDataError ? (
-              <div className="p-2 mb-2 text-xs rounded bg-red-50 text-red-600 border border-red-200">
-                {adminDataError}
-              </div>
-            ) : null}
-            <TableFilterToolbar
-              hasActiveFilters={!!mappingSearch.trim()}
-              onClear={() => { setMappingSearch(""); setMappingPage(1); }}
-            >
-              <input
-                type="text"
-                placeholder="Search tenant or domain..."
-                className="border rounded p-2 text-sm min-w-[240px]"
-                value={mappingSearch}
-                onChange={(e) => { setMappingSearch(e.target.value); setMappingPage(1); }}
-              />
-            </TableFilterToolbar>
-            <table className="w-full text-left text-sm">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="p-2">
-                    <TableSortHeader
-                      label="Tenant ID"
-                      direction={mappingSortDirection}
-                      onAsc={() => { setMappingSortDirection("asc"); setMappingPage(1); }}
-                      onDesc={() => { setMappingSortDirection("desc"); setMappingPage(1); }}
-                      ascAriaLabel="Sort mappings by tenant ascending"
-                      descAriaLabel="Sort mappings by tenant descending"
+              <GridItem colSpan={{ base: 1, md: 3 }}>
+                <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                  <CardBody>
+                    <Text fontSize="xs" fontWeight="bold" color={mutedText} textTransform="uppercase" letterSpacing="wider" borderBottomWidth="1px" borderColor={borderColor} pb={2} mb={4}>
+                      Tenant to Domain Mapping
+                    </Text>
+                    <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3} mb={4}>
+                      <FormControl>
+                        <FormLabel fontSize="xs">Tenant ID</FormLabel>
+                        <Input
+                          size="sm"
+                          placeholder="tenant uuid/slug"
+                          value={newMapTenantId}
+                          onChange={(e) => setNewMapTenantId(e.target.value)}
+                          bg={cardBg}
+                        />
+                      </FormControl>
+                      <FormControl>
+                        <FormLabel fontSize="xs">Domain</FormLabel>
+                        <Select
+                          size="sm"
+                          placeholder="Select domain"
+                          value={newMapDomainId}
+                          onChange={(e) => setNewMapDomainId(e.target.value)}
+                          bg={cardBg}
+                        >
+                          <option value="">Select domain</option>
+                          {allDomains.map((d) => (
+                            <option key={d.domain_id} value={d.domain_id}>
+                              {d.domain_id}
+                              {d.is_active ? " (active)" : ""}
+                            </option>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </SimpleGrid>
+                    <HStack spacing={2} mb={4} flexWrap="wrap">
+                      <Button size="sm" colorScheme="blue" onClick={() => void handleSaveTenantMapping()}>
+                        Save
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => void refreshAdminDataWithRetry()}>
+                        Refresh
+                      </Button>
+                    </HStack>
+                    {adminDataError ? (
+                      <Alert status="error" size="sm" borderRadius="md" mb={4}>
+                        <AlertIcon />
+                        <AlertDescription fontSize="xs">{adminDataError}</AlertDescription>
+                      </Alert>
+                    ) : null}
+                    <TableFilterToolbar
+                      hasActiveFilters={!!mappingSearch.trim()}
+                      onClear={() => {
+                        setMappingSearch("");
+                        setMappingPage(1);
+                      }}
+                    >
+                      <InputGroup size="sm" maxW="280px">
+                        <InputLeftElement pointerEvents="none">
+                          <SearchIcon color="gray.400" />
+                        </InputLeftElement>
+                        <Input
+                          pl={9}
+                          placeholder="Search tenant or domain…"
+                          value={mappingSearch}
+                          onChange={(e) => {
+                            setMappingSearch(e.target.value);
+                            setMappingPage(1);
+                          }}
+                          bg={cardBg}
+                        />
+                      </InputGroup>
+                    </TableFilterToolbar>
+                    <TableContainer maxH="50vh" overflowY="auto" mt={3}>
+                      <Table variant="simple" bg={tableBg} size="sm" w="100%">
+                        <Thead bg={tableHeaderBg}>
+                          <Tr>
+                            <Th>
+                              <TableSortHeader
+                                label="Tenant ID"
+                                direction={mappingSortDirection}
+                                onAsc={() => {
+                                  setMappingSortDirection("asc");
+                                  setMappingPage(1);
+                                }}
+                                onDesc={() => {
+                                  setMappingSortDirection("desc");
+                                  setMappingPage(1);
+                                }}
+                                ascAriaLabel="Sort mappings by tenant ascending"
+                                descAriaLabel="Sort mappings by tenant descending"
+                              />
+                            </Th>
+                            <Th>Domain</Th>
+                            <Th>Updated</Th>
+                            <Th textAlign="right">Actions</Th>
+                          </Tr>
+                        </Thead>
+                        <Tbody>
+                          {mappingsTotal === 0 ? (
+                            <Tr>
+                              <Td colSpan={4} textAlign="center" color={mutedText} py={6}>
+                                No mappings configured.
+                              </Td>
+                            </Tr>
+                          ) : (
+                            paginatedMappings.map((row) => (
+                              <Tr
+                                key={row.tenant_id}
+                                cursor="pointer"
+                                _hover={{ bg: tableRowHoverBg }}
+                                onClick={() => openMappingDetail(row)}
+                              >
+                                <Td fontFamily="mono" fontSize="xs">
+                                  {row.tenant_id}
+                                </Td>
+                                <Td fontWeight="semibold">{row.domain_id}</Td>
+                                <Td fontSize="xs" color={mutedText}>
+                                  {row.updated_at ? new Date(row.updated_at).toLocaleString() : "—"}
+                                </Td>
+                                <Td textAlign="right" onClick={(e) => e.stopPropagation()}>
+                                  <Tooltip label="Remove mapping" hasArrow>
+                                    <IconButton
+                                      aria-label="Remove mapping"
+                                      icon={<DeleteIcon />}
+                                      size="sm"
+                                      variant="ghost"
+                                      colorScheme="red"
+                                      _hover={{ bg: "red.50" }}
+                                      onClick={() => void handleDeleteTenantMapping(row.tenant_id)}
+                                    />
+                                  </Tooltip>
+                                </Td>
+                              </Tr>
+                            ))
+                          )}
+                        </Tbody>
+                      </Table>
+                    </TableContainer>
+                    {mappingsTotal > 0 ? (
+                      <TablePaginationBar
+                        startRow={mappingsStartRow}
+                        endRow={mappingsEndRow}
+                        totalItems={mappingsTotal}
+                        page={mappingPage}
+                        totalPages={mappingsTotalPages}
+                        pageSize={mappingPageSize}
+                        pageSizeOptions={PAGE_SIZE_OPTIONS}
+                        onPageSizeChange={(value) => {
+                          setMappingPageSize(value);
+                          setMappingPage(1);
+                        }}
+                        onFirst={() => setMappingPage(1)}
+                        onPrev={() => setMappingPage((p) => Math.max(1, p - 1))}
+                        onNext={() => setMappingPage((p) => Math.min(mappingsTotalPages, p + 1))}
+                        onLast={() => setMappingPage(mappingsTotalPages)}
+                        canPrev={mappingPage > 1}
+                        canNext={mappingPage < mappingsTotalPages}
+                        borderColor={borderColor}
+                        bg={cardBg}
+                      />
+                    ) : null}
+                  </CardBody>
+                </Card>
+              </GridItem>
+            </SimpleGrid>
+          </TabPanel>
+
+          <TabPanel px={0} pt={6}>
+            <VStack align="stretch" spacing={6}>
+              <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                <CardBody>
+                  <HStack justify="space-between" flexWrap="wrap" gap={3}>
+                    <Box>
+                      <Heading size="sm" mb={2}>
+                        Audit Logs
+                      </Heading>
+                      <Text fontSize="sm" color={mutedText}>
+                        Recent redact events captured by pii-service.
+                      </Text>
+                    </Box>
+                    <Button size="sm" variant="outline" onClick={() => void fetchAuditLogs()}>
+                      Refresh
+                    </Button>
+                  </HStack>
+                </CardBody>
+              </Card>
+              <SimpleGrid columns={{ base: 1, md: 3 }} spacing={6}>
+                <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                  <CardBody>
+                    <Text fontSize="xs" color={mutedText} textTransform="uppercase" mb={2}>
+                      Total Domains
+                    </Text>
+                    <Text fontSize="2xl" fontWeight="bold">
+                      {allDomains.length}
+                    </Text>
+                  </CardBody>
+                </Card>
+                <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                  <CardBody>
+                    <Text fontSize="xs" color={mutedText} textTransform="uppercase" mb={2}>
+                      Active Domains
+                    </Text>
+                    <Text fontSize="2xl" fontWeight="bold">
+                      {activeDomainCount}
+                    </Text>
+                  </CardBody>
+                </Card>
+                <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                  <CardBody>
+                    <Text fontSize="xs" color={mutedText} textTransform="uppercase" mb={2}>
+                      Tenant Mappings
+                    </Text>
+                    <Text fontSize="2xl" fontWeight="bold">
+                      {tenantMappings.length}
+                    </Text>
+                  </CardBody>
+                </Card>
+              </SimpleGrid>
+              <Card bg={cardBg} borderWidth="1px" borderColor={borderColor}>
+                <CardBody>
+                  <TableFilterToolbar
+                    hasActiveFilters={!!auditSearch.trim()}
+                    onClear={() => {
+                      setAuditSearch("");
+                      setAuditPage(1);
+                    }}
+                    rightContent={
+                      <Button size="sm" variant="outline" onClick={() => void fetchAuditLogs()}>
+                        Refresh
+                      </Button>
+                    }
+                  >
+                    <InputGroup size="sm" maxW="300px">
+                      <InputLeftElement pointerEvents="none">
+                        <SearchIcon color="gray.400" />
+                      </InputLeftElement>
+                      <Input
+                        pl={9}
+                        placeholder="Search trace / tenant / domain / target…"
+                        value={auditSearch}
+                        onChange={(e) => {
+                          setAuditSearch(e.target.value);
+                          setAuditPage(1);
+                        }}
+                        bg={cardBg}
+                      />
+                    </InputGroup>
+                  </TableFilterToolbar>
+                  <TableContainer maxH="60vh" overflowY="auto" overflowX="auto" mt={3}>
+                    <Table variant="simple" bg={tableBg} size="sm" w="100%">
+                      <Thead bg={tableHeaderBg}>
+                        <Tr>
+                          <Th>
+                            <TableSortHeader
+                              label="Time"
+                              direction={auditSortDirection}
+                              onAsc={() => {
+                                setAuditSortDirection("asc");
+                                setAuditPage(1);
+                              }}
+                              onDesc={() => {
+                                setAuditSortDirection("desc");
+                                setAuditPage(1);
+                              }}
+                              ascAriaLabel="Sort audit logs by time ascending"
+                              descAriaLabel="Sort audit logs by time descending"
+                            />
+                          </Th>
+                          <Th>Trace ID</Th>
+                          <Th>Tenant</Th>
+                          <Th>Domain</Th>
+                          <Th>Target</Th>
+                          <Th isNumeric>PII Count</Th>
+                          <Th isNumeric>Latency</Th>
+                        </Tr>
+                      </Thead>
+                      <Tbody>
+                        {auditLoading ? (
+                          <Tr>
+                            <Td colSpan={7} textAlign="center" py={8}>
+                              <Spinner mr={2} />
+                              <Text as="span" color={mutedText}>
+                                Loading logs…
+                              </Text>
+                            </Td>
+                          </Tr>
+                        ) : auditTotal === 0 ? (
+                          <Tr>
+                            <Td colSpan={7} textAlign="center" color={mutedText} py={6}>
+                              No audit logs found.
+                            </Td>
+                          </Tr>
+                        ) : (
+                          paginatedAuditLogs.map((row) => (
+                            <Tr
+                              key={row.id}
+                              cursor="pointer"
+                              _hover={{ bg: tableRowHoverBg }}
+                              onClick={() => openAuditTraceDetail(row)}
+                            >
+                              <Td fontSize="xs" color={mutedText} whiteSpace="nowrap">
+                                {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
+                              </Td>
+                              <Td fontFamily="mono" fontSize="xs">
+                                {row.trace_id || "—"}
+                              </Td>
+                              <Td fontFamily="mono" fontSize="xs">
+                                {row.tenant_id || "—"}
+                              </Td>
+                              <Td>{row.domain_id || "—"}</Td>
+                              <Td maxW="200px" isTruncated title={row.target_context || ""}>
+                                {row.target_context || "—"}
+                              </Td>
+                              <Td isNumeric>{row.pii_count ?? 0}</Td>
+                              <Td isNumeric>{row.processing_ms ?? 0} ms</Td>
+                            </Tr>
+                          ))
+                        )}
+                      </Tbody>
+                    </Table>
+                  </TableContainer>
+                  {!auditLoading && auditTotal > 0 ? (
+                    <TablePaginationBar
+                      startRow={auditStartRow}
+                      endRow={auditEndRow}
+                      totalItems={auditTotal}
+                      page={auditPage}
+                      totalPages={auditTotalPages}
+                      pageSize={auditPageSize}
+                      pageSizeOptions={PAGE_SIZE_OPTIONS}
+                      onPageSizeChange={(value) => {
+                        setAuditPageSize(value);
+                        setAuditPage(1);
+                      }}
+                      onFirst={() => setAuditPage(1)}
+                      onPrev={() => setAuditPage((p) => Math.max(1, p - 1))}
+                      onNext={() => setAuditPage((p) => Math.min(auditTotalPages, p + 1))}
+                      onLast={() => setAuditPage(auditTotalPages)}
+                      canPrev={auditPage > 1}
+                      canNext={auditPage < auditTotalPages}
+                      borderColor={borderColor}
+                      bg={cardBg}
                     />
-                  </th>
-                  <th className="p-2">Domain</th>
-                  <th className="p-2">Updated</th>
-                  <th className="p-2 w-24">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {mappingsTotal === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="p-4 text-center text-gray-400">No mappings configured.</td>
-                  </tr>
-                ) : (
-                  paginatedMappings.map((row) => (
-                    <tr key={row.tenant_id} className="border-b">
-                      <td className="p-2 font-mono text-xs">{row.tenant_id}</td>
-                      <td className="p-2 font-semibold">{row.domain_id}</td>
-                      <td className="p-2 text-gray-500 text-xs">{row.updated_at ? new Date(row.updated_at).toLocaleString() : "—"}</td>
-                      <td className="p-2">
-                        <button type="button" onClick={() => void handleDeleteTenantMapping(row.tenant_id)} className="text-red-600 hover:underline text-xs">
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-            {mappingsTotal > 0 ? (
-              <TablePaginationBar
-                startRow={mappingsStartRow}
-                endRow={mappingsEndRow}
-                totalItems={mappingsTotal}
-                page={mappingPage}
-                totalPages={mappingsTotalPages}
-                pageSize={mappingPageSize}
-                pageSizeOptions={PAGE_SIZE_OPTIONS}
-                onPageSizeChange={(value) => { setMappingPageSize(value); setMappingPage(1); }}
-                onFirst={() => setMappingPage(1)}
-                onPrev={() => setMappingPage((p) => Math.max(1, p - 1))}
-                onNext={() => setMappingPage((p) => Math.min(mappingsTotalPages, p + 1))}
-                onLast={() => setMappingPage(mappingsTotalPages)}
-                canPrev={mappingPage > 1}
-                canNext={mappingPage < mappingsTotalPages}
-                borderColor="#e2e8f0"
-                bg="white"
-              />
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+                  ) : null}
+                </CardBody>
+              </Card>
+            </VStack>
+          </TabPanel>
+        </TabPanels>
+      </Tabs>
 
-      {activeTab === "audit" ? (
-        <div className="space-y-6">
-          <div className="bg-white p-5 rounded-lg border shadow-sm">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-sm font-bold text-gray-800 mb-2">Audit Logs</h2>
-                <p className="text-sm text-gray-600">Recent redact events captured by `pii-service`.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void fetchAuditLogs()}
-                className="border border-gray-300 px-4 py-2 rounded text-sm hover:bg-gray-50"
-              >
-                Refresh
-              </button>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white p-5 rounded-lg border shadow-sm">
-              <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Total Domains</p>
-              <p className="text-2xl font-bold text-gray-900">{allDomains.length}</p>
-            </div>
-            <div className="bg-white p-5 rounded-lg border shadow-sm">
-              <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Active Domains</p>
-              <p className="text-2xl font-bold text-gray-900">{activeDomainCount}</p>
-            </div>
-            <div className="bg-white p-5 rounded-lg border shadow-sm">
-              <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Tenant Mappings</p>
-              <p className="text-2xl font-bold text-gray-900">{tenantMappings.length}</p>
-            </div>
-          </div>
-          <div className="bg-white p-5 rounded-lg border shadow-sm overflow-x-auto">
-            <TableFilterToolbar
-              hasActiveFilters={!!auditSearch.trim()}
-              onClear={() => { setAuditSearch(""); setAuditPage(1); }}
-              rightContent={(
-                <button
-                  type="button"
-                  onClick={() => void fetchAuditLogs()}
-                  className="border border-gray-300 px-4 py-2 rounded text-sm hover:bg-gray-50"
-                >
-                  Refresh
-                </button>
-              )}
+      <PiiDomainDetailModal
+        isOpen={domainDetail.isOpen}
+        onClose={closeDomainDetail}
+        domain={viewDomain}
+        isPendingActivation={viewDomain ? checkedDomains.has(viewDomain.domain_id) : false}
+        onEditRules={(id) => {
+          closeDomainDetail();
+          void loadDomainConfig(id);
+        }}
+      />
+
+      <PiiRuleDetailModal
+        isOpen={ruleDetail.isOpen}
+        onClose={closeRuleDetail}
+        rule={viewRule}
+        editingDomainId={editingDomainId}
+        onRemove={(rule) => {
+          removeRuleForRow(rule);
+          closeRuleDetail();
+        }}
+      />
+
+      <PiiMappingDetailModal
+        isOpen={mappingDetail.isOpen}
+        onClose={closeMappingDetail}
+        mapping={viewMapping}
+        onRemove={(tenantId) => void handleDeleteTenantMapping(tenantId, closeMappingDetail)}
+      />
+
+      <StandardModal
+        isOpen={auditTraceDetail.isOpen}
+        onClose={closeAuditTraceDetail}
+        title="Audit trace"
+        size="4xl"
+        footer={
+          <HStack justify="flex-end" w="full">
+            <Button variant="ghost" onClick={closeAuditTraceDetail}>
+              Close
+            </Button>
+          </HStack>
+        }
+      >
+        <FormControl>
+          <FormLabel fontSize="sm">Trace JSON</FormLabel>
+          <Textarea value={auditDetailJson} readOnly fontFamily="mono" fontSize="xs" rows={18} />
+        </FormControl>
+      </StandardModal>
+    </Box>
+  );
+}
+
+function PiiDomainDetailModal({
+  isOpen,
+  onClose,
+  domain,
+  isPendingActivation,
+  onEditRules,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  domain: Domain | null;
+  isPendingActivation: boolean;
+  onEditRules: (domainId: string) => void;
+}) {
+  return (
+    <StandardModal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Domain details"
+      size="lg"
+      footer={
+        <HStack justify="flex-end" w="full">
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+          {domain ? (
+            <Button
+              colorScheme="blue"
+              onClick={() => {
+                onEditRules(domain.domain_id);
+              }}
             >
-              <input
-                type="text"
-                placeholder="Search trace/tenant/domain/target..."
-                className="border rounded p-2 text-sm min-w-[260px]"
-                value={auditSearch}
-                onChange={(e) => { setAuditSearch(e.target.value); setAuditPage(1); }}
-              />
-            </TableFilterToolbar>
-            <table className="w-full text-left text-sm">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="p-2">
-                    <TableSortHeader
-                      label="Time"
-                      direction={auditSortDirection}
-                      onAsc={() => { setAuditSortDirection("asc"); setAuditPage(1); }}
-                      onDesc={() => { setAuditSortDirection("desc"); setAuditPage(1); }}
-                      ascAriaLabel="Sort audit logs by time ascending"
-                      descAriaLabel="Sort audit logs by time descending"
-                    />
-                  </th>
-                  <th className="p-2">Trace ID</th>
-                  <th className="p-2">Tenant</th>
-                  <th className="p-2">Domain</th>
-                  <th className="p-2">Target</th>
-                  <th className="p-2">PII Count</th>
-                  <th className="p-2">Latency</th>
-                </tr>
-              </thead>
-              <tbody>
-                {auditLoading ? (
-                  <tr>
-                    <td colSpan={7} className="p-4 text-center text-gray-500">Loading logs...</td>
-                  </tr>
-                ) : auditTotal === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="p-4 text-center text-gray-400">No audit logs found.</td>
-                  </tr>
-                ) : (
-                  paginatedAuditLogs.map((row) => (
-                    <tr key={row.id} className="border-b">
-                      <td className="p-2 text-xs text-gray-600">
-                        {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
-                      </td>
-                      <td className="p-2 font-mono text-xs">{row.trace_id || "—"}</td>
-                      <td className="p-2 font-mono text-xs">{row.tenant_id || "—"}</td>
-                      <td className="p-2">{row.domain_id || "—"}</td>
-                      <td className="p-2">{row.target_context || "—"}</td>
-                      <td className="p-2">{row.pii_count ?? 0}</td>
-                      <td className="p-2">{row.processing_ms ?? 0} ms</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-            {!auditLoading && auditTotal > 0 ? (
-              <TablePaginationBar
-                startRow={auditStartRow}
-                endRow={auditEndRow}
-                totalItems={auditTotal}
-                page={auditPage}
-                totalPages={auditTotalPages}
-                pageSize={auditPageSize}
-                pageSizeOptions={PAGE_SIZE_OPTIONS}
-                onPageSizeChange={(value) => { setAuditPageSize(value); setAuditPage(1); }}
-                onFirst={() => setAuditPage(1)}
-                onPrev={() => setAuditPage((p) => Math.max(1, p - 1))}
-                onNext={() => setAuditPage((p) => Math.min(auditTotalPages, p + 1))}
-                onLast={() => setAuditPage(auditTotalPages)}
-                canPrev={auditPage > 1}
-                canNext={auditPage < auditTotalPages}
-                borderColor="#e2e8f0"
-                bg="white"
-              />
-            ) : null}
-          </div>
-        </div>
+              Edit policy rules
+            </Button>
+          ) : null}
+        </HStack>
+      }
+    >
+      {domain ? (
+        <Stack spacing={4}>
+          <Text fontSize="xs" color="gray.500" fontFamily="mono">
+            {domain.domain_id}
+          </Text>
+          <Heading size="md">{domain.domain_id.toUpperCase()}</Heading>
+          <HStack spacing={2}>
+            <Badge colorScheme={domain.is_active ? "green" : "gray"}>
+              {domain.is_active ? "Active" : "Inactive"}
+            </Badge>
+            <Badge colorScheme={isPendingActivation ? "blue" : "purple"}>
+              {isPendingActivation ? "Selected for activation" : "Not in activation set"}
+            </Badge>
+          </HStack>
+          {domain.description ? (
+            <Text fontSize="sm" color="gray.700">
+              {domain.description}
+            </Text>
+          ) : (
+            <Text fontSize="sm" color="gray.500">
+              No description
+            </Text>
+          )}
+        </Stack>
       ) : null}
-    </div>
+    </StandardModal>
+  );
+}
+
+function PiiRuleDetailModal({
+  isOpen,
+  onClose,
+  rule,
+  editingDomainId,
+  onRemove,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  rule: Rule | null;
+  editingDomainId: string | null;
+  onRemove: (rule: Rule) => void;
+}) {
+  const configStr = rule ? JSON.stringify(rule.config ?? {}, null, 2) : "";
+  return (
+    <StandardModal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Rule details"
+      size="lg"
+      footer={
+        <HStack justify="flex-end" w="full">
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+          {rule ? (
+            <Button
+              colorScheme="red"
+              variant="outline"
+              onClick={() => {
+                onRemove(rule);
+              }}
+            >
+              Remove rule
+            </Button>
+          ) : null}
+        </HStack>
+      }
+    >
+      {rule ? (
+        <Stack spacing={4}>
+          <Text fontSize="sm" color="gray.600">
+            Domain: {editingDomainId ?? "—"}
+          </Text>
+          <Box>
+            <Text fontSize="sm" fontWeight="semibold" mb={1}>
+              Entity type
+            </Text>
+            <Text fontSize="sm">{rule.entity_type}</Text>
+          </Box>
+          <Box>
+            <Text fontSize="sm" fontWeight="semibold" mb={1}>
+              Action
+            </Text>
+            <Badge colorScheme={actionBadgeColorScheme(rule.action)}>{rule.action}</Badge>
+          </Box>
+          {rule.custom_regex ? (
+            <FormControl>
+              <FormLabel fontSize="sm">Custom regex</FormLabel>
+              <Textarea readOnly fontFamily="mono" fontSize="sm" value={rule.custom_regex} rows={3} />
+            </FormControl>
+          ) : null}
+          <FormControl>
+            <FormLabel fontSize="sm">Config</FormLabel>
+            <Textarea readOnly fontFamily="mono" fontSize="xs" value={configStr} rows={6} />
+          </FormControl>
+        </Stack>
+      ) : null}
+    </StandardModal>
+  );
+}
+
+function PiiMappingDetailModal({
+  isOpen,
+  onClose,
+  mapping,
+  onRemove,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  mapping: TenantDomainMappingRow | null;
+  onRemove: (tenantId: string) => void;
+}) {
+  return (
+    <StandardModal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Tenant mapping details"
+      size="lg"
+      footer={
+        <HStack justify="flex-end" w="full">
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+          {mapping ? (
+            <Button
+              colorScheme="red"
+              variant="outline"
+              onClick={() => {
+                onRemove(mapping.tenant_id);
+              }}
+            >
+              Remove mapping
+            </Button>
+          ) : null}
+        </HStack>
+      }
+    >
+      {mapping ? (
+        <Stack spacing={4}>
+          <Text fontSize="xs" color="gray.500" fontFamily="mono">
+            {mapping.tenant_id}
+          </Text>
+          <Box>
+            <Text fontSize="sm" fontWeight="semibold" mb={1}>
+              Tenant ID
+            </Text>
+            <Text fontSize="sm" fontFamily="mono">
+              {mapping.tenant_id}
+            </Text>
+          </Box>
+          <Box>
+            <Text fontSize="sm" fontWeight="semibold" mb={1}>
+              Domain
+            </Text>
+            <Text fontSize="sm">{mapping.domain_id}</Text>
+          </Box>
+          <Text fontSize="sm" color="gray.600">
+            Updated {mapping.updated_at ? new Date(mapping.updated_at).toLocaleString() : "—"}
+          </Text>
+        </Stack>
+      ) : null}
+    </StandardModal>
   );
 }

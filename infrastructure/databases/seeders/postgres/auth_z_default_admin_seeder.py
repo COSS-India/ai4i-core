@@ -3,12 +3,14 @@ Default Admin User Seeder
 Creates the default system administrator account.
 
 IMPORTANT: After first login, change the default admin password immediately.
-The default password is set via ADMIN_DEFAULT_PASSWORD env var (falls back to 'Admin@123').
+The default password is set via ADMIN_DEFAULT_PASSWORD env var (falls back to 'ADMIN_PASSWORD').
 """
 import os
-import secrets
-from passlib.context import CryptContext
+
 from infrastructure.databases.core.base_seeder import BaseSeeder
+from infrastructure.databases.seeders.postgres.auth_seeder_credentials import (
+    resolve_password_hash_material,
+)
 
 
 class AuthDefaultAdminSeeder(BaseSeeder):
@@ -19,9 +21,10 @@ class AuthDefaultAdminSeeder(BaseSeeder):
     def run(self, adapter):
         """Run seeder"""
         default_password = os.getenv("ADMIN_DEFAULT_PASSWORD", "ADMIN_PASSWORD")
-        salt = secrets.token_hex(16)  # matches auth-service-v2 default argon2_salt_length
-        password_hash = CryptContext(schemes=["argon2"], default="argon2").hash(default_password + salt)
-        hash_rounds = 12
+        admin_email = "admin@ai4inclusion.org"
+        password_hash, salt, hash_rounds = resolve_password_hash_material(
+            default_password, adapter, admin_email
+        )
 
         adapter.execute(
             """
@@ -46,7 +49,7 @@ class AuthDefaultAdminSeeder(BaseSeeder):
                 language = EXCLUDED.language
             """,
             {
-                'email': 'admin@ai4inclusion.org',
+                'email': admin_email,
                 'username': 'admin',
                 'password_hash': password_hash,
                 'password_salt': salt,

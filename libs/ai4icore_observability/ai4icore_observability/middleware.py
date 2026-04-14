@@ -260,17 +260,18 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         
         # Process request
         response = await call_next(request)
-        
+
+        # Extract service_id resolved by model-management middleware (set in request.state)
+        service_id = getattr(request.state, "service_id", "") or ""
+
         # Calculate duration and track metrics
-        duration = time.time() - start_time        
-        # Calculate duration and track metrics
-        duration = time.time() - start_time        
+        duration = time.time() - start_time
         # Track request
         try:
             # Debug: Log the full path being used for metrics
             if self.config.debug:
                 logger.debug(f"Tracking metrics for endpoint: {path}, service_type: {service_type}")
-            
+
             self.metrics_collector.track_request(
                 organization=organization_label,
                 app=app,
@@ -280,10 +281,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 duration=duration,
                 service_type=service_type,
                 tenant=tenant,
+                service_id=service_id,
             )
 
             # Track additional metrics based on service type
-            self._track_additional_metrics(organization_label, app, tenant, service_type, path, duration, tts_characters, translation_characters, asr_audio_length, ocr_characters, ocr_image_size_kb, transliteration_characters, language_detection_characters, audio_lang_detection_length, ner_tokens, speaker_verification_length, speaker_diarization_length, language_diarization_length)
+            self._track_additional_metrics(organization_label, app, tenant, service_type, path, duration, tts_characters, translation_characters, asr_audio_length, ocr_characters, ocr_image_size_kb, transliteration_characters, language_detection_characters, audio_lang_detection_length, ner_tokens, speaker_verification_length, speaker_diarization_length, language_diarization_length, service_id=service_id)
             
         except Exception as e:
             # Don't let metrics collection break the request
@@ -743,7 +745,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             return "translation"
         elif any(pattern in path_lower for pattern in ["/asr", "/transcribe", "/speech"]):
             return "asr"
-        elif any(pattern in path_lower for pattern in ["/tts", "/synthesize", "/speak"]):
+        elif any(pattern in path_lower for pattern in ["/tts", "/synthesize"]):
             return "tts"
         elif any(pattern in path_lower for pattern in ["/ocr", "/text-recognition"]):
             return "ocr"
@@ -753,14 +755,14 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             return "audio_lang_detection"
         elif any(pattern in path_lower for pattern in ["/language-detection", "/lang-detect", "/detect-language"]):
             return "language_detection"
-        elif any(pattern in path_lower for pattern in ["/ner", "/entity", "/entities"]):
-            return "ner"
-        elif any(pattern in path_lower for pattern in ["/speaker", "/speaker-enrollment", "/speaker-verification"]):
-            return "speaker_verification"
-        elif any(pattern in path_lower for pattern in ["/speaker-diarization", "/speaker-diarization-compute-call"]):
-            return "speaker_diarization"
         elif any(pattern in path_lower for pattern in ["/language-diarization", "/language-diarization-compute-call"]):
             return "language_diarization"
+        elif any(pattern in path_lower for pattern in ["/speaker-diarization", "/speaker-diarization-compute-call"]):
+            return "speaker_diarization"
+        elif any(pattern in path_lower for pattern in ["/ner", "/entity", "/entities"]):
+            return "ner"
+        elif any(pattern in path_lower for pattern in ["/speaker", "/speaker-enrollment", "/speaker-verification", "/speak"]):
+            return "speaker_verification"
         elif any(pattern in path_lower for pattern in ["/llm", "/generate", "/chat", "/completion"]):
             return "llm"
         elif any(pattern in path_lower for pattern in ["/enterprise", "/health", "/metrics", "/config"]):
@@ -770,7 +772,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         else:
             return "unknown"
     
-    def _track_additional_metrics(self, organization: str, app: str, tenant: str, service_type: str, path: str, duration: float, tts_characters: int = 0, translation_characters: int = 0, asr_audio_length: float = 0, ocr_characters: int = 0, ocr_image_size_kb: float = 0.0, transliteration_characters: int = 0, language_detection_characters: int = 0, audio_lang_detection_length: float = 0, ner_tokens: int = 0, speaker_verification_length: float = 0, speaker_diarization_length: float = 0, language_diarization_length: float = 0):
+    def _track_additional_metrics(self, organization: str, app: str, tenant: str, service_type: str, path: str, duration: float, tts_characters: int = 0, translation_characters: int = 0, asr_audio_length: float = 0, ocr_characters: int = 0, ocr_image_size_kb: float = 0.0, transliteration_characters: int = 0, language_detection_characters: int = 0, audio_lang_detection_length: float = 0, ner_tokens: int = 0, speaker_verification_length: float = 0, speaker_diarization_length: float = 0, language_diarization_length: float = 0, service_id: str = ""):
         """Track additional metrics based on service type."""
         try:
             # Track component latency
@@ -802,6 +804,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         language="en",  # Default language
                         characters=tts_characters,
                         tenant=tenant,
+                        service_id=service_id,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real TTS characters: {tts_characters}")
@@ -815,6 +818,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         target_lang="hi",  # Default target language
                         characters=translation_characters,
                         tenant=tenant,
+                        service_id=service_id,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real translation characters: {translation_characters}")
@@ -827,6 +831,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         language="en",  # Default language
                         audio_seconds=asr_audio_length,
                         tenant=tenant,
+                        service_id=service_id,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real ASR audio length: {asr_audio_length:.2f} seconds")
@@ -838,6 +843,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         app=app,
                         characters=ocr_characters,
                         tenant=tenant,
+                        service_id=service_id,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real OCR characters: {ocr_characters}")
@@ -848,6 +854,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         app=app,
                         image_size_kb=ocr_image_size_kb,
                         tenant=tenant,
+                        service_id=service_id,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked OCR image size: {ocr_image_size_kb:.2f} KB")
@@ -861,6 +868,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         target_lang="hi",  # Default target language
                         characters=transliteration_characters,
                         tenant=tenant,
+                        service_id=service_id,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real transliteration characters: {transliteration_characters}")
@@ -872,6 +880,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         app=app,
                         characters=language_detection_characters,
                         tenant=tenant,
+                        service_id=service_id,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real language detection characters: {language_detection_characters}")
@@ -883,6 +892,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         app=app,
                         audio_seconds=audio_lang_detection_length,
                         tenant=tenant,
+                        service_id=service_id,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real audio language detection audio length: {audio_lang_detection_length:.2f} seconds")
@@ -894,6 +904,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         app=app,
                         tokens=ner_tokens,
                         tenant=tenant,
+                        service_id=service_id,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real NER tokens (words): {ner_tokens}")
@@ -905,6 +916,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         app=app,
                         audio_seconds=speaker_verification_length,
                         tenant=tenant,
+                        service_id=service_id,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real speaker verification audio length: {speaker_verification_length:.2f} seconds")
@@ -916,6 +928,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         app=app,
                         audio_seconds=speaker_diarization_length,
                         tenant=tenant,
+                        service_id=service_id,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real speaker diarization audio length: {speaker_diarization_length:.2f} seconds")
@@ -927,6 +940,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         app=app,
                         audio_seconds=language_diarization_length,
                         tenant=tenant,
+                        service_id=service_id,
                     )
                     if self.config.debug:
                         print(f"📊 Tracked real language diarization audio length: {language_diarization_length:.2f} seconds")

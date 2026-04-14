@@ -20,6 +20,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   onInputLanguageChange,
   onOutputLanguageChange,
   availableLanguages,
+  disabled = false,
 }) => {
   const handleSwapLanguages = () => {
     const temp = inputLanguage;
@@ -50,6 +51,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
             value={inputLanguage}
             onChange={(e) => onInputLanguageChange(e.target.value)}
             placeholder="Select"
+            isDisabled={disabled}
           >
             {sortedLanguages.map((lang) => (
               <option key={lang} value={lang}>
@@ -66,6 +68,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
           size="md"
           colorScheme="orange"
           variant="outline"
+          isDisabled={disabled}
         />
 
         <FormControl flex={1}>
@@ -77,6 +80,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
             value={safeOutputLanguage}
             onChange={(e) => onOutputLanguageChange(e.target.value)}
             placeholder="Select"
+            isDisabled={disabled}
           >
             {targetLanguageOptions.map((lang) => (
               <option key={lang} value={lang}>

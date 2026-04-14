@@ -36,6 +36,7 @@ import {
   IoPulseOutline,
   IoNotificationsOutline,
   IoShieldCheckmarkOutline,
+  IoFolderOpenOutline,
 } from "react-icons/io5";
 import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
@@ -176,6 +177,12 @@ const safeColorMap = {
     400: "#7986CB",
     600: "#5C6BC0",
   },
+  "policy-management": {
+    50:  "#E3F2FD",
+    300: "#64B5F6",
+    400: "#42A5F5",
+    600: "#1E88E5",
+  },
 };
 
 const getColor = (serviceId: string, shade: 50 | 300 | 400 | 600) => {
@@ -286,10 +293,29 @@ const topNavItems: NavItem[] = [
     iconColor: "",
     requiresAuth: true,
   },
+  {
+    id: "policy-management",
+    label: "Policy management",
+    path: "/policy-management",
+    icon: IoFolderOpenOutline,
+    iconSize: 10,
+    iconColor: "",
+    requiresAuth: true,
+  },
 ];
 
-// Services (grouped under Services section) — labels from serviceMetadata to match header & homepage
+// Services (grouped under Services section) — order matches homepage (index.tsx services array)
 const baseNavItems: NavItem[] = [
+  {
+    id: "nmt",
+    label: getServiceTitle("nmt"),
+    path: "/nmt",
+    icon: IoLanguageOutline,
+    iconSize: 10,
+    iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: false, // Allow anonymous access with rate limiting
+    featureFlag: "nmt-enabled",
+  },
   {
     id: "asr",
     label: getServiceTitle("asr"),
@@ -309,16 +335,6 @@ const baseNavItems: NavItem[] = [
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
     featureFlag: "tts-enabled",
-  },
-  {
-    id: "nmt",
-    label: getServiceTitle("nmt"),
-    path: "/nmt",
-    icon: IoLanguageOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: false, // Allow anonymous access with rate limiting
-    featureFlag: "nmt-enabled",
   },
   {
     id: "llm",
@@ -478,6 +494,12 @@ const Sidebar: React.FC = () => {
       return false;
     }
     if (item.id === "pii-management" && isGuest) {
+      return false;
+    }
+    if (
+      item.id === "policy-management" &&
+      (isGuest || !(isAdmin || Boolean(user?.is_superuser)))
+    ) {
       return false;
     }
 
