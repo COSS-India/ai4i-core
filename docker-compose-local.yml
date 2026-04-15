@@ -1654,6 +1654,36 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  feedback-service:
+    build:
+      context: .
+      dockerfile: ./services/feedback-service/Dockerfile
+    container_name: ai4v-feedback-service
+    ports:
+      - "8100:8100"
+    env_file:
+      - ./services/feedback-service/.env
+    environment:
+      - ENV_FILE=.env
+      - AUTH_ENABLED=true
+      - REQUIRE_API_KEY=false
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      microservices-network:
+        aliases:
+          - feedback-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
 
 
 volumes:
