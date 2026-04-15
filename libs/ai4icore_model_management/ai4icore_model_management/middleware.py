@@ -180,12 +180,24 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             return model_service_id
 
         task_type = extract_task_type_from_path(request_path or "")
+        # Pipeline endpoints can fan out to multiple backends and do not map 1:1 to a single
+        # microservice id in config-service. Do not synthesize a pipeline-service key.
+        if task_type == "pipeline":
+            return model_service_id
         if task_type:
             # task_type is the URL segment (e.g. "asr" or "language-detection").
             # Config-service health snapshots are keyed by microservice name: "<task_type>-service".
             return f"{task_type}-service"
 
         return model_service_id
+
+    def _should_apply_health_gate(self, request_path: str) -> bool:
+        """Whether to apply config-service health preflight for this request path."""
+        task_type = extract_task_type_from_path(request_path or "")
+        # Pipeline routes do not map to a single microservice health key; gate would fail-closed.
+        if task_type == "pipeline":
+            return False
+        return True
     
     def _should_process(self, path: str) -> bool:
         """Check if middleware should process this path"""
@@ -626,18 +638,19 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                                     request_path=request.url.path,
                                     model_service_id=variant_service_id,
                                 )
-                                gate_resp = await self._preflight_health_gate(variant_health_service_id)
-                                if gate_resp is not None:
-                                    # Preserve original request serviceId for client debugging.
-                                    try:
-                                        body = json.loads(gate_resp.body.decode("utf-8"))
-                                        if isinstance(body, dict) and isinstance(body.get("detail"), dict):
-                                            body["detail"]["serviceId"] = variant_service_id
-                                            body["detail"]["healthServiceId"] = variant_health_service_id
-                                            gate_resp = JSONResponse(status_code=gate_resp.status_code, content=body)
-                                    except Exception:
-                                        pass
-                                    return gate_resp
+                                if self._should_apply_health_gate(request.url.path):
+                                    gate_resp = await self._preflight_health_gate(variant_health_service_id)
+                                    if gate_resp is not None:
+                                        # Preserve original request serviceId for client debugging.
+                                        try:
+                                            body = json.loads(gate_resp.body.decode("utf-8"))
+                                            if isinstance(body, dict) and isinstance(body.get("detail"), dict):
+                                                body["detail"]["serviceId"] = variant_service_id
+                                                body["detail"]["healthServiceId"] = variant_health_service_id
+                                                gate_resp = JSONResponse(status_code=gate_resp.status_code, content=body)
+                                        except Exception:
+                                            pass
+                                        return gate_resp
 
                                 response = await call_next(request)
                                 await self._track_experiment_metric(request, response, start_time)
@@ -652,18 +665,19 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                     request_path=request.url.path,
                     model_service_id=service_id,
                 )
-                gate_resp = await self._preflight_health_gate(health_service_id)
-                if gate_resp is not None:
-                    # Preserve original request serviceId for client debugging.
-                    try:
-                        body = json.loads(gate_resp.body.decode("utf-8"))
-                        if isinstance(body, dict) and isinstance(body.get("detail"), dict):
-                            body["detail"]["serviceId"] = service_id
-                            body["detail"]["healthServiceId"] = health_service_id
-                            gate_resp = JSONResponse(status_code=gate_resp.status_code, content=body)
-                    except Exception:
-                        pass
-                    return gate_resp
+                if self._should_apply_health_gate(request.url.path):
+                    gate_resp = await self._preflight_health_gate(health_service_id)
+                    if gate_resp is not None:
+                        # Preserve original request serviceId for client debugging.
+                        try:
+                            body = json.loads(gate_resp.body.decode("utf-8"))
+                            if isinstance(body, dict) and isinstance(body.get("detail"), dict):
+                                body["detail"]["serviceId"] = service_id
+                                body["detail"]["healthServiceId"] = health_service_id
+                                gate_resp = JSONResponse(status_code=gate_resp.status_code, content=body)
+                        except Exception:
+                            pass
+                        return gate_resp
                 # Log removed - middleware handles request/response logging
                 logger.debug(f"Resolving serviceId: {service_id} via Model Management")
                 auth_headers = extract_auth_headers(request)
