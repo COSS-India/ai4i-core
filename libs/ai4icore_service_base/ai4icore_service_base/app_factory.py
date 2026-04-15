@@ -201,21 +201,12 @@ def _build_lifespan(config: InferenceServiceConfig, db_base: Any):
             service_host = app_env.service_host or service_name
             service_url = f"http://{service_host}:{service_port}"
 
-        instance_id = await registry_client.register(
-            service_name=service_name,
-            service_url=service_url,
-            health_check_url=f"{service_url}/health",
-            service_metadata={
-                "instance_id": app_env.service_instance_id,
-                "status": "healthy",
-            },
-        )
-        if not instance_id:
-            # Config-service may not be reachable during initial startup ordering.
-            # Retry a few times so services eventually appear in discovery/health snapshots.
-            retry_delay = 0.5
-            for _ in range(5):
-                await asyncio.sleep(retry_delay)
+        instance_id: Optional[str] = None
+
+        async def _register_with_retry() -> None:
+            """Best-effort service registration with bounded retries."""
+            nonlocal instance_id
+            try:
                 instance_id = await registry_client.register(
                     service_name=service_name,
                     service_url=service_url,
@@ -225,17 +216,51 @@ def _build_lifespan(config: InferenceServiceConfig, db_base: Any):
                         "status": "healthy",
                     },
                 )
+                if not instance_id:
+                    # Config-service may not be reachable during initial startup ordering.
+                    # Retry a few times so services eventually appear in discovery/health snapshots.
+                    retry_delay = 0.5
+                    for _ in range(5):
+                        await asyncio.sleep(retry_delay)
+                        instance_id = await registry_client.register(
+                            service_name=service_name,
+                            service_url=service_url,
+                            health_check_url=f"{service_url}/health",
+                            service_metadata={
+                                "instance_id": app_env.service_instance_id,
+                                "status": "healthy",
+                            },
+                        )
+                        if instance_id:
+                            break
+                        retry_delay = min(retry_delay * 2, 5.0)
                 if instance_id:
-                    break
-                retry_delay = min(retry_delay * 2, 5.0)
-        if instance_id:
-            svc_logger.info("Registered %s as instance %s", service_name, instance_id)
+                    svc_logger.info("Registered %s as instance %s", service_name, instance_id)
+                else:
+                    svc_logger.warning(
+                        "Service registry registration failed (will continue without registry): %s",
+                        service_name,
+                    )
+            except Exception as e:
+                svc_logger.warning(
+                    "Service registry registration failed (will continue without registry): %s (%s)",
+                    service_name,
+                    e,
+                )
+
+        # Run service registration in background so cold-start ordering doesn't block startup.
+        registration_task = asyncio.create_task(_register_with_retry())
 
         svc_logger.info("%s started", config.title)
         yield
 
         # ── Shutdown ──
         svc_logger.info("Shutting down %s ...", config.title)
+        try:
+            await registration_task
+        except Exception:
+            # Best-effort: deregistration depends on instance_id; ignore registration errors here.
+            pass
         if instance_id:
             await registry_client.deregister(service_name, instance_id)
         if redis_client:
