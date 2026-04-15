@@ -190,13 +190,16 @@ def _build_lifespan(config: InferenceServiceConfig, db_base: Any):
 
         # ── Service Registry ──
         registry_client = ServiceRegistryClient(base_url=app_env.config_service_url)
-        service_name = app_env.service_name
+        # Use the factory-provided identity as the source of truth.
+        # Relying on SERVICE_NAME env var is fragile and can silently break registration.
+        service_name = config.service_name
         service_port = app_env.service_port
         public_url = app_env.service_public_url
         if public_url:
             service_url = public_url.rstrip("/")
         else:
-            service_url = f"http://{app_env.service_host}:{service_port}"
+            service_host = app_env.service_host or service_name
+            service_url = f"http://{service_host}:{service_port}"
 
         instance_id = await registry_client.register(
             service_name=service_name,
@@ -207,6 +210,24 @@ def _build_lifespan(config: InferenceServiceConfig, db_base: Any):
                 "status": "healthy",
             },
         )
+        if not instance_id:
+            # Config-service may not be reachable during initial startup ordering.
+            # Retry a few times so services eventually appear in discovery/health snapshots.
+            retry_delay = 0.5
+            for _ in range(5):
+                await asyncio.sleep(retry_delay)
+                instance_id = await registry_client.register(
+                    service_name=service_name,
+                    service_url=service_url,
+                    health_check_url=f"{service_url}/health",
+                    service_metadata={
+                        "instance_id": app_env.service_instance_id,
+                        "status": "healthy",
+                    },
+                )
+                if instance_id:
+                    break
+                retry_delay = min(retry_delay * 2, 5.0)
         if instance_id:
             svc_logger.info("Registered %s as instance %s", service_name, instance_id)
 
