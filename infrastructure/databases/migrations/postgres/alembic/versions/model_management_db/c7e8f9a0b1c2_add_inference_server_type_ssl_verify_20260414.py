@@ -43,12 +43,20 @@ def upgrade() -> None:
     )
     op.execute(
         """
-        UPDATE services s
-        SET inference_server_type = 'http'
-        FROM models m
-        WHERE s.model_id = m.model_id
-          AND s.model_version = m.version
-          AND m.task->>'type' = 'llm'
+        DO $$
+        DECLARE
+          updated_count integer;
+        BEGIN
+          UPDATE services s
+          SET inference_server_type = 'http'
+          FROM models m
+          WHERE s.model_id = m.model_id
+            AND s.model_version = m.version
+            AND m.task->>'type' = 'llm';
+
+          GET DIAGNOSTICS updated_count = ROW_COUNT;
+          RAISE NOTICE 'Backfilled inference_server_type=http for % services rows (llm models)', updated_count;
+        END $$;
         """
     )
 
