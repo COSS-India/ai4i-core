@@ -308,6 +308,19 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             )
         except Exception as exc:
             logger.debug("Health pre-flight check failed (fail-closed) for %r: %s", service_id, exc)
+            # Negative-cache failures briefly to avoid amplifying config-service brownouts.
+            # Keep TTL short so recovery is detected quickly.
+            negative_ttl = min(max(float(self.health_gate_cache_ttl_seconds), 0.0), 1.0) or 1.0
+            self._health_cache[service_id] = (
+                {
+                    "service_id": service_id,
+                    "state": "unknown",
+                    "last_check": None,
+                    "total_instances": 0,
+                    "healthy_instances": 0,
+                },
+                now + negative_ttl,
+            )
             return JSONResponse(
                 status_code=503,
                 content={
