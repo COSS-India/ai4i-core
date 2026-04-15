@@ -164,7 +164,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         # In-memory caches
         self._service_info_cache: Dict[str, Tuple[ServiceInfo, float]] = {}
         self._service_registry_cache: Dict[str, Tuple[str, str, float]] = {}  # serviceId -> (endpoint, model_name, expires_at)
-        self._triton_clients: Dict[str, Tuple[TritonClient, str, float]] = {}  # serviceId -> (client, endpoint, expires_at)
+        self._triton_clients: Dict[str, Tuple[TritonClient, str, Optional[bool], float]] = {}  # serviceId -> (client, endpoint, ssl_verify, expires_at)
         self.cache_prefix = "model_mgmt:triton"
 
     def _health_service_id_for_request(self, *, request_path: str, model_service_id: str) -> str:
@@ -462,8 +462,10 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             # Cache failures are non-critical - log at debug level to avoid noise
             logger.debug(f"Redis write failed for service {service_id}: {e}")
     
-    async def _resolve_service(self, service_id: str, auth_headers: Dict[str, str]) -> Tuple[Optional[str], Optional[str], Optional[TritonClient]]:
-        """Resolve serviceId to endpoint, model_name, and Triton client"""
+    async def _resolve_service(
+        self, service_id: str, auth_headers: Dict[str, str]
+    ) -> Tuple[Optional[str], Optional[str], Optional[TritonClient], Optional[ServiceInfo]]:
+        """Resolve serviceId to endpoint, model_name, Triton client, and service info."""
         # Check publish status first – do not allow inference for unpublished services
         service_info = await self._get_service_info(service_id, auth_headers)
         if service_info is not None and service_info.is_published is not True:
@@ -477,16 +479,29 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             # Get or create Triton client
             cached_client = self._triton_clients.get(service_id)
             if cached_client:
-                client, cached_endpoint, expires_at = cached_client
-                if expires_at > time.time() and cached_endpoint == endpoint:
-                    return endpoint, model_name, client
+                client, cached_endpoint, cached_ssl_verify, expires_at = cached_client
+                if (
+                    expires_at > time.time()
+                    and cached_endpoint == endpoint
+                    and cached_ssl_verify == (service_info.ssl_verify if service_info else None)
+                ):
+                    return endpoint, model_name, client, service_info
                 self._triton_clients.pop(service_id, None)
             
             # Create new client
-            client = TritonClient(triton_url=endpoint, api_key=self.default_triton_api_key)
+            client = TritonClient(
+                triton_url=endpoint,
+                api_key=self.default_triton_api_key,
+                ssl_verify=(service_info.ssl_verify if service_info else None),
+            )
             expires_at = time.time() + self.cache_ttl_seconds
-            self._triton_clients[service_id] = (client, endpoint, expires_at)
-            return endpoint, model_name, client
+            self._triton_clients[service_id] = (
+                client,
+                endpoint,
+                (service_info.ssl_verify if service_info else None),
+                expires_at,
+            )
+            return endpoint, model_name, client, service_info
 
         # No fallback: if Model Management cannot resolve the serviceId, return no endpoint/model/client.
         # Routers are responsible for returning clear HTTP 4xx/5xx errors in this case.
@@ -500,7 +515,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 f"Model Management did not resolve serviceId: {service_id!r} (service found but endpoint is missing or empty in DB). "
                 "No default endpoint is allowed."
             )
-        return None, None, None
+        return None, None, None, service_info
         
     async def dispatch(self, request: Request, call_next):
         """Process request and resolve service if needed. Supports A/B testing via select-variant."""
@@ -592,8 +607,20 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                                 request.state.triton_model_name = (
                                     variant.get("model_id") or variant.get("model_name") or "unknown"
                                 )
+                                request.state.ssl_verify = (
+                                    variant_info.ssl_verify if variant_info else None
+                                )
                                 if variant.get("api_key") is not None:
                                     request.state.triton_api_key = variant.get("api_key")
+                                request.state.triton_client = TritonClient(
+                                    triton_url=variant["endpoint"],
+                                    api_key=(
+                                        variant.get("api_key")
+                                        if variant.get("api_key") is not None
+                                        else self.default_triton_api_key
+                                    ),
+                                    ssl_verify=(variant_info.ssl_verify if variant_info else None),
+                                )
 
                                 variant_health_service_id = self._health_service_id_for_request(
                                     request_path=request.url.path,
@@ -640,7 +667,9 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 # Log removed - middleware handles request/response logging
                 logger.debug(f"Resolving serviceId: {service_id} via Model Management")
                 auth_headers = extract_auth_headers(request)
-                endpoint, model_name, triton_client = await self._resolve_service(service_id, auth_headers)
+                endpoint, model_name, triton_client, service_info = await self._resolve_service(
+                    service_id, auth_headers
+                )
                 
                 request.state.service_id = service_id
                 if endpoint:
@@ -659,6 +688,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                     request.state.model_management_error = "Model name not found"
                 if triton_client:
                     request.state.triton_client = triton_client
+                request.state.ssl_verify = service_info.ssl_verify if service_info else None
             else:
                 logger.debug("No serviceId found, skipping Model Management resolution")
             
