@@ -216,6 +216,22 @@ class AuthService {
     return response;
   }
 
+  async guestLogin(): Promise<LoginResponse> {
+    const response = await this.requestWithoutAuth<LoginResponse>('/guest/login', {
+      method: 'POST',
+    });
+
+    // Guest sessions should stay in session storage by default.
+    this.setAccessToken(response.access_token, false);
+    this.setRefreshToken(response.refresh_token, false);
+
+    return response;
+  }
+
+  async getGuestEnabledServices(): Promise<any> {
+    return this.request<any>('/roles/list/guest/services');
+  }
+
   // Request method without authentication header (for login/register)
   private async requestWithoutAuth<T>(
     endpoint: string,
