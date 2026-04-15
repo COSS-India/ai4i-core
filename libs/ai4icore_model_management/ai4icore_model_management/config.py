@@ -74,12 +74,12 @@ class ModelManagementConfig(BaseModel):
     )
 
     health_gate_timeout_seconds: float = Field(
-        default_factory=lambda: getattr(app_env, "model_management_health_gate_timeout_seconds", 0.05),
+        default_factory=lambda: getattr(app_env, "model_management_health_gate_timeout_seconds", 1.0),
         description="Timeout (seconds) for config-service health-status pre-flight check"
     )
 
     health_gate_cache_ttl_seconds: float = Field(
-        default_factory=lambda: getattr(app_env, "model_management_health_gate_cache_ttl_seconds", 1.0),
+        default_factory=lambda: getattr(app_env, "model_management_health_gate_cache_ttl_seconds", 3.0),
         description="Small in-memory TTL (seconds) for health-status results to reduce overhead"
     )
 
