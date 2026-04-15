@@ -60,7 +60,7 @@ Config-service runs periodic health probes (see `SERVICE_HEALTH_CHECK_ENABLED` /
 
 ### Response fields
 - `service_id`: service identifier (currently the service name in the registry)
-- `state`: one of `healthy`, `degraded`, `unhealthy`
+- `state`: one of `healthy`, `degraded`, `unhealthy`, `unknown`
 - `last_check`: UTC timestamp (ISO-8601) when the snapshot was written
 - `total_instances`: number of instances observed for the service
 - `healthy_instances`: number of instances that were healthy in the last probe
@@ -68,7 +68,8 @@ Config-service runs periodic health probes (see `SERVICE_HEALTH_CHECK_ENABLED` /
 ### State semantics
 - `healthy`: all instances were healthy (and at least one instance exists)
 - `degraded`: at least one instance is healthy, but not all
-- `unhealthy`: no healthy instances (includes zero instances)
+- `unhealthy`: instances exist but none are healthy
+- `unknown`: no instances were observed (e.g., service not registered, registry unavailable)
 
 ### Performance characteristics
 - Request path is **Redis GET + JSON parse only** (no DB query, no live probe).

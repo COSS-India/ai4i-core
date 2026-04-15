@@ -80,7 +80,20 @@ def extract_task_type_from_path(path: str) -> Optional[str]:
     parts = path.strip("/").split("/")
     # Expect ... /api/v1/<task_type>/... or ... /<task_type>/...
     for i, p in enumerate(parts):
-        if p in ("asr", "nmt", "tts", "ocr", "ner", "transliteration", "llm", "pipeline"):
+        if p in (
+            "asr",
+            "nmt",
+            "tts",
+            "ocr",
+            "ner",
+            "transliteration",
+            "llm",
+            "pipeline",
+            "language-detection",
+            "speaker-diarization",
+            "language-diarization",
+            "audio-lang-detection",
+        ):
             return p
     return None
 
@@ -118,8 +131,8 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         enabled_paths: list[str] = None,
         config_service_url: Optional[str] = None,
         health_gate_enabled: bool = False,
-        health_gate_timeout_seconds: float = 0.05,
-        health_gate_cache_ttl_seconds: float = 1.0,
+        health_gate_timeout_seconds: float = 1.0,
+        health_gate_cache_ttl_seconds: float = 3.0,
     ):
         """
         Initialize middleware
@@ -153,6 +166,26 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         self._service_registry_cache: Dict[str, Tuple[str, str, float]] = {}  # serviceId -> (endpoint, model_name, expires_at)
         self._triton_clients: Dict[str, Tuple[TritonClient, str, float]] = {}  # serviceId -> (client, endpoint, expires_at)
         self.cache_prefix = "model_mgmt:triton"
+
+    def _health_service_id_for_request(self, *, request_path: str, model_service_id: str) -> str:
+        """
+        Translate the request's model-level serviceId to the config-service health cache key.
+
+        Config-service caches snapshots keyed by microservice service name (e.g. "asr-service")
+        """
+        if not model_service_id:
+            return model_service_id
+        # If caller already passes microservice id, keep it as-is.
+        if str(model_service_id).endswith("-service"):
+            return model_service_id
+
+        task_type = extract_task_type_from_path(request_path or "")
+        if task_type:
+            # task_type is the URL segment (e.g. "asr" or "language-detection").
+            # Config-service health snapshots are keyed by microservice name: "<task_type>-service".
+            return f"{task_type}-service"
+
+        return model_service_id
     
     def _should_process(self, path: str) -> bool:
         """Check if middleware should process this path"""
@@ -208,6 +241,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                                 "code": "BACKEND_UNHEALTHY",
                                 "message": "Target backend is unhealthy; refusing inference pre-flight.",
                                 "serviceId": service_id,
+                                "healthServiceId": service_id,
                                 "state": state,
                                 "last_check": (payload or {}).get("last_check"),
                             }
@@ -222,6 +256,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                             "code": "BACKEND_HEALTH_UNKNOWN",
                             "message": "Target backend health is unknown; refusing inference pre-flight.",
                             "serviceId": service_id,
+                            "healthServiceId": service_id,
                         }
                     },
                 )
@@ -240,6 +275,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                             "code": "BACKEND_UNHEALTHY",
                             "message": "Target backend is unhealthy; refusing inference pre-flight.",
                             "serviceId": service_id,
+                            "healthServiceId": service_id,
                             "state": state,
                             "last_check": (payload or {}).get("last_check"),
                         }
@@ -254,6 +290,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                         "code": "BACKEND_HEALTH_UNKNOWN",
                         "message": "Target backend health is unknown; refusing inference pre-flight.",
                         "serviceId": service_id,
+                        "healthServiceId": service_id,
                     }
                 },
             )
@@ -266,6 +303,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                         "code": "BACKEND_HEALTH_UNKNOWN",
                         "message": "Target backend health is unavailable; refusing inference pre-flight.",
                         "serviceId": service_id,
+                        "healthServiceId": service_id,
                     }
                 },
             )
@@ -557,8 +595,21 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                                 if variant.get("api_key") is not None:
                                     request.state.triton_api_key = variant.get("api_key")
 
-                                gate_resp = await self._preflight_health_gate(variant_service_id)
+                                variant_health_service_id = self._health_service_id_for_request(
+                                    request_path=request.url.path,
+                                    model_service_id=variant_service_id,
+                                )
+                                gate_resp = await self._preflight_health_gate(variant_health_service_id)
                                 if gate_resp is not None:
+                                    # Preserve original request serviceId for client debugging.
+                                    try:
+                                        body = json.loads(gate_resp.body.decode("utf-8"))
+                                        if isinstance(body, dict) and isinstance(body.get("detail"), dict):
+                                            body["detail"]["serviceId"] = variant_service_id
+                                            body["detail"]["healthServiceId"] = variant_health_service_id
+                                            gate_resp = JSONResponse(status_code=gate_resp.status_code, content=body)
+                                    except Exception:
+                                        pass
                                     return gate_resp
 
                                 response = await call_next(request)
@@ -570,8 +621,21 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             
             # If we found a serviceId, resolve it (normal path or variant service_id)
             if service_id:
-                gate_resp = await self._preflight_health_gate(service_id)
+                health_service_id = self._health_service_id_for_request(
+                    request_path=request.url.path,
+                    model_service_id=service_id,
+                )
+                gate_resp = await self._preflight_health_gate(health_service_id)
                 if gate_resp is not None:
+                    # Preserve original request serviceId for client debugging.
+                    try:
+                        body = json.loads(gate_resp.body.decode("utf-8"))
+                        if isinstance(body, dict) and isinstance(body.get("detail"), dict):
+                            body["detail"]["serviceId"] = service_id
+                            body["detail"]["healthServiceId"] = health_service_id
+                            gate_resp = JSONResponse(status_code=gate_resp.status_code, content=body)
+                    except Exception:
+                        pass
                     return gate_resp
                 # Log removed - middleware handles request/response logging
                 logger.debug(f"Resolving serviceId: {service_id} via Model Management")

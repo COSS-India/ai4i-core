@@ -12,12 +12,15 @@ def health_status_cache_key(service_id: str) -> str:
 
 def compute_health_state(*, total_instances: int, healthy_instances: int) -> str:
     """
-    Map instance counts to a 3-state health for routing:
+    Map instance counts to a routing-oriented health state:
       - healthy: all instances healthy (and at least 1 instance exists)
       - degraded: some healthy, some unhealthy
-      - unhealthy: none healthy (includes zero instances)
+      - unhealthy: instances exist but none are healthy
+      - unknown: no instances were observed (e.g., registry empty/unavailable)
     """
-    if total_instances <= 0 or healthy_instances <= 0:
+    if total_instances <= 0:
+        return "unknown"
+    if healthy_instances <= 0:
         return "unhealthy"
     if healthy_instances >= total_instances:
         return "healthy"
