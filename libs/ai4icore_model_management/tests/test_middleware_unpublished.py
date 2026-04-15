@@ -85,11 +85,12 @@ async def test_resolve_service_allows_when_service_published(middleware):
         return_value=("example.com:8000", "test-model")
     )
 
-    endpoint, model_name, client = await middleware._resolve_service(service_id, {})
+    endpoint, model_name, client, info = await middleware._resolve_service(service_id, {})
 
     assert endpoint == "example.com:8000"
     assert model_name == "test-model"
     assert client is not None
+    assert info is published_info
 
 
 @pytest.mark.asyncio
@@ -99,11 +100,12 @@ async def test_resolve_service_allows_when_service_not_found(middleware):
     middleware._get_service_info = AsyncMock(return_value=None)
     middleware._get_service_registry_entry = AsyncMock(return_value=None)
 
-    endpoint, model_name, client = await middleware._resolve_service(service_id, {})
+    endpoint, model_name, client, info = await middleware._resolve_service(service_id, {})
 
     assert endpoint is None
     assert model_name is None
     assert client is None
+    assert info is None
 
 
 def test_unpublished_error_code_and_message():

@@ -89,7 +89,7 @@ async def test_health_gate_allows_degraded_and_proceeds(middleware):
     middleware._fetch_health_status = AsyncMock(
         return_value={"service_id": service_id, "state": "degraded", "last_check": "2026-04-14T00:00:00+00:00"}
     )
-    middleware._resolve_service = AsyncMock(return_value=("http://example", "model", MagicMock()))
+    middleware._resolve_service = AsyncMock(return_value=("http://example", "model", MagicMock(), None))
 
     request = _make_request(
         "POST",
@@ -148,4 +148,24 @@ async def test_health_gate_maps_model_service_id_to_task_microservice_name(middl
     middleware._fetch_health_status.assert_awaited_once_with(expected_health_service_id)
     middleware._resolve_service.assert_not_called()
     call_next.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_health_gate_skips_pipeline_routes(middleware):
+    # Pipeline routes should bypass preflight gate (they don't map 1:1 to a single microservice).
+    middleware._fetch_health_status = AsyncMock(return_value={"service_id": "pipeline-service", "state": "unhealthy"})
+    middleware._resolve_service = AsyncMock(return_value=("http://example", "model", MagicMock(), None))
+
+    request = _make_request(
+        "POST",
+        "/api/v1/pipeline/inference",
+        body=b'{"config":{"serviceId":"anything"}}',
+    )
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+    resp = await middleware.dispatch(request, call_next)
+
+    assert resp.status_code == 200
+    middleware._fetch_health_status.assert_not_called()
+    middleware._resolve_service.assert_called_once()
+    call_next.assert_called_once()
 
