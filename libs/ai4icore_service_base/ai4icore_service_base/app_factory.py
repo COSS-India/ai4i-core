@@ -257,8 +257,8 @@ def _build_lifespan(config: InferenceServiceConfig, db_base: Any):
         # ── Shutdown ──
         svc_logger.info("Shutting down %s ...", config.title)
         try:
-            await registration_task
-        except Exception:
+            await asyncio.shield(registration_task)
+        except (asyncio.CancelledError, Exception):
             # Best-effort: deregistration depends on instance_id; ignore registration errors here.
             pass
         if instance_id:

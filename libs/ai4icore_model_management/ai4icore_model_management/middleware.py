@@ -6,6 +6,7 @@ FastAPI middleware for automatic serviceId → endpoint + model_name resolution
 import asyncio
 import json
 import logging
+import math
 import re
 import time
 import uuid
@@ -160,7 +161,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         self.health_gate_timeout_seconds = float(health_gate_timeout_seconds)
         self.health_gate_cache_ttl_seconds = float(health_gate_cache_ttl_seconds)
         self._health_client: Optional[httpx.AsyncClient] = None
-        self._health_client_lock = asyncio.Lock()
+        self._health_client_lock: Optional[asyncio.Lock] = None
         self._health_cache: Dict[str, Tuple[dict, float]] = {}  # service_id -> (payload, expires_at)
         
         # In-memory caches
@@ -208,6 +209,8 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
     async def _get_health_client(self) -> httpx.AsyncClient:
         """Lazy init pooled HTTP client for health-status pre-flight checks."""
         if self._health_client is None:
+            if self._health_client_lock is None:
+                self._health_client_lock = asyncio.Lock()
             async with self._health_client_lock:
                 if self._health_client is None:
                     self._health_client = httpx.AsyncClient(
@@ -314,7 +317,11 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             logger.debug("Health pre-flight check failed (fail-closed) for %r: %s", service_id, exc)
             # Negative-cache failures briefly to avoid amplifying config-service brownouts.
             # Keep TTL short so recovery is detected quickly.
-            negative_ttl = min(max(float(self.health_gate_cache_ttl_seconds), 0.0), 1.0) or 1.0
+            ttl = float(self.health_gate_cache_ttl_seconds)
+            if not math.isfinite(ttl) or not (0.0 < ttl <= 1.0):
+                negative_ttl = 1.0
+            else:
+                negative_ttl = ttl
             self._health_cache[service_id] = (
                 {
                     "service_id": service_id,
@@ -641,15 +648,47 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                                 )
                                 if variant.get("api_key") is not None:
                                     request.state.triton_api_key = variant.get("api_key")
-                                request.state.triton_client = TritonClient(
-                                    triton_url=variant["endpoint"],
-                                    api_key=(
-                                        variant.get("api_key")
-                                        if variant.get("api_key") is not None
-                                        else self.default_triton_api_key
-                                    ),
-                                    ssl_verify=(variant_info.ssl_verify if variant_info else None),
+                                variant_endpoint = variant["endpoint"]
+                                variant_api_key = (
+                                    variant.get("api_key")
+                                    if variant.get("api_key") is not None
+                                    else self.default_triton_api_key
                                 )
+                                variant_ssl_verify = (variant_info.ssl_verify if variant_info else None)
+                                # Variant can specify per-variant api_key and ssl_verify; cache by full client config.
+                                client_cache_key = "|".join(
+                                    [
+                                        str(variant_service_id),
+                                        str(variant_endpoint),
+                                        str(variant_ssl_verify),
+                                        str(variant_api_key),
+                                    ]
+                                )
+                                cached_client = self._triton_clients.get(client_cache_key)
+                                if cached_client:
+                                    client, cached_endpoint, cached_ssl_verify, expires_at = cached_client
+                                    if (
+                                        expires_at > time.time()
+                                        and cached_endpoint == variant_endpoint
+                                        and cached_ssl_verify == variant_ssl_verify
+                                    ):
+                                        request.state.triton_client = client
+                                    else:
+                                        self._triton_clients.pop(client_cache_key, None)
+                                if getattr(request.state, "triton_client", None) is None:
+                                    client = TritonClient(
+                                        triton_url=variant_endpoint,
+                                        api_key=variant_api_key,
+                                        ssl_verify=variant_ssl_verify,
+                                    )
+                                    expires_at = time.time() + self.cache_ttl_seconds
+                                    self._triton_clients[client_cache_key] = (
+                                        client,
+                                        variant_endpoint,
+                                        variant_ssl_verify,
+                                        expires_at,
+                                    )
+                                    request.state.triton_client = client
 
                                 variant_health_service_id = self._health_service_id_for_request(
                                     request_path=request.url.path,
