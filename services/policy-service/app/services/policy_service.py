@@ -1,4 +1,4 @@
-"""Business logic for Policy management."""
+"""Business logic for Policy Management."""
 import asyncio
 from typing import List, Optional, Sequence
 from uuid import UUID
