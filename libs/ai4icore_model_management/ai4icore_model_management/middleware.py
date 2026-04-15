@@ -3,6 +3,7 @@ Model Resolution Middleware
 FastAPI middleware for automatic serviceId → endpoint + model_name resolution
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -159,6 +160,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         self.health_gate_timeout_seconds = float(health_gate_timeout_seconds)
         self.health_gate_cache_ttl_seconds = float(health_gate_cache_ttl_seconds)
         self._health_client: Optional[httpx.AsyncClient] = None
+        self._health_client_lock = asyncio.Lock()
         self._health_cache: Dict[str, Tuple[dict, float]] = {}  # service_id -> (payload, expires_at)
         
         # In-memory caches
@@ -206,10 +208,12 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
     async def _get_health_client(self) -> httpx.AsyncClient:
         """Lazy init pooled HTTP client for health-status pre-flight checks."""
         if self._health_client is None:
-            self._health_client = httpx.AsyncClient(
-                timeout=self.health_gate_timeout_seconds,
-                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
-            )
+            async with self._health_client_lock:
+                if self._health_client is None:
+                    self._health_client = httpx.AsyncClient(
+                        timeout=self.health_gate_timeout_seconds,
+                        limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+                    )
         return self._health_client
 
     async def _fetch_health_status(self, service_id: str) -> dict:
