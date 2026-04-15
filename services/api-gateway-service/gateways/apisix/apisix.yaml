@@ -1528,6 +1528,71 @@
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
+- uri: /api/v1/feedback/*
+  name: feedback-route
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      feedback-service${APISIX_UPSTREAM_SUFFIX}:8100: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+      - |
+        return function(conf, ctx)
+          ngx.req.set_header("X-User-Id", nil)
+        end
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    response-rewrite:
+      headers:
+        X-Service: feedback-service
+      body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 60
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
 - uri: /api/v1/transliteration/*
   name: transliteration-route
   priority: 0

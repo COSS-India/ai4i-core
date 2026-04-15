@@ -1,19 +1,22 @@
 """
 Feedback ingestion routes.
 
-All endpoints require ADMIN role JWT.
+Ingestion endpoints (/event, POST /) require any valid JWT (AuthRequired)
+so upstream inference services and end-users can post telemetry and feedback.
+
+Query endpoints (/status/{trace_id}, /latest) require ADMIN role.
 """
 
 import logging
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4icore_multi_tenant import get_tenant_db_session_factory
 
-from app.dependencies.auth import AdminRequired
+from app.dependencies.auth import AdminRequired, AuthRequired
 from app.models.feedback import FeedbackMetric
 from app.schemas.feedback import (
     FeedbackRequest,
@@ -27,13 +30,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/feedback",
     tags=["Feedback"],
-    dependencies=[Depends(AdminRequired)],
 )
 
 get_db = get_tenant_db_session_factory()
 
 
 def _org_from_request(request: Request) -> str:
+    """
+    Derive a stable organization identifier from the JWT claims.
+
+    Uses the domain portion of the authenticated user's email (e.g. "company.com")
+    so that organization is distinct from tenant_id (the technical tenant key).
+    Falls back to tenant_id, then "default".
+    """
+    email: str = getattr(request.state, "email", None) or ""
+    if "@" in email:
+        return email.split("@", 1)[1].lower()
     return getattr(request.state, "tenant_id", None) or "default"
 
 
@@ -41,7 +53,7 @@ def _org_from_request(request: Request) -> str:
 # Implicit telemetry event
 # ---------------------------------------------------------------------------
 
-@router.post("/event", response_model=FeedbackResponse)
+@router.post("/event", response_model=FeedbackResponse, dependencies=[Depends(AuthRequired)])
 async def ingest_implicit_event(
     body: ImplicitEventRequest,
     background_tasks: BackgroundTasks,
@@ -104,9 +116,11 @@ async def ingest_implicit_event(
         await db.flush()
         record_id = str(record.id)
         db_session_factory = request.app.state.db_session_factory
+        schema_name = getattr(request.state, "tenant_schema", None)
         background_tasks.add_task(
             _bg_evaluate, record_id, record.source_input, record.model_output,
             record.task_type, record.language or "unknown", db_session_factory,
+            schema_name,
         )
 
     await db.commit()
@@ -123,7 +137,7 @@ async def ingest_implicit_event(
 # Explicit feedback
 # ---------------------------------------------------------------------------
 
-@router.post("", response_model=FeedbackResponse)
+@router.post("", response_model=FeedbackResponse, dependencies=[Depends(AuthRequired)])
 async def submit_feedback(
     body: FeedbackRequest,
     background_tasks: BackgroundTasks,
@@ -162,9 +176,11 @@ async def submit_feedback(
     if body.trigger_evaluation:
         record_id = str(record.id)
         db_session_factory = request.app.state.db_session_factory
+        schema_name = getattr(request.state, "tenant_schema", None)
         background_tasks.add_task(
             _bg_evaluate, record_id, body.source_input, body.model_output,
             body.task_type, body.language or "unknown", db_session_factory,
+            schema_name,
         )
 
     await db.commit()
@@ -178,10 +194,11 @@ async def submit_feedback(
 
 
 # ---------------------------------------------------------------------------
-# Status query
+# Status query (admin-only)
 # ---------------------------------------------------------------------------
 
-@router.get("/status/{trace_id}", response_model=FeedbackStatusResponse)
+@router.get("/status/{trace_id}", response_model=FeedbackStatusResponse,
+            dependencies=[Depends(AdminRequired)])
 async def get_status(
     trace_id: str,
     db: AsyncSession = Depends(get_db),
@@ -197,10 +214,11 @@ async def get_status(
 
 
 # ---------------------------------------------------------------------------
-# Latest records
+# Latest records (admin-only)
 # ---------------------------------------------------------------------------
 
-@router.get("/latest", response_model=list[FeedbackStatusResponse])
+@router.get("/latest", response_model=list[FeedbackStatusResponse],
+            dependencies=[Depends(AdminRequired)])
 async def get_latest(
     limit: int = 100,
     organization: str | None = None,
@@ -223,17 +241,22 @@ async def get_latest(
 
 
 # ---------------------------------------------------------------------------
-# Background helper — uses app.state.db_session_factory directly
+# Background helpers — use app.state.db_session_factory with tenant schema
 # ---------------------------------------------------------------------------
 
 async def _bg_evaluate_async(record_id: str, source: str, output: str,
-                              task_type: str, language: str, db_session_factory) -> None:
+                              task_type: str, language: str, db_session_factory,
+                              schema_name: str | None) -> None:
     from app.services.evaluator import evaluate_single
     async with db_session_factory() as db:
+        if schema_name:
+            await db.execute(text(f'SET search_path TO "{schema_name}", public'))
         await evaluate_single(record_id, source, output, task_type, language, db)
 
 
 def _bg_evaluate(record_id: str, source: str, output: str,
-                 task_type: str, language: str, db_session_factory) -> None:
+                 task_type: str, language: str, db_session_factory,
+                 schema_name: str | None) -> None:
     import asyncio
-    asyncio.run(_bg_evaluate_async(record_id, source, output, task_type, language, db_session_factory))
+    asyncio.run(_bg_evaluate_async(record_id, source, output, task_type, language,
+                                   db_session_factory, schema_name))

@@ -75,6 +75,7 @@ DATABASE_ORDER = [
     "policy_db",
     "multi_tenant_db",
     "telemetry_db",
+    "feedback_db",
 ]
 
 
@@ -240,6 +241,25 @@ def _load_telemetry_metadata():
     module = _load_module(
         "ai4i_alembic_dynamic.telemetry_models",
         PROJECT_ROOT / "services" / "telemetry-service" / "models.py",
+    )
+    return module.Base.metadata
+
+
+def _load_feedback_metadata():
+    """Load feedback-service ORM metadata (feedback_metrics table)."""
+    feedback_root = PROJECT_ROOT / "services" / "feedback-service"
+    feedback_path = str(feedback_root)
+    if feedback_path not in sys.path:
+        sys.path.insert(0, feedback_path)
+
+    # Ensure we import feedback-service's `app.*`, not another service's `app.*`.
+    for module_name in list(sys.modules.keys()):
+        if module_name == "app" or module_name.startswith("app."):
+            sys.modules.pop(module_name, None)
+
+    module = _load_module(
+        "ai4i_alembic_dynamic.feedback_models",
+        PROJECT_ROOT / "services" / "feedback-service" / "app" / "models" / "feedback.py",
     )
     return module.Base.metadata
 
@@ -489,6 +509,15 @@ DATABASE_SPECS = {
         port_key="POSTGRES_PORT",
         database_name_key="TELEMETRY_DB_NAME",
         metadata_loader=_load_telemetry_metadata,
+    ),
+    "feedback_db": DatabaseSpec(
+        name="feedback_db",
+        user_key="POSTGRES_USER",
+        password_key="POSTGRES_PASSWORD",
+        host_key="POSTGRES_HOST",
+        port_key="POSTGRES_PORT",
+        database_name_key="FEEDBACK_DB_NAME",
+        metadata_loader=_load_feedback_metadata,
     ),
 }
 

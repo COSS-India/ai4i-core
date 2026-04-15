@@ -2,6 +2,7 @@
 Pydantic schemas for the Feedback service.
 """
 
+from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
@@ -53,6 +54,8 @@ class FeedbackResponse(BaseModel):
 
 class FeedbackStatusResponse(BaseModel):
     id: UUID
+    organization: str
+    tenant_id: Optional[str]
     trace_id: str
     service_id: str
     task_type: str
@@ -60,12 +63,16 @@ class FeedbackStatusResponse(BaseModel):
     source_input: str
     model_output: str
     human_correction: Optional[str]
+    feedback_source: Optional[str]
+    rating: Optional[int]
+    implicit_score: Optional[int]
+    event_log: Optional[List[Dict[str, Any]]]
     ai_status: str
     error_type: Optional[str]
     severity: Optional[str]
     payload: Optional[Dict[str, Any]]
-    implicit_score: Optional[int]
-    rating: Optional[int]
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
 
     class Config:
         from_attributes = True

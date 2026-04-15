@@ -45,6 +45,7 @@ DATABASES=(
   "policy_db"
   "multi_tenant_db"
   "telemetry_db"
+  "feedback_db"
 )
 
 # External databases: services manage their own schemas, we just ensure DB exists

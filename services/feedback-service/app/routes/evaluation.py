@@ -29,6 +29,10 @@ get_db = get_tenant_db_session_factory()
 
 
 def _org_from_request(request: Request) -> str:
+    """Derive organization from JWT email domain, distinct from tenant_id."""
+    email: str = getattr(request.state, "email", None) or ""
+    if "@" in email:
+        return email.split("@", 1)[1].lower()
     return getattr(request.state, "tenant_id", None) or "default"
 
 
@@ -75,7 +79,8 @@ async def batch_process(
     await db.commit()
 
     db_session_factory = request.app.state.db_session_factory
-    background_tasks.add_task(_bg_batch_evaluate, record_ids, db_session_factory)
+    schema_name = getattr(request.state, "tenant_schema", None)
+    background_tasks.add_task(_bg_batch_evaluate, record_ids, db_session_factory, schema_name)
 
     return BatchProcessResponse(
         queued=len(record_ids),
@@ -83,9 +88,13 @@ async def batch_process(
     )
 
 
-async def _bg_batch_evaluate_async(record_ids: list[str], db_session_factory) -> None:
+async def _bg_batch_evaluate_async(record_ids: list[str], db_session_factory,
+                                    schema_name: str | None) -> None:
     from app.services.evaluator import evaluate_batch
+    from sqlalchemy import text
     async with db_session_factory() as db:
+        if schema_name:
+            await db.execute(text(f'SET search_path TO "{schema_name}", public'))
         result = await db.execute(
             select(FeedbackMetric).where(
                 FeedbackMetric.id.in_([uuid_lib.UUID(rid) for rid in record_ids])
@@ -95,6 +104,7 @@ async def _bg_batch_evaluate_async(record_ids: list[str], db_session_factory) ->
         await evaluate_batch(records, db)
 
 
-def _bg_batch_evaluate(record_ids: list[str], db_session_factory) -> None:
+def _bg_batch_evaluate(record_ids: list[str], db_session_factory,
+                        schema_name: str | None) -> None:
     import asyncio
-    asyncio.run(_bg_batch_evaluate_async(record_ids, db_session_factory))
+    asyncio.run(_bg_batch_evaluate_async(record_ids, db_session_factory, schema_name))

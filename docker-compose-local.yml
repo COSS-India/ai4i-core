@@ -1672,6 +1672,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      auth-service:
+        condition: service_started
     networks:
       microservices-network:
         aliases:
