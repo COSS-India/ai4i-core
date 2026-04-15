@@ -708,6 +708,16 @@
       "description": "Get roles for a user"
     },
     {
+      "endpoint": "POST:/api/v1/auth/roles/assign/guest/services",
+      "permissionRequired": "roles.assign",
+      "description": "Assign inference services to the GUEST role"
+    },
+    {
+      "endpoint": "GET:/api/v1/auth/roles/list/guest/services",
+      "permissionRequired": "roles.read",
+      "description": "List inference services assigned to the GUEST role"
+    },
+    {
       "endpoint": "GET:/api/v1/auth/inference/permissions",
       "permissionRequired": "roles.read",
       "description": "List inference permissions"
