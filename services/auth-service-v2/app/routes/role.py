@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.responses import success_response
+from app.dependencies.auth import get_current_active_user
 from app.dependencies.permissions import require_any_role
 from app.dependencies.services import get_role_service
 from app.dependencies.tenant_scope import enforce_target_user_same_tenant
@@ -85,9 +86,9 @@ async def assign_guest_services(
 
 @router.get("/list/guest/services")
 async def list_guest_services(
-    _admin: User = Depends(require_any_role("ADMIN", "MODERATOR")),
+    _current_user: User = Depends(get_current_active_user),
     svc: RoleService = Depends(get_role_service),
 ):
-    """List inference service resources currently linked to the GUEST role."""
+    """List GUEST-role inference services; ``roles.read`` is enforced by ``enforce_endpoint_permission`` on the v1 router."""
     services = await svc.list_guest_inference_services()
     return success_response(data={"services": services})
