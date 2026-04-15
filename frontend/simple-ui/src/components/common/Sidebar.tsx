@@ -40,6 +40,7 @@ import {
 } from "react-icons/io5";
 import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
+import { useGuestServices } from "../../hooks/useGuestServices";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { useFeatureFlagsBulk, ALL_UI_FEATURE_FLAG_NAMES } from "../../hooks/useFeatureFlag";
 import { getTenantIdFromToken } from "../../utils/helpers";
@@ -430,7 +431,8 @@ const baseNavItems: NavItem[] = [
 
 const Sidebar: React.FC = () => {
   const router = useRouter();
-  const { isAuthenticated, isLoading, user } = useAuth();
+  const { isLoading, user } = useAuth();
+  const { isGuest: isGuestFromAccess, isLoading: guestServicesLoading, allowedServiceIds } = useGuestServices();
   const { checkSessionExpiry } = useSessionExpiry();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
@@ -523,6 +525,10 @@ const Sidebar: React.FC = () => {
 
   // Filter service items based on feature flags
   const serviceItems = baseNavItems.filter((item) => {
+    if (isGuestFromAccess || isGuest) {
+      if (guestServicesLoading) return false;
+      if (!allowedServiceIds?.has(item.id)) return false;
+    }
     if (item.featureFlag) {
       return featureFlagMap[item.featureFlag] ?? true;
     }
