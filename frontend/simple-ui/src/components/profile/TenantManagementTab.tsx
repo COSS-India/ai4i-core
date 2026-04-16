@@ -408,7 +408,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
 
   if (!user?.id) return null;
   const showAdopter = user?.is_superuser;
-  const showTenant = user?.is_tenant && !user?.is_superuser;
+  const showTenantAdminRole = user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === "TENANT ADMIN");
+  const showTenant = (user?.is_tenant || showTenantAdminRole) && !user?.is_superuser;
   const mustKeepManageServicesOpen =
     tm.manageServicesTenant?.status === "ACTIVE" &&
     tm.availableServices.length > 0 &&

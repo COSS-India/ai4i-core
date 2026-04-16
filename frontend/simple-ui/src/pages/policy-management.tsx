@@ -3,6 +3,7 @@ import Head from "next/head";
 import React from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import PolicyManagement from "../components/policy/PolicyManagement";
 import { useAuth } from "../hooks/useAuth";
 
@@ -54,16 +55,16 @@ const PolicyManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <Box maxW="full" mx="auto" py={4} px={{ base: 2, md: 4 }}>
-          <Heading size="md" mb={2} color="gray.700">
-            Policy Management
-          </Heading>
-          <Text fontSize="sm" color="gray.600" mb={6}>
-            Configure detection policies and the PII type library (policy service). Platform
-            administrators only.
-          </Text>
-          <PolicyManagement canManage={canManagePolicies} />
-        </Box>
+        <VStack spacing={6} w="full">
+          <ManagementPageHeader
+            title="Policy Management"
+            description="Manage policy definitions and PII types"
+          />
+
+          <Box maxW="full" w="full" mx="auto" py={4} px={{ base: 2, md: 4 }}>
+            <PolicyManagement canManage={canManagePolicies} />
+          </Box>
+        </VStack>
       </ContentLayout>
     </>
   );

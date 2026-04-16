@@ -48,6 +48,7 @@ import { SearchIcon, ViewIcon } from "@chakra-ui/icons";
 import { useRouter } from "next/router";
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import ContentLayout from "../components/common/ContentLayout";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { getAllModels, createModel, getModelById, updateModel } from "../services/modelManagementService";
 import { listServices as listServicesForModels } from "../services/servicesManagementService";
 import { useAuth } from "../hooks/useAuth";
@@ -853,15 +854,10 @@ const ModelManagementPage: React.FC = () => {
 
       <ContentLayout>
            <VStack spacing={6} w="full">
-                  {/* Page Header */}
-                  <Box textAlign="center" mb={2}>
-                    <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
-                     Model Management
-                    </Heading>
-                    <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
-                    Manage and configure AI models
-                    </Text>
-                  </Box>
+                  <ManagementPageHeader
+                    title="Model Management"
+                    description="Manage and configure AI models"
+                  />
         
                   <Grid
                     gap={8}

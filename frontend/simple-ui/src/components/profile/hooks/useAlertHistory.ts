@@ -63,40 +63,13 @@ export function useAlertHistory(enabled: boolean) {
     [toast, filterCategory, filterSeverity, dateFrom, dateTo, searchQuery, pageSize]
   );
 
-  /** Refetch from page 1 with current filters (matches typical “Refresh” behavior). */
-  const fetchHistory = useCallback(() => {
-    void loadPage(0);
-  }, [loadPage]);
-
   const clearFilters = useCallback(() => {
     setSearchQuery("");
     setFilterSeverity("all");
     setFilterCategory("all");
     setDateFrom("");
     setDateTo("");
-    setIsLoading(true);
-    void (async () => {
-      try {
-        const res = await alertingService.listAlertHistory({
-          limit: pageSize,
-          offset: 0,
-        });
-        setItems(res.items);
-        setTotal(res.total);
-        setOffset(0);
-      } catch (error) {
-        toast({
-          title: "Error",
-          description: error instanceof Error ? error.message : "Failed to load alert history",
-          status: "error",
-          duration: 5000,
-          isClosable: true,
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    })();
-  }, [toast, pageSize]);
+  }, []);
 
   const goPrev = useCallback(() => {
     const next = Math.max(0, offset - pageSize);
@@ -139,6 +112,12 @@ export function useAlertHistory(enabled: boolean) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageSize]);
 
+  useEffect(() => {
+    if (!enabled) return;
+    void loadPage(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, filterSeverity, filterCategory, dateFrom, dateTo]);
+
   const pageStart = total === 0 ? 0 : offset + 1;
   const pageEnd = offset + items.length;
   const canPrev = offset > 0;
@@ -162,7 +141,6 @@ export function useAlertHistory(enabled: boolean) {
     setDateTo,
     hasActiveFilters,
     clearFilters,
-    fetchHistory,
     pageStart,
     pageEnd,
     pageSize,

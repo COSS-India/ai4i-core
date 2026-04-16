@@ -406,12 +406,13 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     });
   }, [rules.filteredRules, rulesNameSortDirection]);
 
+  const activeAlertDefinitions = React.useMemo(
+    () => defs.definitions.filter((d) => d.enabled),
+    [defs.definitions]
+  );
+
   const sortedHistoryItems = React.useMemo(() => {
-    const q = history.searchQuery.trim().toLowerCase();
-    const byName = q
-      ? history.items.filter((row) => (row.name ?? "").toLowerCase().includes(q))
-      : history.items;
-    return [...byName].sort((a, b) => {
+    return [...history.items].sort((a, b) => {
       const aName = a.name ?? "";
       const bName = b.name ?? "";
       const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
@@ -420,7 +421,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       const timeB = new Date(b.triggered_at ?? b.created_at ?? "").getTime();
       return timeB - timeA;
     });
-  }, [history.items, history.searchQuery, historyNameSortDirection]);
+  }, [history.items, historyNameSortDirection]);
 
   const definitionsTotal = sortedDefinitions.length;
   const definitionsTotalPages = Math.max(1, Math.ceil(definitionsTotal / definitionsPageSize));
@@ -2261,8 +2262,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     const cat = rules.createForm.category;
                     const sev = rules.createForm.severity;
                     const hasFilter = !!cat && !!sev;
-                    const matchingDefs = defs.definitions.filter((d) =>
-                      (!cat || d.category === cat) && (!sev || d.severity === sev)
+                    const matchingDefs = activeAlertDefinitions.filter((d) =>
+                      (!cat || d.category === cat) &&
+                      (!sev || d.severity === sev)
                     );
                     return (
                       <Select
@@ -2661,17 +2663,17 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   {(() => {
                     const cat = editRuleCategory;
                     const sev = editRuleSeverity;
-                    const filtered = defs.definitions.filter((d) =>
+                    const filtered = activeAlertDefinitions.filter((d) =>
                       (!cat || d.category === cat) && (!sev || d.severity === sev)
                     );
-                    const displayDefs = cat || sev ? filtered : defs.definitions;
+                    const displayDefs = cat || sev ? filtered : activeAlertDefinitions;
                     return (
                       <Select
                         bg="white"
                         value={editRuleDef}
                         onChange={(e) => {
                           setEditRuleDef(e.target.value);
-                          const chosen = defs.definitions.find((d) => String(d.id) === e.target.value);
+                          const chosen = activeAlertDefinitions.find((d) => String(d.id) === e.target.value);
                           rules.setUpdateForm({
                             ...rules.updateForm,
                             alert_names: chosen ? [chosen.name] : null,
@@ -2871,16 +2873,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
             <TableFilterToolbar
               hasActiveFilters={history.hasActiveFilters}
               onClear={() => history.clearFilters()}
-              rightContent={(
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => history.fetchHistory()}
-                  isLoading={history.isLoading}
-                >
-                  Refresh
-                </Button>
-              )}
             >
               <InputGroup maxW="260px" size="sm">
                 <InputLeftElement pointerEvents="none">
