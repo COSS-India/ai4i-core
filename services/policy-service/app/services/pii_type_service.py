@@ -74,9 +74,12 @@ class PiiTypeService:
                     detail={"code": "CONFLICT", "message": "pii_type_label already exists"},
                 )
 
-        if "regex_pattern" in updates:
-            # re-validate against empty examples (no stored examples — best effort)
-            pass
+        # Optional validation-only examples (not persisted)
+        examples = updates.pop("example_values", None)
+
+        if ("regex_pattern" in updates) or (examples is not None):
+            pattern = updates.get("regex_pattern", obj.regex_pattern)
+            self._validate_regex(pattern, examples or [])
         return await self.repo.update(obj, updates)
 
     async def delete(self, pii_type_id: UUID) -> None:
