@@ -1,0 +1,752 @@
+# Alert Management Service - Public API (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: Alert Management Service
+  description: Manage alert definitions, notification receivers, routing rules, and alert history.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: Alert Definitions
+    description: CRUD operations for alert rules
+  - name: Notification Receivers
+    description: Manage who gets notified when alerts fire
+  - name: Routing Rules
+    description: Control how alerts are routed to receivers
+  - name: Alert History
+    description: Query past alert events
+
+paths:
+  # ── Alert Definitions ──────────────────────────────────────────────
+  /api/v1/alerts/definitions:
+    post:
+      tags: [Alert Definitions]
+      summary: Create alert definition
+      description: >
+        Creates a new alert definition. Generates a PromQL expression from the provided
+        signal configuration and threshold. Triggers a config sync to Prometheus/Alertmanager.
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertDefinitionCreate" }
+      responses:
+        "201":
+          description: Alert definition created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertDefinitionResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      tags: [Alert Definitions]
+      summary: List alert definitions
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+        - name: enabled_only
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: Return only enabled alert definitions
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: List of alert definitions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AlertDefinitionResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/alerts/definitions/{alert_id}:
+    get:
+      tags: [Alert Definitions]
+      summary: Get alert definition by ID
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+        - $ref: "#/components/parameters/AlertId"
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Alert definition
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertDefinitionResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Alert Definitions]
+      summary: Update alert definition
+      description: >
+        Updates an existing alert definition. Rebuilds the PromQL expression if threshold,
+        signal, or service fields change. Triggers a config sync.
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+        - $ref: "#/components/parameters/AlertId"
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertDefinitionUpdate" }
+      responses:
+        "200":
+          description: Updated alert definition
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertDefinitionResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Alert Definitions]
+      summary: Delete alert definition
+      description: Deletes an alert definition. Requires ADMIN role. Triggers a config sync.
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+        - $ref: "#/components/parameters/AlertId"
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: "Alert definition deleted successfully" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/alerts/definitions/{alert_id}/enabled:
+    patch:
+      tags: [Alert Definitions]
+      summary: Toggle alert enabled/disabled
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+        - $ref: "#/components/parameters/AlertId"
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean, description: Set to true to enable or false to disable }
+      responses:
+        "200":
+          description: Updated alert definition
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertDefinitionResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ── Notification Receivers ─────────────────────────────────────────
+  /api/v1/alerts/receivers:
+    post:
+      tags: [Notification Receivers]
+      summary: Create notification receiver
+      description: >
+        Creates a notification receiver and auto-creates an associated routing rule.
+        Emails are resolved from the tenant, rbac_role, or email_to field.
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotificationReceiverCreate" }
+      responses:
+        "201":
+          description: Receiver created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationReceiverResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      tags: [Notification Receivers]
+      summary: List notification receivers
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+        - name: enabled_only
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: Return only enabled receivers
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: List of receivers
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/NotificationReceiverResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/alerts/receivers/{receiver_id}:
+    get:
+      tags: [Notification Receivers]
+      summary: Get receiver by ID
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+        - $ref: "#/components/parameters/ReceiverId"
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Receiver details
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationReceiverResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Notification Receivers]
+      summary: Update notification receiver
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+        - $ref: "#/components/parameters/ReceiverId"
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotificationReceiverUpdate" }
+      responses:
+        "200":
+          description: Updated receiver
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationReceiverResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Notification Receivers]
+      summary: Delete notification receiver
+      description: Deletes a receiver and its associated routing rules (cascade). Requires ADMIN role.
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+        - $ref: "#/components/parameters/ReceiverId"
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: "Notification receiver deleted successfully" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ── Routing Rules ──────────────────────────────────────────────────
+  /api/v1/alerts/routing-rules:
+    post:
+      tags: [Routing Rules]
+      summary: Create routing rule
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoutingRuleCreate" }
+      responses:
+        "201":
+          description: Routing rule created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoutingRuleResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    get:
+      tags: [Routing Rules]
+      summary: List routing rules
+      description: Returns routing rules ordered by priority (ascending).
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+        - name: enabled_only
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: Return only enabled rules
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: List of routing rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RoutingRuleResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/alerts/routing-rules/{rule_id}:
+    get:
+      tags: [Routing Rules]
+      summary: Get routing rule by ID
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+        - $ref: "#/components/parameters/RuleId"
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Routing rule details
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoutingRuleResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Routing Rules]
+      summary: Update routing rule
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+        - $ref: "#/components/parameters/RuleId"
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoutingRuleUpdate" }
+      responses:
+        "200":
+          description: Updated routing rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoutingRuleResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Routing Rules]
+      summary: Delete routing rule
+      description: Requires ADMIN role.
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+        - $ref: "#/components/parameters/RuleId"
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: "Routing rule deleted successfully" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/alerts/routing-rules/timing:
+    patch:
+      tags: [Routing Rules]
+      summary: Bulk-update timing for matching routing rules
+      description: >
+        Updates group_wait, group_interval, and/or repeat_interval for all routing rules
+        matching the specified category, severity, and optional alert_type/priority.
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoutingRuleTimingUpdate" }
+      responses:
+        "200":
+          description: Timing update result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated_count: { type: integer }
+                  updated_rules: { type: array, items: { type: object } }
+                  updated_fields: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # ── Alert History ──────────────────────────────────────────────────
+  /api/v1/alerts/history:
+    get:
+      tags: [Alert History]
+      summary: List alert history
+      description: Query past alert firing events with filters and pagination.
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
+        - name: category
+          in: query
+          required: false
+          schema: { type: string, enum: [application, infrastructure] }
+        - name: severity
+          in: query
+          required: false
+          schema: { type: string, enum: [critical, warning, info] }
+        - name: date_from
+          in: query
+          required: false
+          schema: { type: string, format: date }
+          description: Filter from date (YYYY-MM-DD or ISO 8601)
+        - name: date_to
+          in: query
+          required: false
+          schema: { type: string, format: date }
+          description: Filter to date (YYYY-MM-DD or ISO 8601)
+        - name: search
+          in: query
+          required: false
+          schema: { type: string }
+          description: Search in alert name and notified audience
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 50, minimum: 1, maximum: 200 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, default: 0, minimum: 0 }
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Paginated alert history
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertHistoryListResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/alerts/history/webhook:
+    post:
+      tags: [Alert History]
+      summary: Alertmanager webhook receiver
+      description: >
+        Internal endpoint called by Alertmanager when alerts fire.
+        Accepts the Alertmanager v4 webhook payload format. No authentication required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertmanagerWebhookPayload" }
+      responses:
+        "200":
+          description: Webhook processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  recorded: { type: integer, example: 1 }
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+  parameters:
+    XAuthSource:
+      name: x-auth-source
+      in: header
+      required: false
+      description: Auth mode. Use BOTH when sending both Bearer token and X-API-Key.
+      schema:
+        type: string
+        enum: [API_KEY, AUTH_TOKEN, BOTH]
+        default: BOTH
+    AlertId:
+      name: alert_id
+      in: path
+      required: true
+      schema: { type: integer }
+    ReceiverId:
+      name: receiver_id
+      in: path
+      required: true
+      schema: { type: integer }
+    RuleId:
+      name: rule_id
+      in: path
+      required: true
+      schema: { type: integer }
+  responses:
+    BadRequest:
+      description: Bad request - validation error
+    Unauthorized:
+      description: Unauthorized - missing or invalid token
+    Forbidden:
+      description: Forbidden - insufficient permissions
+    NotFound:
+      description: Resource not found
+  schemas:
+    # ── Alert Definition Schemas ──
+    AlertAnnotation:
+      type: object
+      required: [key, value]
+      properties:
+        key: { type: string, description: "Annotation key (e.g. summary, description, impact, action)" }
+        value: { type: string, description: Annotation value }
+    AlertDefinitionCreate:
+      type: object
+      required: [name, threshold_value, threshold_unit, severity, sub_category, signal, signal_metric, condition_operator]
+      properties:
+        name: { type: string, description: "Alert name (globally unique)", example: HighP99Latency }
+        description: { type: string, description: Human-readable description }
+        threshold_value: { type: number, description: "Threshold value", example: 500 }
+        threshold_unit: { type: string, description: "Unit: ms, s for latency; % for error rate and infrastructure", enum: [ms, s, "%"], example: ms }
+        category: { type: string, enum: [application, infrastructure], default: application }
+        severity: { type: string, enum: [critical, warning, info], example: critical }
+        urgency: { type: string, enum: [high, medium, low], default: medium }
+        sub_category: { type: string, description: "Sub-category", enum: [performance, availability, compute, storage], example: performance }
+        signal: { type: string, description: "Signal type", enum: [latency, error_rate, cpu_utilization, memory_utilization, disk_utilization], example: latency }
+        signal_metric: { type: string, description: "Specific metric", enum: [latency_p50, latency_p99, error_rate_4xx, error_rate_5xx, error_rate_timeout, total_cpu_usage, total_memory_usage, total_disk_usage], example: latency_p99 }
+        condition_operator: { type: string, enum: [">", ">=", "<", "<="], example: ">" }
+        scope: { type: string, description: "Alert scope", example: per_service }
+        service:
+          type: array
+          items: { type: string }
+          description: "Service names (e.g. asr-service, nmt-service)"
+          example: [asr-service, nmt-service]
+        evaluation_interval: { type: string, default: "30s", description: Prometheus evaluation interval }
+        for_duration: { type: string, default: "5m", description: "How long condition must hold before firing" }
+        enabled: { type: boolean, default: true }
+        annotations:
+          type: array
+          items: { $ref: "#/components/schemas/AlertAnnotation" }
+    AlertDefinitionUpdate:
+      type: object
+      properties:
+        description: { type: string }
+        threshold_value: { type: number }
+        threshold_unit: { type: string, enum: [ms, s, "%"] }
+        category: { type: string, enum: [application, infrastructure] }
+        severity: { type: string, enum: [critical, warning, info] }
+        urgency: { type: string, enum: [high, medium, low] }
+        sub_category: { type: string, enum: [performance, availability, compute, storage] }
+        signal: { type: string, enum: [latency, error_rate, cpu_utilization, memory_utilization, disk_utilization] }
+        signal_metric: { type: string, enum: [latency_p50, latency_p99, error_rate_4xx, error_rate_5xx, error_rate_timeout, total_cpu_usage, total_memory_usage, total_disk_usage] }
+        condition_operator: { type: string, enum: [">", ">=", "<", "<="] }
+        scope: { type: string }
+        service: { type: array, items: { type: string } }
+        evaluation_interval: { type: string }
+        for_duration: { type: string }
+        enabled: { type: boolean }
+        annotations: { type: array, items: { $ref: "#/components/schemas/AlertAnnotation" } }
+    AlertDefinitionResponse:
+      type: object
+      properties:
+        id: { type: integer }
+        organization: { type: string }
+        name: { type: string }
+        description: { type: string }
+        promql_expr: { type: string, description: Generated PromQL expression }
+        threshold_value: { type: number }
+        threshold_unit: { type: string }
+        category: { type: string }
+        severity: { type: string }
+        urgency: { type: string }
+        sub_category: { type: string }
+        signal: { type: string }
+        signal_metric: { type: string }
+        condition_operator: { type: string }
+        scope: { type: string }
+        service: { type: array, items: { type: string } }
+        evaluation_interval: { type: string }
+        for_duration: { type: string }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        created_by: { type: string }
+        annotations: { type: array, items: { $ref: "#/components/schemas/AlertAnnotation" } }
+
+    # ── Notification Receiver Schemas ──
+    NotificationReceiverCreate:
+      type: object
+      required: [category, severity]
+      properties:
+        category: { type: string, enum: [application, infrastructure], description: Alert category to match }
+        severity: { type: string, enum: [critical, warning, info], description: Alert severity to match }
+        alert_type: { type: string, description: "Optional alert type filter (e.g. latency, error_rate)" }
+        alert_names: { type: array, items: { type: string }, description: Specific alert names to route }
+        tenant: { type: string, description: "Tenant name. Resolves to tenant user email for notifications." }
+        rule_name: { type: string, description: Custom routing rule name }
+        description: { type: string }
+        email_to: { type: array, items: { type: string, format: email }, description: "Explicit email addresses. Mutually exclusive with rbac_role." }
+        rbac_role: { type: string, enum: [ADMIN, MODERATOR, USER, GUEST], description: "RBAC role to resolve emails from. Mutually exclusive with email_to." }
+        email_subject_template: { type: string, description: Custom Alertmanager Go-template email subject }
+        email_body_template: { type: string, description: Custom Alertmanager Go-template email body (HTML) }
+    NotificationReceiverUpdate:
+      type: object
+      properties:
+        receiver_name: { type: string }
+        rule_name: { type: string }
+        description: { type: string }
+        category: { type: string, enum: [application, infrastructure] }
+        severity: { type: string, enum: [critical, warning, info] }
+        alert_names: { type: array, items: { type: string } }
+        tenant: { type: string }
+        email_to: { type: array, items: { type: string, format: email } }
+        rbac_role: { type: string, enum: [ADMIN, MODERATOR, USER, GUEST] }
+        email_subject_template: { type: string }
+        email_body_template: { type: string }
+        enabled: { type: boolean }
+    NotificationReceiverResponse:
+      type: object
+      properties:
+        id: { type: integer }
+        organization: { type: string }
+        receiver_name: { type: string }
+        rule_name: { type: string }
+        description: { type: string }
+        category: { type: string }
+        severity: { type: string }
+        email_to: { type: array, items: { type: string } }
+        rbac_role: { type: string }
+        alert_names: { type: array, items: { type: string } }
+        tenant: { type: string }
+        email_subject_template: { type: string }
+        email_body_template: { type: string }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        created_by: { type: string }
+
+    # ── Routing Rule Schemas ──
+    RoutingRuleCreate:
+      type: object
+      required: [rule_name, receiver_id]
+      properties:
+        rule_name: { type: string, description: Unique rule name }
+        receiver_id: { type: integer, description: ID of the notification receiver }
+        match_severity: { type: string, enum: [critical, warning, info], description: "Severity to match (null = all)" }
+        match_category: { type: string, enum: [application, infrastructure], description: "Category to match (null = all)" }
+        match_alert_type: { type: string, description: "Alert type to match (null = all)" }
+        match_alert_names: { type: array, items: { type: string }, description: Specific alert names to match }
+        match_tenant_id: { type: string, description: Tenant ID to match }
+        group_by:
+          type: array
+          items: { type: string }
+          default: [alertname, category, severity]
+          description: Labels to group alerts by
+        group_wait: { type: string, default: "10s", description: Wait time before sending first notification }
+        group_interval: { type: string, default: "10s", description: Minimum interval between notifications for the same group }
+        repeat_interval: { type: string, default: "12h", description: Wait time before re-sending if alert is still firing }
+        continue_routing: { type: boolean, default: false, description: Continue to next matching rule }
+        priority: { type: integer, default: 100, description: "Priority (lower value = higher priority)" }
+    RoutingRuleUpdate:
+      type: object
+      properties:
+        rule_name: { type: string }
+        receiver_id: { type: integer }
+        match_severity: { type: string, enum: [critical, warning, info] }
+        match_category: { type: string, enum: [application, infrastructure] }
+        match_alert_type: { type: string }
+        match_alert_names: { type: array, items: { type: string } }
+        match_tenant_id: { type: string }
+        group_by: { type: array, items: { type: string } }
+        group_wait: { type: string }
+        group_interval: { type: string }
+        repeat_interval: { type: string }
+        continue_routing: { type: boolean }
+        priority: { type: integer }
+        enabled: { type: boolean }
+    RoutingRuleResponse:
+      type: object
+      properties:
+        id: { type: integer }
+        organization: { type: string }
+        rule_name: { type: string }
+        receiver_id: { type: integer }
+        match_severity: { type: string }
+        match_category: { type: string }
+        match_alert_type: { type: string }
+        match_alert_names: { type: array, items: { type: string } }
+        match_tenant_id: { type: string }
+        group_by: { type: array, items: { type: string } }
+        group_wait: { type: string }
+        group_interval: { type: string }
+        repeat_interval: { type: string }
+        continue_routing: { type: boolean }
+        priority: { type: integer }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        created_by: { type: string }
+    RoutingRuleTimingUpdate:
+      type: object
+      required: [category, severity]
+      properties:
+        category: { type: string, enum: [application, infrastructure] }
+        severity: { type: string, enum: [critical, warning, info] }
+        alert_type: { type: string, description: Optional alert type filter }
+        priority: { type: integer, description: Optional priority filter }
+        group_wait: { type: string, description: "New group_wait value (e.g. 15s, 1m)" }
+        group_interval: { type: string, description: "New group_interval value" }
+        repeat_interval: { type: string, description: "New repeat_interval value (e.g. 6h, 24h)" }
+
+    # ── Alert History Schemas ──
+    AlertHistoryItem:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string, description: Alert name }
+        category: { type: string }
+        severity: { type: string }
+        triggered_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+        status: { type: string, enum: [firing, resolved] }
+        receiver: { type: string }
+        notified: { type: string, description: "Human-readable recipient (e.g. Admin, Tenant Admin - CloudSphere)" }
+        tenant: { type: string }
+        organization: { type: string }
+        created_at: { type: string, format: date-time }
+    AlertHistoryListResponse:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/AlertHistoryItem" } }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+    AlertmanagerWebhookPayload:
+      type: object
+      description: Alertmanager v4 webhook payload format
+      properties:
+        receiver: { type: string }
+        status: { type: string, enum: [firing, resolved] }
+        alerts:
+          type: array
+          items:
+            type: object
+            properties:
+              labels: { type: object, additionalProperties: { type: string } }
+              annotations: { type: object, additionalProperties: { type: string } }
+              startsAt: { type: string, format: date-time }
+              endsAt: { type: string, format: date-time }
+              fingerprint: { type: string }
+
+security:
+  - BearerAuth: []

@@ -40,6 +40,20 @@ _current_scope: ContextVar[dict] = ContextVar("_current_scope", default=None)
 SCOPE_KEY = "_inference_model_time_ms"
 
 
+def resolve_inference_ssl_verify(per_service_ssl_verify: Optional[bool]) -> bool:
+    """
+    Resolve TLS verification for inference clients.
+
+    Precedence:
+      1) per-service ssl_verify (registry metadata)
+      2) INFERENCE_SSL_VERIFY env var (global default)
+      3) True (secure default)
+    """
+    if per_service_ssl_verify is not None:
+        return bool(per_service_ssl_verify)
+    return bool(getattr(app_env, "inference_ssl_verify", True))
+
+
 def _accumulate_inference_time(elapsed_ms: float) -> None:
     """Add elapsed_ms to the running total in the current request's ASGI scope."""
     scope = _current_scope.get()
@@ -153,10 +167,12 @@ class TritonClient:
         triton_url: str,
         api_key: Optional[str] = None,
         timeout: int = 30,
+        ssl_verify: Optional[bool] = None,
     ):
         self.triton_url = triton_url.strip()
         self.api_key = api_key
         self.timeout = timeout
+        self.ssl_verify = ssl_verify
         self._client: Optional[httpx.Client] = None
 
     @property
@@ -164,7 +180,10 @@ class TritonClient:
         """Lazy-initialised httpx client."""
         if self._client is None:
             logger.info("Initializing Triton httpx client for: %s", self.triton_url)
-            self._client = httpx.Client(timeout=self.timeout, verify=app_env.inference_ssl_verify)
+            self._client = httpx.Client(
+                timeout=self.timeout,
+                verify=resolve_inference_ssl_verify(self.ssl_verify),
+            )
         return self._client
 
     # ------------------------------------------------------------------

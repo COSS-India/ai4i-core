@@ -77,13 +77,13 @@ const SHOW_POLICY_AUDIT_TAB = false;
 
 const POLICY_TAB_CONFIG = SHOW_POLICY_AUDIT_TAB
   ? ([
-      { id: "policies" as const, label: "Policy definitions" },
       { id: "pii" as const, label: "PII type library" },
+      { id: "policies" as const, label: "Policy definitions" },
       { id: "audit" as const, label: "Audit log" },
     ] as const)
   : ([
-      { id: "policies" as const, label: "Policy definitions" },
       { id: "pii" as const, label: "PII type library" },
+      { id: "policies" as const, label: "Policy definitions" },
     ] as const);
 
 type PolicySectionId = (typeof POLICY_TAB_CONFIG)[number]["id"];
@@ -101,9 +101,39 @@ const LANGUAGE_OPTIONS = ["en", "hi"] as const;
 const MASK_OPTIONS: MaskFormat[] = ["full", "partial", "redact"];
 
 function getPolicyApiErrorMessage(e: unknown, fallback: string): string {
-  const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
-    ?.message;
-  return typeof msg === "string" && msg.trim() ? msg : fallback;
+  const data = (e as {
+    response?: {
+      data?: {
+        detail?: string | { message?: string } | Array<{ msg?: string }>;
+        error?: { message?: string };
+        message?: string;
+      };
+    };
+    message?: string;
+  })?.response?.data;
+
+  const detail = data?.detail;
+  if (Array.isArray(detail)) {
+    const validationMessage = detail
+      .map((item) => item?.msg)
+      .filter((msg): msg is string => typeof msg === "string" && msg.trim().length > 0)
+      .join("; ");
+    if (validationMessage) return validationMessage;
+  }
+
+  if (typeof detail === "object" && detail !== null && !Array.isArray(detail)) {
+    const detailMessage = detail.message;
+    if (typeof detailMessage === "string" && detailMessage.trim()) return detailMessage;
+  }
+
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (typeof data?.error?.message === "string" && data.error.message.trim()) return data.error.message;
+  if (typeof data?.message === "string" && data.message.trim()) return data.message;
+
+  const topLevelMessage = (e as { message?: string })?.message;
+  if (typeof topLevelMessage === "string" && topLevelMessage.trim()) return topLevelMessage;
+
+  return fallback;
 }
 
 function formatDt(iso: string) {
@@ -114,64 +144,21 @@ function formatDt(iso: string) {
   }
 }
 
+function parseDelimitedValues(value: string): string[] {
+  return value
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 export interface PolicyManagementProps {
   /** Platform admin (ADMIN role or superuser); required to call policy APIs. */
   canManage: boolean;
 }
 
-function PolicyServiceHealthBadge() {
-  const [status, setStatus] = useState<"ok" | "error" | "loading">("loading");
-  const [detail, setDetail] = useState<string>("");
-
-  useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      try {
-        const res = await policyService.health();
-        if (cancelled) return;
-        if (res.data?.status === "ok") {
-          setStatus("ok");
-          setDetail("Policy service reachable");
-        } else {
-          setStatus("error");
-          setDetail("Unexpected health response");
-        }
-      } catch {
-        if (!cancelled) {
-          setStatus("error");
-          setDetail("Health check failed (is the gateway routing /api/v1/policy-service?)");
-        }
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return (
-    <HStack spacing={2} flexWrap="wrap">
-      <Text fontSize="sm" color="gray.600">
-        Policy service
-      </Text>
-      {status === "loading" && <Spinner size="sm" />}
-      {status === "ok" && (
-        <Badge colorScheme="green" variant="subtle">
-          {detail}
-        </Badge>
-      )}
-      {status === "error" && (
-        <Badge colorScheme="red" variant="subtle">
-          {detail}
-        </Badge>
-      )}
-    </HStack>
-  );
-}
-
 export default function PolicyManagement({ canManage }: PolicyManagementProps) {
   const toast = useToast();
-  const [tab, setTab] = useState<PolicySectionId>("policies");
+  const [tab, setTab] = useState<PolicySectionId>("pii");
 
   useEffect(() => {
     if (!SHOW_POLICY_AUDIT_TAB && tab === "audit") {
@@ -196,14 +183,7 @@ export default function PolicyManagement({ canManage }: PolicyManagementProps) {
 
   return (
     <VStack align="stretch" spacing={6}>
-      <PolicyServiceHealthBadge />
-
       <Box>
-        <Text fontSize="sm" color="gray.600" mb={2}>
-          {SHOW_POLICY_AUDIT_TAB
-            ? "Policy definitions, PII type library, and audit trail (policy-service APIs)."
-            : "Policy definitions and PII type library (policy-service APIs)."}
-        </Text>
         <Tabs
           variant="unstyled"
           index={policySubTabIndex}
@@ -244,10 +224,10 @@ export default function PolicyManagement({ canManage }: PolicyManagementProps) {
           </TabList>
           <TabPanels>
             <TabPanel px={0} pt={6}>
-              <PoliciesPanel toast={toast} />
+              <PiiTypesPanel toast={toast} />
             </TabPanel>
             <TabPanel px={0} pt={6}>
-              <PiiTypesPanel toast={toast} />
+              <PoliciesPanel toast={toast} />
             </TabPanel>
             {SHOW_POLICY_AUDIT_TAB ? (
               <TabPanel px={0} pt={6}>
@@ -274,10 +254,15 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
   const modal = useDisclosure();
   const viewModal = useDisclosure();
+  const confirmDeleteModal = useDisclosure();
   const [viewPolicyId, setViewPolicyId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PolicyOut | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [piiOptions, setPiiOptions] = useState<PiiTypeOut[]>([]);
   const [policyStatusBusyId, setPolicyStatusBusyId] = useState<string | null>(null);
+  const [activeStatusTooltipId, setActiveStatusTooltipId] = useState<string | null>(null);
+  const statusTooltipTimeoutRef = useRef<number | null>(null);
 
   const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor } = useAdminTableSurface();
 
@@ -401,6 +386,68 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const closePolicyView = () => {
     viewModal.onClose();
     setViewPolicyId(null);
+  };
+
+  const requestDelete = (policy: PolicyOut) => {
+    setDeleteTarget(policy);
+    confirmDeleteModal.onOpen();
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await policyService.deletePolicy(deleteTarget.policy_id);
+      toast({ title: "Policy deleted", status: "success", duration: 2500 });
+      confirmDeleteModal.onClose();
+      if (viewPolicyId === deleteTarget.policy_id) {
+        closePolicyView();
+      }
+      if (editingId === deleteTarget.policy_id) {
+        modal.onClose();
+        setEditingId(null);
+      }
+      setDeleteTarget(null);
+      await reloadPolicies();
+    } catch (e: unknown) {
+      toast({
+        title: getPolicyApiErrorMessage(e, "Could not delete policy"),
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (statusTooltipTimeoutRef.current != null) {
+        window.clearTimeout(statusTooltipTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const showStatusTooltip = (policyId: string) => {
+    if (statusTooltipTimeoutRef.current != null) {
+      window.clearTimeout(statusTooltipTimeoutRef.current);
+    }
+    setActiveStatusTooltipId(policyId);
+    statusTooltipTimeoutRef.current = window.setTimeout(() => {
+      setActiveStatusTooltipId((current) => (current === policyId ? null : current));
+      statusTooltipTimeoutRef.current = null;
+    }, 1500);
+  };
+
+  const hideStatusTooltip = (policyId?: string) => {
+    if (statusTooltipTimeoutRef.current != null) {
+      window.clearTimeout(statusTooltipTimeoutRef.current);
+      statusTooltipTimeoutRef.current = null;
+    }
+    setActiveStatusTooltipId((current) =>
+      policyId == null || current === policyId ? null : current
+    );
   };
 
   const handleToggleActive = async (row: PolicyOut) => {
@@ -591,11 +638,11 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                           descAriaLabel="Sort policies by name descending"
                         />
                       </Th>
+                      <Th>PII types</Th>
+                      <Th>Languages</Th>
                       <Th>Status</Th>
                       <Th>Scope</Th>
                       <Th>Tenants</Th>
-                      <Th>Languages</Th>
-                      <Th>PII types</Th>
                       <Th>Created</Th>
                       <Th textAlign="right">Actions</Th>
                     </Tr>
@@ -609,23 +656,12 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                         onClick={() => openPolicyView(row.policy_id)}
                       >
                         <Td fontWeight="medium">{row.name}</Td>
-                        <Td onClick={(e) => e.stopPropagation()}>
-                          <Tooltip
-                            label={row.is_active ? "Active — turn off to deactivate" : "Inactive — turn on to activate"}
-                            hasArrow
-                            placement="top"
-                          >
-                            <Switch
-                              size="sm"
-                              colorScheme="green"
-                              isChecked={row.is_active}
-                              isDisabled={policyStatusBusyId === row.policy_id}
-                              aria-label={
-                                row.is_active ? `Deactivate policy ${row.name}` : `Activate policy ${row.name}`
-                              }
-                              onChange={() => void handleToggleActive(row)}
-                            />
-                          </Tooltip>
+                        <Td>{row.pii_types?.length ?? 0}</Td>
+                        <Td>{row.supported_languages?.join(", ") || "—"}</Td>
+                        <Td>
+                          <Badge colorScheme={row.is_active ? "green" : "gray"}>
+                            {row.is_active ? "Active" : "Inactive"}
+                          </Badge>
                         </Td>
                         <Td>{row.is_global ? "Global" : "Tenant-scoped"}</Td>
                         <Td maxW="180px" isTruncated title={(row.tenant_ids ?? []).join(", ")}>
@@ -635,11 +671,9 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                               ? row.tenant_ids!.join(", ")
                               : "—"}
                         </Td>
-                        <Td>{row.supported_languages?.join(", ") || "—"}</Td>
-                        <Td>{row.pii_types?.length ?? 0}</Td>
                         <Td whiteSpace="nowrap">{formatDt(row.created_at)}</Td>
                         <Td textAlign="right" onClick={(e) => e.stopPropagation()}>
-                          <HStack justify="flex-end" spacing={1}>
+                          <HStack spacing={3} justify="flex-end" align="center">
                             <Tooltip label="Edit policy" hasArrow placement="top">
                               <IconButton
                                 aria-label="Edit policy"
@@ -650,6 +684,46 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                                 _hover={{ bg: "blue.50" }}
                                 onClick={() => openEdit(row.policy_id)}
                               />
+                            </Tooltip>
+                            <Tooltip label="Delete policy" hasArrow placement="top">
+                              <IconButton
+                                aria-label="Delete policy"
+                                icon={<DeleteIcon />}
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="red"
+                                _hover={{ bg: "red.50" }}
+                                onClick={() => requestDelete(row)}
+                              />
+                            </Tooltip>
+                            <Tooltip
+                              label={row.is_active ? "Turn off to deactivate" : "Turn on to activate"}
+                              hasArrow
+                              placement="top"
+                              isOpen={activeStatusTooltipId === row.policy_id}
+                            >
+                              <Box
+                                as="span"
+                                display="inline-flex"
+                                alignItems="center"
+                                onMouseEnter={() => showStatusTooltip(row.policy_id)}
+                                onMouseLeave={() => hideStatusTooltip(row.policy_id)}
+                              >
+                                <Switch
+                                  size="md"
+                                  colorScheme="green"
+                                  isChecked={row.is_active}
+                                  isDisabled={policyStatusBusyId === row.policy_id}
+                                  aria-label={
+                                    row.is_active ? `Deactivate policy ${row.name}` : `Activate policy ${row.name}`
+                                  }
+                                  onChange={() => {
+                                    hideStatusTooltip();
+                                    void handleToggleActive(row);
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              </Box>
                             </Tooltip>
                           </HStack>
                         </Td>
@@ -704,6 +778,10 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
           closePolicyView();
           openEdit(id);
         }}
+        onDelete={(policy) => {
+          closePolicyView();
+          requestDelete(policy);
+        }}
         onError={(msg) =>
           toast({ title: msg, status: "error", duration: 5000, isClosable: true })
         }
@@ -714,6 +792,7 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
         onClose={modal.onClose}
         policyId={editingId}
         piiOptions={piiOptions}
+        refreshPiiOptions={loadPiiOptions}
         onSaved={() => {
           modal.onClose();
           void reloadPolicies();
@@ -724,6 +803,26 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
           toast({ title: msg, status: "error", duration: 5000, isClosable: true })
         }
       />
+
+      <ConfirmDialog
+        isOpen={confirmDeleteModal.isOpen}
+        onClose={() => {
+          confirmDeleteModal.onClose();
+          if (!deleting) setDeleteTarget(null);
+        }}
+        title="Delete policy definition"
+        body={
+          deleteTarget ? (
+            <Text>
+              Delete <strong>{deleteTarget.name}</strong>? This action cannot be undone.
+            </Text>
+          ) : null
+        }
+        onConfirm={() => void handleConfirmDelete()}
+        confirmLabel="Delete"
+        confirmColorScheme="red"
+        isConfirmLoading={deleting}
+      />
     </Box>
   );
 }
@@ -733,12 +832,14 @@ function PolicyDetailModal({
   onClose,
   policyId,
   onEdit,
+  onDelete,
   onError,
 }: {
   isOpen: boolean;
   onClose: () => void;
   policyId: string | null;
   onEdit: (id: string) => void;
+  onDelete: (policy: PolicyOut) => void;
   onError: (msg: string) => void;
 }) {
   const [policy, setPolicy] = useState<PolicyOut | null>(null);
@@ -779,14 +880,21 @@ function PolicyDetailModal({
             Close
           </Button>
           {policyId ? (
-            <Button
-              colorScheme="blue"
-              onClick={() => {
-                onEdit(policyId);
-              }}
-            >
-              Edit
-            </Button>
+            <>
+              {policy ? (
+                <Button colorScheme="red" variant="outline" onClick={() => onDelete(policy)}>
+                  Delete
+                </Button>
+              ) : null}
+              <Button
+                colorScheme="blue"
+                onClick={() => {
+                  onEdit(policyId);
+                }}
+              >
+                Edit
+              </Button>
+            </>
           ) : null}
         </HStack>
       }
@@ -832,12 +940,6 @@ function PolicyDetailModal({
           </Box>
           <Box>
             <Text fontSize="sm" fontWeight="semibold" mb={1}>
-              Languages
-            </Text>
-            <Text fontSize="sm">{policy.supported_languages?.join(", ") || "—"}</Text>
-          </Box>
-          <Box>
-            <Text fontSize="sm" fontWeight="semibold" mb={1}>
               PII types ({policy.pii_types?.length ?? 0})
             </Text>
             <Stack spacing={1}>
@@ -856,6 +958,12 @@ function PolicyDetailModal({
               )}
             </Stack>
           </Box>
+          <Box>
+            <Text fontSize="sm" fontWeight="semibold" mb={1}>
+              Languages
+            </Text>
+            <Text fontSize="sm">{policy.supported_languages?.join(", ") || "—"}</Text>
+          </Box>
           <Text fontSize="sm" color="gray.600">
             Created {formatDt(policy.created_at)}
           </Text>
@@ -870,6 +978,7 @@ function PolicyFormModal({
   onClose,
   policyId,
   piiOptions,
+  refreshPiiOptions,
   onSaved,
   onError,
 }: {
@@ -877,13 +986,15 @@ function PolicyFormModal({
   onClose: () => void;
   policyId: string | null;
   piiOptions: PiiTypeOut[];
+  refreshPiiOptions: () => Promise<void> | void;
   onSaved: () => void;
   onError: (msg: string) => void;
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [isGlobal, setIsGlobal] = useState(true);
-  const [tenantId, setTenantId] = useState("");
+  const [tenantIds, setTenantIds] = useState<string[]>([]);
+  const [tenantInput, setTenantInput] = useState("");
   const [langs, setLangs] = useState<string[]>(["en"]);
   const [selectedPii, setSelectedPii] = useState<string[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -891,6 +1002,19 @@ function PolicyFormModal({
   const [tenants, setTenants] = useState<TenantView[]>([]);
   const [tenantsLoading, setTenantsLoading] = useState(false);
   const [tenantsError, setTenantsError] = useState<string | null>(null);
+
+  const didFetchPiiOptionsForThisOpen = useRef(false);
+  useEffect(() => {
+    if (!isOpen) {
+      didFetchPiiOptionsForThisOpen.current = false;
+      return;
+    }
+
+    // Only fetch PII options once when the modal is opened, to avoid background load.
+    if (didFetchPiiOptionsForThisOpen.current) return;
+    didFetchPiiOptionsForThisOpen.current = true;
+    void refreshPiiOptions();
+  }, [isOpen, refreshPiiOptions]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -900,7 +1024,7 @@ function PolicyFormModal({
     void listTenants()
       .then((res) => {
         if (cancelled) return;
-        const list = res.tenants ?? [];
+        const list = (res.tenants ?? []).filter((tenant) => tenant.status === "ACTIVE");
         setTenants(
           [...list].sort((a, b) =>
             (a.organization_name ?? "").localeCompare(b.organization_name ?? "", undefined, {
@@ -926,7 +1050,8 @@ function PolicyFormModal({
       setName("");
       setDescription("");
       setIsGlobal(true);
-      setTenantId("");
+      setTenantIds([]);
+      setTenantInput("");
       setLangs(["en"]);
       setSelectedPii([]);
       return;
@@ -942,7 +1067,8 @@ function PolicyFormModal({
         setDescription(p.description || "");
         setIsGlobal(p.is_global);
         const tids = p.tenant_ids ?? [];
-        setTenantId(tids[0] ?? "");
+        setTenantIds(tids);
+        setTenantInput(tids.join(", "));
         setLangs(p.supported_languages?.length ? p.supported_languages : ["en"]);
         setSelectedPii((p.pii_types || []).map((x) => x.pii_type_id));
       } catch (e: unknown) {
@@ -958,6 +1084,9 @@ function PolicyFormModal({
   }, [isOpen, policyId, onError]);
 
   const handleSubmit = async () => {
+    const normalizedTenantIds =
+      tenantsError || tenants.length === 0 ? parseDelimitedValues(tenantInput) : tenantIds;
+
     if (!name.trim()) {
       onError("Name is required");
       return;
@@ -966,8 +1095,12 @@ function PolicyFormModal({
       onError("Select at least one language");
       return;
     }
-    if (!policyId && !isGlobal && !tenantId.trim()) {
-      onError("Tenant is required for non-global policies");
+    if (!isGlobal && !normalizedTenantIds.length) {
+      onError("Select at least one tenant for non-global policies");
+      return;
+    }
+    if (!selectedPii.length) {
+      onError("Select at least one PII type");
       return;
     }
     const pii_types = selectedPii.map((pii_type_id) => ({ pii_type_id }));
@@ -979,11 +1112,9 @@ function PolicyFormModal({
           description: description.trim() || null,
           supported_languages: langs,
           is_global: isGlobal,
+          tenant_ids: isGlobal ? [] : normalizedTenantIds,
           pii_types,
         };
-        if (!isGlobal && tenantId.trim()) {
-          body.tenant_id = tenantId.trim();
-        }
         await policyService.updatePolicy(policyId, body);
       } else {
         await policyService.createPolicy({
@@ -991,7 +1122,7 @@ function PolicyFormModal({
           description: description.trim() || undefined,
           is_global: isGlobal,
           supported_languages: langs,
-          tenant_id: isGlobal ? undefined : tenantId.trim(),
+          tenant_ids: isGlobal ? undefined : normalizedTenantIds,
           pii_types,
         });
       }
@@ -1006,6 +1137,10 @@ function PolicyFormModal({
   const piiById = useMemo(
     () => new Map(piiOptions.map((p) => [p.pii_type_id, p])),
     [piiOptions]
+  );
+  const tenantById = useMemo(
+    () => new Map(tenants.map((tenant) => [tenant.tenant_id, tenant])),
+    [tenants]
   );
 
   return (
@@ -1044,8 +1179,8 @@ function PolicyFormModal({
             <Switch isChecked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)} />
           </FormControl>
           {!isGlobal && (
-            <FormControl isRequired={!policyId}>
-              <FormLabel>Tenant</FormLabel>
+            <FormControl isRequired>
+              <FormLabel>Tenants</FormLabel>
               {tenantsLoading ? (
                 <HStack spacing={2} py={2}>
                   <Spinner size="sm" />
@@ -1061,41 +1196,48 @@ function PolicyFormModal({
                     </Text>
                   ) : (
                     <Text fontSize="sm" color="gray.600" mb={2}>
-                      No tenants found. Enter a tenant ID manually.
+                      No tenants found. Enter tenant IDs manually.
                     </Text>
                   )}
-                  <Input
+                  <Textarea
                     placeholder={
                       policyId
-                        ? "Optional: tenant UUID"
-                        : "Tenant UUID (required for non-global create)"
+                        ? "Tenant IDs separated by comma or newline"
+                        : "Tenant IDs separated by comma or newline"
                     }
-                    value={tenantId}
-                    onChange={(e) => setTenantId(e.target.value)}
+                    value={tenantInput}
+                    onChange={(e) => setTenantInput(e.target.value)}
                     fontFamily="mono"
                     fontSize="sm"
+                    rows={3}
                   />
+                  <FormHelperText>Enter one or more tenant IDs.</FormHelperText>
                 </>
               ) : (
                 <>
-                  <Select
-                    placeholder="Select organization…"
-                    value={tenantId}
-                    onChange={(e) => setTenantId(e.target.value)}
-                  >
-                    {tenantId && !tenants.some((t) => t.tenant_id === tenantId) ? (
-                      <option value={tenantId}>
-                        Current assignment — {tenantId}
-                      </option>
-                    ) : null}
-                    {tenants.map((t) => (
-                      <option key={t.tenant_id} value={t.tenant_id}>
-                        {t.organization_name || "(Unnamed)"} — {t.tenant_id}
-                      </option>
-                    ))}
-                  </Select>
+                  <Box maxH="220px" overflowY="auto" borderWidth="1px" borderRadius="md" p={3}>
+                    <CheckboxGroup value={tenantIds} onChange={(v) => setTenantIds(v as string[])}>
+                      <Stack spacing={2}>
+                        {tenantIds
+                          .filter((id) => !tenantById.has(id))
+                          .map((id) => (
+                            <Checkbox key={id} value={id}>
+                              Current assignment - {id}
+                            </Checkbox>
+                          ))}
+                        {tenants.map((t) => (
+                          <Checkbox key={t.tenant_id} value={t.tenant_id}>
+                            {t.organization_name || "(Unnamed)"}{" "}
+                            <Text as="span" color="gray.500" fontSize="sm">
+                              ({t.tenant_id})
+                            </Text>
+                          </Checkbox>
+                        ))}
+                      </Stack>
+                    </CheckboxGroup>
+                  </Box>
                   <FormHelperText>
-                    The policy is stored with the tenant ID. Pick an organization from the list.
+                    Select one or more active tenant assignments for this policy.
                   </FormHelperText>
                 </>
               )}
@@ -1113,7 +1255,7 @@ function PolicyFormModal({
               </HStack>
             </CheckboxGroup>
           </FormControl>
-          <FormControl>
+          <FormControl isRequired>
             <FormLabel>PII types (policy configuration)</FormLabel>
             <Box maxH="220px" overflowY="auto" borderWidth="1px" borderRadius="md" p={3}>
               <CheckboxGroup
@@ -1398,13 +1540,10 @@ function PiiTypesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
       toast({ title: "Label and regex are required", status: "warning" });
       return;
     }
-    const example_values = examples
-      .split(/[\n,]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (!editing && example_values.length < 3) {
+    const example_values = parseDelimitedValues(examples);
+    if ((!editing || example_values.length > 0) && example_values.length < 3) {
       toast({
-        title: "At least three example values are required for new PII types",
+        title: "Provide at least three example values when using the example field",
         status: "warning",
       });
       return;
@@ -1415,6 +1554,7 @@ function PiiTypesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
         await policyService.updatePiiType(editing.pii_type_id, {
           pii_type_label: label.trim(),
           regex_pattern: regex.trim(),
+          example_values: example_values.length > 0 ? example_values : undefined,
           mask_format: mask,
         });
       } else {
@@ -1750,17 +1890,19 @@ function PiiTypesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
             <FormLabel>Regex pattern</FormLabel>
             <Textarea value={regex} onChange={(e) => setRegex(e.target.value)} fontFamily="mono" rows={3} />
           </FormControl>
-          {!editing && (
-            <FormControl isRequired>
-              <FormLabel>Example values (comma or newline, min 3)</FormLabel>
-              <Textarea
-                value={examples}
-                onChange={(e) => setExamples(e.target.value)}
-                placeholder="a@b.com, test@example.org, user@mail.co"
-                rows={3}
-              />
-            </FormControl>
-          )}
+          <FormControl isRequired={!editing}>
+            <FormLabel>
+              {editing
+                ? "Example values (comma or newline, optional validation)"
+                : "Example values (comma or newline, min 3)"}
+            </FormLabel>
+            <Textarea
+              value={examples}
+              onChange={(e) => setExamples(e.target.value)}
+              placeholder="a@b.com, test@example.org, user@mail.co"
+              rows={3}
+            />
+          </FormControl>
           <FormControl>
             <FormLabel>Mask format</FormLabel>
             <Select value={mask} onChange={(e) => setMask(e.target.value as MaskFormat)}>

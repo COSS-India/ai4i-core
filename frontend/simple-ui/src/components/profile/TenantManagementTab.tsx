@@ -408,7 +408,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
 
   if (!user?.id) return null;
   const showAdopter = user?.is_superuser;
-  const showTenant = user?.is_tenant && !user?.is_superuser;
+  const showTenantAdminRole = user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === "TENANT ADMIN");
+  const showTenant = (user?.is_tenant || showTenantAdminRole) && !user?.is_superuser;
   const mustKeepManageServicesOpen =
     tm.manageServicesTenant?.status === "ACTIVE" &&
     tm.availableServices.length > 0 &&
@@ -1435,7 +1436,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
               </FormControl>
               <FormControl>
                 <FormLabel>Role</FormLabel>
-                <Select value={tm.userForm.role || "USER"} onChange={(e) => tm.setUserForm((f) => ({ ...f, role: e.target.value }))} bg="white">
+                <Select value={tm.userForm.role || ""} onChange={(e) => tm.setUserForm((f) => ({ ...f, role: e.target.value }))} bg="white" placeholder="Select role">
                   {tenantUserAssignableRoleOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}

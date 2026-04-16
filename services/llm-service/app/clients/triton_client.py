@@ -13,7 +13,10 @@ import httpx
 
 from ai4icore_exceptions import TritonInferenceError
 from ai4icore_env import app_env
-from ai4icore_model_management.triton_client import _accumulate_inference_time
+from ai4icore_model_management.triton_client import (
+    _accumulate_inference_time,
+    resolve_inference_ssl_verify,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +29,27 @@ class LLMTritonClient:
     Triton inference protocol but is accessed through a gateway URL.
     """
 
-    def __init__(self, triton_url: str, api_key: Optional[str] = None, timeout: float = 300.0):
+    def __init__(
+        self,
+        triton_url: str,
+        api_key: Optional[str] = None,
+        timeout: float = 300.0,
+        ssl_verify: Optional[bool] = None,
+    ):
         self.triton_url = triton_url
         self.api_key = api_key
         self.timeout = timeout
+        self.ssl_verify = ssl_verify
         self._client: Optional[httpx.AsyncClient] = None
 
     @property
     def client(self) -> httpx.AsyncClient:
         """Lazy initialization of HTTP client."""
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self.timeout, verify=app_env.inference_ssl_verify)
+            self._client = httpx.AsyncClient(
+                timeout=self.timeout,
+                verify=resolve_inference_ssl_verify(self.ssl_verify),
+            )
         return self._client
 
     def get_llm_io_for_triton(

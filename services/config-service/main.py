@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as redis
+from utils.health_status_cache import cache_health_snapshots
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from aiokafka import AIOKafkaProducer
@@ -88,6 +89,15 @@ async def periodic_health_check():
                 additional_endpoints if additional_endpoints else None,
             )
             
+            # Cache a lightweight health snapshot per service for internal consumers.
+            # This enables GET /internal/health-status to serve from cache only (<5ms),
+            # without DB reads or live probes on request.
+            await cache_health_snapshots(
+                redis_client,
+                results=results,
+                health_check_interval=health_check_interval,
+            )
+
             logger.debug(f"Completed health check cycle for {len(results)} services")
             
         except Exception as e:
@@ -183,6 +193,8 @@ async def startup_event():
         redis_client = redis.from_url(app_env.get_redis_url())
         await redis_client.ping()
         logger.info("Connected to Redis")
+        # Expose on app.state for routers (avoids circular imports).
+        app.state.redis_client = redis_client
         
         # Initialize PostgreSQL connection
         database_url = app_env.get_database_url()
@@ -435,11 +447,18 @@ async def root():
         "description": "Centralized configuration for microservices"
     }
 
-from routers import config_router, service_registry_router, health_router, feature_flag_router
+from routers import (
+    config_router,
+    service_registry_router,
+    health_router,
+    feature_flag_router,
+    internal_health_router,
+)
 app.include_router(config_router)
 app.include_router(service_registry_router)
 app.include_router(health_router)
 app.include_router(feature_flag_router)
+app.include_router(internal_health_router)
 
 @app.get("/api/v1/config/status")
 async def config_status():
