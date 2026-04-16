@@ -445,10 +445,10 @@ const Sidebar: React.FC = () => {
   const isAdmin = user?.roles?.includes('ADMIN') || false;
 
   // Check if user is TENANT ADMIN
-  const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
+  const isTenantAdmin = user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === 'TENANT ADMIN') || false;
 
-  // Show Tenant Management only to superuser or tenant users
-  const showTenantManagement = Boolean(user?.is_superuser || user?.is_tenant);
+  // Show Tenant Management to superusers, tenant-scoped users, and tenant admins
+  const showTenantManagement = Boolean(user?.is_superuser || user?.is_tenant || isTenantAdmin);
 
   // Single bulk request shared with home page (same queryKey = one request for whole app)
   const { flags: sidebarFlags } = useBulkFlags({
@@ -495,12 +495,12 @@ const Sidebar: React.FC = () => {
     if (item.id === "alerts-management" && !isAdmin) {
       return false;
     }
-    if (item.id === "pii-management" && isGuest) {
+    if (item.id === "pii-management" && !(isAdmin || isTenantAdmin)) {
       return false;
     }
     if (
       item.id === "policy-management" &&
-      (isGuest || !(isAdmin || Boolean(user?.is_superuser)))
+      !isAdmin
     ) {
       return false;
     }

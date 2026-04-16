@@ -42,6 +42,7 @@ import { useRouter } from "next/router";
 import { useQueryClient } from "@tanstack/react-query";
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import ContentLayout from "../components/common/ContentLayout";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import {
   listServices,
   createService,
@@ -929,15 +930,10 @@ const ServicesManagementPage: React.FC = () => {
 
       <ContentLayout>
         <VStack spacing={6} w="full">
-          {/* Page Header */}
-          <Box textAlign="center" mb={2}>
-            <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
-              Services Management
-            </Heading>
-            <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
-              Manage and configure services
-            </Text>
-          </Box>
+          <ManagementPageHeader
+            title="Services Management"
+            description="Manage and configure services"
+          />
 
           <Grid gap={8} w="full" mx="auto">
             <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px">
@@ -1231,66 +1227,6 @@ const ServicesManagementPage: React.FC = () => {
                           <VStack spacing={6} align="stretch">
                             <FormControl isRequired>
                               <FormLabel fontWeight="semibold">
-                                Model Name{" "}
-                              </FormLabel>
-                              <Select
-                                value={formData.modelId || ""}
-                                onChange={(e) => handleModelNameChange(e.target.value)}
-                                placeholder={isLoadingModels ? "Loading models..." : "Select a model"}
-                                bg="white"
-                                isDisabled={isLoadingModels}
-                              >
-                                {modelsForDropdown.map((model) => (
-                                  <option key={model.modelId || model.model_id} value={model.modelId || model.model_id}>
-                                    {model.name || model.modelId || model.model_id}
-                                  </option>
-                                ))}
-                              </Select>
-                              <Text fontSize="xs" color="gray.500" mt={1}>
-                                Select the model to be associated with this service.
-                              </Text>
-                            </FormControl>
-
-                            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                              <FormControl isRequired>
-                                <FormLabel fontWeight="semibold">Model ID</FormLabel>
-                                <Input value={formData.modelId || ""} bg="gray.50" isReadOnly />
-                                <Text fontSize="xs" color="gray.500" mt={1}>
-                                  Auto-populated from selected model
-                                </Text>
-                              </FormControl>
-
-                              <FormControl isRequired>
-                                <FormLabel fontWeight="semibold">Model Task Type</FormLabel>
-                                <Input
-                                  value={formData.task_type || ""}
-                                  onChange={(e) => handleInputChange("task_type", e.target.value)}
-                                  placeholder="Enter model task type"
-                                  bg="white"
-                                />
-                                <Text fontSize="xs" color="gray.500" mt={1}>
-                                  Auto-populated from selected model but editable.
-                                </Text>
-                              </FormControl>
-                            </SimpleGrid>
-
-                            <FormControl>
-                              <FormLabel fontWeight="semibold">
-                                Model Submission Date{" "}
-                              </FormLabel>
-                              <Input
-                                type="date"
-                                value={(formData.modelSubmissionDate as string) || ""}
-                                onChange={(e) => handleInputChange("modelSubmissionDate", e.target.value)}
-                                bg="white"
-                              />
-                              <Text fontSize="xs" color="gray.500" mt={1}>
-                                Auto-populated when available from model details, and can be adjusted.
-                              </Text>
-                            </FormControl>
-
-                            <FormControl isRequired>
-                              <FormLabel fontWeight="semibold">
                                 Service Name{" "}
                               </FormLabel>
                               <Input
@@ -1330,6 +1266,57 @@ const ServicesManagementPage: React.FC = () => {
                               <Text fontSize="xs" color="gray.500" mt={1}>
                                 Enter the full HTTP endpoint where this service is hosted.
                               </Text>
+                            </FormControl>
+
+                            <FormControl isRequired>
+                              <FormLabel fontWeight="semibold">
+                                Model Name{" "}
+                              </FormLabel>
+                              <Select
+                                value={formData.modelId || ""}
+                                onChange={(e) => handleModelNameChange(e.target.value)}
+                                placeholder={isLoadingModels ? "Loading models..." : "Select a model"}
+                                bg="white"
+                                isDisabled={isLoadingModels}
+                              >
+                                {modelsForDropdown.map((model) => (
+                                  <option key={model.modelId || model.model_id} value={model.modelId || model.model_id}>
+                                    {model.name || model.modelId || model.model_id}
+                                  </option>
+                                ))}
+                              </Select>
+                              <Text fontSize="xs" color="gray.500" mt={1}>
+                                Select the model to be associated with this service.
+                              </Text>
+                            </FormControl>
+
+                            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                              <FormControl isRequired>
+                                <FormLabel fontWeight="semibold">Model ID</FormLabel>
+                                <Input value={formData.modelId || ""} bg="gray.50" isReadOnly />
+                              </FormControl>
+
+                              <FormControl isRequired>
+                                <FormLabel fontWeight="semibold">Model Task Type</FormLabel>
+                                <Input
+                                  value={formData.task_type || ""}
+                                  onChange={(e) => handleInputChange("task_type", e.target.value)}
+                                  placeholder="Enter model task type"
+                                  bg="white"
+                                />
+                              </FormControl>
+                            </SimpleGrid>
+
+                            <FormControl>
+                              <FormLabel fontWeight="semibold">
+                                Model Submission Date{" "}
+                              </FormLabel>
+                              <Input
+                                type="date"
+                                value={(formData.modelSubmissionDate as string) || ""}
+                                onChange={(e) => handleInputChange("modelSubmissionDate", e.target.value)}
+                                bg="white"
+                              />
                             </FormControl>
 
                             <HStack justify="flex-end" spacing={4} pt={4}>

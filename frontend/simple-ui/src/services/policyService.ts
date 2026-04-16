@@ -91,6 +91,7 @@ export const policyService = {
     body: Partial<{
       pii_type_label: string;
       regex_pattern: string;
+      example_values: string[];
       mask_format: MaskFormat;
     }>
   ) => api.put<PiiTypeOut>(`${POLICY_API}/pii-types/${id}`, body),
@@ -116,7 +117,7 @@ export const policyService = {
     description?: string | null;
     is_global: boolean;
     supported_languages: string[];
-    tenant_id?: string | null;
+    tenant_ids?: string[];
     pii_types?: { pii_type_id: string }[];
   }) => api.post<PolicyOut>(`${POLICY_API}/policies`, body),
 
@@ -127,7 +128,7 @@ export const policyService = {
       description: string | null;
       supported_languages: string[];
       is_global: boolean;
-      tenant_id: string | null;
+      tenant_ids: string[];
       pii_types: { pii_type_id: string }[] | null;
     }>
   ) => api.put<PolicyOut>(`${POLICY_API}/policies/${id}`, body),

@@ -104,7 +104,6 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     if (roles.length === 0) {
       await handleLoadRoles();
     }
-    const primaryRole = selectedUserRoles[0] ?? "";
     if (selectedUserRoles.length > 1) {
       toast({
         title: "Multiple roles detected",
@@ -114,7 +113,7 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
         isClosable: true,
       });
     }
-    setDraftRole(primaryRole);
+    setDraftRole("");
     setIsManageRolesOpen(true);
   };
 
@@ -124,6 +123,7 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
   };
 
   const hasDraftChanges = (() => {
+    if (!draftRole) return false;
     const originalPrimary = selectedUserRoles[0] ?? "";
     if (selectedUserRoles.length > 1) return true;
     return originalPrimary !== draftRole;
@@ -132,6 +132,16 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
   const saveManageRoles = async () => {
     if (!selectedUser) return;
     if (!isAdmin || isModeratorOnly) return;
+    if (!draftRole) {
+      toast({
+        title: "Select role",
+        description: "Select a role to assign to this user.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     const originalPrimary = selectedUserRoles[0] ?? "";
     const toRemove = selectedUserRoles.filter((role) => role !== draftRole);
     const toAdd =

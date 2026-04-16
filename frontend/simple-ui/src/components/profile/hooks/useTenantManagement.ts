@@ -65,6 +65,8 @@ export interface UseTenantManagementOptions {
 export function useTenantManagement(options: UseTenantManagementOptions) {
   const { user } = options;
   const toast = useToastWithDeduplication();
+  const isTenantAdmin = Boolean(user?.roles?.some((role) => isTenantAdminRoleForSessionEnd(role)));
+  const isTenantScopedUser = Boolean((user?.is_tenant || isTenantAdmin) && !user?.is_superuser);
 
   // ----- Model (state) -----
   const [tenants, setTenants] = useState<TenantView[]>([]);
@@ -176,11 +178,11 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (user.is_superuser) {
       setMultiTenantSubView("adopter");
       hasSetInitialMultiTenantView.current = true;
-    } else if (user.is_tenant) {
+    } else if (isTenantScopedUser) {
       setMultiTenantSubView("tenant");
       hasSetInitialMultiTenantView.current = true;
     }
-  }, [user?.id, user?.is_superuser, user?.is_tenant]);
+  }, [isTenantScopedUser, user?.id, user?.is_superuser]);
 
   // ----- Derived (filtered lists) -----
   const filteredTenants = useMemo(
@@ -214,7 +216,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     try {
       // Tenant admin must not hit platform-admin-only list endpoint.
       // Load only their own tenant using the tenant-scoped view endpoint.
-      if (user?.is_tenant && !user?.is_superuser) {
+      if (isTenantScopedUser) {
         const tenantId = user?.tenant_id?.trim();
         if (!tenantId) {
           setTenants([]);
@@ -706,9 +708,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         });
         toast({ title: "User status updated", status: "success", isClosable: true });
         const endedStatus = statusUpdateNewStatus === "SUSPENDED" || statusUpdateNewStatus === "DEACTIVATED";
-        const tenantAdminFromMe = Boolean(
-          user?.roles?.some((r) => (r ?? "").trim().toUpperCase() === "TENANT ADMIN")
-        );
+      const tenantAdminFromMe = isTenantAdmin;
         const isCurrentTenantAdmin =
           endedStatus &&
           user?.id != null &&
