@@ -76,7 +76,9 @@ const extractGuestServices = (payload: any): string[] => {
 
 export const useGuestServices = () => {
   const { isAuthenticated, user } = useAuth();
-  const userRoles = Array.isArray(user?.roles) ? user.roles : [];
+  const roles = user?.roles;
+  // `user` may be null; ensure we always end up with an array type.
+  const userRoles: unknown[] = Array.isArray(roles) ? roles : [];
   const isGuest = userRoles.some((role) => String(role).toUpperCase() === 'GUEST');
   const userId = user?.id ?? null;
 

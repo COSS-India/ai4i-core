@@ -708,7 +708,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         });
         toast({ title: "User status updated", status: "success", isClosable: true });
         const endedStatus = statusUpdateNewStatus === "SUSPENDED" || statusUpdateNewStatus === "DEACTIVATED";
-      const tenantAdminFromMe = isTenantAdmin;
+        const tenantAdminFromMe = isTenantAdmin;
         const isCurrentTenantAdmin =
           endedStatus &&
           user?.id != null &&
