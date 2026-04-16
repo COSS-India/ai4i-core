@@ -45,6 +45,8 @@ class PiiTypeCreate(BaseModel):
 class PiiTypeUpdate(BaseModel):
     pii_type_label: Optional[str] = None
     regex_pattern: Optional[str] = None
+    # Used only for validation during updates; not persisted.
+    example_values: Optional[List[str]] = Field(default=None, min_length=3)
     mask_format: Optional[str] = None
 
     @field_validator("mask_format")
