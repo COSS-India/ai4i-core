@@ -2,7 +2,7 @@
 from typing import Optional, Sequence
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -60,6 +60,15 @@ class TenantPolicyRepository:
                 continue
             self.db.add(TenantPolicy(tenant_id=tenant_id, policy_id=policy_id))
         await self.db.commit()
+
+    async def clear_policy_assignments(self, policy_id: UUID) -> int:
+        """
+        Remove all explicit tenant assignments for a policy.
+        Returns number of rows deleted.
+        """
+        result = await self.db.execute(delete(TenantPolicy).where(TenantPolicy.policy_id == policy_id))
+        await self.db.commit()
+        return int(result.rowcount or 0)
 
     async def unassign(self, tenant_id: str, policy_id: UUID) -> bool:
         assignment = await self.get_assignment(tenant_id, policy_id)
