@@ -42,7 +42,8 @@ from models.enum_tenant import  (
     AuditAction , 
     BillingStatus , 
     AuditActorType , 
-    TenantUserStatus
+    TenantUserStatus,
+    TenantUserSuspensionTag,
     )
 
 from models.tenant_create import TenantRegisterRequest, TenantRegisterResponse
@@ -260,6 +261,70 @@ async def enforce_verification_send_policy(
             detail="Verification email resend limit reached for the last 24 hours.",
         )
 
+
+async def _cascade_tenant_status_to_users(
+    tenant: Tenant,
+    old_status: TenantStatus,
+    new_status: TenantStatus,
+    db: AsyncSession,
+) -> list[int]:
+    """
+    Apply tenant lifecycle status to tenant users with reversible suspension tagging.
+    Returns auth user_ids whose tenant-user status changed.
+    """
+    result = await db.execute(
+        select(TenantUser).where(TenantUser.tenant_id == tenant.tenant_id)
+    )
+    tenant_users = result.scalars().all()
+    changed_auth_user_ids: list[int] = []
+    changed_tenant_user_ids: list[UUID] = []
+
+    if new_status in {TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED}:
+        for tenant_user in tenant_users:
+            # Preserve tenant-admin suspensions so reactivation does not unintentionally unblock them.
+            if tenant_user.status == TenantUserStatus.SUSPENDED:
+                if not tenant_user.suspension_tag:
+                    tenant_user.suspension_tag = TenantUserSuspensionTag.TENANT_SUSPENDED
+                continue
+
+            tenant_user.status = TenantUserStatus.SUSPENDED
+            tenant_user.suspension_tag = TenantUserSuspensionTag.ADMIN_SUSPENDED
+            changed_tenant_user_ids.append(tenant_user.id)
+            changed_auth_user_ids.append(tenant_user.user_id)
+
+    elif (
+        old_status in {TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED}
+        and new_status == TenantStatus.ACTIVE
+    ):
+        # Reactivate only users suspended by tenant-level admin action.
+        for tenant_user in tenant_users:
+            if (
+                tenant_user.status == TenantUserStatus.SUSPENDED
+                and tenant_user.suspension_tag == TenantUserSuspensionTag.ADMIN_SUSPENDED
+            ):
+                tenant_user.status = TenantUserStatus.ACTIVE
+                tenant_user.suspension_tag = None
+                changed_tenant_user_ids.append(tenant_user.id)
+                changed_auth_user_ids.append(tenant_user.user_id)
+
+    if changed_tenant_user_ids:
+        target_status = (
+            TenantUserStatus.SUSPENDED
+            if new_status in {TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED}
+            else TenantUserStatus.ACTIVE
+        )
+        await db.execute(
+            update(UserBillingRecord)
+            .where(
+                UserBillingRecord.tenant_id == tenant.tenant_id,
+                UserBillingRecord.user_id.in_(changed_tenant_user_ids),
+            )
+            .values(status=target_status)
+        )
+
+    return changed_auth_user_ids
+
+
 # Status transition rules
 TENANT_STATUS_TRANSITIONS = {
     TenantStatus.PENDING: [TenantStatus.ACTIVE, TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED],
@@ -272,6 +337,8 @@ TENANT_USER_STATUS_TRANSITIONS = {
     TenantUserStatus.ACTIVE: [TenantUserStatus.SUSPENDED],
     TenantUserStatus.SUSPENDED: [TenantUserStatus.ACTIVE],
 }
+
+
 
 def validate_status_transition(old_status, new_status, allowed_transitions: dict, entity_type: str = "Entity"):
     """
@@ -2155,8 +2222,12 @@ async def update_tenant_status(
     validate_status_transition(old_status, new_status, TENANT_STATUS_TRANSITIONS, "Tenant")
 
     tenant.status = new_status
-
-    # Removing user status as tenant status and user status is independent of each other 
+    affected_tenant_user_ids = await _cascade_tenant_status_to_users(
+        tenant=tenant,
+        old_status=old_status,
+        new_status=new_status,
+        db=db,
+    )
 
     # Update tenant-level billing record status if it exists
     billing_record = await db.scalar(select(BillingRecord).where(BillingRecord.tenant_id == tenant.id))
@@ -2204,6 +2275,7 @@ async def update_tenant_status(
                 "old_status": old_status,
                 "new_status": new_status,
                 "reason": payload.reason,
+                "affected_tenant_users": len(affected_tenant_user_ids),
             },
         )
     )
@@ -2220,6 +2292,8 @@ async def update_tenant_status(
         raise HTTPException(status_code=500, detail="Failed to update tenant status")
 
     await _invalidate_auth_tenant_status_cache(tenant.tenant_id)
+    for affected_user_id in affected_tenant_user_ids:
+        await _invalidate_auth_tenant_user_status_cache(tenant.tenant_id, affected_user_id)
     
     # Immediately revoke active auth sessions when tenant is suspended/deactivated.
     # This is best-effort; auth enforcement on subsequent requests still blocks access.
@@ -2286,6 +2360,11 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
     validate_status_transition(old_status, payload.status, TENANT_USER_STATUS_TRANSITIONS, "User")
     
     tenant_user.status = payload.status
+    tenant_user.suspension_tag = (
+        TenantUserSuspensionTag.TENANT_SUSPENDED
+        if payload.status == TenantUserStatus.SUSPENDED
+        else None
+    )
 
     # Cascade status to this user's billing records
     await db.execute(update(UserBillingRecord)
@@ -2306,6 +2385,11 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
                 "user_id": user_id,
                 "old_status": old_status,
                 "new_status": payload.status,
+                "suspension_tag": (
+                    tenant_user.suspension_tag.value
+                    if tenant_user.suspension_tag is not None
+                    else None
+                ),
             },
         )
     )
@@ -2328,6 +2412,7 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
         user_id=user_id,
         old_status=old_status,
         new_status=payload.status,
+        suspension_tag=tenant_user.suspension_tag,
     )
 
     return response
@@ -2851,6 +2936,11 @@ async def view_tenant_user_details(
         phone_number=decrypted_phone,
         subscriptions=tenant_user.subscriptions or [],
         status=tenant_user.status.value if hasattr(tenant_user.status, "value") else str(tenant_user.status),
+        suspension_tag=(
+            tenant_user.suspension_tag.value
+            if getattr(tenant_user, "suspension_tag", None) is not None
+            else None
+        ),
         is_approved=tenant_user.is_approved,
         created_at=tenant_user.created_at.isoformat(),
         updated_at=tenant_user.updated_at.isoformat(),
@@ -2982,6 +3072,11 @@ async def list_all_users(
                 phone_number=decrypted_phone,
                 subscriptions=user.subscriptions or [],
                 status=user.status.value if hasattr(user.status, "value") else str(user.status),
+                suspension_tag=(
+                    user.suspension_tag.value
+                    if getattr(user, "suspension_tag", None) is not None
+                    else None
+                ),
                 is_approved=user.is_approved,
                 created_at=user.created_at.isoformat(),
                 updated_at=user.updated_at.isoformat(),

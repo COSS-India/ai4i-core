@@ -11,6 +11,10 @@ class TenantUserStatus(str, Enum):
     ACTIVE = "ACTIVE"            # user created and approved by tenant admin
     SUSPENDED = "SUSPENDED"
 
+class TenantUserSuspensionTag(str, Enum):
+    ADMIN_SUSPENDED = "ADMIN_SUSPENDED"
+    TENANT_SUSPENDED = "TENANT_SUSPENDED"
+
 
 class TenantUserRole(str, Enum):
     """Roles assignable to tenant users. Must exist in auth service."""

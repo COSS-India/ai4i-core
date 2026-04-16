@@ -12,6 +12,7 @@ class TenantUserViewResponse(BaseModel):
     phone_number: Optional[str] = None
     subscriptions: list[str]
     status: str
+    suspension_tag: Optional[str] = None
     created_at: str
     updated_at: str
     role: str = Field(

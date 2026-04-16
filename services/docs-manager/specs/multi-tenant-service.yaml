@@ -516,6 +516,7 @@ components:
         user_id: { type: integer }
         old_status: { type: string }
         new_status: { type: string }
+        suspension_tag: { type: string, nullable: true}
     TenantUserUpdateRequest:
       type: object
       required: [tenant_id, user_id]
@@ -704,6 +705,7 @@ components:
         phone_number: { type: string }
         subscriptions: { type: array, items: { type: string } }
         status: { type: string }
+        suspension_tag: { type: string, nullable: true}
         created_at: { type: string }
         updated_at: { type: string }
         role: { type: string }
