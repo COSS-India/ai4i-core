@@ -254,8 +254,11 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
   const modal = useDisclosure();
   const viewModal = useDisclosure();
+  const confirmDeleteModal = useDisclosure();
   const [viewPolicyId, setViewPolicyId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PolicyOut | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [piiOptions, setPiiOptions] = useState<PiiTypeOut[]>([]);
   const [policyStatusBusyId, setPolicyStatusBusyId] = useState<string | null>(null);
   const [activeStatusTooltipId, setActiveStatusTooltipId] = useState<string | null>(null);
@@ -383,6 +386,39 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
   const closePolicyView = () => {
     viewModal.onClose();
     setViewPolicyId(null);
+  };
+
+  const requestDelete = (policy: PolicyOut) => {
+    setDeleteTarget(policy);
+    confirmDeleteModal.onOpen();
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await policyService.deletePolicy(deleteTarget.policy_id);
+      toast({ title: "Policy deleted", status: "success", duration: 2500 });
+      confirmDeleteModal.onClose();
+      if (viewPolicyId === deleteTarget.policy_id) {
+        closePolicyView();
+      }
+      if (editingId === deleteTarget.policy_id) {
+        modal.onClose();
+        setEditingId(null);
+      }
+      setDeleteTarget(null);
+      await reloadPolicies();
+    } catch (e: unknown) {
+      toast({
+        title: getPolicyApiErrorMessage(e, "Could not delete policy"),
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setDeleting(false);
+    }
   };
 
   useEffect(() => {
@@ -649,6 +685,17 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
                                 onClick={() => openEdit(row.policy_id)}
                               />
                             </Tooltip>
+                            <Tooltip label="Delete policy" hasArrow placement="top">
+                              <IconButton
+                                aria-label="Delete policy"
+                                icon={<DeleteIcon />}
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="red"
+                                _hover={{ bg: "red.50" }}
+                                onClick={() => requestDelete(row)}
+                              />
+                            </Tooltip>
                             <Tooltip
                               label={row.is_active ? "Turn off to deactivate" : "Turn on to activate"}
                               hasArrow
@@ -731,6 +778,10 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
           closePolicyView();
           openEdit(id);
         }}
+        onDelete={(policy) => {
+          closePolicyView();
+          requestDelete(policy);
+        }}
         onError={(msg) =>
           toast({ title: msg, status: "error", duration: 5000, isClosable: true })
         }
@@ -752,6 +803,26 @@ function PoliciesPanel({ toast }: { toast: ReturnType<typeof useToast> }) {
           toast({ title: msg, status: "error", duration: 5000, isClosable: true })
         }
       />
+
+      <ConfirmDialog
+        isOpen={confirmDeleteModal.isOpen}
+        onClose={() => {
+          confirmDeleteModal.onClose();
+          if (!deleting) setDeleteTarget(null);
+        }}
+        title="Delete policy definition"
+        body={
+          deleteTarget ? (
+            <Text>
+              Delete <strong>{deleteTarget.name}</strong>? This action cannot be undone.
+            </Text>
+          ) : null
+        }
+        onConfirm={() => void handleConfirmDelete()}
+        confirmLabel="Delete"
+        confirmColorScheme="red"
+        isConfirmLoading={deleting}
+      />
     </Box>
   );
 }
@@ -761,12 +832,14 @@ function PolicyDetailModal({
   onClose,
   policyId,
   onEdit,
+  onDelete,
   onError,
 }: {
   isOpen: boolean;
   onClose: () => void;
   policyId: string | null;
   onEdit: (id: string) => void;
+  onDelete: (policy: PolicyOut) => void;
   onError: (msg: string) => void;
 }) {
   const [policy, setPolicy] = useState<PolicyOut | null>(null);
@@ -807,14 +880,21 @@ function PolicyDetailModal({
             Close
           </Button>
           {policyId ? (
-            <Button
-              colorScheme="blue"
-              onClick={() => {
-                onEdit(policyId);
-              }}
-            >
-              Edit
-            </Button>
+            <>
+              {policy ? (
+                <Button colorScheme="red" variant="outline" onClick={() => onDelete(policy)}>
+                  Delete
+                </Button>
+              ) : null}
+              <Button
+                colorScheme="blue"
+                onClick={() => {
+                  onEdit(policyId);
+                }}
+              >
+                Edit
+              </Button>
+            </>
           ) : null}
         </HStack>
       }
@@ -944,7 +1024,7 @@ function PolicyFormModal({
     void listTenants()
       .then((res) => {
         if (cancelled) return;
-        const list = res.tenants ?? [];
+        const list = (res.tenants ?? []).filter((tenant) => tenant.status === "ACTIVE");
         setTenants(
           [...list].sort((a, b) =>
             (a.organization_name ?? "").localeCompare(b.organization_name ?? "", undefined, {
@@ -1157,7 +1237,7 @@ function PolicyFormModal({
                     </CheckboxGroup>
                   </Box>
                   <FormHelperText>
-                    Select one or more tenant assignments for this policy.
+                    Select one or more active tenant assignments for this policy.
                   </FormHelperText>
                 </>
               )}
