@@ -970,6 +970,10 @@ function PolicyFormModal({
       onError("Tenant is required for non-global policies");
       return;
     }
+    if (!selectedPii.length) {
+      onError("Select at least one PII type");
+      return;
+    }
     const pii_types = selectedPii.map((pii_type_id) => ({ pii_type_id }));
     setSaving(true);
     try {
@@ -1113,7 +1117,7 @@ function PolicyFormModal({
               </HStack>
             </CheckboxGroup>
           </FormControl>
-          <FormControl>
+          <FormControl isRequired>
             <FormLabel>PII types (policy configuration)</FormLabel>
             <Box maxH="220px" overflowY="auto" borderWidth="1px" borderRadius="md" p={3}>
               <CheckboxGroup
