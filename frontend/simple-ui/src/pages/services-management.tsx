@@ -74,6 +74,8 @@ type ModelSummary = {
   taskType?: string;
   version?: string;
   modelVersion?: string;
+  submittedOn?: string | number;
+  submitted_on?: string | number;
 };
 
 const ServicesManagementPage: React.FC = () => {
@@ -92,6 +94,7 @@ const ServicesManagementPage: React.FC = () => {
     modelName: "", // Store selected model name for display
     endpoint: "",
     task_type: "",
+    modelSubmissionDate: "",
     modelVersion: "1.0",
   });
   const [updateFormData, setUpdateFormData] = useState<Partial<Service>>({});
@@ -137,6 +140,23 @@ const ServicesManagementPage: React.FC = () => {
     if (typeof value === "number") return value > 1e12 ? value : value * 1000;
     const t = new Date(value).getTime();
     return Number.isNaN(t) ? 0 : t;
+  };
+
+  const formatModelSubmissionDate = (value?: string | number | null): string => {
+    if (value == null || value === "") return "";
+
+    let timestampMs: number;
+    if (typeof value === "number") {
+      timestampMs = value > 1e12 ? value : value * 1000;
+    } else if (/^\d+$/.test(value)) {
+      const parsed = Number(value);
+      timestampMs = parsed > 1e12 ? parsed : parsed * 1000;
+    } else {
+      timestampMs = new Date(value).getTime();
+    }
+
+    if (Number.isNaN(timestampMs)) return "";
+    return new Date(timestampMs).toISOString().slice(0, 10);
   };
 
   const taskTypeOptions = useMemo(() => {
@@ -411,7 +431,7 @@ const ServicesManagementPage: React.FC = () => {
     }));
   };
 
-  // Handle model name selection and derive modelId, task_type, and modelVersion
+  // Handle model name selection and derive model metadata
   const handleModelNameChange = async (modelId: string) => {
     // Check session expiry before fetching model details
     if (!checkSessionExpiry()) return;
@@ -425,6 +445,11 @@ const ServicesManagementPage: React.FC = () => {
         
         // Extract model version (required field after migration)
         const modelVersion = modelDetails?.version || modelDetails?.modelVersion || "1.0";
+
+        // Extract model submission date (if API returns it)
+        const modelSubmissionDate = formatModelSubmissionDate(
+          modelDetails?.submittedOn ?? modelDetails?.submitted_on ?? ""
+        );
         
         // Get model name for display
         const modelName = modelDetails?.name || modelDetails?.modelId || modelDetails?.model_id || "";
@@ -434,6 +459,7 @@ const ServicesManagementPage: React.FC = () => {
           modelId: modelId,
           modelName: modelName,
           task_type: taskType,
+          modelSubmissionDate: modelSubmissionDate,
           modelVersion: modelVersion,
         }));
       } catch (error: any) {
@@ -455,6 +481,7 @@ const ServicesManagementPage: React.FC = () => {
         modelId: "",
         modelName: "",
         task_type: "",
+        modelSubmissionDate: "",
         modelVersion: "",
       }));
     }
@@ -473,9 +500,12 @@ const ServicesManagementPage: React.FC = () => {
       const timestamp = Date.now();
       const serviceId = `${formData.name?.toLowerCase().replace(/\s+/g, '-') || 'service'}-${timestamp}`;
       
-      // Prepare service data with auto-generated serviceId
+      // Prepare service data with auto-generated serviceId.
+      // Do not send modelSubmissionDate because backend owns this field.
+      const serviceFormData: Partial<Service> = { ...formData };
+      delete serviceFormData.modelSubmissionDate;
       const serviceData: Partial<Service> = {
-        ...formData,
+        ...serviceFormData,
         serviceId: serviceId,
         publishedOn: Math.floor(Date.now() / 1000),
         hardwareDescription: 'Default hardware', // Default value since field is removed
@@ -515,6 +545,7 @@ const ServicesManagementPage: React.FC = () => {
         modelName: "",
         endpoint: "",
         task_type: "",
+        modelSubmissionDate: "",
         modelVersion: "1.0",
       });
       setPreselectedModelFromQuery(null);
@@ -987,7 +1018,7 @@ const ServicesManagementPage: React.FC = () => {
                                 </Select>
                               </FormControl>
                               <FormControl w={{ base: "full", sm: "160px" }}>
-                                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>Task type</FormLabel>
+                                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>Model Task Type</FormLabel>
                                 <Select
                                   size="sm"
                                   value={filterTaskType}
@@ -1015,7 +1046,7 @@ const ServicesManagementPage: React.FC = () => {
                                 )}
                                 {filterTaskType && (
                                   <Badge colorScheme="gray" fontSize="xs" px={2} py={1} cursor="pointer" onClick={() => { setFilterTaskType(""); setListPage(1); }} _hover={{ opacity: 0.8 }}>
-                                    Task: {filterTaskType} ×
+                                    Model Task Type: {filterTaskType} ×
                                   </Badge>
                                 )}
                               </HStack>
@@ -1052,7 +1083,7 @@ const ServicesManagementPage: React.FC = () => {
                                       descAriaLabel="Sort services by name descending"
                                     />
                                   </Th>
-                                  <Th>Task Type</Th>
+                                  <Th>Model Task Type</Th>
                                   <Th>Status</Th>
                                   <Th>Actions</Th>
                                 </Tr>
@@ -1200,8 +1231,67 @@ const ServicesManagementPage: React.FC = () => {
                           <VStack spacing={6} align="stretch">
                             <FormControl isRequired>
                               <FormLabel fontWeight="semibold">
+                                Model Name{" "}
+                              </FormLabel>
+                              <Select
+                                value={formData.modelId || ""}
+                                onChange={(e) => handleModelNameChange(e.target.value)}
+                                placeholder={isLoadingModels ? "Loading models..." : "Select a model"}
+                                bg="white"
+                                isDisabled={isLoadingModels}
+                              >
+                                {modelsForDropdown.map((model) => (
+                                  <option key={model.modelId || model.model_id} value={model.modelId || model.model_id}>
+                                    {model.name || model.modelId || model.model_id}
+                                  </option>
+                                ))}
+                              </Select>
+                              <Text fontSize="xs" color="gray.500" mt={1}>
+                                Select the model to be associated with this service.
+                              </Text>
+                            </FormControl>
+
+                            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                              <FormControl isRequired>
+                                <FormLabel fontWeight="semibold">Model ID</FormLabel>
+                                <Input value={formData.modelId || ""} bg="gray.50" isReadOnly />
+                                <Text fontSize="xs" color="gray.500" mt={1}>
+                                  Auto-populated from selected model
+                                </Text>
+                              </FormControl>
+
+                              <FormControl isRequired>
+                                <FormLabel fontWeight="semibold">Model Task Type</FormLabel>
+                                <Input
+                                  value={formData.task_type || ""}
+                                  onChange={(e) => handleInputChange("task_type", e.target.value)}
+                                  placeholder="Enter model task type"
+                                  bg="white"
+                                />
+                                <Text fontSize="xs" color="gray.500" mt={1}>
+                                  Auto-populated from selected model but editable.
+                                </Text>
+                              </FormControl>
+                            </SimpleGrid>
+
+                            <FormControl>
+                              <FormLabel fontWeight="semibold">
+                                Model Submission Date{" "}
+                              </FormLabel>
+                              <Input
+                                type="date"
+                                value={(formData.modelSubmissionDate as string) || ""}
+                                onChange={(e) => handleInputChange("modelSubmissionDate", e.target.value)}
+                                bg="white"
+                              />
+                              <Text fontSize="xs" color="gray.500" mt={1}>
+                                Auto-populated when available from model details, and can be adjusted.
+                              </Text>
+                            </FormControl>
+
+                            <FormControl isRequired>
+                              <FormLabel fontWeight="semibold">
                                 Service Name{" "}
-                                
                               </FormLabel>
                               <Input
                                 value={formData.name || ""}
@@ -1217,7 +1307,6 @@ const ServicesManagementPage: React.FC = () => {
                             <FormControl isRequired>
                               <FormLabel fontWeight="semibold">
                                 Service Description{" "}
-                                
                               </FormLabel>
                               <Textarea
                                 value={formData.serviceDescription || ""}
@@ -1228,74 +1317,20 @@ const ServicesManagementPage: React.FC = () => {
                               />
                             </FormControl>
 
-                            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                              <FormControl isRequired>
-                                <FormLabel fontWeight="semibold">
-                                  Model Name{" "}
-                               
-                                </FormLabel>
-                                <Select
-                                  value={formData.modelId || ""}
-                                  onChange={(e) => handleModelNameChange(e.target.value)}
-                                  placeholder={isLoadingModels ? "Loading models..." : "Select a model"}
-                                  bg="white"
-                                  isDisabled={isLoadingModels}
-                                >
-                                  {modelsForDropdown.map((model) => (
-                                    <option key={model.modelId || model.model_id} value={model.modelId || model.model_id}>
-                                      {model.name || model.modelId || model.model_id}
-                                    </option>
-                                  ))}
-                                </Select>
-                                <Text fontSize="xs" color="gray.500" mt={1}>
-                                  Select the model to be associated with this service.
-                                </Text>
-                              </FormControl>
-
-                              <FormControl isRequired>
+                            <FormControl isRequired>
                               <FormLabel fontWeight="semibold">
                                 Endpoint{" "}
-                                
                               </FormLabel>
-                                <Input
-                                  value={formData.endpoint || ""}
-                                  onChange={(e) => handleInputChange("endpoint", e.target.value)}
-                                  placeholder="Enter endpoint URL, e.g. http://localhost:8088"
-                                  bg="white"
-                                />
-                                <Text fontSize="xs" color="gray.500" mt={1}>
-                                  Enter the full HTTP endpoint where this service is hosted.
-                                </Text>
-                              </FormControl>
-                            </SimpleGrid>
-
-                            {/* Auto-generated fields (read-only labels) */}
-                            {formData.modelId && (
-                              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                                <Box>
-                                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                    Model ID
-                                  </Text>
-                                  <Box px={3} py={2} bg="gray.50" borderRadius="md" borderWidth="1px" borderColor="gray.200">
-                                    <Text fontSize="sm" color="gray.700">{formData.modelId || "—"}</Text>
-                                  </Box>
-                                  <Text fontSize="xs" color="gray.500" mt={1}>
-                                    Auto-generated from selected model
-                                  </Text>
-                                </Box>
-                                <Box>
-                                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                                    Task type
-                                  </Text>
-                                  <Box px={3} py={2} bg="gray.50" borderRadius="md" borderWidth="1px" borderColor="gray.200">
-                                    <Text fontSize="sm" color="gray.700">{formData.task_type || "—"}</Text>
-                                  </Box>
-                                  <Text fontSize="xs" color="gray.500" mt={1}>
-                                    Auto-derived from selected model
-                                  </Text>
-                                </Box>
-                              </SimpleGrid>
-                            )}
+                              <Input
+                                value={formData.endpoint || ""}
+                                onChange={(e) => handleInputChange("endpoint", e.target.value)}
+                                placeholder="Enter endpoint URL, e.g. http://localhost:8088"
+                                bg="white"
+                              />
+                              <Text fontSize="xs" color="gray.500" mt={1}>
+                                Enter the full HTTP endpoint where this service is hosted.
+                              </Text>
+                            </FormControl>
 
                             <HStack justify="flex-end" spacing={4} pt={4}>
                               <Button
@@ -1310,6 +1345,7 @@ const ServicesManagementPage: React.FC = () => {
                                     modelName: "",
                                     endpoint: "",
                                     task_type: "",
+                                    modelSubmissionDate: "",
                                     modelVersion: "1.0",
                                   });
                                   setPreselectedModelFromQuery(null);
@@ -1371,7 +1407,7 @@ const ServicesManagementPage: React.FC = () => {
                               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                                 <Box>
                                   <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                                    Task Type
+                                    Model Task Type
                                   </Text>
                                   <Badge
                                     colorScheme={getTaskColor(selectedService?.model?.task?.type || selectedService?.task?.type || selectedService.task_type)}
