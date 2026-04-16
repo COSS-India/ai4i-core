@@ -154,7 +154,7 @@ python infrastructure/databases/cli.py seed:all
 ```
 
 This will create:
-- Default admin user: `admin@ai4inclusion.org` / `Admin@123`
+- Default admin user: `admin@ai4inclusion.org` / `ADMIN_PASSWORD`
 - Default roles (ADMIN, DEVELOPER, USER) and permissions
 - Sample service configurations
 - Default alert rules and dashboard configurations
@@ -235,7 +235,7 @@ Once all services are running, use the table below to find URLs and ports. The *
 **Platform Admin:**
 - **Username**: `admin`
 - **Email**: `admin@ai4inclusion.org`
-- **Password**: `Admin@123`
+- **Password**: `ADMIN_PASSWORD`
 - **Role**: ADMIN (all permissions)
 
 **Unleash (Feature Flags):**
@@ -327,7 +327,7 @@ Or use a path in the project: `mkdir -p volumes/pg_data` and set `device: "./vol
 
 ### Default admin login not working
 
-Use the credentials from the [Default Credentials](#default-credentials) section: **Username** `admin`, **Email** `admin@ai4inclusion.org`, **Password** `Admin@123`. 
+Use the credentials from the [Default Credentials](#default-credentials) section: **Username** `admin`, **Email** `admin@ai4inclusion.org`, **Password** `ADMIN_PASSWORD`. 
 
 If login still fails:
 

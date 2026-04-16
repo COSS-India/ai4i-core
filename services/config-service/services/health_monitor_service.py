@@ -74,6 +74,19 @@ class HealthMonitorService:
         self.retry_backoff_multiplier = retry_backoff_multiplier
         self._session: Optional[Any] = None  # aiohttp.ClientSession (lazy import)
 
+    async def _reset_session(self) -> None:
+        """
+        Drop the underlying aiohttp session.
+
+        This is used as a self-healing mechanism when the client session/connector
+        ends up in a closed/broken state (e.g., "Connection has been closed").
+        """
+        try:
+            if self._session and not self._session.closed:
+                await self._session.close()
+        finally:
+            self._session = None
+
     async def _get_session(self):
         """Get or create aiohttp session"""
         try:
@@ -86,13 +99,14 @@ class HealthMonitorService:
         
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(total=self.default_timeout)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            # Use a connector that is resilient to transient connection drops.
+            connector = aiohttp.TCPConnector(enable_cleanup_closed=True)
+            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
         return self._session
 
     async def close(self):
         """Close the aiohttp session"""
-        if self._session and not self._session.closed:
-            await self._session.close()
+        await self._reset_session()
 
     async def check_endpoint_health(
         self,
@@ -155,9 +169,19 @@ class HealthMonitorService:
             except aiohttp.ClientError as e:
                 last_error = f"Client error: {str(e)}"
                 response_time = 0
+                # Self-heal: aiohttp can raise connection/session-related errors like
+                # "Connection has been closed" across many requests when the connector
+                # is in a bad state. Recreate the session and let the retry loop proceed.
+                msg = str(e) or ""
+                if "Connection has been closed" in msg or "Session is closed" in msg:
+                    await self._reset_session()
             except Exception as e:
                 last_error = f"Unexpected error: {str(e)}"
                 response_time = 0
+                # Also self-heal on generic runtime errors that indicate a closed session.
+                msg = str(e) or ""
+                if "Connection has been closed" in msg or "Session is closed" in msg:
+                    await self._reset_session()
 
             # If retry is enabled and not the last attempt, wait with exponential backoff
             if retry and attempt < self.max_retries - 1:
