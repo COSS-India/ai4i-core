@@ -223,7 +223,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const [createRuleDef, setCreateRuleDef] = useState("");
 
   // Create Routing Rule — extended form state
-  const [createRuleScope, setCreateRuleScope] = useState<"global" | "specific_tenant">("global");
+  const [createRuleScope, setCreateRuleScope] = useState<"" | "global" | "specific_tenant">("");
   const [createRuleTenant, setCreateRuleTenant] = useState("");
   const [createRuleErrors, setCreateRuleErrors] = useState<Record<string, string>>({});
   const [tenants, setTenants] = useState<TenantView[]>([]);
@@ -237,7 +237,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const [editRuleErrors, setEditRuleErrors] = useState<Record<string, string>>({});
 
   const resetCreateRuleExtras = () => {
-    setCreateRuleScope("global");
+    setCreateRuleScope("");
     setCreateRuleTenant("");
     setCreateRuleErrors({});
     setCreateRuleDef("");
@@ -286,6 +286,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     if (!rules.createForm.rule_name.trim()) errors.ruleName = "Rule name is required.";
     if (!rules.createForm.category) errors.category = "Please select a category.";
     if (!rules.createForm.severity) errors.severity = "Please select a severity.";
+    if (!isInfrastructure && !createRuleScope) errors.scope = "Please select a scope.";
     if (!isInfrastructure && createRuleScope === "specific_tenant" && !createRuleTenant) {
       errors.tenant = "Please select a target tenant.";
     }
@@ -779,7 +780,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </FormLabel>
                 <OptionSelector
                   options={CATEGORIES}
-                  value={defs.createForm.category ?? "application"}
+                  value={defs.createForm.category ?? ""}
                   onChange={(v) => defs.setCreateForm({
                     ...defs.createForm,
                     category: v,
@@ -1082,13 +1083,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   <Select
                     value={defs.createForm.evaluation_interval ?? "30s"}
                     onChange={(e) => {
-                      const newEval = e.target.value;
-                      const allowed = getAllowedForDurations(newEval);
-                      const currentFor = defs.createForm.for_duration ?? "1m";
-                      const newFor = allowed.includes(currentFor) ? currentFor : allowed[0];
-                      defs.setCreateForm({ ...defs.createForm, evaluation_interval: newEval, for_duration: newFor });
+                    const newEval = e.target.value;
+                    defs.setCreateForm({ ...defs.createForm, evaluation_interval: newEval, for_duration: "" });
                     }}
                     bg="white"
+                  placeholder="Select evaluation interval"
                   >
                     {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
                   </Select>
@@ -1101,13 +1100,13 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     For Duration
                   </FormLabel>
                   <Select
-                    value={(() => {
-                      const allowed = getAllowedForDurations(defs.createForm.evaluation_interval);
-                      const cur = defs.createForm.for_duration ?? "1m";
-                      return allowed.includes(cur) ? cur : allowed[0];
-                    })()}
+                    value={defs.createForm.for_duration ?? ""}
                     onChange={(e) => defs.setCreateForm({ ...defs.createForm, for_duration: e.target.value })}
                     bg="white"
+                    placeholder={
+                      defs.createForm.evaluation_interval ? "Select for duration" : "Select an evaluation interval first"
+                    }
+                    isDisabled={!defs.createForm.evaluation_interval}
                   >
                     {getAllowedForDurations(defs.createForm.evaluation_interval).map((v) => (
                       <option key={v} value={v}>{v}</option>
@@ -1802,13 +1801,13 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <SimpleGrid columns={2} spacing={4}>
                 <FormControl isRequired>
                   <FormLabel fontWeight="semibold">Category</FormLabel>
-                  <Select value={recvs.createForm.category} onChange={(e) => recvs.setCreateForm({ ...recvs.createForm, category: e.target.value })} bg="white">
+                  <Select value={recvs.createForm.category} onChange={(e) => recvs.setCreateForm({ ...recvs.createForm, category: e.target.value })} bg="white" placeholder="Select category">
                     {CATEGORIES.map((c) => (<option key={c} value={c}>{c}</option>))}
                   </Select>
                 </FormControl>
                 <FormControl isRequired>
                   <FormLabel fontWeight="semibold">Severity</FormLabel>
-                  <Select value={recvs.createForm.severity} onChange={(e) => recvs.setCreateForm({ ...recvs.createForm, severity: e.target.value })} bg="white">
+                  <Select value={recvs.createForm.severity} onChange={(e) => recvs.setCreateForm({ ...recvs.createForm, severity: e.target.value })} bg="white" placeholder="Select severity">
                     {SEVERITIES.map((s) => (<option key={s} value={s}>{s}</option>))}
                   </Select>
                 </FormControl>
@@ -2287,7 +2286,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
 
               {/* ── Scope ── */}
               <VStack spacing={4} align="stretch" pb={6}>
-                <FormControl isRequired>
+                <FormControl isRequired isInvalid={!!createRuleErrors.scope}>
                   <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
                     Scope
                   </FormLabel>
@@ -2302,20 +2301,23 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <Select
                       value={createRuleScope}
                       onChange={(e) => {
-                        setCreateRuleScope(e.target.value as "global" | "specific_tenant");
+                        setCreateRuleScope(e.target.value as "" | "global" | "specific_tenant");
                         setCreateRuleTenant("");
                         setCreateRuleErrors((prev) => {
                           const n = { ...prev };
+                          delete n.scope;
                           delete n.tenant;
                           return n;
                         });
                       }}
                       bg="white"
+                      placeholder="Select scope"
                     >
                       <option value="global">Global</option>
                       <option value="specific_tenant">Specific Tenant</option>
                     </Select>
                   )}
+                  <FormErrorMessage>{createRuleErrors.scope}</FormErrorMessage>
                 </FormControl>
                 {rules.createForm.category !== "infrastructure" && createRuleScope === "specific_tenant" && (
                   <FormControl isRequired isInvalid={!!createRuleErrors.tenant}>
