@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, Optional
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from utils.health_status_cache import health_status_cache_key
 
@@ -19,6 +19,7 @@ router = APIRouter(prefix="/internal", tags=["Internal"])
     },
 )
 async def get_health_status(
+    request: Request,
     service_id: Annotated[
         str,
         Query(..., min_length=1, description="Service identifier (service name)"),
@@ -31,8 +32,7 @@ async def get_health_status(
       - Pure cache read (Redis) for low latency; no DB reads, no live probes.
       - Returns health state and last-check timestamp for the given service_id.
     """
-    from main import redis_client  # type: ignore
-
+    redis_client = getattr(request.app.state, "redis_client", None)
     if not redis_client:
         raise HTTPException(status_code=503, detail="Redis client not initialized")
 

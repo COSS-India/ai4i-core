@@ -163,6 +163,15 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         self._health_client: Optional[httpx.AsyncClient] = None
         self._health_client_lock: Optional[asyncio.Lock] = None
         self._health_cache: Dict[str, Tuple[dict, float]] = {}  # service_id -> (payload, expires_at)
+
+        # BaseHTTPMiddleware has no teardown hooks; attach cleanup to the app lifespan when possible.
+        # This is best-effort and safe to call multiple times.
+        if hasattr(app, "add_event_handler"):
+            try:
+                app.add_event_handler("shutdown", self.aclose)  # type: ignore[attr-defined]
+            except Exception:
+                # If the wrapped app doesn't support event handlers, skip shutdown wiring.
+                pass
         
         # In-memory caches
         self._service_info_cache: Dict[str, Tuple[ServiceInfo, float]] = {}
@@ -200,6 +209,9 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         # Pipeline routes do not map to a single microservice health key; gate would fail-closed.
         if task_type == "pipeline":
             return False
+        # Unknown routes cannot be mapped to a microservice health key; don't fail-closed.
+        if task_type is None:
+            return False
         return True
     
     def _should_process(self, path: str) -> bool:
@@ -233,6 +245,46 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         resp.raise_for_status()
         return resp.json()
 
+    def _build_health_503(
+        self,
+        *,
+        code: str,
+        message: str,
+        service_id: str,
+        health_service_id: str,
+        payload: Optional[dict] = None,
+    ) -> JSONResponse:
+        detail: dict[str, Any] = {
+            "code": code,
+            "message": message,
+            "serviceId": service_id,
+            "healthServiceId": health_service_id,
+        }
+        state = (payload or {}).get("state")
+        if state is not None:
+            detail["state"] = state
+        if (payload or {}).get("last_check") is not None:
+            detail["last_check"] = (payload or {}).get("last_check")
+        return JSONResponse(status_code=503, content={"detail": detail})
+
+    def _rewrite_health_gate_response(
+        self,
+        gate_resp: JSONResponse,
+        *,
+        service_id: str,
+        health_service_id: str,
+    ) -> JSONResponse:
+        """Ensure the JSON body includes both model-level and health cache service ids."""
+        try:
+            body = json.loads(gate_resp.body.decode("utf-8"))
+            if isinstance(body, dict) and isinstance(body.get("detail"), dict):
+                body["detail"]["serviceId"] = service_id
+                body["detail"]["healthServiceId"] = health_service_id
+                return JSONResponse(status_code=gate_resp.status_code, content=body)
+        except Exception:
+            pass
+        return gate_resp
+
     async def _preflight_health_gate(self, service_id: str) -> Optional[JSONResponse]:
         """
         Pre-flight gate for backend health.
@@ -253,31 +305,21 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             if expires_at > now:
                 state = (payload or {}).get("state")
                 if state == "unhealthy":
-                    return JSONResponse(
-                        status_code=503,
-                        content={
-                            "detail": {
-                                "code": "BACKEND_UNHEALTHY",
-                                "message": "Target backend is unhealthy; refusing inference pre-flight.",
-                                "serviceId": service_id,
-                                "healthServiceId": service_id,
-                                "state": state,
-                                "last_check": (payload or {}).get("last_check"),
-                            }
-                        },
+                    return self._build_health_503(
+                        code="BACKEND_UNHEALTHY",
+                        message="Target backend is unhealthy; refusing inference pre-flight.",
+                        service_id=service_id,
+                        health_service_id=service_id,
+                        payload=payload,
                     )
                 if state in ("healthy", "degraded"):
                     return None
-                return JSONResponse(
-                    status_code=503,
-                    content={
-                        "detail": {
-                            "code": "BACKEND_HEALTH_UNKNOWN",
-                            "message": "Target backend health is unknown; refusing inference pre-flight.",
-                            "serviceId": service_id,
-                            "healthServiceId": service_id,
-                        }
-                    },
+                return self._build_health_503(
+                    code="BACKEND_HEALTH_UNKNOWN",
+                    message="Target backend health is unknown; refusing inference pre-flight.",
+                    service_id=service_id,
+                    health_service_id=service_id,
+                    payload=payload,
                 )
             self._health_cache.pop(service_id, None)
 
@@ -287,31 +329,21 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             self._health_cache[service_id] = (payload, expires_at)
             state = (payload or {}).get("state")
             if state == "unhealthy":
-                return JSONResponse(
-                    status_code=503,
-                    content={
-                        "detail": {
-                            "code": "BACKEND_UNHEALTHY",
-                            "message": "Target backend is unhealthy; refusing inference pre-flight.",
-                            "serviceId": service_id,
-                            "healthServiceId": service_id,
-                            "state": state,
-                            "last_check": (payload or {}).get("last_check"),
-                        }
-                    },
+                return self._build_health_503(
+                    code="BACKEND_UNHEALTHY",
+                    message="Target backend is unhealthy; refusing inference pre-flight.",
+                    service_id=service_id,
+                    health_service_id=service_id,
+                    payload=payload,
                 )
             if state in ("healthy", "degraded"):
                 return None
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "detail": {
-                        "code": "BACKEND_HEALTH_UNKNOWN",
-                        "message": "Target backend health is unknown; refusing inference pre-flight.",
-                        "serviceId": service_id,
-                        "healthServiceId": service_id,
-                    }
-                },
+            return self._build_health_503(
+                code="BACKEND_HEALTH_UNKNOWN",
+                message="Target backend health is unknown; refusing inference pre-flight.",
+                service_id=service_id,
+                health_service_id=service_id,
+                payload=payload,
             )
         except Exception as exc:
             logger.debug("Health pre-flight check failed (fail-closed) for %r: %s", service_id, exc)
@@ -332,17 +364,22 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 },
                 now + negative_ttl,
             )
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "detail": {
-                        "code": "BACKEND_HEALTH_UNKNOWN",
-                        "message": "Target backend health is unavailable; refusing inference pre-flight.",
-                        "serviceId": service_id,
-                        "healthServiceId": service_id,
-                    }
-                },
+            return self._build_health_503(
+                code="BACKEND_HEALTH_UNKNOWN",
+                message="Target backend health is unavailable; refusing inference pre-flight.",
+                service_id=service_id,
+                health_service_id=service_id,
             )
+
+    async def aclose(self) -> None:
+        """Close any pooled resources created by this middleware (best-effort)."""
+        client = self._health_client
+        self._health_client = None
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
     
     async def _get_service_info(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> Optional[ServiceInfo]:
         """Get service info from model management service with caching"""
@@ -655,6 +692,20 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                                     else self.default_triton_api_key
                                 )
                                 variant_ssl_verify = (variant_info.ssl_verify if variant_info else None)
+
+                                # Run health gate BEFORE allocating/caching a TritonClient.
+                                variant_health_service_id = self._health_service_id_for_request(
+                                    request_path=request.url.path,
+                                    model_service_id=variant_service_id,
+                                )
+                                if self._should_apply_health_gate(request.url.path):
+                                    gate_resp = await self._preflight_health_gate(variant_health_service_id)
+                                    if gate_resp is not None:
+                                        return self._rewrite_health_gate_response(
+                                            gate_resp,
+                                            service_id=variant_service_id,
+                                            health_service_id=variant_health_service_id,
+                                        )
                                 # Variant can specify per-variant api_key and ssl_verify; cache by full client config.
                                 client_cache_key = "|".join(
                                     [
@@ -690,24 +741,6 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                                     )
                                     request.state.triton_client = client
 
-                                variant_health_service_id = self._health_service_id_for_request(
-                                    request_path=request.url.path,
-                                    model_service_id=variant_service_id,
-                                )
-                                if self._should_apply_health_gate(request.url.path):
-                                    gate_resp = await self._preflight_health_gate(variant_health_service_id)
-                                    if gate_resp is not None:
-                                        # Preserve original request serviceId for client debugging.
-                                        try:
-                                            body = json.loads(gate_resp.body.decode("utf-8"))
-                                            if isinstance(body, dict) and isinstance(body.get("detail"), dict):
-                                                body["detail"]["serviceId"] = variant_service_id
-                                                body["detail"]["healthServiceId"] = variant_health_service_id
-                                                gate_resp = JSONResponse(status_code=gate_resp.status_code, content=body)
-                                        except Exception:
-                                            pass
-                                        return gate_resp
-
                                 response = await call_next(request)
                                 await self._track_experiment_metric(request, response, start_time)
                                 return response
@@ -724,16 +757,11 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 if self._should_apply_health_gate(request.url.path):
                     gate_resp = await self._preflight_health_gate(health_service_id)
                     if gate_resp is not None:
-                        # Preserve original request serviceId for client debugging.
-                        try:
-                            body = json.loads(gate_resp.body.decode("utf-8"))
-                            if isinstance(body, dict) and isinstance(body.get("detail"), dict):
-                                body["detail"]["serviceId"] = service_id
-                                body["detail"]["healthServiceId"] = health_service_id
-                                gate_resp = JSONResponse(status_code=gate_resp.status_code, content=body)
-                        except Exception:
-                            pass
-                        return gate_resp
+                        return self._rewrite_health_gate_response(
+                            gate_resp,
+                            service_id=service_id,
+                            health_service_id=health_service_id,
+                        )
                 # Log removed - middleware handles request/response logging
                 logger.debug(f"Resolving serviceId: {service_id} via Model Management")
                 auth_headers = extract_auth_headers(request)
