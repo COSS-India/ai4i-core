@@ -930,7 +930,7 @@ function PolicyFormModal({
 
     const intervalId = window.setInterval(() => {
       void refreshPiiOptions();
-    }, 5000);
+    }, 20000);
 
     const refreshOnFocus = () => {
       void refreshPiiOptions();
