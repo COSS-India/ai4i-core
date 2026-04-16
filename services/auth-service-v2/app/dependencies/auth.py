@@ -9,7 +9,7 @@ of the shared lib, not a parallel implementation.
 import logging
 from datetime import datetime, timezone
 
-from fastapi import Depends, Request
+from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,10 +32,8 @@ from app.core.exceptions import (
 from app.dependencies.services import get_cache_service
 from app.models.user import User
 from app.repositories.api_key_repository import APIKeyRepository
-from app.repositories.session_repository import SessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.cache_service import CacheService
-from app.services.tenant_service import TenantService, is_suspended_or_deactivated
 from app.services.token_service import TokenPayload, TokenService
 
 logger = logging.getLogger(__name__)
@@ -141,7 +139,8 @@ async def _check_token_revocation(
 ) -> bool:
     """
     Check if a token_id has been revoked.
-    Redis first, DB fallback to avoid false revocations on Redis eviction.
+    API keys: Redis first, DB fallback (api_keys table still exists).
+    Refresh tokens: Redis only (no session table).
     Returns True if revoked, False if valid.
     """
     if token_type == "api_key":
@@ -160,26 +159,13 @@ async def _check_token_revocation(
         return False
 
     else:
-        if await cache_service.is_refresh_token_valid(token_id):
-            return False
-
-        repo = SessionRepository(db)
-        session = await repo.get_by_token_id(token_id)
-        if not session or not session.is_active:
-            return True
-
-        if session.expires_at:
-            remaining = (session.expires_at - datetime.now(timezone.utc)).total_seconds()
-            if remaining > 0:
-                await cache_service.store_refresh_token(token_id, int(remaining))
-        return False
+        # Refresh tokens — Redis only, no DB session table
+        return not await cache_service.is_refresh_token_valid(token_id)
 
 
 async def get_current_user(
-    request: Request,
     payload: TokenPayload = Depends(get_current_token),
     db: AsyncSession = Depends(get_db),
-    cache_service: CacheService = Depends(get_cache_service),
 ) -> User:
     """Resolve the authenticated user from the token payload."""
     repo = UserRepository(db)
@@ -189,37 +175,17 @@ async def get_current_user(
     if not user.is_active:
         raise UserInactiveError()
 
-    mt_factory = getattr(request.app.state, "multi_tenant_session_factory", None)
-    if mt_factory:
-        tenant_service = TenantService(mt_factory, cache_service)
-
-        tenant_id = user.tenant_id_cached or payload.tenant_id
-        is_tenant_user = bool(user.is_tenant)
-        if not tenant_id:
-            tenant_id = await tenant_service.resolve_and_cache_tenant_id(user.id, is_tenant_user)
-
-        if tenant_id:
-            tenant_status = await tenant_service.get_tenant_status_cached(tenant_id)
-            # Fast path: trust cached ACTIVE status in normal auth dependency.
-            # Source-of-truth rechecks are enforced on /auth/validate.
-            if tenant_status is None:
-                tenant_status = await tenant_service.get_tenant_status_by_user_id(
-                    user.id,
-                    is_tenant_user,
-                )
-            if is_suspended_or_deactivated(tenant_status):
-                raise AuthorizationError(
-                    message="Tenant access is restricted. Contact your administrator.",
-                    code="TENANT_INACTIVE",
-                )
-
-            if not is_tenant_user:
-                tenant_user_status = await tenant_service.get_tenant_user_status_cached(tenant_id, user.id)
-                if is_suspended_or_deactivated(tenant_user_status):
-                    raise AuthorizationError(
-                        message=f"User is {str(tenant_user_status).lower()}, please contact your admin",
-                        code="TENANT_USER_INACTIVE",
-                    )
+    # Tenant/user status enforcement via materialized columns — zero extra queries
+    if user.tenant_status and user.tenant_status.upper() in ("SUSPENDED", "DEACTIVATED"):
+        raise AuthorizationError(
+            message="Tenant access is restricted. Contact your administrator.",
+            code="TENANT_INACTIVE",
+        )
+    if user.user_status and user.user_status.upper() in ("SUSPENDED", "DEACTIVATED"):
+        raise AuthorizationError(
+            message=f"User is {user.user_status.lower()}, please contact your admin",
+            code="TENANT_USER_INACTIVE",
+        )
     return user
 
 

@@ -1,9 +1,10 @@
 """
 Role assignment and permission checking.
-Uses Redis cache for permission lookups (cache-aside pattern).
+Uses in-memory cache for permission lookups (process-local, TTL-based).
 """
 
 import logging
+import time
 
 from app.core.exceptions import EntityNotFoundError, ValidationError
 from app.models.role import Permission, Role
@@ -13,6 +14,25 @@ from app.services.cache_service import CacheService
 logger = logging.getLogger(__name__)
 
 _GUEST_ROLE_NAME = "GUEST"
+_ROLE_CACHE_TTL = 60  # seconds
+
+# Process-local role permission cache: {role_id: (permission_ids, timestamp)}
+_role_perm_cache: dict[int, tuple[list[int], float]] = {}
+
+
+def _get_cached_role_perms(role_id: int) -> list[int] | None:
+    entry = _role_perm_cache.get(role_id)
+    if entry and (time.monotonic() - entry[1]) < _ROLE_CACHE_TTL:
+        return entry[0]
+    return None
+
+
+def _set_cached_role_perms(role_id: int, perm_ids: list[int]) -> None:
+    _role_perm_cache[role_id] = (perm_ids, time.monotonic())
+
+
+def _invalidate_cached_role(role_id: int) -> None:
+    _role_perm_cache.pop(role_id, None)
 
 
 def _normalize_service_slug(value: str) -> str:
@@ -46,10 +66,9 @@ class RoleService:
 
     async def get_user_permission_ids_cached(self, user_id: int) -> list[int]:
         """
-        Get permission IDs for a user. Redis first, DB fallback, cache on miss.
+        Get permission IDs for a user. In-memory cache first, DB fallback.
         This is the hot-path method used during login and token refresh.
         """
-        # Get user's role IDs first
         role_records = await self._roles.get_user_role_records(user_id)
         if not role_records:
             return []
@@ -57,21 +76,18 @@ class RoleService:
         all_perm_ids: set[int] = set()
         uncached_role_ids: list[int] = []
 
-        # Check Redis for each role's permissions
         for ur in role_records:
-            cached = await self._cache.get_role_permissions(ur.role_id)
+            cached = _get_cached_role_perms(ur.role_id)
             if cached is not None:
                 all_perm_ids.update(cached)
             else:
                 uncached_role_ids.append(ur.role_id)
 
-        # Fetch uncached from DB and cache them
         if uncached_role_ids:
             for role_id in uncached_role_ids:
                 perm_ids = await self._roles.get_role_permission_ids(role_id)
                 all_perm_ids.update(perm_ids)
-                # Cache for next time
-                await self._cache.cache_role_permissions(role_id, perm_ids)
+                _set_cached_role_perms(role_id, perm_ids)
 
         return sorted(all_perm_ids)
 
@@ -86,8 +102,7 @@ class RoleService:
         existing = await self._roles.get_user_role_records(user_id)
         for ur in existing:
             await self._roles.remove_role(user_id, ur.role_id)
-            # Invalidate cache for removed role
-            await self._cache.invalidate_role_cache(ur.role_id)
+            _invalidate_cached_role(ur.role_id)
 
         await self._roles.assign_role(user_id, role.id)
         await self._roles.commit()
@@ -100,7 +115,7 @@ class RoleService:
         removed = await self._roles.remove_role(user_id, role.id)
         if not removed:
             raise EntityNotFoundError("UserRole")
-        await self._cache.invalidate_role_cache(role.id)
+        _invalidate_cached_role(role.id)
         await self._roles.commit()
 
     async def get_user_roles(self, user_id: int) -> list[str]:
@@ -180,7 +195,7 @@ class RoleService:
         await self._roles.insert_role_permissions(guest.id, [p.id for p in resolved])
         await self._roles.commit()
         fresh_perm_ids = await self._roles.get_role_permission_ids(guest.id)
-        await self._cache.cache_role_permissions(guest.id, fresh_perm_ids)
+        _set_cached_role_perms(guest.id, fresh_perm_ids)
         logger.info(
             "GUEST inference services set to: %s",
             [p.resource for p in resolved],

@@ -112,20 +112,6 @@ async def lifespan(app: FastAPI):
     # Load API-to-permission mapping
     await _load_api_permissions_with_retry()
 
-    # Casbin RBAC policies
-    try:
-        from app.casbin.enforcer import load_policies_from_db
-        from app.core.database import get_db
-
-        async for db in get_db():
-            await load_policies_from_db(db)
-            break
-        logger.info("Casbin RBAC policies loaded from database.")
-    except ImportError:
-        logger.info("Casbin module not available, skipping.")
-    except (RuntimeError, OSError) as exc:
-        logger.warning("Casbin policy loading failed: %s", exc)
-
     # Telemetry (optional)
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor

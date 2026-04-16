@@ -26,8 +26,8 @@ class Permission(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), unique=True, index=True, nullable=False)
-    resource = Column(String(100), nullable=False)
-    action = Column(String(50), nullable=False)
+    resource = Column(String(100), nullable=False, index=True)
+    action = Column(String(50), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     role_permissions = relationship("RolePermission", back_populates="permission", cascade="all, delete-orphan")

@@ -5,7 +5,7 @@ UserSession table queries.
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.session import UserSession
@@ -66,35 +66,45 @@ class SessionRepository:
         await self._db.flush()
         return sessions
 
-    async def invalidate_all_for_users(self, user_ids: list[int]) -> list[UserSession]:
-        """Batch invalidate active sessions for multiple users and return affected sessions."""
+    async def invalidate_all_for_users(self, user_ids: list[int]) -> list[str]:
+        """Batch invalidate active sessions for multiple users.
+        Returns list of token_ids for Redis revocation."""
         if not user_ids:
             return []
 
+        # Get token_ids first (needed for Redis revocation)
         result = await self._db.execute(
-            select(UserSession).where(
+            select(UserSession.token_id).where(
+                UserSession.user_id.in_(user_ids),
+                UserSession.is_active == True,  # noqa: E712
+                UserSession.token_id.is_not(None),
+            )
+        )
+        token_ids = [row[0] for row in result.all()]
+
+        # Bulk UPDATE instead of loading all rows into memory
+        await self._db.execute(
+            update(UserSession)
+            .where(
                 UserSession.user_id.in_(user_ids),
                 UserSession.is_active == True,  # noqa: E712
             )
+            .values(is_active=False)
         )
-        sessions = result.scalars().all()
-        for s in sessions:
-            s.is_active = False
         await self._db.flush()
-        return sessions
+        return token_ids
 
     async def cleanup_expired(self) -> int:
         result = await self._db.execute(
-            select(UserSession).where(
+            update(UserSession)
+            .where(
                 UserSession.expires_at < datetime.now(timezone.utc),
                 UserSession.is_active == True,  # noqa: E712
             )
+            .values(is_active=False)
         )
-        sessions = result.scalars().all()
-        for s in sessions:
-            s.is_active = False
         await self._db.flush()
-        return len(sessions)
+        return result.rowcount
 
     async def commit(self) -> None:
         await self._db.commit()

@@ -22,6 +22,7 @@ from app.routes.permission import router as permission_router
 from app.routes.api_key import router as api_key_router
 from app.routes.validation import router as validation_router
 from app.routes.oauth import router as oauth_router
+from app.routes.internal import router as internal_router
 
 # ── Versioning ──
 versioning = APIVersioning(
@@ -43,6 +44,7 @@ v1_router = versioning.create_router("v1")
 v1_router.include_router(auth_router)
 v1_router.include_router(validation_router)
 v1_router.include_router(oauth_router)
+v1_router.include_router(internal_router)
 
 # Protected (endpoint guard enforces api_permissions.json)
 _guard = [Depends(enforce_endpoint_permission)]

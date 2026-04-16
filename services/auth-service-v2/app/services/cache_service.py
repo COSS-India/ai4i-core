@@ -15,6 +15,7 @@ from app.core.config import settings
 
 _API_KEY_PREFIX = "auth:apikey:"
 _REFRESH_PREFIX = "auth:refresh:"
+_USER_TOKENS_PREFIX = "auth:user_tokens:"
 _ROLE_PERMS_PREFIX = "auth:role:"
 _API_PERMS_KEY = "auth:api_perms"
 _TENANT_STATUS_PREFIX = "auth:tenant_status:"
@@ -98,6 +99,38 @@ class CacheService(_BaseCacheService):
             for key in keys:
                 pipe.delete(key)
             await pipe.execute()
+
+    # ── User token tracking (for bulk revocation without DB sessions) ──
+
+    async def track_user_token(self, user_id: int, token_id: str) -> None:
+        """Add a token_id to a user's active token set."""
+        await self._redis_refresh_tokens.sadd(f"{_USER_TOKENS_PREFIX}{user_id}", token_id)
+
+    async def get_user_token_ids(self, user_id: int) -> list[str]:
+        """Get all active token_ids for a user."""
+        members = await self._redis_refresh_tokens.smembers(f"{_USER_TOKENS_PREFIX}{user_id}")
+        return list(members) if members else []
+
+    async def remove_user_token(self, user_id: int, token_id: str) -> None:
+        """Remove a single token_id from a user's set."""
+        await self._redis_refresh_tokens.srem(f"{_USER_TOKENS_PREFIX}{user_id}", token_id)
+
+    async def clear_user_tokens(self, user_id: int) -> None:
+        """Remove all token_ids for a user."""
+        await self._redis_refresh_tokens.delete(f"{_USER_TOKENS_PREFIX}{user_id}")
+
+    async def revoke_all_user_tokens(self, user_ids: list[int]) -> int:
+        """Revoke all refresh tokens for multiple users. Returns count of revoked tokens."""
+        if not user_ids:
+            return 0
+        all_token_ids: list[str] = []
+        for uid in user_ids:
+            token_ids = await self.get_user_token_ids(uid)
+            all_token_ids.extend(token_ids)
+        await self.revoke_refresh_tokens(all_token_ids)
+        for uid in user_ids:
+            await self.clear_user_tokens(uid)
+        return len(all_token_ids)
 
     # ── Tenant status caches (short TTL for validate path) ──
 

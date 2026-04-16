@@ -35,7 +35,7 @@ async def create_api_key(
         user_id=current_user.id,
         key_name=body.key_name,
         permissions=body.permissions,
-        tenant_id=current_user.tenant_id_cached,
+        tenant_id=current_user.tenant_id,
         expires_days=body.expires_days,
     )
     return success_response(data={

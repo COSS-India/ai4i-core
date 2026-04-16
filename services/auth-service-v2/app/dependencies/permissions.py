@@ -16,7 +16,7 @@ from app.core.database import get_db
 from app.core.exceptions import InsufficientPermissionsError
 from app.dependencies.auth import get_current_active_user
 from app.models.user import User
-from app.repositories.role_repository import RoleRepository
+from app.repositories.role_repository import RoleRepository  # still used by require_permission
 
 
 def require_permission(resource: str, action: str) -> Callable:
@@ -47,22 +47,19 @@ def require_permission(resource: str, action: str) -> Callable:
 def require_any_role(*role_names: str) -> Callable:
     """
     Dependency factory: requires current user to have at least one of the roles.
-    Uses shared PermissionChecker.has_any_role.
+    Uses JWT roles from AuthMiddleware (request.state.roles) — zero DB queries.
     """
 
     async def _check(
         request: Request,
         current_user: User = Depends(get_current_active_user),
-        db: AsyncSession = Depends(get_db),
     ) -> User:
         if current_user.is_superuser:
             return current_user
 
-        repo = RoleRepository(db)
-        user_roles = await repo.get_user_roles(current_user.id)
+        user_roles = getattr(request.state, "roles", None) or []
 
         # Reuse these role names in downstream services to avoid duplicate DB queries.
-        # (Routes can read `request.state.user_roles`.)
         request.state.user_roles = user_roles
 
         if not PermissionChecker.has_any_role(list(role_names), user_roles):

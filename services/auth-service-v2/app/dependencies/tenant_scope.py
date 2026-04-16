@@ -35,11 +35,11 @@ async def enforce_target_user_same_tenant(
         raise EntityNotFoundError(f"User {target_user_id}")
 
     jwt_tid = getattr(request.state, "tenant_id", None)
-    caller_tid = jwt_tid if jwt_tid else current_user.tenant_id_cached
+    caller_tid = jwt_tid if jwt_tid else current_user.tenant_id
 
     enforce_tenant_scope(
         request,
-        target.tenant_id_cached,
+        target.tenant_id,
         is_platform_admin=False,
         caller_tenant_id=str(caller_tid) if caller_tid else None,
     )

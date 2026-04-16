@@ -16,7 +16,6 @@ from app.dependencies.auth import get_current_active_user
 from app.dependencies.permissions import require_any_role
 from app.dependencies.services import get_auth_service, get_cache_service
 from app.models.user import User
-from app.repositories.session_repository import SessionRepository
 from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
@@ -29,19 +28,9 @@ from app.schemas.auth import (
 )
 from app.services.auth_service import AuthService
 from app.services.cache_service import CacheService
-from app.services.session_service import SessionService
 from app.services.tenant_service import TenantService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
-
-
-def _client_context(request: Request) -> tuple[str | None, str | None]:
-    ip_address = request.headers.get(
-        "X-Forwarded-For",
-        request.client.host if request.client else None,
-    )
-    user_agent = request.headers.get("User-Agent")
-    return ip_address, user_agent
 
 
 @router.post("/register")
@@ -71,22 +60,17 @@ async def register(
 
 @router.post("/login", response_model=LoginResponse)
 async def login(
-    request: Request,
     body: LoginRequest,
     svc: AuthService = Depends(get_auth_service),
 ):
-    ip_address, user_agent = _client_context(request)
     return await svc.login(
         email=body.email,
         password=body.password,
-        ip_address=ip_address,
-        user_agent=user_agent,
     )
 
 
 @router.post("/guest/login", response_model=LoginResponse)
 async def guest_login(
-    request: Request,
     svc: AuthService = Depends(get_auth_service),
 ):
     email = (settings.guest_email or "").strip()
@@ -96,12 +80,9 @@ async def guest_login(
             status_code=503,
             detail="Guest login is not configured.",
         )
-    ip_address, user_agent = _client_context(request)
     return await svc.login(
         email=email,
         password=password,
-        ip_address=ip_address,
-        user_agent=user_agent,
     )
 
 
@@ -149,13 +130,8 @@ async def revoke_sessions_by_tenant(
         description="Tenant identifier",
     ),
     current_admin: User = Depends(require_any_role("ADMIN")),
-    db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache_service),
 ):
-    """
-    Admin-only endpoint to invalidate all active sessions for users in a tenant.
-    Used by multi-tenant service when tenant is suspended/deactivated.
-    """
     mt_factory = getattr(request.app.state, "multi_tenant_session_factory", None)
     if not mt_factory:
         raise HTTPException(status_code=503, detail="Multi-tenant DB not configured in auth service")
@@ -186,15 +162,13 @@ async def revoke_sessions_by_tenant(
             "sessions_revoked": 0,
         })
 
-    session_service = SessionService(SessionRepository(db), cache)
-    sessions_revoked = await session_service.invalidate_all_for_users(user_ids)
-    await session_service.commit()
+    tokens_revoked = await cache.revoke_all_user_tokens(user_ids)
     await cache.delete_tenant_status(tenant_id)
 
     return success_response(data={
         "tenant_id": tenant_id,
         "users_matched": len(user_ids),
-        "sessions_revoked": sessions_revoked,
+        "sessions_revoked": tokens_revoked,
     })
 
 
@@ -209,10 +183,6 @@ async def revoke_sessions_by_users(
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache_service),
 ):
-    """
-    Admin-only endpoint to invalidate all active sessions for a set of users.
-    Useful for external orchestrators that already know impacted user IDs.
-    """
     user_ids = sorted({int(uid) for uid in body.user_ids if uid is not None})
     if not user_ids:
         return success_response(data={"users_matched": 0, "sessions_revoked": 0})
@@ -235,19 +205,18 @@ async def revoke_sessions_by_users(
             },
         )
 
-    session_service = SessionService(SessionRepository(db), cache)
-    sessions_revoked = await session_service.invalidate_all_for_users(user_ids)
-    await session_service.commit()
+    tokens_revoked = await cache.revoke_all_user_tokens(user_ids)
+
     tenant_ids_result = await db.execute(
-        select(User.tenant_id_cached)
-        .where(User.id.in_(user_ids), User.tenant_id_cached.is_not(None))
+        select(User.tenant_id)
+        .where(User.id.in_(user_ids), User.tenant_id.is_not(None))
         .distinct()
     )
     tenant_ids = [row[0] for row in tenant_ids_result.fetchall() if row[0]]
-    for tenant_id in tenant_ids:
-        await cache.delete_tenant_status(tenant_id)
+    for tid in tenant_ids:
+        await cache.delete_tenant_status(tid)
 
     return success_response(data={
         "users_matched": len(user_ids),
-        "sessions_revoked": sessions_revoked,
+        "sessions_revoked": tokens_revoked,
     })

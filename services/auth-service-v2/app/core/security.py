@@ -2,6 +2,7 @@
 RS256 key management and password hashing (argon2).
 """
 
+import asyncio
 import base64
 import logging
 import secrets
@@ -210,21 +211,21 @@ class PasswordManager:
         from passlib.context import CryptContext
         self._context = CryptContext(schemes=["argon2"], default="argon2")
 
-    def hash_password(self, password: str) -> PasswordHashResult:
+    async def hash_password(self, password: str) -> PasswordHashResult:
         """Hash a password with a unique salt. Returns hash, salt, and rounds."""
         salt = secrets.token_hex(settings.argon2_salt_length)
         salted_password = password + salt
-        hashed = self._context.hash(salted_password)
+        hashed = await asyncio.to_thread(self._context.hash, salted_password)
         return PasswordHashResult(
             hashed=hashed,
             salt=salt,
             rounds=settings.default_hash_rounds,
         )
 
-    def verify_password(self, plain_password: str, hashed_password: str, salt: str) -> bool:
+    async def verify_password(self, plain_password: str, hashed_password: str, salt: str) -> bool:
         """Verify a password against its hash using the stored salt."""
         salted_password = plain_password + salt
-        return self._context.verify(salted_password, hashed_password)
+        return await asyncio.to_thread(self._context.verify, salted_password, hashed_password)
 
     @staticmethod
     def validate_strength(password: str) -> tuple[bool, list[str]]:

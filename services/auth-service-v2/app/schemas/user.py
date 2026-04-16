@@ -35,20 +35,6 @@ class UserResponse(BaseSchema):
     tenant_id: Optional[str] = Field(None, description="Tenant identifier")
 
 
-class UserDetailResponse(BaseSchema):
-    """Admin view of user details."""
-    userid: int = Field(..., alias="id")
-    username: str
-    emailid: str = Field(..., alias="email")
-    phonenumber: Optional[str] = Field(None, alias="phone_number")
-    full_name: Optional[str] = None
-    is_active: bool
-    is_verified: bool
-    is_superuser: bool
-    created_at: datetime
-    last_login: Optional[datetime] = None
-
-
 class UserListResponse(BaseSchema):
     """Compact user list item."""
     userid: int = Field(..., alias="id")

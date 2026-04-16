@@ -30,11 +30,6 @@ class RoleAssignRequest(BaseSchema):
     role_name: str = Field(..., min_length=1, max_length=100)
 
 
-class RoleRemoveRequest(BaseSchema):
-    user_id: int
-    role_name: str
-
-
 class GuestServicesAssignRequest(BaseSchema):
     """Replace GUEST role inference permissions; other GUEST permissions are unchanged."""
 

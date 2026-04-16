@@ -47,16 +47,6 @@ class PasswordChangeRequest(BaseSchema):
     confirm_password: str = Field(..., min_length=8, max_length=100)
 
 
-class PasswordResetRequest(BaseSchema):
-    email: EmailStr
-
-
-class PasswordResetConfirm(BaseSchema):
-    token: str
-    new_password: str = Field(..., min_length=8, max_length=100)
-    confirm_password: str = Field(..., min_length=8, max_length=100)
-
-
 class LogoutRequest(BaseSchema):
     refresh_token: Optional[str] = None
 

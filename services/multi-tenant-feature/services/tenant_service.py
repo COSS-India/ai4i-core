@@ -130,6 +130,38 @@ async def _invalidate_auth_tenant_user_status_cache(tenant_id: str, user_id: int
         )
 
 
+async def _sync_tenant_status_to_auth(tenant_id: str, status: str) -> None:
+    """Sync tenant status to auth-service materialized column."""
+    try:
+        async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
+            r = await client.post(
+                f"{API_GATEWAY_URL}/api/v1/internal/tenant-status-sync",
+                json={"tenant_id": tenant_id, "tenant_status": status},
+            )
+            if r.status_code == 200:
+                logger.info("Synced tenant status to auth: tenant_id=%s status=%s", tenant_id, status)
+            else:
+                logger.warning("Auth tenant-status-sync failed: status=%s body=%s", r.status_code, r.text)
+    except Exception as exc:
+        logger.warning("Failed to sync tenant status to auth (tenant_id=%s): %s", tenant_id, exc)
+
+
+async def _sync_user_status_to_auth(user_id: int, status: str) -> None:
+    """Sync user status to auth-service materialized column."""
+    try:
+        async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
+            r = await client.post(
+                f"{API_GATEWAY_URL}/api/v1/internal/user-status-sync",
+                json={"user_id": user_id, "user_status": status},
+            )
+            if r.status_code == 200:
+                logger.info("Synced user status to auth: user_id=%s status=%s", user_id, status)
+            else:
+                logger.warning("Auth user-status-sync failed: status=%s body=%s", r.status_code, r.text)
+    except Exception as exc:
+        logger.warning("Failed to sync user status to auth (user_id=%s): %s", user_id, exc)
+
+
 async def invalidate_pending_verification_tokens(
     tenant_id: UUID,
     db: AsyncSession,
@@ -2220,7 +2252,8 @@ async def update_tenant_status(
         raise HTTPException(status_code=500, detail="Failed to update tenant status")
 
     await _invalidate_auth_tenant_status_cache(tenant.tenant_id)
-    
+    await _sync_tenant_status_to_auth(tenant.tenant_id, new_status.value)
+
     # Immediately revoke active auth sessions when tenant is suspended/deactivated.
     # This is best-effort; auth enforcement on subsequent requests still blocks access.
     if new_status in {TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED}:
@@ -2322,6 +2355,7 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
         raise HTTPException(status_code=500, detail="Failed to update tenant user status")
 
     await _invalidate_auth_tenant_user_status_cache(tenant_id, user_id)
+    await _sync_user_status_to_auth(user_id, payload.status.value)
 
     response = TenantUserStatusUpdateResponse(
         tenant_id=tenant_id,

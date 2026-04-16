@@ -5,7 +5,7 @@ Routes use these via Depends() — never construct repos or services directly.
 This is the ONLY place where repositories are imported and wired into services.
 """
 
-from fastapi import Depends, Request
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import redis.asyncio as aioredis
@@ -20,7 +20,6 @@ from app.core.redis import (
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.oauth_repository import OAuthRepository
 from app.repositories.role_repository import RoleRepository
-from app.repositories.session_repository import SessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.api_key_service import APIKeyService
 from app.services.auth_service import AuthService
@@ -61,25 +60,16 @@ async def get_user_service(
 
 
 async def get_auth_service(
-    request: Request,
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache_service),
 ) -> AuthService:
-    # Optional: TenantService for resolving tenant_id on login
-    tenant_service = None
-    mt_factory = getattr(request.app.state, "multi_tenant_session_factory", None)
-    if mt_factory:
-        from app.services.tenant_service import TenantService
-        tenant_service = TenantService(mt_factory)
-
     return AuthService(
         user_repo=UserRepository(db),
         role_service=RoleService(RoleRepository(db), cache),
         token_service=TokenService(),
         password_service=PasswordService(),
-        session_service=SessionService(SessionRepository(db), cache),
+        session_service=SessionService(cache),
         cache_service=cache,
-        tenant_service=tenant_service,
     )
 
 
@@ -97,8 +87,8 @@ async def get_oauth_service(
     return OAuthService(
         user_repo=UserRepository(db),
         oauth_repo=OAuthRepository(db),
-        role_repo=RoleRepository(db),
+        role_service=RoleService(RoleRepository(db), cache),
         token_service=TokenService(),
-        session_service=SessionService(SessionRepository(db), cache),
+        session_service=SessionService(cache),
         cache_service=cache,
     )

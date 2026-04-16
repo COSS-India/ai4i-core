@@ -38,7 +38,7 @@ class UserService:
             "timezone": user.timezone,
             "language": user.language,
             "roles": roles,
-            "tenant_id": user.tenant_id_cached,
+            "tenant_id": user.tenant_id,
         }
 
     async def update_profile(self, user: User, data: dict) -> User:
@@ -58,7 +58,7 @@ class UserService:
         *,
         role_set: set[str] | None = None,
     ) -> list[User]:
-        """ADMIN/MODERATOR: all users. TENANT ADMIN: users in caller.tenant_id_cached only."""
+        """ADMIN/MODERATOR: all users. TENANT ADMIN: users in caller.tenant_id only."""
         if caller.is_superuser:
             return await self._users.list_all(offset, limit)
 
@@ -70,7 +70,7 @@ class UserService:
         if "ADMIN" in effective_role_set or "MODERATOR" in effective_role_set:
             return await self._users.list_all(offset, limit)
         if "TENANT ADMIN" in effective_role_set:
-            tid = (caller.tenant_id_cached or "").strip()
+            tid = (caller.tenant_id or "").strip()
             if not tid:
                 raise AuthorizationError(
                     message="Your account has no tenant context; cannot list users.",
@@ -109,7 +109,7 @@ class UserService:
         if "ADMIN" in effective_role_set or "MODERATOR" in effective_role_set:
             return user
         if "TENANT ADMIN" in effective_role_set:
-            tid = (caller.tenant_id_cached or "").strip()
+            tid = (caller.tenant_id or "").strip()
             if not tid:
                 raise AuthorizationError(
                     message="Your account has no tenant context; cannot view users.",

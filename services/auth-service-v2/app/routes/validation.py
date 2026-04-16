@@ -1,26 +1,26 @@
 """
 Token validation endpoint — called by APISIX for every request.
 Uses the shared ai4icore_auth JWTVerifier.
+
+Zero-DB: JWT verification + Redis revocation check only.
+User/tenant status enforcement happens at login time and via
+event-driven session revocation — not on every request.
 """
 
 import logging
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4icore_auth.jwt_verifier import AuthClaims, JWTExpiredError, JWTVerificationError
 
-from app.core.database import get_db
 from app.core.exceptions import AuthenticationRequiredError
 from app.core.security import key_manager
-from app.dependencies.auth import _check_token_revocation, get_jwt_verifier
-from app.dependencies.services import get_cache_service, get_user_service
+from app.dependencies.auth import get_jwt_verifier
+from app.dependencies.services import get_cache_service
 from app.schemas.token import TokenValidationResponse
 from app.services.cache_service import CacheService
-from app.services.tenant_service import TenantService, is_suspended_or_deactivated
-from app.services.user_service import UserService
 
 logger = logging.getLogger(__name__)
 
@@ -29,23 +29,12 @@ router = APIRouter(prefix="/auth", tags=["Validation"])
 security = HTTPBearer(auto_error=False)
 
 
-def _tenant_inactive_message() -> str:
-    return "Tenant access is restricted. Contact your administrator."
-
-
-def _user_inactive_message(user_status: str) -> str:
-    return f"User is {user_status.lower()}, please contact your admin"
-
-
 @router.get("/validate")
 @router.post("/validate")
 async def validate_token(
-    request: Request,
     response: Response,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     cache_svc: CacheService = Depends(get_cache_service),
-    user_svc: UserService = Depends(get_user_service),
-    db: AsyncSession = Depends(get_db),
 ) -> TokenValidationResponse:
     if credentials is None:
         raise AuthenticationRequiredError()
@@ -59,93 +48,22 @@ async def validate_token(
     except JWTVerificationError:
         return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_INVALID"})
 
+    # Redis-only revocation check (no DB fallback — keeps validate zero-DB)
     if claims.token_id:
-        revoked = await _check_token_revocation(
-            claims.token_id, claims.token_type, cache_svc, db,
-        )
-        if revoked:
+        if claims.token_type == "api_key":
+            is_valid = await cache_svc.is_api_key_valid(claims.token_id)
+        else:
+            is_valid = await cache_svc.is_refresh_token_valid(claims.token_id)
+        if not is_valid:
             return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_REVOKED"})
 
-    username = None
-    if claims.user_id:
-        user = await user_svc.get_user_by_id(claims.user_id)
-        if not user:
-            # Backward compatibility: API key validation should still succeed
-            # even if the owning user record was deleted.
-            if claims.token_type != "api_key":
-                return JSONResponse(status_code=401, content={"valid": False, "error": "USER_NOT_FOUND"})
-            logger.warning(
-                "API key token validated with missing user record: user_id=%s token_id=%s",
-                claims.user_id,
-                claims.token_id,
-            )
-            user = None
-
-        if user and not user.is_active:
-            return JSONResponse(status_code=401, content={"valid": False, "error": "USER_INACTIVE"})
-
-        if user:
-            username = user.username
-
-        tenant_service = None
-        mt_factory = getattr(request.app.state, "multi_tenant_session_factory", None)
-        if mt_factory:
-            tenant_service = TenantService(mt_factory, cache_svc)
-
-        # Enforce tenant lifecycle status on every token validation.
-        # This ensures suspended/deactivated tenant admins/users are cut off on next request.
-        if tenant_service and user:
-            tenant_id = user.tenant_id_cached or claims.tenant_id
-            is_tenant_user = bool(user.is_tenant)
-
-            if not tenant_id:
-                tenant_id = await tenant_service.resolve_and_cache_tenant_id(claims.user_id, is_tenant_user)
-
-            if tenant_id:
-                tenant_status = await tenant_service.get_tenant_status_cached(tenant_id)
-                # Cache-first: only hit source-of-truth when cache misses.
-                if tenant_status is None:
-                    tenant_status = await tenant_service.get_tenant_status_by_user_id(claims.user_id, is_tenant_user)
-                if is_suspended_or_deactivated(tenant_status):
-                    return JSONResponse(
-                        status_code=401,
-                        content={
-                            "valid": False,
-                            "error": "TENANT_INACTIVE",
-                            "message": _tenant_inactive_message(),
-                        },
-                    )
-
-                # tenant admin only checks tenant status; tenant user checks both tenant and tenant-user status
-                if not is_tenant_user:
-                    tenant_user_status = await tenant_service.get_tenant_user_status_cached(
-                        tenant_id,
-                        claims.user_id,
-                    )
-                    # Cache-first: only hit source-of-truth when cache misses.
-                    if tenant_user_status is None:
-                        tenant_user_status = await tenant_service.get_tenant_user_status(
-                            tenant_id,
-                            claims.user_id,
-                        )
-                    if is_suspended_or_deactivated(tenant_user_status):
-                        return JSONResponse(
-                            status_code=401,
-                            content={
-                                "valid": False,
-                                "error": "TENANT_USER_INACTIVE",
-                                "message": _user_inactive_message(str(tenant_user_status)),
-                            },
-                        )
-
-    # Backward-compatible: keep JSON body and add user id header for consumers
     if claims.user_id:
         response.headers["X-User-ID"] = str(claims.user_id)
 
     return TokenValidationResponse(
         valid=True,
         user_id=claims.user_id,
-        username=username,
+        username=None,
         tenant_id=claims.tenant_id,
         permission_ids=claims.permission_ids,
         roles=claims.roles,

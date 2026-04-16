@@ -13,8 +13,8 @@ from app.core.exceptions import AuthenticationRequiredError, EntityNotFoundError
 from app.models.oauth import OAuthProvider
 from app.models.user import User
 from app.repositories.oauth_repository import OAuthRepository
-from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
+from app.services.role_service import RoleService
 from app.services.cache_service import CacheService
 from app.services.session_service import SessionService
 from app.services.token_service import TokenService
@@ -27,14 +27,14 @@ class OAuthService:
         self,
         user_repo: UserRepository,
         oauth_repo: OAuthRepository,
-        role_repo: RoleRepository,
+        role_service: RoleService,
         token_service: Optional[TokenService] = None,
         session_service: Optional[SessionService] = None,
         cache_service: Optional[CacheService] = None,
     ) -> None:
         self._users = user_repo
         self._oauth = oauth_repo
-        self._roles = role_repo
+        self._roles = role_service
         self._tokens = token_service
         self._sessions = session_service
         self._cache = cache_service
@@ -186,9 +186,10 @@ class OAuthService:
         )
         await self._users.create(user)
 
-        role = await self._roles.get_role_by_name("USER")
-        if role:
-            await self._roles.assign_role(user.id, role.id)
+        try:
+            await self._roles.assign_role(user.id, "USER")
+        except Exception:
+            logger.warning("Default USER role not found, skipping role assignment.")
 
         await self._link_oauth(user.id, provider_name, provider_user_id, oauth_tokens)
         await self._users.commit()
@@ -219,21 +220,20 @@ class OAuthService:
 
         # Issue JWT tokens
         roles = await self._roles.get_user_roles(user.id)
-        permission_ids = await self._roles.get_user_permission_ids(user.id)
+        permission_ids = await self._roles.get_user_permission_ids_cached(user.id)
 
         jwt_access = self._tokens.create_access_token(
-            user_id=user.id, tenant_id=user.tenant_id_cached,
+            user_id=user.id, tenant_id=user.tenant_id,
             permission_ids=permission_ids, roles=roles,
         )
         jwt_refresh, refresh_token_id = self._tokens.create_refresh_token(
-            user_id=user.id, tenant_id=user.tenant_id_cached, roles=roles,
+            user_id=user.id, tenant_id=user.tenant_id, roles=roles,
         )
 
-        # Create session
+        # Track refresh token for revocation
         if self._sessions:
             await self._sessions.create_session(
-                user_id=user.id, access_token=jwt_access,
-                refresh_token=jwt_refresh, token_id=refresh_token_id,
+                user_id=user.id, token_id=refresh_token_id,
             )
 
         # Update last login

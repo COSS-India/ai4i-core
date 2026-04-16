@@ -139,23 +139,28 @@ class APIKeyService:
             return {"valid": False, "message": "API key missing token_id."}
 
         # 2. Revocation check: Redis first, DB fallback
-        db_key = await self._check_revocation(payload.token_id)
-        if db_key is None:
+        is_revoked = await self._is_revoked(payload.token_id)
+        if is_revoked:
             return {"valid": False, "message": "API key has been revoked."}
 
-        permissions = db_key.permissions or []
+        # 3. Load DB record for permissions and ownership checks
+        db_key = await self._repo.get_by_token_id(payload.token_id)
+        if not db_key:
+            return {"valid": False, "message": "API key not found."}
 
-        # 3. Ownership enforcement (when caller provides user_id)
-        if expected_user_id is not None and db_key.user_id != expected_user_id:
+        permissions = db_key.permissions or []
+        user_id = db_key.user_id
+
+        # 4. Ownership enforcement (when caller provides user_id)
+        if expected_user_id is not None and user_id != expected_user_id:
             return {
                 "valid": False,
                 "message": "API key does not belong to the specified user.",
             }
 
-        # 4. Service + action permission check
+        # 5. Service + action permission check
         if required_service and required_action:
             required_permission = f"{required_service}.{required_action}"
-            # Also accept inference permission for read actions (v1 compat)
             inference_permission = f"{required_service}.inference"
 
             has_permission = (
@@ -169,58 +174,53 @@ class APIKeyService:
                     return {
                         "valid": False,
                         "message": f"API key does not have access to {required_service.upper()} service.",
-                        "user_id": db_key.user_id,
+                        "user_id": user_id,
                         "permissions": permissions,
                     }
                 return {
                     "valid": False,
                     "message": f"API key missing '{required_permission}' permission. "
                                f"Available: {', '.join(service_perms)}",
-                    "user_id": db_key.user_id,
+                    "user_id": user_id,
                     "permissions": permissions,
                 }
 
-        # 5. Update last_used
+        # 6. Update last_used
         await self._repo.update_last_used(db_key)
         await self._repo.commit()
 
         return {
             "valid": True,
-            "user_id": db_key.user_id,
+            "user_id": user_id,
             "permissions": permissions,
             "token_id": payload.token_id,
             "tenant_id": payload.tenant_id,
         }
 
-    async def _check_revocation(self, token_id: str) -> Optional[APIKey]:
+    async def _is_revoked(self, token_id: str) -> bool:
         """
-        Check if an API key token_id is valid.
-        Checks Redis first, falls back to DB if Redis key expired/evicted.
-        Returns the APIKey record if valid, None if revoked.
+        Check if an API key token_id has been revoked.
+        Redis first (0 DB), DB fallback only on cache miss.
+        Returns True if revoked, False if valid.
         """
-        is_cached = await self._cache.is_api_key_valid(token_id)
+        if await self._cache.is_api_key_valid(token_id):
+            return False  # Cache hit — not revoked, no DB needed
 
-        if is_cached:
-            # Fast path: present in Redis = not revoked
-            db_key = await self._repo.get_by_token_id(token_id)
-            return db_key if (db_key and db_key.is_active and not db_key.is_revoked) else None
-
-        # Slow path: not in Redis — could be evicted or actually revoked
+        # Cache miss — check DB
         db_key = await self._repo.get_by_token_id(token_id)
         if not db_key or db_key.is_revoked or not db_key.is_active:
-            return None
+            return True
 
-        # Check expiry
         if db_key.expires_at and db_key.expires_at < datetime.now(timezone.utc):
-            return None
+            return True
 
-        # Re-cache if found active in DB (Redis had evicted it)
+        # Re-cache valid key (Redis had evicted it)
         if db_key.expires_at:
             remaining = (db_key.expires_at - datetime.now(timezone.utc)).total_seconds()
             if remaining > 0:
                 await self._cache.store_api_key_token(token_id, int(remaining))
 
-        return db_key
+        return False
 
     async def list_by_user(self, user_id: int) -> list[APIKey]:
         return await self._repo.list_by_user(user_id)
