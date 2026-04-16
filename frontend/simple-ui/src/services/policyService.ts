@@ -133,6 +133,8 @@ export const policyService = {
     }>
   ) => api.put<PolicyOut>(`${POLICY_API}/policies/${id}`, body),
 
+  deletePolicy: (id: string) => api.delete<void>(`${POLICY_API}/policies/${id}`),
+
   setPolicyStatus: (id: string, is_active: boolean) =>
     api.patch<{ is_active: boolean }>(`${POLICY_API}/policies/${id}/status`, {
       is_active,
