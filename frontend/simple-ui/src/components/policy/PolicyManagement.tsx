@@ -923,27 +923,17 @@ function PolicyFormModal({
   const [tenantsLoading, setTenantsLoading] = useState(false);
   const [tenantsError, setTenantsError] = useState<string | null>(null);
 
+  const didFetchPiiOptionsForThisOpen = useRef(false);
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      didFetchPiiOptionsForThisOpen.current = false;
+      return;
+    }
 
+    // Only fetch PII options once when the modal is opened, to avoid background load.
+    if (didFetchPiiOptionsForThisOpen.current) return;
+    didFetchPiiOptionsForThisOpen.current = true;
     void refreshPiiOptions();
-
-    const intervalId = window.setInterval(() => {
-      void refreshPiiOptions();
-    }, 20000);
-
-    const refreshOnFocus = () => {
-      void refreshPiiOptions();
-    };
-
-    window.addEventListener("focus", refreshOnFocus);
-    document.addEventListener("visibilitychange", refreshOnFocus);
-
-    return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener("focus", refreshOnFocus);
-      document.removeEventListener("visibilitychange", refreshOnFocus);
-    };
   }, [isOpen, refreshPiiOptions]);
 
   useEffect(() => {
@@ -1213,18 +1203,6 @@ function PolicyFormModal({
               {selectedPii.length} selected
               {selectedPii.some((id) => !piiById.has(id)) ? " (includes types not in current list)" : ""}
             </Text>
-          </FormControl>
-          <FormControl>
-            <FormLabel>Supported languages</FormLabel>
-            <CheckboxGroup value={langs} onChange={(v) => setLangs(v as string[])}>
-              <HStack spacing={4}>
-                {LANGUAGE_OPTIONS.map((code) => (
-                  <Checkbox key={code} value={code}>
-                    {code}
-                  </Checkbox>
-                ))}
-              </HStack>
-            </CheckboxGroup>
           </FormControl>
         </Stack>
       )}
