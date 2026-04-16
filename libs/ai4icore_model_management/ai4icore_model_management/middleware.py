@@ -127,6 +127,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         app,
         model_management_client: ModelManagementClient,
         redis_client = None,
+        app_state: Any = None,
         cache_ttl_seconds: int = 300,
         default_triton_endpoint: Optional[str] = None,
         default_triton_api_key: Optional[str] = None,
@@ -163,15 +164,9 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         self._health_client: Optional[httpx.AsyncClient] = None
         self._health_client_lock: Optional[asyncio.Lock] = None
         self._health_cache: Dict[str, Tuple[dict, float]] = {}  # service_id -> (payload, expires_at)
-
-        # BaseHTTPMiddleware has no teardown hooks; attach cleanup to the app lifespan when possible.
-        # This is best-effort and safe to call multiple times.
-        if hasattr(app, "add_event_handler"):
-            try:
-                app.add_event_handler("shutdown", self.aclose)  # type: ignore[attr-defined]
-            except Exception:
-                # If the wrapped app doesn't support event handlers, skip shutdown wiring.
-                pass
+        # Reference to the real FastAPI app.state (passed by the plugin) so the app lifespan
+        # can close pooled clients created lazily inside this middleware.
+        self._app_state = app_state
         
         # In-memory caches
         self._service_info_cache: Dict[str, Tuple[ServiceInfo, float]] = {}
@@ -229,6 +224,12 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                         timeout=self.health_gate_timeout_seconds,
                         limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
                     )
+                    if self._app_state is not None:
+                        # Expose for app shutdown cleanup (see plugin shutdown hook).
+                        try:
+                            setattr(self._app_state, "_health_gate_client", self._health_client)
+                        except Exception:
+                            pass
         return self._health_client
 
     async def _fetch_health_status(self, service_id: str) -> dict:
@@ -378,6 +379,12 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         if client is not None:
             try:
                 await client.aclose()
+            except Exception:
+                pass
+        if self._app_state is not None:
+            try:
+                if getattr(self._app_state, "_health_gate_client", None) is client:
+                    setattr(self._app_state, "_health_gate_client", None)
             except Exception:
                 pass
     

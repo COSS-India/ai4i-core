@@ -61,6 +61,7 @@ class ModelManagementPlugin:
                 ModelResolutionMiddleware,
                 model_management_client=self.model_management_client,
                 redis_client=redis_client,
+                app_state=app.state,
                 cache_ttl_seconds=self.config.cache_ttl_seconds,
                 default_triton_endpoint=self.config.default_triton_endpoint,
                 default_triton_api_key=self.config.default_triton_api_key,
@@ -73,6 +74,17 @@ class ModelManagementPlugin:
             logger.info(
                 f"✅ Model Resolution Middleware registered for paths: {self.config.middleware_paths}"
             )
+
+            if self.config.health_gate_enabled:
+                @app.on_event("shutdown")
+                async def _close_health_gate_client() -> None:
+                    client = getattr(app.state, "_health_gate_client", None)
+                    if client is not None:
+                        try:
+                            await client.aclose()
+                        except Exception:
+                            pass
+                        setattr(app.state, "_health_gate_client", None)
         
         logger.info(
             f"✅ Model Management Plugin initialized: {self.config.model_management_service_url}"
