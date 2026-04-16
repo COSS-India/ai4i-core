@@ -10,6 +10,7 @@ import Head from "next/head";
 import React from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
 import AlertingTab from "../components/profile/AlertingTab";
 
@@ -59,20 +60,10 @@ const AlertsManagementPage: React.FC = () => {
 
       <ContentLayout>
         <Box maxW="7xl" mx="auto" py={8} px={4}>
-          <Box mb={8}>
-            <Heading
-              size="xl"
-              color="gray.800"
-              userSelect="none"
-              cursor="default"
-              tabIndex={-1}
-            >
-              Alerts Management
-            </Heading>
-            <Text color="gray.500" fontSize="md" mt={2}>
-              Define alert policies and configure notification routing for governed, role-aware delivery
-            </Text>
-          </Box>
+          <ManagementPageHeader
+            title="Alerts Management"
+            description="Define alert policies and configure notification routing"
+          />
 
           <AlertingTab isActive={true} />
         </Box>

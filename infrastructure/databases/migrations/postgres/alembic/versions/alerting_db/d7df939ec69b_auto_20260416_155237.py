@@ -1,8 +1,8 @@
-"""auto_20260324_110643
+"""auto_20260416_155237
 
-Revision ID: a472739f0e3d
+Revision ID: d7df939ec69b
 Revises: 
-Create Date: 2026-03-24 11:06:43.458593
+Create Date: 2026-04-16 15:52:38.045420
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = 'a472739f0e3d'
+revision: str = 'd7df939ec69b'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -92,7 +92,7 @@ def upgrade() -> None:
     op.create_index('idx_alert_history_category', 'alert_history', ['category'], unique=False)
     op.create_index('idx_alert_history_severity', 'alert_history', ['severity'], unique=False)
     op.create_index('idx_alert_history_tenant', 'alert_history', ['tenant'], unique=False)
-    op.create_index('idx_alert_history_triggered_at', 'alert_history', [sa.text('triggered_at DESC')], unique=False)
+    op.create_index('idx_alert_history_triggered_at', 'alert_history', [sa.literal_column('triggered_at DESC')], unique=False)
     op.create_table('notification_receivers',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('organization', sa.String(length=100), nullable=False),

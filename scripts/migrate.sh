@@ -146,6 +146,14 @@ has_existing_revisions() {
 run_autogenerate_revision_if_supported() {
   local db="$1"
 
+  # In production/CI, skip autogenerate entirely.
+  # Migration files must be committed to git by developers and applied here.
+  # To enable this mode: APPLY_ONLY=true ./scripts/migrate.sh all upgrade
+  if [[ "${APPLY_ONLY:-false}" == "true" ]]; then
+    print_status "skipped" "APPLY_ONLY mode: skipping autogenerate (prod/CI)"
+    return 0
+  fi
+
   if ! supports_autogenerate "$db"; then
     print_status "skipped" "No models registered. Migration generation skipped."
     return 0

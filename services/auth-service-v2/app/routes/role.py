@@ -7,11 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.responses import success_response
+from app.dependencies.auth import get_current_active_user
 from app.dependencies.permissions import require_any_role
 from app.dependencies.services import get_role_service
 from app.dependencies.tenant_scope import enforce_target_user_same_tenant
 from app.models.user import User
-from app.schemas.role import RoleAssignRequest, RoleResponse
+from app.schemas.role import GuestServicesAssignRequest, RoleAssignRequest, RoleResponse
 from app.services.role_service import RoleService
 
 router = APIRouter(prefix="/auth/roles", tags=["Roles"])
@@ -70,3 +71,24 @@ async def get_user_roles(
     )
     roles = await svc.get_user_roles(user_id)
     return success_response(data={"user_id": user_id, "roles": roles})
+
+
+@router.post("/assign/guest/services")
+async def assign_guest_services(
+    body: GuestServicesAssignRequest,
+    _admin: User = Depends(require_any_role("ADMIN", "MODERATOR")),
+    svc: RoleService = Depends(get_role_service),
+):
+    """Set which inference services the GUEST role may use (replaces prior managed inference links)."""
+    assigned = await svc.assign_guest_inference_services(body.services)
+    return success_response(data={"services": assigned})
+
+
+@router.get("/list/guest/services")
+async def list_guest_services(
+    _current_user: User = Depends(get_current_active_user),
+    svc: RoleService = Depends(get_role_service),
+):
+    """List GUEST-role inference services; ``roles.read`` is enforced by ``enforce_endpoint_permission`` on the v1 router."""
+    services = await svc.list_guest_inference_services()
+    return success_response(data={"services": services})

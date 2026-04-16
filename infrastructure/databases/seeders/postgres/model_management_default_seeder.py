@@ -335,8 +335,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 service_id = generate_service_id(svc_name)
 
                 sn = _sql_lit(svc_name)
+                ist = "http" if m["task_type"] == "llm" else "triton"
                 adapter.execute(f"""
-                    INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+                    INSERT INTO services (id, service_id, name, model_id, model_version, endpoint, inference_server_type, ssl_verify, service_description, hardware_description, published_on, is_published)
                     VALUES (
                         '{generate_uuid("service", name, version, svc_name)}',
                         '{service_id}',
@@ -344,6 +345,8 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                         '{model_id}',
                         '{_sql_lit(version)}',
                         '{ep_lit}',
+                        '{ist}',
+                        true,
                         '{_sql_lit(svc["description"])}',
                         '{_sql_lit(svc["hardware"])}',
                         {timestamp_ms},
@@ -353,6 +356,8 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                         model_id = '{model_id}',
                         model_version = '{_sql_lit(version)}',
                         endpoint = '{ep_lit}',
+                        inference_server_type = '{ist}',
+                        ssl_verify = true,
                         service_description = '{_sql_lit(svc["description"])}',
                         hardware_description = '{_sql_lit(svc["hardware"])}',
                         is_published = true,

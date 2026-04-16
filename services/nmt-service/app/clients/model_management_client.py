@@ -22,6 +22,8 @@ class ServiceInfo(BaseModel):
     service_id: str
     model_id: str
     endpoint: Optional[str] = None
+    inference_server_type: str = "triton"
+    ssl_verify: bool = True
     api_key: Optional[str] = None
     triton_model: Optional[str] = None
     name: Optional[str] = None
@@ -151,6 +153,8 @@ class ModelManagementClient:
                     service_id=item.get("serviceId", ""),
                     model_id=item.get("modelId", ""),
                     endpoint=item.get("endpoint"),
+                    inference_server_type=item.get("inferenceServerType") or "triton",
+                    ssl_verify=item.get("sslVerify", True),
                     api_key=item.get("api_key"),
                     triton_model="nmt",
                     name=item.get("name"),
@@ -214,6 +218,8 @@ class ModelManagementClient:
                 service_id=data.get("serviceId", service_id),
                 model_id=data.get("modelId", ""),
                 endpoint=data.get("endpoint"),
+                inference_server_type=data.get("inferenceServerType") or "triton",
+                ssl_verify=data.get("sslVerify", True),
                 api_key=data.get("api_key"),
                 triton_model="nmt",
                 name=data.get("name"),
