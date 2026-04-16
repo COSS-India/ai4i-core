@@ -462,6 +462,27 @@
       "resource": "pii_guard",
       "action": "admin",
       "description": "Manage PII policies"
+    },
+    {
+      "code": "P_67",
+      "name": "feedback.write",
+      "resource": "feedback",
+      "action": "write",
+      "description": "Submit implicit telemetry events and explicit feedback"
+    },
+    {
+      "code": "P_68",
+      "name": "feedback.read",
+      "resource": "feedback",
+      "action": "read",
+      "description": "Read feedback evaluation status and records"
+    },
+    {
+      "code": "P_69",
+      "name": "feedback.admin",
+      "resource": "feedback",
+      "action": "admin",
+      "description": "Batch evaluation, human corrections, and admin overrides"
     }
   ],
   "roles": [
@@ -534,7 +555,10 @@
         "P_63",
         "P_64",
         "P_65",
-        "P_66"
+        "P_66",
+        "P_67",
+        "P_68",
+        "P_69"
       ]
     },
     {
@@ -569,7 +593,9 @@
         "P_30",
         "P_31",
         "P_32",
-        "P_65"
+        "P_65",
+        "P_67",
+        "P_68"
       ]
     },
     {
@@ -579,7 +605,8 @@
         "P_02",
         "P_03",
         "P_26",
-        "P_65"
+        "P_65",
+        "P_67"
       ]
     },
     {
@@ -589,7 +616,8 @@
         "P_02",
         "P_03",
         "P_26",
-        "P_65"
+        "P_65",
+        "P_67"
       ]
     },
     {
@@ -607,7 +635,9 @@
         "P_22",
         "P_33",
         "P_35",
-        "P_66"
+        "P_66",
+        "P_67",
+        "P_68"
       ]
     }
   ],
@@ -861,6 +891,41 @@
       "endpoint": "POST:/admin/tenant-domain/delete",
       "permissionRequired": "pii_guard.admin",
       "description": "Delete tenant_id PII domain mapping"
+    },
+    {
+      "endpoint": "POST:/api/v1/feedback/event",
+      "permissionRequired": "feedback.write",
+      "description": "Submit implicit telemetry event"
+    },
+    {
+      "endpoint": "POST:/api/v1/feedback",
+      "permissionRequired": "feedback.write",
+      "description": "Submit explicit feedback"
+    },
+    {
+      "endpoint": "POST:/api/v1/feedback/correction",
+      "permissionRequired": "feedback.write",
+      "description": "Submit human correction (golden data)"
+    },
+    {
+      "endpoint": "GET:/api/v1/feedback/status/{trace_id}",
+      "permissionRequired": "feedback.read",
+      "description": "Get feedback evaluation status for a trace"
+    },
+    {
+      "endpoint": "GET:/api/v1/feedback/latest",
+      "permissionRequired": "feedback.read",
+      "description": "List latest feedback records"
+    },
+    {
+      "endpoint": "POST:/api/v1/feedback/batch_process",
+      "permissionRequired": "feedback.admin",
+      "description": "Batch evaluate NMT records from NMT database"
+    },
+    {
+      "endpoint": "POST:/api/v1/feedback/override",
+      "permissionRequired": "feedback.admin",
+      "description": "Admin override of feedback evaluation verdict"
     }
   ]
 }

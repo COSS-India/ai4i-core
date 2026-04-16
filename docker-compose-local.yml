@@ -1660,7 +1660,7 @@ services:
       dockerfile: ./services/feedback-service/Dockerfile
     container_name: ai4v-feedback-service
     ports:
-      - "8100:8100"
+      - "8106:8100"  # host 8100 is taken by multi-tenant-service
     env_file:
       - ./services/feedback-service/.env
     environment:

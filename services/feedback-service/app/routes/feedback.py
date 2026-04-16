@@ -8,6 +8,7 @@ Query endpoints (/status/{trace_id}, /latest) require ADMIN role.
 """
 
 import logging
+import re
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -24,8 +25,24 @@ from app.schemas.feedback import (
     FeedbackStatusResponse,
     ImplicitEventRequest,
 )
+from app.services.pii_client import redact_pair
 
 logger = logging.getLogger(__name__)
+
+# Allowlist for schema names — only lowercase letters, digits, underscores.
+# Prevents SQL injection in `SET search_path TO "{schema_name}", public`.
+_SAFE_SCHEMA_RE = re.compile(r'^[a-z0-9_]+$')
+
+
+def _validate_schema(schema_name: str | None) -> str | None:
+    """Return schema_name if safe, None otherwise (with a warning log)."""
+    if schema_name is None:
+        return None
+    if _SAFE_SCHEMA_RE.match(schema_name):
+        return schema_name
+    logger.warning("Unsafe schema_name rejected: %r — skipping SET search_path", schema_name)
+    return None
+
 
 router = APIRouter(
     prefix="/api/v1/feedback",
@@ -78,16 +95,20 @@ async def ingest_implicit_event(
                 status_code=422,
                 detail="source_input and model_output are required for new trace_ids.",
             )
+        tenant_id = getattr(request.state, "tenant_id", None)
+        safe_source, safe_output = await redact_pair(
+            body.source_input, body.model_output, body.language, tenant_id
+        )
         record = FeedbackMetric(
             id=uuid.uuid4(),
             organization=organization,
-            tenant_id=getattr(request.state, "tenant_id", None),
+            tenant_id=tenant_id,
             trace_id=body.trace_id,
             service_id=body.service_id,
             task_type=body.task_type,
             language=body.language,
-            source_input=body.source_input,
-            model_output=body.model_output,
+            source_input=safe_source,
+            model_output=safe_output,
             feedback_source="system",
             ai_status="PENDING",
             implicit_score=0,
@@ -153,16 +174,21 @@ async def submit_feedback(
     if result.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="trace_id already exists.")
 
+    tenant_id = getattr(request.state, "tenant_id", None)
+    safe_source, safe_output = await redact_pair(
+        body.source_input, body.model_output, body.language, tenant_id
+    )
+
     record = FeedbackMetric(
         id=uuid.uuid4(),
         organization=organization,
-        tenant_id=getattr(request.state, "tenant_id", None),
+        tenant_id=tenant_id,
         trace_id=body.trace_id,
         service_id=body.service_id,
         task_type=body.task_type,
         language=body.language,
-        source_input=body.source_input,
-        model_output=body.model_output,
+        source_input=safe_source,
+        model_output=safe_output,
         feedback_source=body.feedback_source,
         rating=body.rating,
         ai_status="PENDING",
@@ -248,9 +274,10 @@ async def _bg_evaluate_async(record_id: str, source: str, output: str,
                               task_type: str, language: str, db_session_factory,
                               schema_name: str | None) -> None:
     from app.services.evaluator import evaluate_single
+    safe_schema = _validate_schema(schema_name)
     async with db_session_factory() as db:
-        if schema_name:
-            await db.execute(text(f'SET search_path TO "{schema_name}", public'))
+        if safe_schema:
+            await db.execute(text(f'SET search_path TO "{safe_schema}", public'))
         await evaluate_single(record_id, source, output, task_type, language, db)
 
 

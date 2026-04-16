@@ -233,20 +233,67 @@ async def _evaluate_chunk(chunk: List[FeedbackMetric], db: AsyncSession,
 # ---------------------------------------------------------------------------
 
 def _parse_json_object(text: str) -> dict:
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            pass
+    """
+    Extract the first well-formed JSON object from *text*.
+
+    Strategy:
+    1. Try parsing the whole string directly (fast path for clean LLM output).
+    2. Walk character-by-character tracking brace depth to find the first
+       balanced {...} block — handles prose before/after the JSON and avoids
+       the greedy-regex bug where nested objects confuse re.DOTALL matching.
+    """
+    stripped = text.strip()
+    try:
+        parsed = json.loads(stripped)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    depth = 0
+    start: int | None = None
+    for i, ch in enumerate(text):
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0 and start is not None:
+                try:
+                    return json.loads(text[start:i + 1])
+                except json.JSONDecodeError:
+                    # Keep scanning — this block was malformed, try the next one.
+                    start = None
     return {}
 
 
 def _parse_json_array(text: str) -> list:
-    match = re.search(r"\[.*\]", text, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            pass
+    """
+    Extract the first well-formed JSON array from *text*.
+
+    Same balanced-bracket strategy as _parse_json_object.
+    """
+    stripped = text.strip()
+    try:
+        parsed = json.loads(stripped)
+        if isinstance(parsed, list):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    depth = 0
+    start: int | None = None
+    for i, ch in enumerate(text):
+        if ch == '[':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == ']':
+            depth -= 1
+            if depth == 0 and start is not None:
+                try:
+                    return json.loads(text[start:i + 1])
+                except json.JSONDecodeError:
+                    start = None
     return []

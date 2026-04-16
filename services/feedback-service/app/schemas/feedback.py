@@ -18,7 +18,7 @@ class ImplicitEventRequest(BaseModel):
     service_id: str
     task_type: Literal["nmt", "asr", "tts", "ocr"]
     language: Optional[str] = None
-    action: str                          # e.g. CORRECTION, RETRY, DWELL
+    action: Literal["COPY_TRANSLATION", "COPY_SOURCE", "CLEAR_RESULTS", "RETRANSLATE", "CORRECTION", "ABANDON"]
     reward_score: float = Field(ge=-1.0, le=1.0)
     metrics: Optional[Dict[str, Any]] = None
     source_input: Optional[str] = None
@@ -91,21 +91,31 @@ class HumanCorrectionRequest(BaseModel):
 # Batch processing
 # ---------------------------------------------------------------------------
 
-class BatchItem(BaseModel):
-    trace_id: str
-    service_id: str
-    task_type: Literal["nmt", "asr", "tts", "ocr"]
-    language: Optional[str] = None
-    source_input: str
-    model_output: str
-
-
 class BatchProcessRequest(BaseModel):
-    items: List[BatchItem] = Field(min_length=1, max_length=100)
+    """
+    Admin-triggered batch evaluation pulled directly from the NMT database.
+
+    The feedback service queries the NMT DB for the last `limit` completed
+    translations and submits them to the LLM judge — no need to re-send
+    source/translated text in the request body.
+    """
+    limit: int = Field(
+        default=50, ge=1, le=500,
+        description="Maximum number of NMT records to evaluate in this run.",
+    )
+    offset: int = Field(
+        default=0, ge=0,
+        description="Skip the first N records (for manual pagination across runs).",
+    )
+    skip_evaluated: bool = Field(
+        default=True,
+        description="Skip NMT records that already have a feedback_metrics entry.",
+    )
 
 
 class BatchProcessResponse(BaseModel):
     queued: int
+    skipped: int
     message: str
 
 

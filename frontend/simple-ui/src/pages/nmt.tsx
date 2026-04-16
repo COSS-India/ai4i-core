@@ -58,7 +58,12 @@ const NMTPage: React.FC = () => {
     setLanguagePair,
     setSelectedServiceId,
     clearResults,
+    sendFeedbackEvent,
+    sendAbandonIfNeeded,
   } = useNMT();
+
+  // H4 — fire ABANDON when the NMT page unmounts with a visible result and no positive signal
+  useEffect(() => () => sendAbandonIfNeeded(), [sendAbandonIfNeeded]);
 
   // Fetch available services (anonymous: try-it API with X-Try-It: true; logged-in: model management with auth)
   const { data: services, isLoading: servicesLoading } = useQuery({
@@ -101,7 +106,14 @@ const NMTPage: React.FC = () => {
 
   const handleTranslate = () => {
     if (!canTranslate) return;
+    // If a result is already shown and the user clicks Translate again, that's a retry signal.
+    if (fetched) sendFeedbackEvent('RETRANSLATE');
     performInference(inputText);
+  };
+
+  const handleClear = () => {
+    sendFeedbackEvent('CLEAR_RESULTS');
+    clearResults();
   };
 
   return (
@@ -264,10 +276,12 @@ const NMTPage: React.FC = () => {
                       requestWordCount={requestWordCount}
                       responseWordCount={responseWordCount}
                       responseTime={Number(requestTime)}
+                      onCopyTranslation={() => sendFeedbackEvent('COPY_TRANSLATION')}
+                      onCopySource={() => sendFeedbackEvent('COPY_SOURCE')}
                     />
                     <Box textAlign="center">
                       <button
-                        onClick={clearResults}
+                        onClick={handleClear}
                         style={{
                           padding: "8px 16px",
                           backgroundColor: "#f7fafc",

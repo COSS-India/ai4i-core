@@ -29,7 +29,7 @@ export const performNMTInference = async (
   text: string,
   config: NMTInferenceRequest['config'],
   forceAuth: boolean = false
-): Promise<{ data: NMTInferenceResponse; responseTime: number }> => {
+): Promise<{ data: NMTInferenceResponse; responseTime: number; traceId: string | null }> => {
   try {
     // Check if user is anonymous and should use try-it endpoint
     const isAnonymous = isAnonymousUser();
@@ -42,7 +42,7 @@ export const performNMTInference = async (
       // counter and warning banner stay accurate even when the server rejects.
       trackTryItRequest();
       const result = await performTryItNMTInference(text, config);
-      return result;
+      return { ...result, traceId: null };
     }
 
     // Use authenticated endpoint for logged-in users
@@ -59,12 +59,16 @@ export const performNMTInference = async (
       payload
     );
 
-    // Extract response time from headers
+    // Extract timing and the backend-generated trace ID from response headers.
+    // x-trace-id is injected by InferenceHeadersMiddleware and matches the
+    // ID the NMT service uses when saving the request to its database.
     const responseTime = parseInt(response.headers['request-duration'] || '0');
+    const traceId = response.headers['x-trace-id'] ?? null;
 
     return {
       data: response.data,
-      responseTime
+      responseTime,
+      traceId,
     };
   } catch (error) {
     console.error('NMT inference error:', error);

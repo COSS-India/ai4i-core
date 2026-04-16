@@ -78,6 +78,8 @@ export interface NMTHookState {
   responseWordCount: number;
   requestTime: string;
   error: string | null;
+  /** Unique ID for the current translation result — used as trace_id for feedback events. */
+  traceId: string | null;
 }
 
 // NMT Hook Methods
@@ -88,6 +90,10 @@ export interface NMTHookMethods {
   setSelectedServiceId: (serviceId: string) => void;
   clearResults: () => void;
   swapLanguages: () => void;
+  /** Send an implicit feedback event for the current translation result. No-op if no result yet. */
+  sendFeedbackEvent: (action: import('./feedback').ImplicitAction) => void;
+  /** Fire an ABANDON event if the component unmounts with a visible result and no positive signal. */
+  sendAbandonIfNeeded: () => void;
 }
 
 // NMT Hook Return Type

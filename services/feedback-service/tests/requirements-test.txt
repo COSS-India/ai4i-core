@@ -1,0 +1,15 @@
+# Test dependencies for feedback-service
+
+# Testing framework
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.0.0
+
+# HTTP testing (sync TestClient)
+httpx>=0.24.0
+
+# Async support
+anyio>=3.0.0
+
+# Starlette TestClient (bundled with fastapi, listed explicitly for clarity)
+starlette>=0.27.0

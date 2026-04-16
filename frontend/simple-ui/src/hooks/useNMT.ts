@@ -4,8 +4,10 @@ import { useState, useCallback, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { performNMTInference } from '../services/nmtService';
+import { sendImplicitEvent } from '../services/feedbackService';
 import { getWordCount } from '../utils/helpers';
 import { UseNMTReturn, NMTInferenceRequest, NMTInferenceResponse, LanguagePair } from '../types/nmt';
+import { ImplicitAction } from '../types/feedback';
 import { DEFAULT_NMT_CONFIG, MAX_TEXT_LENGTH, MIN_NMT_TEXT_LENGTH, NMT_ERRORS } from '../config/constants';
 import { extractErrorInfo } from '../utils/errorHandler';
 
@@ -24,9 +26,26 @@ export const useNMT = (): UseNMTReturn => {
   const [responseWordCount, setResponseWordCount] = useState<number>(0);
   const [requestTime, setRequestTime] = useState<string>('0');
   const [error, setError] = useState<string | null>(null);
+  // Unique ID for the current translation result — used as trace_id for implicit feedback
+  const [traceId, setTraceId] = useState<string | null>(null);
+
+  // Snapshot of the source/output at inference time for feedback events
+  const feedbackContextRef = useRef<{
+    traceId: string;
+    serviceId: string;
+    language: string;
+    sourceInput: string;
+    modelOutput: string;
+  } | null>(null);
 
   // Only show "text exceeds limit" toast once per exceed (not every keystroke)
   const hasShownTextLimitToastRef = useRef(false);
+
+  // H3 — CORRECTION signal: debounce timer for source-text edits while a result is visible
+  const correctionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // H4 — ABANDON signal: set to true when COPY_TRANSLATION fires so abandon is suppressed
+  const hasPositiveSignalRef = useRef(false);
 
   // Toast hook
   const toast = useToastWithDeduplication();
@@ -44,17 +63,33 @@ export const useNMT = (): UseNMTReturn => {
         serviceId: selectedServiceId,
       };
 
-      return performNMTInference(text, config);
+      const result = await performNMTInference(text, config);
+      // Attach source text so onSuccess can snapshot it for feedback events
+      return { ...result, _meta: { sourceInput: text } };
     },
-    onSuccess: (response: { data: NMTInferenceResponse; responseTime: number }) => {
+    onSuccess: (response: { data: NMTInferenceResponse; responseTime: number; traceId: string | null; _meta?: { sourceInput: string } }) => {
       try {
         const translation = response.data.output[0]?.target || '';
         setTranslatedText(translation);
         setResponseWordCount(getWordCount(translation));
-        
+
         // Update request time with actual API response time (in milliseconds)
         setRequestTime(response.responseTime.toString());
-        
+
+        // Prefer the backend-generated trace ID (x-trace-id header from NMT service)
+        // so feedback events are traceable back to the saved NMT request row.
+        // Fall back to a client-generated UUID for try-it / anonymous flows where
+        // the header is absent.
+        const newTraceId = response.traceId ?? crypto.randomUUID();
+        setTraceId(newTraceId);
+        feedbackContextRef.current = {
+          traceId: newTraceId,
+          serviceId: selectedServiceId,
+          language: `${languagePair.sourceLanguage}-${languagePair.targetLanguage}`,
+          sourceInput: response._meta?.sourceInput ?? '',
+          modelOutput: translation,
+        };
+
         setFetched(true);
         setFetching(false);
         setError(null);
@@ -95,6 +130,12 @@ export const useNMT = (): UseNMTReturn => {
 
   // Perform inference
   const performInference = useCallback(async (text: string) => {
+    // Cancel any pending CORRECTION debounce — a new inference supersedes it.
+    if (correctionDebounceRef.current !== null) {
+      clearTimeout(correctionDebounceRef.current);
+      correctionDebounceRef.current = null;
+    }
+
     const trimmed = text?.trim() ?? '';
 
     if (!selectedServiceId?.trim()) {
@@ -214,6 +255,29 @@ export const useNMT = (): UseNMTReturn => {
   const setInputTextWithValidation = useCallback((text: string) => {
     setInputText(text);
 
+    // H3 — CORRECTION signal: user edits source text while a translation result is visible.
+    // Debounced 2 000 ms so we wait until they pause typing before sending the event.
+    if (feedbackContextRef.current) {
+      if (correctionDebounceRef.current !== null) {
+        clearTimeout(correctionDebounceRef.current);
+      }
+      // Snapshot context at keystroke time so the event always references the translation
+      // that was visible when the user started editing, even if a new inference starts later.
+      const ctx = feedbackContextRef.current;
+      correctionDebounceRef.current = setTimeout(() => {
+        correctionDebounceRef.current = null;
+        sendImplicitEvent({
+          traceId:     ctx.traceId,
+          serviceId:   ctx.serviceId,
+          taskType:    'nmt',
+          language:    ctx.language,
+          sourceInput: ctx.sourceInput,
+          modelOutput: ctx.modelOutput,
+          action:      'CORRECTION',
+        });
+      }, 2000);
+    }
+
     if (text.length > MAX_TEXT_LENGTH) {
       if (!hasShownTextLimitToastRef.current) {
         hasShownTextLimitToastRef.current = true;
@@ -241,9 +305,51 @@ export const useNMT = (): UseNMTReturn => {
     setError(null);
   }, []);
 
+  // Send an implicit feedback event for the current translation result
+  const sendFeedbackEvent = useCallback((action: ImplicitAction) => {
+    const ctx = feedbackContextRef.current;
+    if (!ctx) return;
+    if (action === 'COPY_TRANSLATION') {
+      hasPositiveSignalRef.current = true;
+    }
+    sendImplicitEvent({
+      traceId:     ctx.traceId,
+      serviceId:   ctx.serviceId,
+      taskType:    'nmt',
+      language:    ctx.language,
+      sourceInput: ctx.sourceInput,
+      modelOutput: ctx.modelOutput,
+      action,
+    });
+  }, []);
+
+  // H4 — Fire ABANDON if the component unmounts with a visible result and no positive signal.
+  // Reads refs only → stable identity ([] deps is correct).
+  const sendAbandonIfNeeded = useCallback(() => {
+    const ctx = feedbackContextRef.current;
+    if (!ctx) return;
+    if (hasPositiveSignalRef.current) return;
+    sendImplicitEvent({
+      traceId:     ctx.traceId,
+      serviceId:   ctx.serviceId,
+      taskType:    'nmt',
+      language:    ctx.language,
+      sourceInput: ctx.sourceInput,
+      modelOutput: ctx.modelOutput,
+      action:      'ABANDON',
+    });
+  }, []);
+
   // Clear results
   const clearResults = useCallback(() => {
+    if (correctionDebounceRef.current !== null) {
+      clearTimeout(correctionDebounceRef.current);
+      correctionDebounceRef.current = null;
+    }
+    hasPositiveSignalRef.current = false;
     setTranslatedText('');
+    setTraceId(null);
+    feedbackContextRef.current = null;
     setFetched(false);
     setFetching(false);
     setRequestWordCount(0);
@@ -281,7 +387,8 @@ export const useNMT = (): UseNMTReturn => {
     responseWordCount,
     requestTime,
     error,
-    
+    traceId,
+
     // Methods
     performInference,
     setInputText: setInputTextWithValidation,
@@ -289,5 +396,7 @@ export const useNMT = (): UseNMTReturn => {
     setSelectedServiceId,
     clearResults,
     swapLanguages,
+    sendFeedbackEvent,
+    sendAbandonIfNeeded,
   };
 };

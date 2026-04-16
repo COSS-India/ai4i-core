@@ -90,7 +90,10 @@ export const apiEndpoints = {
   policy: {
     /** Gateway prefix; service mounts routes at /v1 (see policy-service main.py). */
     base: '/api/v1/policy-service',
- },
+  },
+  feedback: {
+    event: '/api/v1/feedback/event',
+  },
 } as const;
 
 // Create Axios instance with standard timeout

@@ -1,4 +1,4 @@
-# Feedback Service — Review
+# Feedback Service — Review (v3)
 
 Scope: `services/feedback-service/` plus all touch points that connect it to
 the rest of the platform (compose, gateways, alembic, upstream services,
@@ -16,152 +16,181 @@ Per its own description, an RLAIF pipeline:
    taxonomy.
 3. Accept explicit user feedback (rating + text), human corrections (golden
    pair for RLHF), and admin overrides.
-4. Support batch re-evaluation of historical traces.
+4. Support batch re-evaluation of historical traces — now via a pull-based
+   model that reads directly from the NMT database.
 
-## Internal correctness
 
-The service compiles, the routes are wired through `create_inference_app`,
-the SQLAlchemy model and Pydantic schemas line up, and the path layout
-(`/api/v1/feedback/*` plus `/health`) is consistent. That said, several
-behavioural defects mean it does not actually work end-to-end:
+## Issues fixed since v1 review
 
-1. **Background evaluation uses the wrong DB session.**
-   Routes acquire a tenant-scoped session via `get_tenant_db_session_factory()`
-   and write the new `FeedbackMetric` into the tenant schema, but the
-   background task pulls `request.app.state.db_session_factory` — the global,
-   non-tenant session. The follow-up
-   `select(FeedbackMetric).where(id == record_id)` runs against the public/
-   shared schema and returns `None`, so PENDING records under a real tenant
-   never transition to PASS/FAIL/ERROR. The same issue affects
-   `_bg_batch_evaluate`. (`app/routes/feedback.py:139`,
-   `app/routes/evaluation.py:75-90`).
+1. **Background evaluation tenant awareness** — FIXED.
+   `_bg_evaluate` and `_bg_batch_evaluate` now receive `schema_name` from
+   `request.state.tenant_schema` and execute
+   `SET search_path TO "{schema_name}", public` before querying.
+   PENDING records under a real tenant will now correctly transition.
 
-2. **Auth dependency contradicts the schema.**
-   Every route — including implicit telemetry (`POST /event`) and explicit
-   user feedback (`POST /api/v1/feedback`) — is gated by `AdminRequired`.
-   The Pydantic schema explicitly supports `feedback_source = "user"`, but
-   end-users (and upstream inference services) cannot reach the endpoint
-   without an admin JWT. Either the auth requirement needs to relax for the
-   ingestion endpoints, or the design intent (admin-only) needs to be
-   stated and the schema trimmed.
+2. **Auth split** — FIXED.
+   `auth.py` now exports both `AuthRequired` (any valid JWT) and
+   `AdminRequired` (ADMIN role). Ingestion endpoints (`POST /event`,
+   `POST /`) use `AuthRequired`; query, correction, batch, and override
+   endpoints use `AdminRequired`.
 
-3. **`organization` is collapsed into `tenant_id`.**
-   `_org_from_request` returns `tenant_id or "default"` and writes the same
-   value to both `organization` and `tenant_id` columns. The model treats
-   them as separate dimensions (and the indexes
-   `ix_feedback_org_status` / `ix_feedback_org_task` exist for cross-tenant
-   org-level queries), so the column is effectively unusable.
+3. **`organization` no longer collapsed into `tenant_id`** — FIXED.
+   `_org_from_request` now derives organization from the JWT email domain
+   (`email.split("@")[1].lower()`), keeping it semantically distinct from
+   the tenant_id column.
 
-4. **Implicit-score state machine is one-shot and not idempotent.**
-   - Once `ai_status` leaves `PENDING`, no further negative event can
-     re-trigger evaluation, even if the running `implicit_score` keeps
-     dropping.
-   - `implicit_score` is accumulated but never read for any decision; only
-     the *latest* event's `reward_score` is compared to the ±0.5 threshold.
-   - Replays of the same telemetry event keep adding to `implicit_score`
-     and `event_log`. There is no event id / dedup key.
+4. **`FeedbackStatusResponse` expanded** — FIXED.
+   Now includes `organization`, `tenant_id`, `feedback_source`, `rating`,
+   `implicit_score`, `event_log`, `created_at`, and `updated_at`.
 
-5. **Sync wrapper around async background.**
-   `_bg_evaluate` is `def`, not `async def`, so FastAPI runs it in the
-   threadpool and the body calls `asyncio.run(...)`. Each invocation spins
-   up a fresh event loop and httpx client (timeout 300 s). It works but
-   serialises behind the threadpool and makes connection reuse impossible.
+5. **Database registered in alembic** — FIXED.
+   `alembic.ini` `version_locations` now includes `feedback-service`.
+   `migration_registry.py` has `feedback_db` in `DATABASE_ORDER` and a
+   `DatabaseSpec` with `_load_feedback_metadata`.
+   `scripts/migrate.sh` also includes `feedback_db`.
 
-6. **`FeedbackStatusResponse` is missing fields the API needs.**
-   It omits `created_at`, `event_log`, `feedback_source`, `organization`,
-   and `tenant_id`. The `/latest` endpoint exposes an `organization`
-   filter, but the response can't show which org a row belongs to.
+6. **API gateway routes added** — FIXED.
+   APISIX has a full route for `/api/v1/feedback/*` with forward-auth,
+   CORS, rate-limiting, correlation-ID injection, and response headers.
+   Nginx also has a `proxy_pass` entry.
+   (Kong still has no route — see remaining items below.)
 
-7. **Brittle JSON parsing.**
+7. **docker-compose `depends_on`** — FIXED.
+   `auth-service: condition: service_started` added to both compose files.
+
+8. **Batch evaluation redesigned (new `nmt_reader.py`)** — IMPROVED.
+   `BatchProcessRequest` now takes `limit`/`offset`/`skip_evaluated`
+   instead of a caller-supplied items array. The service pulls directly
+   from the NMT database (`nmt_requests JOIN nmt_results`), creating
+   FeedbackMetric records for un-evaluated rows and queuing them for LLM
+   evaluation. The SQL column names (`source_text`, `translated_text`,
+   `source_language`, `target_language`, `model_id`) are verified to match
+   the NMT service's ORM model.
+
+9. **`.env.template` updated** — FIXED.
+   Now includes `NMT_DB_URL` for the read-only NMT database connection and
+   clarifies the `DATABASE_URL` as the feedback service's own store.
+
+10. **`schemas/__init__.py` exports** — FIXED.
+    All schema classes are now re-exported.
+
+
+## Issues fixed since v2 review
+
+11. **Host port conflict** — FIXED.
+    `multi-tenant-service` was already mapped to host port `8100`. Both
+    `docker-compose.yml` and `docker-compose-local.yml` now map
+    feedback-service to `8106:8100`. Internal service-to-service traffic
+    (`http://feedback-service:8100`) is unaffected.
+
+12. **SQL injection in `SET search_path`** — FIXED.
+    Both `feedback.py` and `evaluation.py` now include
+    `_SAFE_SCHEMA_RE = re.compile(r'^[a-z0-9_]+$')` and a
+    `_validate_schema()` helper. The background async functions validate
+    the schema name before interpolating it into the SQL statement;
+    malformed names are rejected with a warning log and the SET is skipped.
+
+13. **Ollama added to docker-compose** — FIXED.
+    `docker-compose.yml` includes an `ollama` service under the `feedback`
+    profile (`docker compose --profile feedback up -d`). Uses the `ollama`
+    network alias that `.env.template` already expects.
+    Note: only present in `docker-compose.yml`, not `docker-compose-local.yml`.
+
+14. **Frontend implicit-event integration** — FIXED (previously missed).
+    `feedbackService.ts` defines the `ImplicitAction` type
+    (`COPY_TRANSLATION`, `COPY_SOURCE`, `CLEAR_RESULTS`, `RETRANSLATE`)
+    with calibrated reward scores (+0.7, +0.1, -0.3, -0.5). The
+    `sendImplicitEvent` function POSTs to the feedback `/event` endpoint
+    (skipped for anonymous users). `useNMT.ts` exposes a
+    `sendFeedbackEvent` callback, and `nmt.tsx` hooks all four implicit
+    signals to the corresponding user actions (copy translation, copy
+    source, clear results, re-translate). This means the NMT page is a
+    live producer of implicit telemetry events.
+
+
+## Remaining issues
+
+### Internal (code-level)
+
+1. **Implicit-score state machine is one-shot and not idempotent.**
+   Once `ai_status` leaves `PENDING`, no further negative event can
+   re-trigger evaluation, even if the running `implicit_score` keeps
+   dropping. `implicit_score` is accumulated but never read for any
+   decision — only the latest event's `reward_score` is compared to the
+   ±0.5 threshold. There is also no event id / dedup key, so replays keep
+   adding to the score and log. (Lower priority — design decision.)
+
+2. **`nmt_reader.py` has no schema / search_path awareness.**
+   The raw SQL in `fetch_nmt_records` runs against the default search_path
+   of the NMT database connection. If the NMT tables live in a
+   tenant-specific schema, the query will return nothing. This should
+   either accept a schema parameter or document that it only works with
+   public-schema NMT deployments.
+
+3. **Sync wrapper still spins up a fresh event loop per background task.**
+   `_bg_evaluate` / `_bg_batch_evaluate` are sync `def` calling
+   `asyncio.run(...)`. This creates and tears down an event loop + httpx
+   client per invocation. It works correctly but is heavy. (Lower priority.)
+
+4. **Brittle JSON parsing.**
    `_parse_json_object` and `_parse_json_array` use greedy `\{.*\}` /
-   `\[.*\]` regexes. If the LLM emits stray braces (commentary, examples)
-   the parse fails and the record silently lands in `ai_status="ERROR"`.
+   `\[.*\]` regexes. If the LLM emits stray braces the parse fails and
+   the record silently lands in `ai_status="ERROR"`. (Lower priority.)
 
-## Orchestration integration
+### Orchestration
 
-This is where the service is most clearly broken.
+5. **Ollama missing from `docker-compose-local.yml`.**
+   The ollama service was added to `docker-compose.yml` under the
+   `feedback` profile, but not to `docker-compose-local.yml`. Local
+   dev environments will still lack an LLM judge unless pointed at an
+   external instance.
 
-1. **The database is never created.**
-   - `services/feedback-service/.env.template` references
-     `<FEEDBACK_DB_NAME>` and the root `env.template` adds
-     `FEEDBACK_DB_NAME=...`, but neither
-     `infrastructure/databases/migrations/postgres/alembic.ini`
-     `version_locations` nor
-     `infrastructure/.../alembic/migration_registry.py`
-     (`DATABASE_ORDER` / `DATABASES`) registers a `feedback_db`. Alembic
-     never sees the migration in
-     `versions/feedback-service/001_create_feedback_tables.py`.
-   - `scripts/migrate.sh` and `scripts/setup-env.sh` make no mention of
-     the service. There is no provisioning path that creates
-     `feedback_metrics`. Once the container starts, the first DB query
-     will fail.
+6. **Frontend feature flag is still `false`.**
+   `NEXT_PUBLIC_ENABLE_FEEDBACK=false` in `env.template`. The code behind
+   it works (verified), but new deployments will ship with the flag off by
+   default. This is presumably intentional (opt-in), but worth noting so
+   it doesn't get forgotten in deployment checklists.
 
-2. **No API gateway route.**
-   `apisix.yaml`, `kong.yml`, and `nginx.conf` contain no entries for
-   `/api/v1/feedback/*`. The service is reachable only via the host port
-   `8100` published by docker-compose, not through the public gateway that
-   every other service is exposed behind.
+7. **Kong gateway not configured.**
+   APISIX and nginx have routes; kong.yml does not. If Kong is the
+   fallback or secondary gateway in any deployment, traffic won't reach
+   the feedback service through it.
 
-3. **No upstream producers.**
-   None of `nmt-service`, `asr-service`, `tts-service`, `ocr-service`,
-   `pipeline-service`, or `telemetry-service` import or call the feedback
-   service. The implicit-event endpoint has zero clients in the repo, so
-   the RLAIF telemetry pipeline does not exist end-to-end — only its
-   sink does.
-
-4. **Frontend integration is a stub.**
-   `frontend/simple-ui/env.template` ships `NEXT_PUBLIC_ENABLE_FEEDBACK=false`
-   but no UI code reads the flag, no rating widget exists, and there are
-   no fetches to `/api/v1/feedback`.
-
-5. **Compose dependencies are incomplete.**
-   `feedback-service` only depends on `config-service` and `postgres`. With
-   `AUTH_ENABLED=true` and `JWKS_URL=http://auth-service:8081/...`, the
-   service needs `auth-service` to be reachable for any authenticated
-   request to resolve. Cold starts will produce JWKS fetch errors until
-   `auth-service` happens to come up.
-
-6. **LLM judge has no provider in compose.**
-   `.env.template` defaults `LLM_JUDGE_URL=http://ollama:11434/api/generate`
-   but there is no `ollama` (or compatible) container in either
-   `docker-compose.yml` or `docker-compose-local.yml`. Out of the box,
-   every triggered evaluation falls into the exception branch and the
-   record goes to `ai_status="ERROR"` with `payload.error` set.
-
-7. **No tests.**
+8. **No tests.**
    `tests/integration/` and `tests/e2e/` cover NMT, ASR, TTS, the API
-   gateway, auth flows, and the websocket layer — nothing for feedback.
-   There is no fixture, contract test, or smoke test for the service.
+   gateway, auth flows, and websockets — nothing for feedback. There is
+   no fixture, contract test, or smoke test for the service.
 
-## Verdict
+9. **No implicit-event producers for ASR/TTS/OCR.**
+   The NMT frontend is now a live producer of implicit events, which
+   closes the "no producers" gap for NMT. The ASR, TTS, and OCR pages
+   (if they exist) do not yet emit feedback events. The batch evaluation
+   path also only covers NMT. (Lower priority — NMT-first is reasonable.)
 
-In its current state the service is well structured at the file level but
-is not operationally wired in:
 
-- Out of the box it cannot serve traffic (no DB schema, no gateway route).
-- Even if traffic reached it, every tenant-scoped record stays PENDING
-  (background-task session bug).
-- Even if the session bug is fixed, the LLM judge has no provider, so the
-  records would land in ERROR.
-- And no producer in the platform is sending it any events anyway.
+## Verdict (v3)
 
-## Recommended fix order
+The feedback service is now operationally viable for NMT workflows:
 
-1. Register `feedback_db` in `migration_registry.py` and add the
-   `feedback-service` path to `alembic.ini`'s `version_locations`. Add the
-   service to `scripts/migrate.sh` so the table is actually created.
-2. Make the background `_bg_evaluate` use a tenant-scoped session (or pass
-   the tenant schema into the task and `SET search_path` before querying).
-3. Decide auth posture: if implicit telemetry is meant to come from
-   inference services, expose `/event` (and probably `POST /`) with a
-   service-account scope, not `AdminRequired`.
-4. Add `auth-service` (and the chosen LLM judge) to `depends_on` /
-   compose, and add an APISIX route for `/api/v1/feedback/*`.
-5. Stand up at least one producer: have `pipeline-service` (or each
-   inference service) emit `/event` calls when corrections / retries
-   happen. Without this, the RLAIF loop is dead.
-6. Replace the `organization == tenant_id` shortcut, expose the missing
-   columns in `FeedbackStatusResponse`, and add an event id for
-   idempotent ingestion.
-7. Add at least an integration test that posts an event, asserts the
-   record exists, and verifies the LLM-judge branch using a stub.
+- The database schema is provisioned via alembic.
+- APISIX and nginx expose the routes.
+- Auth is correctly tiered (any-JWT for ingestion, ADMIN for admin ops).
+- Background evaluation is tenant-aware and SQL-injection-safe.
+- The NMT frontend emits all four implicit signals with calibrated rewards.
+- Batch evaluation self-serves from the NMT database.
+- Ollama is available via the `feedback` docker-compose profile.
+
+The remaining items are either lower-priority design decisions (state
+machine semantics, JSON parsing robustness), coverage gaps for non-NMT
+services, or missing test infrastructure. None are blockers to running the
+NMT feedback loop end-to-end.
+
+### Recommended next steps (priority order)
+
+1. Add ollama to `docker-compose-local.yml` so local dev matches prod.
+2. Add at least one integration test: post an event, verify the record,
+   mock the LLM judge, assert the PASS/FAIL transition.
+3. Decide whether `nmt_reader.py` needs tenant-schema support or is
+   intentionally public-schema only, and document accordingly.
+4. Add the Kong route if Kong is used in any deployment.
+5. Extend implicit-event hooks to ASR/TTS/OCR pages when they're ready.

@@ -1360,7 +1360,7 @@ services:
       dockerfile: ./services/feedback-service/Dockerfile
     container_name: ai4v-feedback-service
     ports:
-      - "8100:8100"
+      - "8106:8100"  # host 8100 is taken by multi-tenant-service
     env_file:
       - ./services/feedback-service/.env
     environment:
@@ -1378,6 +1378,14 @@ services:
       microservices-network:
         aliases:
           - feedback-service
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
       interval: 30s
@@ -1386,6 +1394,31 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # LLM judge for feedback evaluation (Ollama).
+  # Start with: docker compose --profile feedback up -d ollama
+  # Pull the judge model once: docker exec ai4v-ollama ollama pull llama3:8b
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai4v-ollama
+    profiles:
+      - feedback
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    networks:
+      microservices-network:
+        aliases:
+          - ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
 
 
 volumes:
@@ -1414,6 +1447,8 @@ volumes:
   opensearch-data:
     driver: local
   alertmanager-data:
+    driver: local
+  ollama-data:
     driver: local
 
 networks:
