@@ -108,7 +108,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     full_name: "",
     services: [],
     is_approved: false,
-    role: "USER",
+    role: "",
   });
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
   const [userFormErrors, setUserFormErrors] = useState<Record<string, string>>({});
@@ -433,7 +433,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     full_name: "",
     services: [],
     is_approved: false,
-    role: "USER",
+    role: "",
   });
 
   const openUserModal = () => {

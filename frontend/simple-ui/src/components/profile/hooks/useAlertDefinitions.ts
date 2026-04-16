@@ -28,7 +28,7 @@ function normalizeForDuration(evalInterval: string | null | undefined, forDurati
 const EMPTY_CREATE_FORM: AlertDefinitionCreate = {
   name: "",
   description: null,
-  category: "application",
+  category: "",
   severity: "",
   urgency: "medium",
   sub_category: null,
@@ -38,8 +38,8 @@ const EMPTY_CREATE_FORM: AlertDefinitionCreate = {
   threshold_value: null,
   threshold_unit: undefined,
   service: [],
-  evaluation_interval: "30s",
-  for_duration: "1m",
+  evaluation_interval: "",
+  for_duration: "",
   enabled: true,
   annotations: [],
 };

@@ -1436,7 +1436,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
               </FormControl>
               <FormControl>
                 <FormLabel>Role</FormLabel>
-                <Select value={tm.userForm.role || "USER"} onChange={(e) => tm.setUserForm((f) => ({ ...f, role: e.target.value }))} bg="white">
+                <Select value={tm.userForm.role || ""} onChange={(e) => tm.setUserForm((f) => ({ ...f, role: e.target.value }))} bg="white" placeholder="Select role">
                   {tenantUserAssignableRoleOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
