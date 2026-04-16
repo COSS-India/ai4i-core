@@ -41,6 +41,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { useQuery } from "@tanstack/react-query";
 import { SearchIcon, RepeatIcon } from "@chakra-ui/icons";
 import ContentLayout from "../components/common/ContentLayout";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth, forceFrontendSessionEnd } from "../hooks/useAuth";
 import { useRouter } from "next/router";
 import { getJwtToken } from "../services/api";
@@ -962,15 +963,10 @@ const LogsPage: React.FC = () => {
             </Card>
           ) : (
             <>
-              {/* Page Header */}
-              <Box textAlign="center" mb={2}>
-                <Heading size="lg" color="gray.800" mb={1}>
-                  Logs Dashboard
-                </Heading>
-                <Text color="gray.600" fontSize="sm">
-                  View and search logs from OpenSearch
-                </Text>
-              </Box>
+              <ManagementPageHeader
+                title="Logs Dashboard"
+                description="View and search logs from OpenSearch"
+              />
 
               {/* Show auth warning if not authenticated */}
               {!authLoading && !isAuthenticated && (

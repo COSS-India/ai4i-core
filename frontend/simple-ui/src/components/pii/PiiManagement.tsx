@@ -124,7 +124,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const [newMapTenantId, setNewMapTenantId] = useState("");
   const [newMapDomainId, setNewMapDomainId] = useState("");
   const [newEntity, setNewEntity] = useState("");
-  const [newAction, setNewAction] = useState("REDACT_TAG");
+  const [newAction, setNewAction] = useState("");
   const [newExample, setNewExample] = useState("");
   const [newRegex, setNewRegex] = useState("");
   const [adminDataError, setAdminDataError] = useState<string | null>(null);
@@ -312,6 +312,15 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
     if (!newEntity) {
       toast({
         title: "Entity name required",
+        status: "warning",
+        duration: 4000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (!newAction) {
+      toast({
+        title: "Action required",
         status: "warning",
         duration: 4000,
         isClosable: true,
@@ -718,10 +727,10 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                           />
                         </GridItem>
                         <GridItem colSpan={{ base: 1, md: 3 }}>
-                          <Select size="sm" value={newAction} onChange={(e) => setNewAction(e.target.value)} bg={cardBg}>
-                            <option>REDACT_TAG</option>
-                            <option>MASK</option>
-                            <option>HASH</option>
+                          <Select size="sm" value={newAction} onChange={(e) => setNewAction(e.target.value)} bg={cardBg} placeholder="Select action">
+                            <option value="REDACT_TAG">REDACT_TAG</option>
+                            <option value="MASK">MASK</option>
+                            <option value="HASH">HASH</option>
                           </Select>
                         </GridItem>
                         <GridItem colSpan={{ base: 1, md: 6 }}>

@@ -10,6 +10,7 @@ import Head from "next/head";
 import React from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
 import TenantManagementTab from "../components/profile/TenantManagementTab";
 
@@ -17,7 +18,8 @@ const TenantManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
-  const showTenantManagement = Boolean(user?.is_superuser || user?.is_tenant);
+  const isTenantAdmin = user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === "TENANT ADMIN");
+  const showTenantManagement = Boolean(user?.is_superuser || user?.is_tenant || isTenantAdmin);
 
   React.useEffect(() => {
     if (!authLoading && (!isAuthenticated || !showTenantManagement)) {
@@ -57,6 +59,10 @@ const TenantManagementPage: React.FC = () => {
 
       <ContentLayout>
         <Box maxW="7xl" mx="auto" py={8} px={4}>
+          <ManagementPageHeader
+            title="Tenant Management"
+            description="Manage tenants and tenant users"
+          />
           <TenantManagementTab isActive={true} />
         </Box>
       </ContentLayout>
