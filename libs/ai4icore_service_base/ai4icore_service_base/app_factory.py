@@ -207,32 +207,24 @@ def _build_lifespan(config: InferenceServiceConfig, db_base: Any):
             """Best-effort service registration with bounded retries."""
             nonlocal instance_id
             try:
-                instance_id = await registry_client.register(
-                    service_name=service_name,
-                    service_url=service_url,
-                    health_check_url=f"{service_url}/health",
-                    service_metadata={
-                        "instance_id": app_env.service_instance_id,
-                        "status": "healthy",
-                    },
-                )
-                if not instance_id:
-                    # Config-service may not be reachable during initial startup ordering.
-                    # Retry a few times so services eventually appear in discovery/health snapshots.
-                    retry_delay = 0.5
-                    for _ in range(5):
+                # Config-service may not be reachable during initial startup ordering.
+                # Retry a few times so services eventually appear in discovery/health snapshots.
+                max_attempts = 6  # first attempt + 5 retries
+                retry_delay = 0.5
+                for attempt in range(max_attempts):
+                    instance_id = await registry_client.register(
+                        service_name=service_name,
+                        service_url=service_url,
+                        health_check_url=f"{service_url}/health",
+                        service_metadata={
+                            "instance_id": app_env.service_instance_id,
+                            "status": "healthy",
+                        },
+                    )
+                    if instance_id:
+                        break
+                    if attempt < max_attempts - 1:
                         await asyncio.sleep(retry_delay)
-                        instance_id = await registry_client.register(
-                            service_name=service_name,
-                            service_url=service_url,
-                            health_check_url=f"{service_url}/health",
-                            service_metadata={
-                                "instance_id": app_env.service_instance_id,
-                                "status": "healthy",
-                            },
-                        )
-                        if instance_id:
-                            break
                         retry_delay = min(retry_delay * 2, 5.0)
                 if instance_id:
                     svc_logger.info("Registered %s as instance %s", service_name, instance_id)
@@ -257,8 +249,11 @@ def _build_lifespan(config: InferenceServiceConfig, db_base: Any):
         # ── Shutdown ──
         svc_logger.info("Shutting down %s ...", config.title)
         try:
-            await asyncio.shield(registration_task)
-        except (asyncio.CancelledError, Exception):
+            await asyncio.wait_for(registration_task, timeout=10)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            # Best-effort: deregistration depends on instance_id; ignore shutdown timeouts/cancellation.
+            pass
+        except Exception:
             # Best-effort: deregistration depends on instance_id; ignore registration errors here.
             pass
         if instance_id:
