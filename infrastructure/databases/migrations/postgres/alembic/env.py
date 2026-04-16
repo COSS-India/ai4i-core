@@ -8,7 +8,7 @@ from pathlib import Path
 
 from alembic import context
 from alembic.operations import ops
-from sqlalchemy import MetaData, create_engine, pool
+from sqlalchemy import MetaData, String, create_engine, pool
 from sqlalchemy.types import TypeDecorator
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -110,20 +110,42 @@ def include_object(object_, name, type_, reflected, compare_to) -> bool:
 
 
 def render_item(type_, obj, autogen_context):
-    """Render custom type decorators as their underlying SQLAlchemy impl."""
+    """Render custom type decorators as their underlying SQLAlchemy impl.
+
+    Models loaded via ``migration_registry`` live under a synthetic module
+    ``ai4i_alembic_dynamic.*``. If Alembic falls back to default rendering, it
+    emits that path in migrations, which raises ``NameError`` at upgrade time.
+    Known decorators are mapped to plain ``sa.*`` types here.
+    """
     if type_ == "type" and isinstance(obj, TypeDecorator):
+        td_cls = type(obj)
+        td_mod = getattr(td_cls, "__module__", "") or ""
         impl = getattr(obj, "impl", None)
         if impl is None:
-            return False
-        # Alembic compatibility: some versions expose renderer on
-        # autogen_context.migration_context.impl, not autogen_context.impl.
+            impl = getattr(td_cls, "impl", None)
+
         migration_context = getattr(autogen_context, "migration_context", None)
         context_impl = getattr(migration_context, "impl", None)
-        if context_impl is not None and hasattr(context_impl, "render_type"):
+        if context_impl is not None and hasattr(context_impl, "render_type") and impl is not None:
             try:
-                return context_impl.render_type(impl, autogen_context)
+                rendered = context_impl.render_type(impl, autogen_context)
+                # impl.render_type returns False when the dialect declines — do not
+                # treat that like a string (False is not None and False != "").
+                if rendered not in (False, None, ""):
+                    return rendered
             except Exception:
-                return False
+                pass
+
+        # Synthetic loader module — never emit as Python reference in revisions.
+        if "ai4i_alembic_dynamic" in td_mod:
+            if isinstance(impl, String):
+                ln = getattr(impl, "length", None)
+                if ln is not None:
+                    return f"sa.String(length={ln})"
+                return "sa.String()"
+            if td_cls.__name__ == "ServiceUnitTypeEnum":
+                return "sa.String(length=50)"
+
         return False
     return False
 
