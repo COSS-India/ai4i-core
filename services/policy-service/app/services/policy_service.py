@@ -92,13 +92,14 @@ class PolicyService:
                 detail={"code": "CONFLICT", "message": "Policy name already exists"},
             )
 
-        # Validate tenant_id (non-global) against active tenants list
+        # Validate tenant_ids (non-global) against active tenants list
         active_tenant_ids = await self._get_active_tenant_ids(auth_header=auth_header)
-        if (not data.is_global) and data.tenant_id:
-            self._validate_tenant_id(data.tenant_id, active_tenant_ids)
+        if (not data.is_global) and data.tenant_ids:
+            for tenant_id in data.tenant_ids:
+                self._validate_tenant_id(tenant_id, active_tenant_ids)
 
-        # tenant_id is not a column on pii_policy; it is only used for tenant_policy assignment.
-        payload = data.model_dump(exclude={"pii_types", "tenant_id"})
+        # tenant_ids is not a column on pii_policy; it is only used for tenant_policy assignment.
+        payload = data.model_dump(exclude={"pii_types", "tenant_ids"})
         policy = await self.repo.create(payload)
 
         if data.pii_types:
@@ -108,10 +109,8 @@ class PolicyService:
         if policy.is_global:
             # Map to all active tenants
             await self.tenant_repo.assign_many(active_tenant_ids, policy.policy_id)
-        elif data.tenant_id:
-            existing = await self.tenant_repo.get_assignment(data.tenant_id, policy.policy_id)
-            if not existing:
-                await self.tenant_repo.assign(data.tenant_id, policy.policy_id)
+        elif data.tenant_ids:
+            await self.tenant_repo.assign_many(data.tenant_ids, policy.policy_id)
 
         return await self.repo.get_with_pii_types(policy.policy_id)
 
@@ -119,25 +118,30 @@ class PolicyService:
         obj = await self.get(policy_id)
         active_tenant_ids = await self._get_active_tenant_ids(auth_header=auth_header)
 
-        if (data.is_global is not True) and data.tenant_id:
-            self._validate_tenant_id(data.tenant_id, active_tenant_ids)
+        if (data.is_global is not True) and data.tenant_ids:
+            for tenant_id in data.tenant_ids:
+                self._validate_tenant_id(tenant_id, active_tenant_ids)
 
-        # tenant_id is not a column on pii_policy; it is only used for tenant_policy assignment.
-        updates = data.model_dump(exclude_none=True, exclude={"pii_types", "tenant_id"})
+        # tenant_ids is not a column on pii_policy; it is only used for tenant_policy assignment.
+        updates = data.model_dump(exclude_none=True, exclude={"pii_types", "tenant_ids"})
         updated = await self.repo.update(obj, updates)
 
         # If pii_types is provided (including empty list), replace the linked set
         if data.pii_types is not None:
             await self._validate_and_add_links(policy_id, data.pii_types, replace=True)
 
-        # Handle is_global switch and optional tenant_id mapping
+        # Handle is_global switch and optional tenant_ids mapping.
+        # NOTE: tenant_ids is represented via the tenant_policy mapping table, not a column on pii_policy.
         if data.is_global is True:
-            # Map to all active tenants
+            # Switching to global: replace explicit mappings with "all active tenants"
+            await self.tenant_repo.clear_policy_assignments(policy_id)
             await self.tenant_repo.assign_many(active_tenant_ids, policy_id)
-        elif data.tenant_id:
-            existing = await self.tenant_repo.get_assignment(data.tenant_id, policy_id)
-            if not existing:
-                await self.tenant_repo.assign(data.tenant_id, policy_id)
+        elif data.tenant_ids is not None:
+            # Non-global explicit assignment: replace any existing tenant mappings with this tenant set.
+            # If tenant_ids is an empty list, this clears all explicit mappings.
+            await self.tenant_repo.clear_policy_assignments(policy_id)
+            if data.tenant_ids:
+                await self.tenant_repo.assign_many(data.tenant_ids, policy_id)
 
         # Always return a fully eager-loaded entity to avoid async lazy-load issues in response builders.
         return await self.repo.get_with_pii_types(policy_id)
