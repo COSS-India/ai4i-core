@@ -25,7 +25,6 @@ import {
   Text,
   VStack,
   HStack,
-  useColorModeValue,
   useDisclosure,
   Tabs,
   TabList,
@@ -45,10 +44,11 @@ import {
   Tooltip,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import { SearchIcon, ViewIcon, TriangleDownIcon, TriangleUpIcon } from "@chakra-ui/icons";
+import { SearchIcon, ViewIcon } from "@chakra-ui/icons";
 import { useRouter } from "next/router";
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import ContentLayout from "../components/common/ContentLayout";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { getAllModels, createModel, getModelById, updateModel } from "../services/modelManagementService";
 import { listServices as listServicesForModels } from "../services/servicesManagementService";
 import { useAuth } from "../hooks/useAuth";
@@ -56,6 +56,12 @@ import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 import ConfirmDialog from "../components/common/ConfirmDialog";
+import {
+  TableFilterToolbar,
+  TablePaginationBar,
+  TableSortHeader,
+  useAdminTableSurface,
+} from "../components/common/TableControls";
 
 // TypeScript interfaces for model data
 interface OAuthId {
@@ -190,7 +196,7 @@ const ModelManagementPage: React.FC = () => {
       setIsLoading(true);
       try {
         const fetchedModels = await getAllModels();
-        setModels(fetchedModels);
+        setModels(fetchedModels as unknown as Model[]);
       } catch (error: any) {
         console.error("Failed to fetch models:", error);
         
@@ -233,11 +239,8 @@ const ModelManagementPage: React.FC = () => {
     fetchServices();
   }, []);
 
-  const cardBg = useColorModeValue("white", "gray.800");
-  const cardBorder = useColorModeValue("gray.200", "gray.700");
-  const tableBg = useColorModeValue("white", "gray.800");
-  const tableHeaderBg = useColorModeValue("gray.50", "gray.700");
-  const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
+  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor: cardBorder } =
+    useAdminTableSurface();
 
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
@@ -528,7 +531,7 @@ const ModelManagementPage: React.FC = () => {
 
       // Refresh models list
       const fetchedModels = await getAllModels();
-      setModels(fetchedModels);
+      setModels(fetchedModels as unknown as Model[]);
 
       // Reset file input
       if (fileInputRef.current) {
@@ -610,7 +613,7 @@ const ModelManagementPage: React.FC = () => {
 
       toast({
         title: "File Validated",
-        description: "JSON file has been validated successfully. Review the data below and click 'Create Model' to proceed.",
+        description: "JSON file has been validated successfully. Review the data below and click 'Register Model' to proceed.",
         status: "success",
         duration: 3000,
         isClosable: true,
@@ -640,11 +643,11 @@ const ModelManagementPage: React.FC = () => {
     
     try {
       const model = await getModelById(modelId);
-      setSelectedModel(model);
+      setSelectedModel(model as unknown as Model);
       // Ensure task field is properly initialized
       setUpdateFormData({
-        ...model,
-        task: model.task || { type: "" },
+        ...(model as unknown as Partial<Model>),
+        task: { type: model.task?.type ?? model.task_type ?? model.taskType ?? "" },
       });
       setIsViewingModel(true);
       setActiveTab(2); // Switch to View Model tab
@@ -692,10 +695,10 @@ const ModelManagementPage: React.FC = () => {
 
       // Refresh models list and selected model
       const fetchedModels = await getAllModels();
-      setModels(fetchedModels);
+      setModels(fetchedModels as unknown as Model[]);
       const updatedModel = await getModelById(selectedModel.modelId);
-      setSelectedModel(updatedModel);
-      setUpdateFormData(updatedModel);
+      setSelectedModel(updatedModel as unknown as Model);
+      setUpdateFormData(updatedModel as unknown as Partial<Model>);
       setIsEditingModel(false);
     } catch (error) {
       toast({
@@ -744,11 +747,11 @@ const ModelManagementPage: React.FC = () => {
       
       // Refresh models list and selected model
       const fetchedModels = await getAllModels();
-      setModels(fetchedModels);
+      setModels(fetchedModels as unknown as Model[]);
       if (selectedModel && selectedModel.modelId === model.modelId) {
         const updatedModel = await getModelById(model.modelId);
-        setSelectedModel(updatedModel);
-        setUpdateFormData(updatedModel);
+        setSelectedModel(updatedModel as unknown as Model);
+        setUpdateFormData(updatedModel as unknown as Partial<Model>);
       }
     } catch (error: any) {
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
@@ -798,11 +801,11 @@ const ModelManagementPage: React.FC = () => {
 
       // Refresh models list and selected model
       const fetchedModels = await getAllModels();
-      setModels(fetchedModels);
+      setModels(fetchedModels as unknown as Model[]);
       if (selectedModel && selectedModel.modelId === model.modelId) {
         const updatedModel = await getModelById(model.modelId);
-        setSelectedModel(updatedModel);
-        setUpdateFormData(updatedModel);
+        setSelectedModel(updatedModel as unknown as Model);
+        setUpdateFormData(updatedModel as unknown as Partial<Model>);
       }
     } catch (error: any) {
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
@@ -851,15 +854,10 @@ const ModelManagementPage: React.FC = () => {
 
       <ContentLayout>
            <VStack spacing={6} w="full">
-                  {/* Page Header */}
-                  <Box textAlign="center" mb={2}>
-                    <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
-                     Model Management
-                    </Heading>
-                    <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
-                    Manage and configure AI models
-                    </Text>
-                  </Box>
+                  <ManagementPageHeader
+                    title="Model Management"
+                    description="Manage and configure AI models"
+                  />
         
                   <Grid
                     gap={8}
@@ -885,7 +883,7 @@ const ModelManagementPage: React.FC = () => {
             >
               <TabList>
                 <Tab fontWeight="semibold">Model Registry</Tab>
-                <Tab fontWeight="semibold">Create Model</Tab>
+                <Tab fontWeight="semibold">Register Model</Tab>
                 {isViewingModel && selectedModel && (
                   <Tab fontWeight="semibold">View Model</Tab>
                 )}
@@ -909,7 +907,11 @@ const ModelManagementPage: React.FC = () => {
                         <>
                         {/* Search and filters - consistent with portal patterns */}
                         <VStack align="stretch" spacing={4} mb={4}>
-                          <HStack flexWrap="wrap" gap={3} align="flex-end">
+                          <TableFilterToolbar
+                            hasActiveFilters={hasActiveFilters}
+                            onClear={clearAllFilters}
+                            align="flex-end"
+                          >
                             <FormControl w={{ base: "full", md: "280px" }}>
                               <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
                                 Search
@@ -965,16 +967,7 @@ const ModelManagementPage: React.FC = () => {
                                 ))}
                               </Select>
                             </FormControl>
-                            {hasActiveFilters && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={clearAllFilters}
-                              >
-                                Clear all
-                              </Button>
-                            )}
-                          </HStack>
+                          </TableFilterToolbar>
                           {hasActiveFilters && (
                             <HStack spacing={2} flexWrap="wrap">
                               {searchQuery.trim() && (
@@ -1035,37 +1028,22 @@ const ModelManagementPage: React.FC = () => {
                             <Thead bg={tableHeaderBg}>
                               <Tr>
                                 <Th>
-                                  <HStack spacing={2}>
-                                    <Text>Name</Text>
-                                    <Tooltip label="Sort Name A to Z" hasArrow>
-                                      <IconButton
-                                        aria-label="Sort models by name ascending"
-                                        icon={<TriangleUpIcon />}
-                                        size="xs"
-                                        variant={sortBy === "name" && nameSortDirection === "asc" ? "solid" : "ghost"}
-                                        colorScheme="gray"
-                                        onClick={() => {
-                                          setSortBy("name");
-                                          setNameSortDirection("asc");
-                                          setListPage(1);
-                                        }}
-                                      />
-                                    </Tooltip>
-                                    <Tooltip label="Sort Name Z to A" hasArrow>
-                                      <IconButton
-                                        aria-label="Sort models by name descending"
-                                        icon={<TriangleDownIcon />}
-                                        size="xs"
-                                        variant={sortBy === "name" && nameSortDirection === "desc" ? "solid" : "ghost"}
-                                        colorScheme="gray"
-                                        onClick={() => {
-                                          setSortBy("name");
-                                          setNameSortDirection("desc");
-                                          setListPage(1);
-                                        }}
-                                      />
-                                    </Tooltip>
-                                  </HStack>
+                                  <TableSortHeader
+                                    label="Name"
+                                    direction={nameSortDirection}
+                                    onAsc={() => {
+                                      setSortBy("name");
+                                      setNameSortDirection("asc");
+                                      setListPage(1);
+                                    }}
+                                    onDesc={() => {
+                                      setSortBy("name");
+                                      setNameSortDirection("desc");
+                                      setListPage(1);
+                                    }}
+                                    ascAriaLabel="Sort models by name ascending"
+                                    descAriaLabel="Sort models by name descending"
+                                  />
                                 </Th>
                                 <Th>Version</Th>
                                 <Th> Status</Th>
@@ -1155,78 +1133,27 @@ const ModelManagementPage: React.FC = () => {
                         </Box>
                         )}
                       {!isLoading && filteredModels.length > 0 && (
-                        <HStack
-                          mt={4}
-                          justify="space-between"
-                          align="center"
-                          flexWrap="wrap"
-                          gap={2}
-                          borderTopWidth="1px"
+                        <TablePaginationBar
+                          startRow={startRow}
+                          endRow={endRow}
+                          totalItems={totalModels}
+                          page={listPage}
+                          totalPages={totalPages}
+                          pageSize={listPageSize}
+                          pageSizeOptions={PAGE_SIZE_OPTIONS}
+                          onPageSizeChange={(value) => {
+                            setListPageSize(value);
+                            setListPage(1);
+                          }}
+                          onFirst={() => setListPage(1)}
+                          onPrev={() => setListPage((p) => Math.max(1, p - 1))}
+                          onNext={() => setListPage((p) => Math.min(totalPages, p + 1))}
+                          onLast={() => setListPage(totalPages)}
+                          canPrev={listPage > 1}
+                          canNext={listPage < totalPages}
                           borderColor={cardBorder}
-                          pt={4}
-                        >
-                          <Text fontSize="sm" color="gray.600">
-                            {startRow}–{endRow} of {totalModels}
-                          </Text>
-                          <HStack spacing={2} align="center" flexWrap="wrap">
-                            <Text fontSize="sm" color="gray.600" whiteSpace="nowrap">Rows per page</Text>
-                            <Select
-                              size="sm"
-                              w="70px"
-                              value={listPageSize}
-                              onChange={(e) => {
-                                setListPageSize(Number(e.target.value));
-                                setListPage(1);
-                              }}
-                              bg={cardBg}
-                            >
-                              {PAGE_SIZE_OPTIONS.map((n) => (
-                                <option key={n} value={n}>{n}</option>
-                              ))}
-                            </Select>
-                            <HStack spacing={1}>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setListPage(1)}
-                                isDisabled={listPage <= 1}
-                                aria-label="First page"
-                              >
-                                First
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setListPage((p) => Math.max(1, p - 1))}
-                                isDisabled={listPage <= 1}
-                                aria-label="Previous page"
-                              >
-                                Previous
-                              </Button>
-                              <Text fontSize="sm" color="gray.600" px={2}>
-                                Page {listPage} of {totalPages}
-                              </Text>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setListPage((p) => Math.min(totalPages, p + 1))}
-                                isDisabled={listPage >= totalPages}
-                                aria-label="Next page"
-                              >
-                                Next
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setListPage(totalPages)}
-                                isDisabled={listPage >= totalPages}
-                                aria-label="Last page"
-                              >
-                                Last
-                              </Button>
-                            </HStack>
-                          </HStack>
-                        </HStack>
+                          bg={cardBg}
+                        />
                       )}
                         </>
                       )}
@@ -1239,7 +1166,7 @@ const ModelManagementPage: React.FC = () => {
                   <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                     <CardHeader>
                       <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-                        Create New Model
+                        Register New Model
                       </Heading>
                     </CardHeader>
                     <CardBody>
@@ -1362,7 +1289,7 @@ const ModelManagementPage: React.FC = () => {
                             <Alert status="success" borderRadius="md" mb={4}>
                               <AlertIcon />
                               <AlertDescription>
-                                JSON file validated successfully! Review the data below and click &quot;Create Model&quot; to proceed.
+                                JSON file validated successfully! Review the data below and click &quot;Register Model&quot; to proceed.
                               </AlertDescription>
                             </Alert>
                             <Box>
@@ -1396,7 +1323,7 @@ const ModelManagementPage: React.FC = () => {
                                   isLoading={isUploading}
                                   loadingText="Creating..."
                                 >
-                                  Create Model
+                                  Register Model
                                 </Button>
                                 <Button
                                   colorScheme="gray"

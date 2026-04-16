@@ -25,7 +25,6 @@ import {
   Spinner,
   Flex,
   IconButton,
-  useColorModeValue,
   Card,
   CardBody,
   SimpleGrid,
@@ -40,9 +39,10 @@ import {
 import Head from "next/head";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeftIcon, ChevronRightIcon, SearchIcon, RepeatIcon } from "@chakra-ui/icons";
+import { SearchIcon, RepeatIcon } from "@chakra-ui/icons";
 import ContentLayout from "../components/common/ContentLayout";
-import { useAuth } from "../hooks/useAuth";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
+import { useAuth, forceFrontendSessionEnd } from "../hooks/useAuth";
 import { useRouter } from "next/router";
 import { getJwtToken } from "../services/api";
 import { getTenantIdFromToken } from "../utils/helpers";
@@ -55,6 +55,7 @@ import {
 } from "../services/observabilityService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 import { listTenants, getViewTenant } from "../services/multiTenantService";
+import { TablePaginationBar, useAdminTableSurface } from "../components/common/TableControls";
 
 /**
  * Convert datetime-local format (YYYY-MM-DDTHH:mm) to ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
@@ -155,10 +156,7 @@ const LogsPage: React.FC = () => {
   // Kept for reference (e.g. display purposes); no longer drives access logic
   const tenantIdFromToken = getTenantIdFromToken();
   
-  const cardBg = useColorModeValue("white", "gray.800");
-  const borderColor = useColorModeValue("gray.200", "gray.700");
-  const theadBg = useColorModeValue("gray.50", "gray.700");
-  const rowHoverBg = useColorModeValue("gray.50", "gray.800");
+  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor } = useAdminTableSurface();
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -402,18 +400,13 @@ const LogsPage: React.FC = () => {
     staleTime: 1 * 60 * 1000, // 1 minute
   });
 
-  // Handle aggregations error
+  // Handle aggregations error — auth/tenant failures end the session (telemetry uses a separate client)
   useEffect(() => {
-    if (aggregationsError && ((aggregationsError as any)?.response?.status === 401 || (aggregationsError as any)?.response?.status === 403)) {
-      toast({
-        title: "Authentication Required",
-        description: "Please log in to view logs.",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
+    const status = (aggregationsError as any)?.response?.status;
+    if (aggregationsError && (status === 401 || status === 403)) {
+      forceFrontendSessionEnd();
     }
-  }, [aggregationsError, toast]);
+  }, [aggregationsError]);
 
   // Fetch logs (only if authenticated)
   const {
@@ -556,36 +549,9 @@ const LogsPage: React.FC = () => {
         url: error?.config?.url,
       });
       
-      if (error?.response?.status === 401) {
-        // 401 Unauthorized - redirect to login
-        toast({
-          title: "Authentication Required",
-          description: error?.response?.data?.detail || "Please log in to view logs.",
-          status: "error",
-          duration: 5000,
-          isClosable: true,
-        });
-        router.push("/auth");
-      } else if (error?.response?.status === 403) {
-        // 403 Forbidden - show error message (user is authenticated but lacks permission)
-        let errorMessage = 'Access denied. You must be associated with a tenant to access logs.';
-        if (error?.response?.data?.detail) {
-          const detail = error.response.data.detail;
-          if (typeof detail === 'string') {
-            errorMessage = detail;
-          } else if (typeof detail === 'object') {
-            errorMessage = detail.message || detail.detail || JSON.stringify(detail);
-          } else {
-            errorMessage = String(detail);
-          }
-        }
-        toast({
-          title: "Access Denied",
-          description: errorMessage,
-          status: "error",
-          duration: 8000,
-          isClosable: true,
-        });
+      if (error?.response?.status === 401 || error?.response?.status === 403) {
+        forceFrontendSessionEnd();
+        return;
       } else {
         // Show other errors as toast
         let errorMessage = 'Failed to load logs';
@@ -611,7 +577,7 @@ const LogsPage: React.FC = () => {
         });
       }
     }
-  }, [logsError, router, toast]);
+  }, [logsError, toast]);
 
   // Debug: Log successful responses
   useEffect(() => {
@@ -943,7 +909,9 @@ const LogsPage: React.FC = () => {
 
   // Calculate pagination for filtered logs
   const totalFilteredLogs = allFilteredLogs.length;
-  const totalFilteredPages = Math.ceil(totalFilteredLogs / size);
+  const totalFilteredPages = Math.max(1, Math.ceil(totalFilteredLogs / size));
+  const filteredStartRow = totalFilteredLogs === 0 ? 0 : (clientPage - 1) * size + 1;
+  const filteredEndRow = Math.min(clientPage * size, totalFilteredLogs);
   
   // Step 2: Get the current page of filtered logs (client-side pagination)
   const filteredLogs = useMemo(() => {
@@ -995,15 +963,10 @@ const LogsPage: React.FC = () => {
             </Card>
           ) : (
             <>
-              {/* Page Header */}
-              <Box textAlign="center" mb={2}>
-                <Heading size="lg" color="gray.800" mb={1}>
-                  Logs Dashboard
-                </Heading>
-                <Text color="gray.600" fontSize="sm">
-                  View and search logs from OpenSearch
-                </Text>
-              </Box>
+              <ManagementPageHeader
+                title="Logs Dashboard"
+                description="View and search logs from OpenSearch"
+              />
 
               {/* Show auth warning if not authenticated */}
               {!authLoading && !isAuthenticated && (
@@ -1022,42 +985,16 @@ const LogsPage: React.FC = () => {
                 </Alert>
               )}
 
-          {/* Show error messages */}
-          {logsError && (
+          {/* Show error messages (401/403 trigger forceFrontendSessionEnd — no inline banner) */}
+          {logsError && (() => {
+            const error = logsError as any;
+            const st = error?.response?.status;
+            if (st === 401 || st === 403) return null;
+            return (
             <Alert status="error">
               <AlertIcon />
               <AlertDescription>
                 {(() => {
-                  const error = logsError as any;
-                  if (error?.response?.status === 401) {
-                    return (
-                      <>
-                        Authentication failed. Please log in again.
-                        <Button
-                          size="sm"
-                          colorScheme="blue"
-                          ml={4}
-                          onClick={() => router.push("/auth")}
-                        >
-                          Log In
-                        </Button>
-                      </>
-                    );
-                  } else if (error?.response?.status === 403) {
-                    // 403 Forbidden - show permission error
-                    let errorMsg = 'Access denied. You must be associated with a tenant to access logs.';
-                    if (error?.response?.data?.detail) {
-                      const detail = error.response.data.detail;
-                      if (typeof detail === 'string') {
-                        errorMsg = detail;
-                      } else if (typeof detail === 'object') {
-                        errorMsg = detail.message || detail.detail || JSON.stringify(detail);
-                      } else {
-                        errorMsg = String(detail);
-                      }
-                    }
-                    return errorMsg;
-                  }
                   let errorMsg = 'Unknown error';
                   if (error?.response?.data?.detail) {
                     const detail = error.response.data.detail;
@@ -1075,15 +1012,21 @@ const LogsPage: React.FC = () => {
                 })()}
               </AlertDescription>
             </Alert>
-          )}
+            );
+          })()}
 
 
-          {aggregationsError && !aggregationsLoading && (
+
+
+          {aggregationsError && !aggregationsLoading && (() => {
+            const error = aggregationsError as any;
+            const st = error?.response?.status;
+            if (st === 401 || st === 403) return null;
+            return (
             <Alert status="warning">
               <AlertIcon />
               <AlertDescription>
                 Failed to load aggregations: {(() => {
-                  const error = aggregationsError as any;
                   if (error?.response?.data?.detail) {
                     const detail = error.response.data.detail;
                     if (typeof detail === 'string') return detail;
@@ -1094,7 +1037,8 @@ const LogsPage: React.FC = () => {
                 })()}
               </AlertDescription>
             </Alert>
-          )}
+            );
+          })()}
 
           {/* Aggregations */}
           {aggregations && (
@@ -1410,9 +1354,9 @@ const LogsPage: React.FC = () => {
                   )}
                   <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
                     <CardBody p={0}>
-                      <TableContainer w="full" overflowX="auto">
-                        <Table variant="simple" size="md" w="full">
-                          <Thead bg={theadBg}>
+                      <TableContainer w="full" maxH="60vh" overflowY="auto" overflowX="auto">
+                        <Table variant="simple" bg={tableBg} size="md" w="full">
+                          <Thead bg={tableHeaderBg}>
                             <Tr>
                               <Th fontWeight="semibold" color="gray.700" py={3}>Timestamp</Th>
                               <Th fontWeight="semibold" color="gray.700">Level</Th>
@@ -1454,7 +1398,7 @@ const LogsPage: React.FC = () => {
                               return (
                                 <Tr 
                                   key={index}
-                                  _hover={{ bg: rowHoverBg }}
+                                  _hover={{ bg: tableRowHoverBg }}
                                   transition="background 0.2s"
                                 >
                                   <Td fontSize="sm" color="gray.600" py={3}>
@@ -1514,40 +1458,29 @@ const LogsPage: React.FC = () => {
                     </CardBody>
                   </Card>
 
-                  {/* Pagination - based on filtered logs */}
-                  {totalFilteredPages > 1 && (
-                    <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" mt={4} w="full">
-                      <CardBody py={3}>
-                        <Flex justify="space-between" align="center" w="full">
-                          <Text fontSize="sm" color="gray.600" fontWeight="medium">
-                            Page {clientPage} of {totalFilteredPages} ({totalFilteredLogs.toLocaleString()} filtered logs)
-                          </Text>
-                          <HStack spacing={2}>
-                            <IconButton
-                              aria-label="Previous page"
-                              icon={<ChevronLeftIcon />}
-                              onClick={() => setClientPage((p) => Math.max(1, p - 1))}
-                              isDisabled={clientPage === 1}
-                              size="sm"
-                              variant="outline"
-                            />
-                            <Text fontSize="sm" fontWeight="bold" color="gray.700" minW="30px" textAlign="center">
-                              {clientPage}
-                            </Text>
-                            <IconButton
-                              aria-label="Next page"
-                              icon={<ChevronRightIcon />}
-                              onClick={() =>
-                                setClientPage((p) => Math.min(totalFilteredPages, p + 1))
-                              }
-                              isDisabled={clientPage === totalFilteredPages}
-                              size="sm"
-                              variant="outline"
-                            />
-                          </HStack>
-                        </Flex>
-                      </CardBody>
-                    </Card>
+                  {totalFilteredLogs > 0 && (
+                    <TablePaginationBar
+                      startRow={filteredStartRow}
+                      endRow={filteredEndRow}
+                      totalItems={totalFilteredLogs}
+                      page={clientPage}
+                      totalPages={totalFilteredPages}
+                      pageSize={size}
+                      pageSizeOptions={[10, 25, 50, 100]}
+                      onPageSizeChange={(value) => {
+                        setSize(value);
+                        setPage(1);
+                        setClientPage(1);
+                      }}
+                      onFirst={() => setClientPage(1)}
+                      onPrev={() => setClientPage((p) => Math.max(1, p - 1))}
+                      onNext={() => setClientPage((p) => Math.min(totalFilteredPages, p + 1))}
+                      onLast={() => setClientPage(totalFilteredPages)}
+                      canPrev={clientPage > 1}
+                      canNext={clientPage < totalFilteredPages}
+                      borderColor={borderColor}
+                      bg={cardBg}
+                    />
                   )}
                 </>
                 ) : logsData.logs.length > 0 ? (

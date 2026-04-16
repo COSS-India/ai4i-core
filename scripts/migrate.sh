@@ -45,6 +45,7 @@ DATABASES=(
   "ai4i_platform_db"
   "metrics_db"
   "model_management_db"
+  "policy_db"
   "multi_tenant_db"
   "telemetry_db"
 )
@@ -148,6 +149,14 @@ has_existing_revisions() {
 run_autogenerate_revision_if_supported() {
   local db="$1"
 
+  # In production/CI, skip autogenerate entirely.
+  # Migration files must be committed to git by developers and applied here.
+  # To enable this mode: APPLY_ONLY=true ./scripts/migrate.sh all upgrade
+  if [[ "${APPLY_ONLY:-false}" == "true" ]]; then
+    print_status "skipped" "APPLY_ONLY mode: skipping autogenerate (prod/CI)"
+    return 0
+  fi
+
   if ! supports_autogenerate "$db"; then
     print_status "skipped" "No models registered. Migration generation skipped."
     return 0
@@ -169,12 +178,35 @@ run_autogenerate_revision_if_supported() {
   run_alembic_with_db_config "$db" "${revision_args[@]}"
 }
 
+validate_current_revision() {
+  # Detect stale revisions: the DB references a migration file that no longer
+  # exists in the versions directory.  This happens when someone deletes a
+  # migration .py file without downgrading or re-stamping the database.
+  local db="$1"
+  local current_rev
+  current_rev="$(run_alembic_with_db_config "$db" current 2>/dev/null | grep -oE '[a-f0-9]{12}' | head -1)"
+  if [[ -z "$current_rev" ]]; then
+    return 0  # fresh database, no revision yet
+  fi
+  local versions_dir="$PROJECT_ROOT/infrastructure/databases/migrations/postgres/alembic/versions/$db"
+  if ! grep -rql "^revision.*=.*['\"]$current_rev['\"]" "$versions_dir"/*.py 2>/dev/null; then
+    print_status "info" "ERROR: Database '$db' is at revision '$current_rev' but no matching"
+    print_status "info" "migration file exists in $versions_dir/"
+    print_status "info" "This means a migration file was deleted without re-stamping the database."
+    print_status "info" "To fix: identify the correct head revision and run:"
+    print_status "info" "  ./scripts/migrate.sh $db stamp <correct_revision>"
+    return 1
+  fi
+}
+
 run_upgrade_flow_for_db() {
   local db="$1"
   shift
 
   print_db_header "$db"
   ensure_database_exists "$db"
+
+  validate_current_revision "$db" || return 1
 
   print_status "check" "Applying existing migrations..."
   run_alembic_with_db_config "$db" upgrade "$@"

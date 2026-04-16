@@ -36,9 +36,11 @@ import {
   IoPulseOutline,
   IoNotificationsOutline,
   IoShieldCheckmarkOutline,
+  IoFolderOpenOutline,
 } from "react-icons/io5";
 import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
+import { useGuestServices } from "../../hooks/useGuestServices";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { useFeatureFlagsBulk, ALL_UI_FEATURE_FLAG_NAMES } from "../../hooks/useFeatureFlag";
 import { getTenantIdFromToken } from "../../utils/helpers";
@@ -176,6 +178,12 @@ const safeColorMap = {
     400: "#7986CB",
     600: "#5C6BC0",
   },
+  "policy-management": {
+    50:  "#E3F2FD",
+    300: "#64B5F6",
+    400: "#42A5F5",
+    600: "#1E88E5",
+  },
 };
 
 const getColor = (serviceId: string, shade: 50 | 300 | 400 | 600) => {
@@ -286,10 +294,29 @@ const topNavItems: NavItem[] = [
     iconColor: "",
     requiresAuth: true,
   },
+  {
+    id: "policy-management",
+    label: "Policy Management",
+    path: "/policy-management",
+    icon: IoFolderOpenOutline,
+    iconSize: 10,
+    iconColor: "",
+    requiresAuth: true,
+  },
 ];
 
-// Services (grouped under Services section) — labels from serviceMetadata to match header & homepage
+// Services (grouped under Services section) — order matches homepage (index.tsx services array)
 const baseNavItems: NavItem[] = [
+  {
+    id: "nmt",
+    label: getServiceTitle("nmt"),
+    path: "/nmt",
+    icon: IoLanguageOutline,
+    iconSize: 10,
+    iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: false, // Allow anonymous access with rate limiting
+    featureFlag: "nmt-enabled",
+  },
   {
     id: "asr",
     label: getServiceTitle("asr"),
@@ -309,16 +336,6 @@ const baseNavItems: NavItem[] = [
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
     featureFlag: "tts-enabled",
-  },
-  {
-    id: "nmt",
-    label: getServiceTitle("nmt"),
-    path: "/nmt",
-    icon: IoLanguageOutline,
-    iconSize: 10,
-    iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: false, // Allow anonymous access with rate limiting
-    featureFlag: "nmt-enabled",
   },
   {
     id: "llm",
@@ -414,7 +431,8 @@ const baseNavItems: NavItem[] = [
 
 const Sidebar: React.FC = () => {
   const router = useRouter();
-  const { isAuthenticated, isLoading, user } = useAuth();
+  const { isLoading, user } = useAuth();
+  const { isGuest: isGuestFromAccess, isLoading: guestServicesLoading, allowedServiceIds } = useGuestServices();
   const { checkSessionExpiry } = useSessionExpiry();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
@@ -427,10 +445,10 @@ const Sidebar: React.FC = () => {
   const isAdmin = user?.roles?.includes('ADMIN') || false;
 
   // Check if user is TENANT ADMIN
-  const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
+  const isTenantAdmin = user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === 'TENANT ADMIN') || false;
 
-  // Show Tenant Management only to superuser or tenant users
-  const showTenantManagement = Boolean(user?.is_superuser || user?.is_tenant);
+  // Show Tenant Management to superusers, tenant-scoped users, and tenant admins
+  const showTenantManagement = Boolean(user?.is_superuser || user?.is_tenant || isTenantAdmin);
 
   // Single bulk request shared with home page (same queryKey = one request for whole app)
   const { flags: sidebarFlags } = useBulkFlags({
@@ -477,7 +495,13 @@ const Sidebar: React.FC = () => {
     if (item.id === "alerts-management" && !isAdmin) {
       return false;
     }
-    if (item.id === "pii-management" && isGuest) {
+    if (item.id === "pii-management" && !(isAdmin || isTenantAdmin)) {
+      return false;
+    }
+    if (
+      item.id === "policy-management" &&
+      !isAdmin
+    ) {
       return false;
     }
 
@@ -501,6 +525,10 @@ const Sidebar: React.FC = () => {
 
   // Filter service items based on feature flags
   const serviceItems = baseNavItems.filter((item) => {
+    if (isGuestFromAccess || isGuest) {
+      if (guestServicesLoading) return false;
+      if (!allowedServiceIds?.has(item.id)) return false;
+    }
     if (item.featureFlag) {
       return featureFlagMap[item.featureFlag] ?? true;
     }

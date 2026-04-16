@@ -127,6 +127,8 @@ class AppEnv(BaseSettings):
     triton_api_key: Optional[str] = None         # credential
     triton_timeout: float = 300.0
     triton_endpoint_cache_ttl: int = 300
+    # Global default for TLS certificate verification on inference clients.
+    inference_ssl_verify: bool = True
 
     # ── Per-service Triton endpoints (seeded into model_management_db) ──
     triton_endpoint_asr: str = ""
@@ -181,6 +183,18 @@ class AppEnv(BaseSettings):
     model_management_cache_ttl: int = 300
     max_active_versions_per_model: int = 5
     allow_deprecated_model_changes: bool = True
+    run_inference_test: bool = True
+    # Optional pre-flight health gate (config-service /internal/health-status).
+    # When enabled, inference requests targeting unhealthy backends fail fast with 503.
+    model_management_health_gate_enabled: bool = False
+    model_management_health_gate_timeout_seconds: float = 1.0
+    model_management_health_gate_cache_ttl_seconds: float = 3.0
+    # "lenient" (default): 4xx treated as pass (server reachable); "strict": only <400 passes
+    endpoint_validation_mode: str = "lenient"
+    # Live inference probe timeout (seconds) used by Model Management endpoint validation
+    endpoint_validation_timeout_seconds: float = 30.0
+    # Allow skipping TLS verification for endpoint validation probes (self-signed certs)
+    endpoint_validation_skip_tls_verify: bool = False
 
     # ── Multi-tenant ──
     multi_tenant_enabled: bool = True
@@ -192,6 +206,7 @@ class AppEnv(BaseSettings):
     # ── HTTP Timeouts ──
     pipeline_http_timeout: float = 120.0
     api_gateway_timeout: float = 10.0
+    policy_service_http_timeout: float = 10.0
 
     # ── Auth / API key ──
     auth_enabled: Optional[str] = None
@@ -213,6 +228,9 @@ class AppEnv(BaseSettings):
     email_verification_link: str = ""
     # Multi-tenant email verification token expiry (used by multi-tenant-feature)
     email_verification_token_expire_minutes: int = 15
+    email_verification_resend_min_interval_seconds: int = 60
+    email_verification_resend_max_per_hour: int = 5
+    email_verification_resend_max_per_day: int = 10
 
     # ── OAuth ──
     google_client_id: Optional[str] = None        # credential

@@ -51,7 +51,7 @@ class SessionRepository:
 
     async def invalidate_all_for_user(
         self, user_id: int, except_token: Optional[str] = None
-    ) -> int:
+    ) -> list[UserSession]:
         query = select(UserSession).where(
             UserSession.user_id == user_id,
             UserSession.is_active == True,  # noqa: E712
@@ -64,7 +64,24 @@ class SessionRepository:
         for s in sessions:
             s.is_active = False
         await self._db.flush()
-        return len(sessions)
+        return sessions
+
+    async def invalidate_all_for_users(self, user_ids: list[int]) -> list[UserSession]:
+        """Batch invalidate active sessions for multiple users and return affected sessions."""
+        if not user_ids:
+            return []
+
+        result = await self._db.execute(
+            select(UserSession).where(
+                UserSession.user_id.in_(user_ids),
+                UserSession.is_active == True,  # noqa: E712
+            )
+        )
+        sessions = result.scalars().all()
+        for s in sessions:
+            s.is_active = False
+        await self._db.flush()
+        return sessions
 
     async def cleanup_expired(self) -> int:
         result = await self._db.execute(

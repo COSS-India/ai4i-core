@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel , EmailStr
 from uuid import UUID
 
 
@@ -26,3 +26,6 @@ class TenantResendEmailVerificationResponse(BaseModel):
     tenant_id: str
     token: str
     message: str
+
+class EmailVerificationPayload(BaseModel):
+    contact_email: EmailStr

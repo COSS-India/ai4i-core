@@ -3,13 +3,16 @@ Model Resolution Middleware
 FastAPI middleware for automatic serviceId → endpoint + model_name resolution
 """
 
+import asyncio
 import json
 import logging
+import math
 import re
 import time
 import uuid
 from typing import Optional, Dict, Tuple, Any
 
+import httpx
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response, JSONResponse
@@ -79,7 +82,20 @@ def extract_task_type_from_path(path: str) -> Optional[str]:
     parts = path.strip("/").split("/")
     # Expect ... /api/v1/<task_type>/... or ... /<task_type>/...
     for i, p in enumerate(parts):
-        if p in ("asr", "nmt", "tts", "ocr", "ner", "transliteration", "llm", "pipeline"):
+        if p in (
+            "asr",
+            "nmt",
+            "tts",
+            "ocr",
+            "ner",
+            "transliteration",
+            "llm",
+            "pipeline",
+            "language-detection",
+            "speaker-diarization",
+            "language-diarization",
+            "audio-lang-detection",
+        ):
             return p
     return None
 
@@ -111,10 +127,15 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         app,
         model_management_client: ModelManagementClient,
         redis_client = None,
+        app_state: Any = None,
         cache_ttl_seconds: int = 300,
         default_triton_endpoint: Optional[str] = None,
         default_triton_api_key: Optional[str] = None,
-        enabled_paths: list[str] = None
+        enabled_paths: list[str] = None,
+        config_service_url: Optional[str] = None,
+        health_gate_enabled: bool = False,
+        health_gate_timeout_seconds: float = 1.0,
+        health_gate_cache_ttl_seconds: float = 3.0,
     ):
         """
         Initialize middleware
@@ -135,16 +156,237 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         self.default_triton_endpoint = default_triton_endpoint
         self.default_triton_api_key = default_triton_api_key
         self.enabled_paths = enabled_paths or ["/api/v1"]
+
+        self.config_service_url = (config_service_url or "").rstrip("/")
+        self.health_gate_enabled = bool(health_gate_enabled)
+        self.health_gate_timeout_seconds = float(health_gate_timeout_seconds)
+        self.health_gate_cache_ttl_seconds = float(health_gate_cache_ttl_seconds)
+        self._health_client: Optional[httpx.AsyncClient] = None
+        self._health_client_lock: Optional[asyncio.Lock] = None
+        self._health_cache: Dict[str, Tuple[dict, float]] = {}  # service_id -> (payload, expires_at)
+        # Reference to the real FastAPI app.state (passed by the plugin) so the app lifespan
+        # can close pooled clients created lazily inside this middleware.
+        self._app_state = app_state
         
         # In-memory caches
         self._service_info_cache: Dict[str, Tuple[ServiceInfo, float]] = {}
         self._service_registry_cache: Dict[str, Tuple[str, str, float]] = {}  # serviceId -> (endpoint, model_name, expires_at)
-        self._triton_clients: Dict[str, Tuple[TritonClient, str, float]] = {}  # serviceId -> (client, endpoint, expires_at)
+        self._triton_clients: Dict[str, Tuple[TritonClient, str, Optional[bool], float]] = {}  # serviceId -> (client, endpoint, ssl_verify, expires_at)
         self.cache_prefix = "model_mgmt:triton"
+
+    def _health_service_id_for_request(self, *, request_path: str, model_service_id: str) -> str:
+        """
+        Translate the request's model-level serviceId to the config-service health cache key.
+
+        Config-service caches snapshots keyed by microservice service name (e.g. "asr-service")
+        """
+        if not model_service_id:
+            return model_service_id
+        # If caller already passes microservice id, keep it as-is.
+        if str(model_service_id).endswith("-service"):
+            return model_service_id
+
+        task_type = extract_task_type_from_path(request_path or "")
+        # Pipeline endpoints can fan out to multiple backends and do not map 1:1 to a single
+        # microservice id in config-service. Do not synthesize a pipeline-service key.
+        if task_type == "pipeline":
+            return model_service_id
+        if task_type:
+            # task_type is the URL segment (e.g. "asr" or "language-detection").
+            # Config-service health snapshots are keyed by microservice name: "<task_type>-service".
+            return f"{task_type}-service"
+
+        return model_service_id
+
+    def _should_apply_health_gate(self, request_path: str) -> bool:
+        """Whether to apply config-service health preflight for this request path."""
+        task_type = extract_task_type_from_path(request_path or "")
+        # Pipeline routes do not map to a single microservice health key; gate would fail-closed.
+        if task_type == "pipeline":
+            return False
+        # Unknown routes cannot be mapped to a microservice health key; don't fail-closed.
+        if task_type is None:
+            return False
+        return True
     
     def _should_process(self, path: str) -> bool:
         """Check if middleware should process this path"""
         return any(path.startswith(prefix) for prefix in self.enabled_paths)
+
+    async def _get_health_client(self) -> httpx.AsyncClient:
+        """Lazy init pooled HTTP client for health-status pre-flight checks."""
+        if self._health_client is None:
+            if self._health_client_lock is None:
+                self._health_client_lock = asyncio.Lock()
+            async with self._health_client_lock:
+                if self._health_client is None:
+                    self._health_client = httpx.AsyncClient(
+                        timeout=self.health_gate_timeout_seconds,
+                        limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+                    )
+                    if self._app_state is not None:
+                        # Expose for app shutdown cleanup (see plugin shutdown hook).
+                        try:
+                            setattr(self._app_state, "_health_gate_client", self._health_client)
+                        except Exception:
+                            pass
+        return self._health_client
+
+    async def _fetch_health_status(self, service_id: str) -> dict:
+        """
+        Fetch health status snapshot from config-service.
+
+        Fail-closed callers treat any non-200/exception as unknown.
+        """
+        if not self.config_service_url:
+            raise RuntimeError("config_service_url is not configured")
+        client = await self._get_health_client()
+        url = f"{self.config_service_url}/internal/health-status"
+        resp = await client.get(url, params={"service_id": service_id})
+        resp.raise_for_status()
+        return resp.json()
+
+    def _build_health_503(
+        self,
+        *,
+        code: str,
+        message: str,
+        service_id: str,
+        health_service_id: str,
+        payload: Optional[dict] = None,
+    ) -> JSONResponse:
+        detail: dict[str, Any] = {
+            "code": code,
+            "message": message,
+            "serviceId": service_id,
+            "healthServiceId": health_service_id,
+        }
+        state = (payload or {}).get("state")
+        if state is not None:
+            detail["state"] = state
+        if (payload or {}).get("last_check") is not None:
+            detail["last_check"] = (payload or {}).get("last_check")
+        return JSONResponse(status_code=503, content={"detail": detail})
+
+    def _rewrite_health_gate_response(
+        self,
+        gate_resp: JSONResponse,
+        *,
+        service_id: str,
+        health_service_id: str,
+    ) -> JSONResponse:
+        """Ensure the JSON body includes both model-level and health cache service ids."""
+        try:
+            body = json.loads(gate_resp.body.decode("utf-8"))
+            if isinstance(body, dict) and isinstance(body.get("detail"), dict):
+                body["detail"]["serviceId"] = service_id
+                body["detail"]["healthServiceId"] = health_service_id
+                return JSONResponse(status_code=gate_resp.status_code, content=body)
+        except Exception:
+            pass
+        return gate_resp
+
+    async def _preflight_health_gate(self, service_id: str) -> Optional[JSONResponse]:
+        """
+        Pre-flight gate for backend health.
+
+        Contract:
+          - if disabled: no-op
+          - fail-closed: any unknown/unavailable state => 503
+          - healthy/degraded => allow
+          - unhealthy => 503
+        """
+        if not self.health_gate_enabled:
+            return None
+
+        now = time.time()
+        cached = self._health_cache.get(service_id)
+        if cached:
+            payload, expires_at = cached
+            if expires_at > now:
+                state = (payload or {}).get("state")
+                if state == "unhealthy":
+                    return self._build_health_503(
+                        code="BACKEND_UNHEALTHY",
+                        message="Target backend is unhealthy; refusing inference pre-flight.",
+                        service_id=service_id,
+                        health_service_id=service_id,
+                        payload=payload,
+                    )
+                if state in ("healthy", "degraded"):
+                    return None
+                return self._build_health_503(
+                    code="BACKEND_HEALTH_UNKNOWN",
+                    message="Target backend health is unknown; refusing inference pre-flight.",
+                    service_id=service_id,
+                    health_service_id=service_id,
+                    payload=payload,
+                )
+            self._health_cache.pop(service_id, None)
+
+        try:
+            payload = await self._fetch_health_status(service_id)
+            expires_at = now + max(self.health_gate_cache_ttl_seconds, 0.0)
+            self._health_cache[service_id] = (payload, expires_at)
+            state = (payload or {}).get("state")
+            if state == "unhealthy":
+                return self._build_health_503(
+                    code="BACKEND_UNHEALTHY",
+                    message="Target backend is unhealthy; refusing inference pre-flight.",
+                    service_id=service_id,
+                    health_service_id=service_id,
+                    payload=payload,
+                )
+            if state in ("healthy", "degraded"):
+                return None
+            return self._build_health_503(
+                code="BACKEND_HEALTH_UNKNOWN",
+                message="Target backend health is unknown; refusing inference pre-flight.",
+                service_id=service_id,
+                health_service_id=service_id,
+                payload=payload,
+            )
+        except Exception as exc:
+            logger.debug("Health pre-flight check failed (fail-closed) for %r: %s", service_id, exc)
+            # Negative-cache failures briefly to avoid amplifying config-service brownouts.
+            # Keep TTL short so recovery is detected quickly.
+            ttl = float(self.health_gate_cache_ttl_seconds)
+            if not math.isfinite(ttl) or not (0.0 < ttl <= 1.0):
+                negative_ttl = 1.0
+            else:
+                negative_ttl = ttl
+            self._health_cache[service_id] = (
+                {
+                    "service_id": service_id,
+                    "state": "unknown",
+                    "last_check": None,
+                    "total_instances": 0,
+                    "healthy_instances": 0,
+                },
+                now + negative_ttl,
+            )
+            return self._build_health_503(
+                code="BACKEND_HEALTH_UNKNOWN",
+                message="Target backend health is unavailable; refusing inference pre-flight.",
+                service_id=service_id,
+                health_service_id=service_id,
+            )
+
+    async def aclose(self) -> None:
+        """Close any pooled resources created by this middleware (best-effort)."""
+        client = self._health_client
+        self._health_client = None
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+        if self._app_state is not None:
+            try:
+                if getattr(self._app_state, "_health_gate_client", None) is client:
+                    setattr(self._app_state, "_health_gate_client", None)
+            except Exception:
+                pass
     
     async def _get_service_info(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> Optional[ServiceInfo]:
         """Get service info from model management service with caching"""
@@ -192,7 +434,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
     
     def _extract_triton_metadata(self, service_info: ServiceInfo, service_id: str = None) -> Tuple[str, str]:
         """Extract normalized Triton endpoint and model name from service info"""
-        endpoint = service_info.endpoint.replace("http://", "").replace("https://", "") if service_info.endpoint else ""
+        endpoint = service_info.endpoint if service_info.endpoint else ""
         model_name = None
 
         # Try to infer model name from model inference endpoint metadata (highest priority)
@@ -300,8 +542,10 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             # Cache failures are non-critical - log at debug level to avoid noise
             logger.debug(f"Redis write failed for service {service_id}: {e}")
     
-    async def _resolve_service(self, service_id: str, auth_headers: Dict[str, str]) -> Tuple[Optional[str], Optional[str], Optional[TritonClient]]:
-        """Resolve serviceId to endpoint, model_name, and Triton client"""
+    async def _resolve_service(
+        self, service_id: str, auth_headers: Dict[str, str]
+    ) -> Tuple[Optional[str], Optional[str], Optional[TritonClient], Optional[ServiceInfo]]:
+        """Resolve serviceId to endpoint, model_name, Triton client, and service info."""
         # Check publish status first – do not allow inference for unpublished services
         service_info = await self._get_service_info(service_id, auth_headers)
         if service_info is not None and service_info.is_published is not True:
@@ -315,16 +559,29 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             # Get or create Triton client
             cached_client = self._triton_clients.get(service_id)
             if cached_client:
-                client, cached_endpoint, expires_at = cached_client
-                if expires_at > time.time() and cached_endpoint == endpoint:
-                    return endpoint, model_name, client
+                client, cached_endpoint, cached_ssl_verify, expires_at = cached_client
+                if (
+                    expires_at > time.time()
+                    and cached_endpoint == endpoint
+                    and cached_ssl_verify == (service_info.ssl_verify if service_info else None)
+                ):
+                    return endpoint, model_name, client, service_info
                 self._triton_clients.pop(service_id, None)
             
             # Create new client
-            client = TritonClient(triton_url=endpoint, api_key=self.default_triton_api_key)
+            client = TritonClient(
+                triton_url=endpoint,
+                api_key=self.default_triton_api_key,
+                ssl_verify=(service_info.ssl_verify if service_info else None),
+            )
             expires_at = time.time() + self.cache_ttl_seconds
-            self._triton_clients[service_id] = (client, endpoint, expires_at)
-            return endpoint, model_name, client
+            self._triton_clients[service_id] = (
+                client,
+                endpoint,
+                (service_info.ssl_verify if service_info else None),
+                expires_at,
+            )
+            return endpoint, model_name, client, service_info
 
         # No fallback: if Model Management cannot resolve the serviceId, return no endpoint/model/client.
         # Routers are responsible for returning clear HTTP 4xx/5xx errors in this case.
@@ -338,7 +595,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 f"Model Management did not resolve serviceId: {service_id!r} (service found but endpoint is missing or empty in DB). "
                 "No default endpoint is allowed."
             )
-        return None, None, None
+        return None, None, None, service_info
         
     async def dispatch(self, request: Request, call_next):
         """Process request and resolve service if needed. Supports A/B testing via select-variant."""
@@ -426,14 +683,71 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                             request.state.service_id = variant_service_id
                             request.state.experiment_info = variant
                             if variant.get("endpoint") and (variant.get("model_id") or variant.get("model_name")):
-                                request.state.triton_endpoint = (
-                                    variant["endpoint"].replace("http://", "").replace("https://", "")
-                                )
+                                request.state.triton_endpoint = variant["endpoint"]
                                 request.state.triton_model_name = (
                                     variant.get("model_id") or variant.get("model_name") or "unknown"
                                 )
+                                request.state.ssl_verify = (
+                                    variant_info.ssl_verify if variant_info else None
+                                )
                                 if variant.get("api_key") is not None:
                                     request.state.triton_api_key = variant.get("api_key")
+                                variant_endpoint = variant["endpoint"]
+                                variant_api_key = (
+                                    variant.get("api_key")
+                                    if variant.get("api_key") is not None
+                                    else self.default_triton_api_key
+                                )
+                                variant_ssl_verify = (variant_info.ssl_verify if variant_info else None)
+
+                                # Run health gate BEFORE allocating/caching a TritonClient.
+                                variant_health_service_id = self._health_service_id_for_request(
+                                    request_path=request.url.path,
+                                    model_service_id=variant_service_id,
+                                )
+                                if self._should_apply_health_gate(request.url.path):
+                                    gate_resp = await self._preflight_health_gate(variant_health_service_id)
+                                    if gate_resp is not None:
+                                        return self._rewrite_health_gate_response(
+                                            gate_resp,
+                                            service_id=variant_service_id,
+                                            health_service_id=variant_health_service_id,
+                                        )
+                                # Variant can specify per-variant api_key and ssl_verify; cache by full client config.
+                                client_cache_key = "|".join(
+                                    [
+                                        str(variant_service_id),
+                                        str(variant_endpoint),
+                                        str(variant_ssl_verify),
+                                        str(variant_api_key),
+                                    ]
+                                )
+                                cached_client = self._triton_clients.get(client_cache_key)
+                                if cached_client:
+                                    client, cached_endpoint, cached_ssl_verify, expires_at = cached_client
+                                    if (
+                                        expires_at > time.time()
+                                        and cached_endpoint == variant_endpoint
+                                        and cached_ssl_verify == variant_ssl_verify
+                                    ):
+                                        request.state.triton_client = client
+                                    else:
+                                        self._triton_clients.pop(client_cache_key, None)
+                                if getattr(request.state, "triton_client", None) is None:
+                                    client = TritonClient(
+                                        triton_url=variant_endpoint,
+                                        api_key=variant_api_key,
+                                        ssl_verify=variant_ssl_verify,
+                                    )
+                                    expires_at = time.time() + self.cache_ttl_seconds
+                                    self._triton_clients[client_cache_key] = (
+                                        client,
+                                        variant_endpoint,
+                                        variant_ssl_verify,
+                                        expires_at,
+                                    )
+                                    request.state.triton_client = client
+
                                 response = await call_next(request)
                                 await self._track_experiment_metric(request, response, start_time)
                                 return response
@@ -443,10 +757,24 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             
             # If we found a serviceId, resolve it (normal path or variant service_id)
             if service_id:
+                health_service_id = self._health_service_id_for_request(
+                    request_path=request.url.path,
+                    model_service_id=service_id,
+                )
+                if self._should_apply_health_gate(request.url.path):
+                    gate_resp = await self._preflight_health_gate(health_service_id)
+                    if gate_resp is not None:
+                        return self._rewrite_health_gate_response(
+                            gate_resp,
+                            service_id=service_id,
+                            health_service_id=health_service_id,
+                        )
                 # Log removed - middleware handles request/response logging
                 logger.debug(f"Resolving serviceId: {service_id} via Model Management")
                 auth_headers = extract_auth_headers(request)
-                endpoint, model_name, triton_client = await self._resolve_service(service_id, auth_headers)
+                endpoint, model_name, triton_client, service_info = await self._resolve_service(
+                    service_id, auth_headers
+                )
                 
                 request.state.service_id = service_id
                 if endpoint:
@@ -465,6 +793,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                     request.state.model_management_error = "Model name not found"
                 if triton_client:
                     request.state.triton_client = triton_client
+                request.state.ssl_verify = service_info.ssl_verify if service_info else None
             else:
                 logger.debug("No serviceId found, skipping Model Management resolution")
             

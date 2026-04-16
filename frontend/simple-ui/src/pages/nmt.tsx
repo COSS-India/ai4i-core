@@ -180,6 +180,7 @@ const NMTPage: React.FC = () => {
                     selectedServiceId={selectedServiceId}
                     onServiceChange={setSelectedServiceId}
                     hideServiceSelector={false}
+                    inferenceInProgress={fetching}
                   />
                 </Box>
 
@@ -189,13 +190,13 @@ const NMTPage: React.FC = () => {
                     inputText={inputText}
                     onInputChange={setInputText}
                     maxLength={512}
-                    disabled={fetching}
+                    disabled={fetching || !selectedServiceId}
                   />
                 </Box>
 
                 {/* Instruction above Translate (same order as TTS/ASR) */}
                 <Text fontSize="sm" color="gray.600">
-                  Enter text and click &quot;Translate&quot; to translate. You can change source and target languages in the configuration above.
+                  Select an NMT service and languages above, enter text, then click &quot;Translate&quot;.
                 </Text>
 
                 {/* Translate Button */}

@@ -4,8 +4,13 @@ Test script to query Triton servers and list available models
 Fetches NMT services from model management service and tests their Triton endpoints
 """
 
+import os
 import sys
 import asyncio
+
+# Add the parent directory to the path so app.* imports work
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, parent_dir)
 
 from ai4icore_env import app_env
 
@@ -17,13 +22,7 @@ except ImportError:
     print("  pip install tritonclient[http]")
     sys.exit(1)
 
-# Add the parent directory to the path to import modules
-# (test file is in tests/ subdirectory, need to go up one level)
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, parent_dir)
-
-from utils.triton_client import TritonClient
-from utils.model_management_client import ModelManagementClient
+from ai4icore_model_management import TritonClient, ModelManagementClient
 
 
 def test_triton_endpoint(endpoint: str, service_id: str = None, expected_model: str = None):
@@ -109,7 +108,7 @@ async def test_all_nmt_services():
         unique_endpoints = {}
         for service in services:
             if service.endpoint:
-                endpoint = service.endpoint.replace("http://", "").replace("https://", "")
+                endpoint = service.endpoint
                 if endpoint not in unique_endpoints:
                     unique_endpoints[endpoint] = []
                 unique_endpoints[endpoint].append({
@@ -151,9 +150,6 @@ async def test_all_nmt_services():
 
 def test_single_endpoint(endpoint: str):
     """Test a single endpoint provided as argument"""
-    # Remove http:// or https:// if present
-    endpoint = endpoint.replace("http://", "").replace("https://", "")
-    
     print("-" * 80)
     print("Querying Triton Server...")
     print("-" * 80)

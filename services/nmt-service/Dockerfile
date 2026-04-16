@@ -12,6 +12,7 @@ COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY libs/ai4icore_env /app/libs/ai4icore_env
 COPY libs/ai4icore_auth /app/libs/ai4icore_auth
+COPY libs/ai4icore_service_base /app/libs/ai4icore_service_base
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
@@ -38,6 +39,7 @@ RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_multi_tenant
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_exceptions
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_service_base
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
@@ -79,6 +81,7 @@ COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observab
 COPY --from=builder /app/libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
 COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
+COPY --from=builder /app/libs/ai4icore_service_base /app/libs/ai4icore_service_base
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
@@ -101,4 +104,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 
 # Run the application
 # Disable uvicorn access logs since we use RequestLoggingMiddleware with trace_id
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8089", "--no-access-log"]
+ENTRYPOINT ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8089", "--no-access-log"]

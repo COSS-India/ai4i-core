@@ -195,6 +195,7 @@ const TTSPage: React.FC = () => {
                     availableLanguages={serviceId ? indoAryanLanguages : []}
                     availableVoices={voicesData?.voices ?? []}
                     loading={voicesLoading}
+                    disabled={fetching || !serviceId}
                   />
                 </Box>
 
@@ -206,7 +207,7 @@ const TTSPage: React.FC = () => {
                     language={language}
                     maxLength={512}
                     placeholder="Enter text to synthesize..."
-                    disabled={fetching}
+                    disabled={fetching || !serviceId}
                   />
                 </Box>
 
