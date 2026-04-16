@@ -193,6 +193,8 @@ async def startup_event():
         redis_client = redis.from_url(app_env.get_redis_url())
         await redis_client.ping()
         logger.info("Connected to Redis")
+        # Expose on app.state for routers (avoids circular imports).
+        app.state.redis_client = redis_client
         
         # Initialize PostgreSQL connection
         database_url = app_env.get_database_url()

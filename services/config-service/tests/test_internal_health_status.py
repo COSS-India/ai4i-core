@@ -10,6 +10,7 @@ def test_internal_health_status_cache_read(test_client, redis_client, monkeypatc
 
     # Ensure the router reads from our test Redis instance.
     monkeypatch.setattr(app_main, "redis_client", redis_client, raising=False)
+    app_main.app.state.redis_client = redis_client
 
     service_id = "asr-service"
     payload = {
@@ -38,6 +39,7 @@ def test_internal_health_status_404_when_missing(test_client, redis_client, monk
     import main as app_main
 
     monkeypatch.setattr(app_main, "redis_client", redis_client, raising=False)
+    app_main.app.state.redis_client = redis_client
 
     resp = test_client.get("/internal/health-status", params={"service_id": "missing-service"})
     assert resp.status_code == 404
