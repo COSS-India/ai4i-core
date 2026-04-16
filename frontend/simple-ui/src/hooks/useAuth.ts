@@ -73,6 +73,8 @@ export const useAuth = () => {
     refreshToken: null,
     isAuthenticated: false,
     isLoading: true,
+    isLoginLoading: false,
+    isGuestLoginLoading: false,
     error: null,
   });
 
@@ -96,6 +98,8 @@ export const useAuth = () => {
           refreshToken: authService.getRefreshToken(),
           isAuthenticated: !!hasToken && !!storedUser,
           isLoading: false,
+          isLoginLoading: false,
+          isGuestLoginLoading: false,
           error: null,
         }));
       } catch {
@@ -117,6 +121,8 @@ export const useAuth = () => {
         refreshToken: authService.getRefreshToken(),
         isAuthenticated: !!hasToken && !!storedUser,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: null,
       });
     };
@@ -144,6 +150,8 @@ export const useAuth = () => {
         refreshToken: null,
         isAuthenticated: false,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: null,
       });
       window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
@@ -191,6 +199,8 @@ export const useAuth = () => {
         refreshToken: response.refresh_token,
         isAuthenticated: true,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: null,
       });
 
@@ -214,6 +224,8 @@ export const useAuth = () => {
       setAuthState(prev => ({
         ...prev,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: errorMessage.includes('timeout')
           ? 'Request timeout. The server is taking too long to respond. Please try again.'
           : errorMessage.includes('401') || errorMessage.includes('Unauthorized')
@@ -225,7 +237,7 @@ export const useAuth = () => {
   }, []);
 
   const login = useCallback(async (credentials: LoginRequest) => {
-    setAuthState(prev => ({ ...prev, isLoading: true, error: null }));
+    setAuthState(prev => ({ ...prev, isLoading: true, isLoginLoading: true, isGuestLoginLoading: false, error: null }));
 
     try {
       const response = await authService.login(credentials);
@@ -250,6 +262,8 @@ export const useAuth = () => {
       setAuthState(prev => ({
         ...prev,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: errorMessage,
       }));
       throw new Error(errorMessage);
@@ -257,7 +271,7 @@ export const useAuth = () => {
   }, [completeLogin]);
 
   const guestLogin = useCallback(async () => {
-    setAuthState(prev => ({ ...prev, isLoading: true, error: null }));
+    setAuthState(prev => ({ ...prev, isLoading: true, isLoginLoading: false, isGuestLoginLoading: true, error: null }));
 
     try {
       const response = await authService.guestLogin();
@@ -268,6 +282,8 @@ export const useAuth = () => {
       setAuthState(prev => ({
         ...prev,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: errorMessage,
       }));
       throw new Error(errorMessage);
@@ -310,6 +326,8 @@ export const useAuth = () => {
         refreshToken: null,
         isAuthenticated: false,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: null,
       });
 
@@ -332,6 +350,8 @@ export const useAuth = () => {
         refreshToken: null,
         isAuthenticated: false,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: null,
       });
       authService.clearStoredUser();

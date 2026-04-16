@@ -37,7 +37,7 @@ const LoginForm: React.FC<LoginFormProps> = ({
   onSuccess,
   onSwitchToRegister,
 }) => {
-  const { login, guestLogin, isLoading, error, clearError } = useAuth();
+  const { login, guestLogin, isLoading, isLoginLoading, isGuestLoginLoading, error, clearError } = useAuth();
   const [formData, setFormData] = useState<LoginRequest>({
     email: "",
     password: "",
@@ -213,11 +213,11 @@ const LoginForm: React.FC<LoginFormProps> = ({
             colorScheme="blue"
             size="md"
             width="full"
-            isLoading={isLoading}
+            isLoading={isLoginLoading}
             loadingText="Signing in..."
             disabled={isLoading}
           >
-            {isLoading ? <LoadingSpinner size="sm" /> : "Sign In"}
+            {isLoginLoading ? <LoadingSpinner size="sm" /> : "Sign In"}
           </Button>
 
           <Button
@@ -226,7 +226,7 @@ const LoginForm: React.FC<LoginFormProps> = ({
             colorScheme="teal"
             size="md"
             width="full"
-            isLoading={isLoading}
+            isLoading={isGuestLoginLoading}
             loadingText="Signing in as guest..."
             disabled={isLoading}
             onClick={handleGuestSignIn}
