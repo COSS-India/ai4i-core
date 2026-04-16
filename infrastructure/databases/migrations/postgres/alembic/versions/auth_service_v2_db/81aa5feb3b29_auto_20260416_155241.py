@@ -1,8 +1,8 @@
-"""auto_20260324_110647
+"""auto_20260416_155241
 
-Revision ID: 0fb1a4424704
+Revision ID: 81aa5feb3b29
 Revises: 
-Create Date: 2026-03-24 11:06:47.926378
+Create Date: 2026-04-16 15:52:42.208129
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '0fb1a4424704'
+revision: str = '81aa5feb3b29'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -123,6 +123,23 @@ def upgrade() -> None:
     sa.Column('session_id', sa.Integer(), nullable=True),
     sa.Column('model_id', sa.String(length=100), nullable=False),
     sa.Column('language', sa.String(length=10), nullable=False),
+    sa.Column('audio_duration', sa.Float(), nullable=True),
+    sa.Column('processing_time', sa.Float(), nullable=True),
+    sa.Column('status', sa.String(length=20), nullable=False),
+    sa.Column('error_message', sa.Text(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.ForeignKeyConstraint(['api_key_id'], ['api_keys.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['session_id'], ['user_sessions.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_table('audio_lang_detection_requests',
+    sa.Column('id', sa.UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
+    sa.Column('user_id', sa.Integer(), nullable=True),
+    sa.Column('api_key_id', sa.Integer(), nullable=True),
+    sa.Column('session_id', sa.Integer(), nullable=True),
+    sa.Column('model_id', sa.String(length=100), nullable=False),
     sa.Column('audio_duration', sa.Float(), nullable=True),
     sa.Column('processing_time', sa.Float(), nullable=True),
     sa.Column('status', sa.String(length=20), nullable=False),
@@ -337,6 +354,16 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['request_id'], ['asr_requests.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
+    op.create_table('audio_lang_detection_results',
+    sa.Column('id', sa.UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
+    sa.Column('request_id', sa.UUID(), nullable=False),
+    sa.Column('language_code', sa.String(length=50), nullable=False),
+    sa.Column('confidence', sa.Float(), nullable=True),
+    sa.Column('all_scores', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.ForeignKeyConstraint(['request_id'], ['audio_lang_detection_requests.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id')
+    )
     op.create_table('language_detection_results',
     sa.Column('id', sa.UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
     sa.Column('request_id', sa.UUID(), nullable=False),
@@ -446,6 +473,7 @@ def downgrade() -> None:
     op.drop_table('llm_results')
     op.drop_table('language_diarization_results')
     op.drop_table('language_detection_results')
+    op.drop_table('audio_lang_detection_results')
     op.drop_table('asr_results')
     op.drop_index(op.f('ix_user_roles_user_id'), table_name='user_roles')
     op.drop_index(op.f('ix_user_roles_role_id'), table_name='user_roles')
@@ -462,6 +490,7 @@ def downgrade() -> None:
     op.drop_table('llm_requests')
     op.drop_table('language_diarization_requests')
     op.drop_table('language_detection_requests')
+    op.drop_table('audio_lang_detection_requests')
     op.drop_table('asr_requests')
     op.drop_index(op.f('ix_users_username'), table_name='users')
     op.drop_index(op.f('ix_users_tenant_id_cached'), table_name='users')

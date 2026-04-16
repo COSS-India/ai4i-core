@@ -1,8 +1,8 @@
-"""auto_20260324_110700
+"""auto_20260416_155257
 
-Revision ID: 500e60023e47
+Revision ID: e6beeb8148d9
 Revises: 
-Create Date: 2026-03-24 11:07:00.583135
+Create Date: 2026-04-16 15:52:57.790678
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '500e60023e47'
+revision: str = 'e6beeb8148d9'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -60,6 +60,7 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('model_id'),
     sa.UniqueConstraint('name', 'version', name='uq_name_version')
     )
     op.create_table('services',
@@ -72,6 +73,8 @@ def upgrade() -> None:
     sa.Column('model_id', sa.String(length=255), nullable=False),
     sa.Column('model_version', sa.String(length=100), nullable=False),
     sa.Column('endpoint', sa.String(length=500), nullable=False),
+    sa.Column('inference_server_type', sa.String(length=32), server_default='triton', nullable=False),
+    sa.Column('ssl_verify', sa.Boolean(), server_default='true', nullable=False),
     sa.Column('api_key', sa.String(length=255), nullable=True),
     sa.Column('health_status', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('benchmarks', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
@@ -83,8 +86,9 @@ def upgrade() -> None:
     sa.Column('updated_by', sa.String(length=255), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
+    sa.ForeignKeyConstraint(['model_id'], ['models.model_id'], ),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('model_id', 'model_version', 'name', name='uq_model_id_version_service_name'),
+    sa.UniqueConstraint('name', name='uq_service_name'),
     sa.UniqueConstraint('service_id')
     )
     op.create_table('experiment_variants',
