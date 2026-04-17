@@ -1025,9 +1025,9 @@
       redis_password: ${REDIS_PASSWORD}
       redis_timeout: 1001
       key_type: var
-      key: http_x_forwarded_for
-      count: 20
-      time_window: 60
+      key: arg_token
+      count: 5
+      time_window: 3600
       rejected_code: 429
       show_limit_quota_header: true
       allow_degradation: false
