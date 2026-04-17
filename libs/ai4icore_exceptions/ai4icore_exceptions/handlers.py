@@ -212,8 +212,12 @@ def register_exception_handlers(app: FastAPI) -> None:
     # ------------------------------------------------------------------
     @app.exception_handler(ValidationError)
     async def validation_app_error(
-        _request: Request, exc: ValidationError
+        request: Request, exc: ValidationError
     ) -> JSONResponse:
+        logger.error(
+            "%s %s - %d validation error: %s",
+            request.method, request.url.path, exc.status_code, exc.message,
+        )
         details = {"errors": exc.errors} if exc.errors else None
         body: dict = {
             "detail": {
@@ -296,7 +300,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             extra_attrs={"validation.error_count": len(errors)},
         )
 
-        logger.warning(
+        logger.error(
             "%s %s - 422 validation error (%d errors)",
             request.method, request.url.path, len(errors),
         )
