@@ -158,7 +158,7 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
         ) : (
           <VStack align="stretch" spacing={3}>
             <Text fontSize="sm" color="gray.600">
-              Select role for this user.
+              Select a role to assign to this user.
             </Text>
             <FormControl>
               <FormLabel fontWeight="semibold" fontSize="sm">Role</FormLabel>
@@ -169,7 +169,7 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
                 bg="white"
                 size="sm"
               >
-                <option value="">Select role</option>
+                <option value="">Select a role to assign to this user.</option>
                 {rt.availableRoles.map((roleName) => (
                   <option key={roleName} value={roleName}>
                     {roleName}
