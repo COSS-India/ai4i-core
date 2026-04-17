@@ -1,7 +1,7 @@
 """Pydantic schemas for the PII Policy Module API."""
 from __future__ import annotations
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import List, Optional
 from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 from app.utils.constants import ALLOWED_LANGUAGE_CODES, ALLOWED_MASK_TYPES
@@ -138,40 +138,4 @@ class PolicyDetailOut(BaseModel):
 
 class PolicyListResponse(BaseModel):
     data: List[PolicyOut]
-    meta: Meta
-
-
-# ── Tenant Policy ─────────────────────────────────────────────────────────────
-class TenantPolicyAssign(BaseModel):
-    policy_id: UUID
-
-class TenantPolicyOut(BaseModel):
-    id: UUID
-    tenant_id: str
-    policy_id: UUID
-    assigned_at: datetime
-    model_config = {"from_attributes": True}
-
-class TenantPolicyListResponse(BaseModel):
-    data: List[PolicyOut]
-    meta: Meta
-
-
-# ── Audit Logs ────────────────────────────────────────────────────────────────
-class AuditLogOut(BaseModel):
-    id: UUID = Field(alias="pii_audit_id")
-    trace_id: Optional[str] = None
-    tenant_id: Optional[str] = None
-    policy_id: Optional[UUID] = None
-    target_context: Optional[str] = None
-    pii_count: Optional[int] = None
-    processing_ms: Optional[int] = None
-    created_at: datetime
-    model_config = {"from_attributes": True, "populate_by_name": True}
-
-class AuditLogDetailOut(AuditLogOut):
-    trace_json: Optional[Any] = None
-
-class AuditLogListResponse(BaseModel):
-    data: List[AuditLogOut]
     meta: Meta

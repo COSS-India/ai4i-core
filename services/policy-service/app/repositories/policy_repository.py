@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 """Repository for PiiPolicy CRUD and PII-type link operations (async SQLAlchemy)."""
-from collections import defaultdict
 from typing import Optional, Sequence
 from uuid import UUID
 
@@ -10,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.orm import PiiPolicy, PolicyPiiType, TenantPolicy
+from app.models.orm import PiiPolicy, PolicyPiiType
 
 
 class PolicyRepository:
@@ -26,6 +25,7 @@ class PolicyRepository:
         "is_active",
         "is_global",
         "supported_languages",
+        "tenant_ids",
     }
 
     async def get(self, policy_id: UUID) -> Optional[PiiPolicy]:
@@ -35,7 +35,6 @@ class PolicyRepository:
         stmt = (
             select(PiiPolicy)
             .options(selectinload(PiiPolicy.pii_types).selectinload(PolicyPiiType.pii_type))
-            .options(selectinload(PiiPolicy.tenant_policies))
             .where(PiiPolicy.policy_id == policy_id)
         )
         result = await self.db.execute(stmt)
@@ -70,19 +69,6 @@ class PolicyRepository:
         stmt = stmt.offset((page - 1) * limit).limit(limit)
         rows = (await self.db.execute(stmt)).scalars().all()
         return rows, total
-
-    async def list_tenant_ids_for_policies(self, policy_ids: Sequence[UUID]) -> dict[UUID, list[str]]:
-        if not policy_ids:
-            return {}
-        stmt = select(TenantPolicy.policy_id, TenantPolicy.tenant_id).where(
-            TenantPolicy.policy_id.in_(policy_ids)
-        )
-        rows = (await self.db.execute(stmt)).all()
-        out: dict[UUID, list[str]] = defaultdict(list)
-        for policy_id, tenant_id in rows:
-            if tenant_id:
-                out[policy_id].append(tenant_id)
-        return dict(out)
 
     async def create(self, data: dict) -> PiiPolicy:
         obj = PiiPolicy(**data)

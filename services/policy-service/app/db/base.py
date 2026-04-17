@@ -13,8 +13,6 @@ try:  # noqa: F401
         PiiType,
         PiiPolicy,
         PolicyPiiType,
-        TenantPolicy,
-        PiiAuditLog,
     )
 except (ImportError, ModuleNotFoundError):
     # Allow repo to install without SQLAlchemy initially.

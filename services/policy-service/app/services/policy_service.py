@@ -13,7 +13,6 @@ from ai4icore_auth.providers import build_jwt_verifier  # type: ignore
 from app.models.orm import PiiPolicy
 from app.models.schemas import PolicyCreate, PolicyStatusUpdate, PolicyUpdate
 from app.repositories.policy_repository import PolicyRepository
-from app.repositories.tenant_policy_repository import TenantPolicyRepository
 from app.repositories.pii_type_repository import PiiTypeRepository
 
 
@@ -55,7 +54,6 @@ class PolicyService:
     def __init__(self, db: AsyncSession):
         self.repo = PolicyRepository(db)
         self.pii_repo = PiiTypeRepository(db)
-        self.tenant_repo = TenantPolicyRepository(db)
 
     async def list(
         self,
@@ -64,14 +62,12 @@ class PolicyService:
         search: Optional[str],
         page: int,
         limit: int,
-    ) -> tuple[Sequence[PiiPolicy], int, dict[UUID, list[str]]]:
+    ) -> tuple[Sequence[PiiPolicy], int]:
         rows, total = await self.repo.list(
             is_global=is_global, is_active=is_active, search=search,
             page=page, limit=min(limit, 100),
         )
-        policy_ids = [row.policy_id for row in rows]
-        tenant_ids_by_policy = await self.repo.list_tenant_ids_for_policies(policy_ids)
-        return rows, total, tenant_ids_by_policy
+        return rows, total
 
     async def get(self, policy_id: UUID) -> PiiPolicy:
         obj = await self.repo.get(policy_id)
@@ -98,19 +94,12 @@ class PolicyService:
             for tenant_id in data.tenant_ids:
                 self._validate_tenant_id(tenant_id, active_tenant_ids)
 
-        # tenant_ids is not a column on pii_policy; it is only used for tenant_policy assignment.
-        payload = data.model_dump(exclude={"pii_types", "tenant_ids"})
+        payload = data.model_dump(exclude={"pii_types"})
+        payload["tenant_ids"] = active_tenant_ids if data.is_global else (data.tenant_ids or [])
         policy = await self.repo.create(payload)
 
         if data.pii_types:
             await self._validate_and_add_links(policy.policy_id, data.pii_types, replace=False)
-
-        # Tenant mapping on create
-        if policy.is_global:
-            # Map to all active tenants
-            await self.tenant_repo.assign_many(active_tenant_ids, policy.policy_id)
-        elif data.tenant_ids:
-            await self.tenant_repo.assign_many(data.tenant_ids, policy.policy_id)
 
         return await self.repo.get_with_pii_types(policy.policy_id)
 
@@ -122,26 +111,16 @@ class PolicyService:
             for tenant_id in data.tenant_ids:
                 self._validate_tenant_id(tenant_id, active_tenant_ids)
 
-        # tenant_ids is not a column on pii_policy; it is only used for tenant_policy assignment.
-        updates = data.model_dump(exclude_none=True, exclude={"pii_types", "tenant_ids"})
-        updated = await self.repo.update(obj, updates)
+        updates = data.model_dump(exclude_none=True, exclude={"pii_types"})
+        if data.is_global is True:
+            updates["tenant_ids"] = active_tenant_ids
+        elif data.tenant_ids is not None:
+            updates["tenant_ids"] = data.tenant_ids
+        await self.repo.update(obj, updates)
 
         # If pii_types is provided (including empty list), replace the linked set
         if data.pii_types is not None:
             await self._validate_and_add_links(policy_id, data.pii_types, replace=True)
-
-        # Handle is_global switch and optional tenant_ids mapping.
-        # NOTE: tenant_ids is represented via the tenant_policy mapping table, not a column on pii_policy.
-        if data.is_global is True:
-            # Switching to global: replace explicit mappings with "all active tenants"
-            await self.tenant_repo.clear_policy_assignments(policy_id)
-            await self.tenant_repo.assign_many(active_tenant_ids, policy_id)
-        elif data.tenant_ids is not None:
-            # Non-global explicit assignment: replace any existing tenant mappings with this tenant set.
-            # If tenant_ids is an empty list, this clears all explicit mappings.
-            await self.tenant_repo.clear_policy_assignments(policy_id)
-            if data.tenant_ids:
-                await self.tenant_repo.assign_many(data.tenant_ids, policy_id)
 
         # Always return a fully eager-loaded entity to avoid async lazy-load issues in response builders.
         return await self.repo.get_with_pii_types(policy_id)
@@ -156,7 +135,6 @@ class PolicyService:
         Delete a policy entity.
 
         Expected delete effects (via ORM/DB constraints):
-        - remove tenant mappings (`tenant_policy`) for the policy
         - remove policy-to-PII links (`policy_pii_types`) for the policy
         - keep `pii_types` master records intact
         """

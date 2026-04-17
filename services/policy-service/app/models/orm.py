@@ -10,11 +10,11 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
-    Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
@@ -57,6 +57,7 @@ class PiiPolicy(Base):
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
     is_global = Column(Boolean, nullable=False, default=False, server_default="false")
     supported_languages = Column(JSONB, nullable=False, default=list)  # ["en","hi"]
+    tenant_ids = Column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
@@ -68,12 +69,6 @@ class PiiPolicy(Base):
     # relationships
     pii_types = relationship(
         "PolicyPiiType", back_populates="policy", cascade="all, delete-orphan"
-    )
-    tenant_policies = relationship(
-        "TenantPolicy", back_populates="policy", cascade="all, delete-orphan"
-    )
-    audit_logs = relationship(
-        "PiiAuditLog", back_populates="policy", cascade="all, delete-orphan"
     )
 
 
@@ -104,55 +99,3 @@ class PolicyPiiType(Base):
     # relationships
     policy = relationship("PiiPolicy", back_populates="pii_types")
     pii_type = relationship("PiiType", back_populates="policy_links")
-
-
-class TenantPolicy(Base):
-    """
-    tenant_policy – explicit assignment of a policy to a tenant.
-    Global policies are NOT stored here; they apply implicitly.
-    tenant_id is a logical FK validated at the service layer against the tenant service.
-    """
-    __tablename__ = "tenant_policy"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "policy_id", name="uq_tenant_policy"),
-    )
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(String(64), nullable=False, index=True)
-    policy_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("pii_policy.policy_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    assigned_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-
-    # relationships
-    policy = relationship("PiiPolicy", back_populates="tenant_policies")
-
-
-class PiiAuditLog(Base):
-    """
-    pii_audit_logs – immutable detection/sanitisation events.
-    No UPDATE or DELETE allowed (enforced at API layer).
-    tenant_id is a logical FK; cross-DB enforcement at service layer.
-    """
-    __tablename__ = "pii_audit_logs"
-
-    pii_audit_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    trace_id = Column(String(128), nullable=True, index=True)
-    tenant_id = Column(String(64), nullable=True, index=True)
-    policy_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("pii_policy.policy_id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-    target_context = Column(String(255), nullable=True)
-    pii_count = Column(Integer, nullable=True)
-    processing_ms = Column(Integer, nullable=True)
-    trace_json = Column(JSONB, nullable=True)          # full detection payload
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-
-    # relationships
-    policy = relationship("PiiPolicy", back_populates="audit_logs")
