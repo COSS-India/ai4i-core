@@ -1,8 +1,8 @@
-"""auto_20260324_110858
+"""auto_20260416_155304
 
-Revision ID: 5420a5259ea1
+Revision ID: 5637dfb48268
 Revises: 
-Create Date: 2026-03-24 11:08:59.332336
+Create Date: 2026-04-16 15:53:04.959067
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '5420a5259ea1'
+revision: str = '5637dfb48268'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -23,7 +23,7 @@ def upgrade() -> None:
     op.create_table('service_config',
     sa.Column('id', sa.BigInteger(), nullable=False),
     sa.Column('service_name', sa.String(length=50), nullable=False),
-    sa.Column('unit_type', sa.Enum('character', 'second', 'minute', 'hour', 'request', name='serviceunittype', native_enum=False, length=50), nullable=False),
+    sa.Column('unit_type', sa.String(length=50), nullable=False),
     sa.Column('price_per_unit', sa.Numeric(precision=10, scale=6), nullable=False),
     sa.Column('currency', sa.String(length=10), nullable=True),
     sa.Column('is_active', sa.Boolean(), nullable=True),
@@ -43,7 +43,7 @@ def upgrade() -> None:
     sa.Column('schema_name', sa.String(length=255), nullable=False),
     sa.Column('user_id', sa.Integer(), nullable=True),
     sa.Column('subscriptions', postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'[]'::jsonb"), nullable=False),
-    sa.Column('status', sa.Enum('PENDING', 'IN_PROGRESS', 'ACTIVE', 'SUSPENDED', 'DEACTIVATED', name='tenantstatus', native_enum=False), nullable=False),
+    sa.Column('status', sa.Enum('PENDING', 'ACTIVE', 'SUSPENDED', 'DEACTIVATED', name='tenantstatus', native_enum=False), nullable=False),
     sa.Column('quotas', postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False),
     sa.Column('usage', postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False),
     sa.Column('temp_admin_username', sa.String(length=128), nullable=True),
@@ -105,7 +105,7 @@ def upgrade() -> None:
     sa.Column('phone_number', sa.String(length=500), nullable=True),
     sa.Column('subscriptions', postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'[]'::jsonb"), nullable=False),
     sa.Column('is_approved', sa.Boolean(), nullable=False),
-    sa.Column('status', sa.Enum('ACTIVE', 'SUSPENDED', 'DEACTIVATED', name='tenantuserstatus', native_enum=False), nullable=False),
+    sa.Column('status', sa.Enum('PENDING', 'ACTIVE', 'SUSPENDED', name='tenantuserstatus', native_enum=False), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.ForeignKeyConstraint(['tenant_id'], ['tenants.tenant_id'], ondelete='CASCADE'),
@@ -123,7 +123,7 @@ def upgrade() -> None:
     sa.Column('service_id', sa.BigInteger(), nullable=False),
     sa.Column('cost', sa.Numeric(precision=20, scale=10), nullable=False),
     sa.Column('billing_period', sa.Date(), nullable=False),
-    sa.Column('status', sa.Enum('ACTIVE', 'SUSPENDED', 'DEACTIVATED', name='tenantuserstatus', native_enum=False), nullable=False),
+    sa.Column('status', sa.Enum('PENDING', 'ACTIVE', 'SUSPENDED', name='tenantuserstatus', native_enum=False), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.ForeignKeyConstraint(['service_id'], ['service_config.id'], ),
