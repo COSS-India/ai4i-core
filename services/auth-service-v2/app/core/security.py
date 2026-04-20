@@ -209,7 +209,15 @@ class PasswordManager:
 
     def __init__(self) -> None:
         from passlib.context import CryptContext
-        self._context = CryptContext(schemes=["argon2"], default="argon2")
+        self._context = CryptContext(
+            schemes=["argon2"],
+            default="argon2",
+            argon2__memory_cost=settings.argon2_memory_cost,
+            argon2__time_cost=settings.argon2_time_cost,
+            argon2__parallelism=settings.argon2_parallelism,
+            argon2__hash_len=settings.argon2_hash_length,
+            argon2__salt_len=settings.argon2_salt_length,
+        )
 
     async def hash_password(self, password: str) -> PasswordHashResult:
         """Hash a password with a unique salt. Returns hash, salt, and rounds."""

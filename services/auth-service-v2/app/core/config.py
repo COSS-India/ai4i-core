@@ -78,13 +78,13 @@ class AuthSettings(BaseSettings):
         validation_alias=AliasChoices("API_KEY_EXPIRE_DAYS", "APIKEY_EXPIRY"),
     )
 
-    # ── Password hashing (argon2) ──
-    argon2_time_cost: int = 3
-    argon2_memory_cost: int = 65536
-    argon2_parallelism: int = 4
-    argon2_hash_length: int = 32
-    argon2_salt_length: int = 16
-    default_hash_rounds: int = 12
+    # ── Password hashing (argon2) — must be set in .env ──
+    argon2_time_cost: int
+    argon2_memory_cost: int
+    argon2_parallelism: int
+    argon2_hash_length: int
+    argon2_salt_length: int
+    default_hash_rounds: int
 
     # ── APISIX ──
     apisix_validation_enabled: bool = True
