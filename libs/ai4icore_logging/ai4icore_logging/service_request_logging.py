@@ -84,7 +84,7 @@ class ServiceRequestLoggingMiddleware(BaseHTTPMiddleware):
         app,
         *,
         logger_name: Optional[str] = None,
-        include_4xx: bool = True,
+        include_4xx: bool = False,
         extra_context_getter: Optional[Callable[[Request, Response], Dict[str, Any]]] = None,
     ):
         super().__init__(app)
@@ -141,7 +141,7 @@ class ServiceRequestLoggingMiddleware(BaseHTTPMiddleware):
         if 200 <= status_code < 300:
             level = logging.INFO
         elif 400 <= status_code < 500:
-            level = logging.ERROR
+            level = logging.WARNING
         elif 500 <= status_code < 600:
             level = logging.ERROR
         else:
@@ -283,7 +283,7 @@ class ServiceRequestLoggingMiddleware(BaseHTTPMiddleware):
             )
         elif 400 <= status_code < 500:
             # Only reached when include_4xx=True
-            self.logger.error(
+            self.logger.warning(
                 f"{method} {path} - {status_code} - {processing_time_s:.3f}s",
                 extra={"context": log_context},
             )
