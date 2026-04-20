@@ -585,7 +585,9 @@ def _format_environment_title(env: str) -> str:
         return "Production"
     if env_norm in {"staging"}:
         return "Staging"
-    if env_norm in {"dev", "development", "local", "test"}:
+    if env_norm in {"local", "test"}:
+        return "Local"
+    if env_norm in {"dev", "development"}:
         return "Dev"
     return env_norm.title() if env_norm else "Dev"
 

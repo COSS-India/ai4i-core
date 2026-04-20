@@ -107,3 +107,13 @@ scrape_configs:
       - targets:
           - "node-exporter:9100"
 
+  # --------------------------------------------
+  # 5. APISIX gateway metrics (apisix_http_status, etc.)
+  # --------------------------------------------
+  - job_name: "apisix"
+    scrape_interval: 5s
+    metrics_path: /apisix/prometheus/metrics
+    static_configs:
+      - targets:
+          - "apisix:9091"
+

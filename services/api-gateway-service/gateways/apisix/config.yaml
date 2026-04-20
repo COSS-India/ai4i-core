@@ -7,3 +7,11 @@ deployment:
   role: data_plane
   role_data_plane:
     config_provider: yaml
+
+# Enable the Prometheus plugin globally so apisix_http_status metrics are exported.
+# Metrics are served at http://apisix:9091/apisix/prometheus/metrics
+plugin_attr:
+  prometheus:
+    export_addr:
+      ip: 0.0.0.0
+      port: 9091

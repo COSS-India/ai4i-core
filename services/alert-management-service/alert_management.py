@@ -725,6 +725,68 @@ SIGNAL_METRIC_LABEL_TO_KEY: Dict[str, str] = {
     "total_disk_usage": "total_disk_usage",
 }
 
+# ---------------------------------------------------------------------------
+# Environment-aware error-rate metric selection
+# ---------------------------------------------------------------------------
+# In non-local environments (dev, staging, sandbox), 4xx errors are handled
+# at the APISIX gateway and never reach backend services. Use apisix_http_status
+# metric instead of telemetry_obsv_requests_total for error rate alerts.
+# ---------------------------------------------------------------------------
+_ENVIRONMENT = (os.getenv("ENVIRONMENT") or "local").strip().lower()
+_USE_APISIX_METRICS = _ENVIRONMENT in ("dev", "development", "staging", "sandbox")
+
+# Maps service names to their APISIX route names and matched_uri patterns.
+SERVICE_TO_APISIX_ROUTE: Dict[str, Dict[str, str]] = {
+    "asr-service": {"route": "asr-route", "matched_uri": "/api/v1/asr/*"},
+    "nmt-service": {"route": "nmt-route", "matched_uri": "/api/v1/nmt/*"},
+    "tts-service": {"route": "tts-route", "matched_uri": "/api/v1/tts/*"},
+    "ocr-service": {"route": "ocr-route", "matched_uri": "/api/v1/ocr/*"},
+    "ner-service": {"route": "ner-route", "matched_uri": "/api/v1/ner/*"},
+    "transliteration-service": {"route": "transliteration-route", "matched_uri": "/api/v1/transliteration/*"},
+    "language-detection-service": {"route": "language-detection-route", "matched_uri": "/api/v1/language-detection/*"},
+    "audio-lang-detection-service": {"route": "audio-lang-detection-route", "matched_uri": "/api/v1/audio-lang-detection/*"},
+    "language-diarization-service": {"route": "language-diarization-route", "matched_uri": "/api/v1/language-diarization/*"},
+    "speaker-diarization-service": {"route": "speaker-diarization-route", "matched_uri": "/api/v1/speaker-diarization/*"},
+    "llm-service": {"route": "llm-route", "matched_uri": "/api/v1/llm/*"},
+    "pipeline-service": {"route": "pipeline-route", "matched_uri": "/api/v1/pipeline/*"},
+}
+
+ALL_APISIX_ROUTES = "|".join(r["route"] for r in SERVICE_TO_APISIX_ROUTE.values())
+
+
+def _build_apisix_error_rate_expr(
+    status_regex: str,
+    op: str,
+    thresh: float,
+    services: Optional[List[str]] = None,
+) -> str:
+    """
+    Build an error-rate PromQL expression using the apisix_http_status metric.
+    Used in non-local environments where 4xx/5xx are captured at the gateway.
+
+    apisix_http_status labels: route, code, matched_uri, node
+    """
+    # Build route filter
+    if services:
+        svc_list = _normalize_services(services)
+        routes = []
+        for svc in svc_list:
+            info = SERVICE_TO_APISIX_ROUTE.get(svc)
+            if info:
+                routes.append(info["route"])
+        if len(routes) == 1:
+            route_filter = f'route="{routes[0]}"'
+        elif routes:
+            route_filter = f'route=~"{"|".join(routes)}"'
+        else:
+            route_filter = f'route=~"{ALL_APISIX_ROUTES}"'
+    else:
+        route_filter = f'route=~"{ALL_APISIX_ROUTES}"'
+
+    num = f'sum(rate(apisix_http_status{{code=~"{status_regex}", {route_filter}}}[5m]))'
+    den = f'sum(rate(apisix_http_status{{{route_filter}}}[5m]))'
+    return f"({num} / {den}) {op} {thresh}"
+
 
 def _normalize_alert_type(category: str, alert_type: str) -> str:
     """Normalize alert_type to internal form for PromQL builder: latency, error_rate, cpu, memory, disk."""
@@ -762,6 +824,7 @@ def build_promql_from_threshold(
     threshold_value: float,
     threshold_unit: str,
     organization: Optional[str] = None,
+    services: Optional[List[str]] = None,
 ) -> str:
     """
     Build PromQL expression from alert type and threshold.
@@ -780,8 +843,12 @@ def build_promql_from_threshold(
                 f'histogram_quantile(0.5, sum by (le, endpoint, tenant) (rate(telemetry_obsv_request_duration_seconds_bucket{{endpoint=~"/.*inference.*"{org_filter}}}[5m]))) > {threshold_value}'
             )
         if at == "error_rate":
-            # Error rate: ratio of 4xx/5xx to total; sum by (endpoint, tenant) preserves tenant from metric
+            # Error rate: ratio of 4xx/5xx to total
             thresh = (threshold_value / 100.0) if (threshold_unit or "").lower() == "percent" else threshold_value
+            if _USE_APISIX_METRICS:
+                # Non-local env: use apisix_http_status (gateway captures 4xx/5xx)
+                return _build_apisix_error_rate_expr("[45]..", ">", thresh, services=services)
+            # Local env: use backend telemetry_obsv_requests_total
             return (
                 f'sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{{status_code=~"[45]..", endpoint=~"/.*inference.*"{org_filter}}}[5m])) '
                 f'/ sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{{endpoint=~"/.*inference.*"{org_filter}}}[5m])) > {thresh}'
@@ -822,6 +889,7 @@ def build_promql_from_signal_config(
     threshold_value: float,
     threshold_unit: str,
     organization: Optional[str] = None,
+    services: Optional[List[str]] = None,
 ) -> str:
     """
     Build PromQL from configurable sub_category, signal, signal_metric, and condition_operator.
@@ -895,6 +963,10 @@ def build_promql_from_signal_config(
             )
         thresh = (threshold_value / 100.0) if unit in THRESHOLD_UNIT_PERCENT else threshold_value
         status_regex = config["status_regex"]
+        if _USE_APISIX_METRICS:
+            # Non-local env: use apisix_http_status (gateway captures 4xx/5xx)
+            return _build_apisix_error_rate_expr(status_regex, op, thresh, services=services)
+        # Local env: use backend telemetry_obsv_requests_total
         num = f'sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{{status_code=~"{status_regex}", endpoint=~"/.*inference.*"{org_filter}}}[5m]))'
         den = f'sum by (endpoint, tenant)(rate(telemetry_obsv_requests_total{{endpoint=~"/.*inference.*"{org_filter}}}[5m]))'
         return f"({num} / {den}) {op} {thresh}"
@@ -1074,6 +1146,13 @@ async def create_alert_definition(
     use_signal_config = all([data.sub_category, data.signal, data.signal_metric, data.condition_operator])
     services_list = _normalize_services(data.service)
 
+    # Determine if this is an error_rate alert (APISIX handles service filtering via route label)
+    _is_error_rate = (
+        (data.signal or "").strip().lower().replace(" ", "_") == "error_rate"
+        or _normalize_alert_type(data.category or "application", data.alert_type or "") == "error_rate"
+    )
+    _skip_service_inject = _USE_APISIX_METRICS and _is_error_rate
+
     if use_signal_config:
         promql_expr_with_org = build_promql_from_signal_config(
             category=data.category,
@@ -1084,8 +1163,9 @@ async def create_alert_definition(
             threshold_value=data.threshold_value,
             threshold_unit=data.threshold_unit,
             organization=None,
+            services=services_list if _skip_service_inject else None,
         )
-        if services_list:
+        if services_list and not _skip_service_inject:
             promql_expr_with_org = inject_service_into_promql(promql_expr_with_org, services_list)
         # Display alert_type from signal for UI consistency (infrastructure: CPU, Memory, Disk)
         sig_key = (data.signal or "").strip().lower().replace(" ", "_")
@@ -1104,8 +1184,9 @@ async def create_alert_definition(
             threshold_value=data.threshold_value,
             threshold_unit=data.threshold_unit,
             organization=None,
+            services=services_list if _skip_service_inject else None,
         )
-        if services_list:
+        if services_list and not _skip_service_inject:
             promql_expr_with_org = inject_service_into_promql(promql_expr_with_org, services_list)
         alert_type_display = _alert_type_to_display(data.alert_type, data.category)
         sub_category_val = None
@@ -1361,6 +1442,14 @@ async def update_alert_definition(alert_id: int, organization: Optional[str], da
             category_to_use = data.category if data.category is not None else existing['category']
             thresh_val = data.threshold_value if data.threshold_value is not None else existing.get('threshold_value')
             thresh_unit = data.threshold_unit if data.threshold_unit is not None else existing.get('threshold_unit')
+
+            # Check if this is an error_rate alert to decide APISIX vs backend metrics
+            _upd_is_error_rate = (
+                (effective_signal or "").strip().lower().replace(" ", "_") == "error_rate"
+                or _normalize_alert_type(category_to_use or "application", (data.alert_type if data.alert_type is not None else existing.get('alert_type')) or "") == "error_rate"
+            )
+            _upd_skip_inject = _USE_APISIX_METRICS and _upd_is_error_rate
+
             if use_signal_path and thresh_val is not None and thresh_unit is not None:
                 promql_expr_with_org = build_promql_from_signal_config(
                     category=category_to_use,
@@ -1371,8 +1460,9 @@ async def update_alert_definition(alert_id: int, organization: Optional[str], da
                     threshold_value=float(thresh_val),
                     threshold_unit=thresh_unit,
                     organization=None,
+                    services=effective_services if _upd_skip_inject else None,
                 )
-                if effective_services:
+                if effective_services and not _upd_skip_inject:
                     promql_expr_with_org = inject_service_into_promql(promql_expr_with_org, effective_services)
                 updates.append(f"promql_expr = ${param_idx}")
                 params.append(promql_expr_with_org)
@@ -1396,8 +1486,9 @@ async def update_alert_definition(alert_id: int, organization: Optional[str], da
                         threshold_value=float(thresh_val),
                         threshold_unit=thresh_unit,
                         organization=None,
+                        services=effective_services if _upd_skip_inject else None,
                     )
-                    if effective_services:
+                    if effective_services and not _upd_skip_inject:
                         promql_expr_with_org = inject_service_into_promql(promql_expr_with_org, effective_services)
                     updates.append(f"promql_expr = ${param_idx}")
                     params.append(promql_expr_with_org)
@@ -1669,7 +1760,9 @@ def _format_environment_title(env: Optional[str]) -> str:
         return "Production"
     if env_norm in {"staging"}:
         return "Staging"
-    if env_norm in {"dev", "development", "local", "test"}:
+    if env_norm in {"local", "test"}:
+        return "Local"
+    if env_norm in {"dev", "development"}:
         return "Dev"
     return env_norm.title() if env_norm else "Dev"
 
