@@ -2,7 +2,7 @@
  * Authentication hook
  */
 import { useState, useEffect, useCallback } from 'react';
-import { User, AuthState, LoginRequest, RegisterRequest } from '../types/auth';
+import { User, AuthState, LoginRequest, LoginResponse, RegisterRequest } from '../types/auth';
 import authService from '../services/authService';
 import { useTokenRefresh } from './useTokenRefresh';
 
@@ -73,6 +73,8 @@ export const useAuth = () => {
     refreshToken: null,
     isAuthenticated: false,
     isLoading: true,
+    isLoginLoading: false,
+    isGuestLoginLoading: false,
     error: null,
   });
 
@@ -96,6 +98,8 @@ export const useAuth = () => {
           refreshToken: authService.getRefreshToken(),
           isAuthenticated: !!hasToken && !!storedUser,
           isLoading: false,
+          isLoginLoading: false,
+          isGuestLoginLoading: false,
           error: null,
         }));
       } catch {
@@ -117,6 +121,8 @@ export const useAuth = () => {
         refreshToken: authService.getRefreshToken(),
         isAuthenticated: !!hasToken && !!storedUser,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: null,
       });
     };
@@ -144,6 +150,8 @@ export const useAuth = () => {
         refreshToken: null,
         isAuthenticated: false,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: null,
       });
       window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
@@ -165,74 +173,75 @@ export const useAuth = () => {
     };
   }, []);
 
+  const completeLogin = useCallback(async (response: LoginResponse) => {
+    // Verify tokens are stored before proceeding
+    const accessToken = authService.getAccessToken();
+    if (!accessToken) {
+      throw new Error('Access token was not stored after login. Please try again.');
+    }
+
+    // Small delay to ensure tokens are fully stored (especially for sessionStorage)
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Use /me endpoint to validate token and get user data in one call
+    try {
+      const user = await authService.getCurrentUser();
+
+      // Store user data and tokens immediately before state update
+      authService.setStoredUser(user);
+      if (!authService.getAccessToken() || !authService.getRefreshToken()) {
+        console.warn('useAuth: Tokens not found in storage after login');
+      }
+
+      setAuthState({
+        user,
+        accessToken: response.access_token,
+        refreshToken: response.refresh_token,
+        isAuthenticated: true,
+        isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
+        error: null,
+      });
+
+      // Notify other components/hooks to refresh their view immediately
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
+      }
+
+      return response;
+    } catch (meError) {
+      console.error('useAuth: Failed to fetch user data / token validation failed:', meError);
+      const errorMessage = meError instanceof Error ? meError.message : 'Token validation failed';
+      console.error('useAuth: Error details:', {
+        message: errorMessage,
+        hasToken: !!authService.getAccessToken(),
+        tokenLength: authService.getAccessToken()?.length || 0,
+      });
+
+      // Clear tokens if /me fails (token is invalid or expired)
+      authService.clearAuthTokens();
+      setAuthState(prev => ({
+        ...prev,
+        isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
+        error: errorMessage.includes('timeout')
+          ? 'Request timeout. The server is taking too long to respond. Please try again.'
+          : errorMessage.includes('401') || errorMessage.includes('Unauthorized')
+          ? 'Invalid credentials. Please check your username and password.'
+          : `Token validation failed: ${errorMessage}. Please try logging in again.`,
+      }));
+      throw new Error(errorMessage);
+    }
+  }, []);
+
   const login = useCallback(async (credentials: LoginRequest) => {
-    setAuthState(prev => ({ ...prev, isLoading: true, error: null }));
+    setAuthState(prev => ({ ...prev, isLoading: true, isLoginLoading: true, isGuestLoginLoading: false, error: null }));
 
     try {
       const response = await authService.login(credentials);
-
-      // Verify tokens are stored before proceeding
-      const accessToken = authService.getAccessToken();
-      const refreshToken = authService.getRefreshToken();
-
-      if (!accessToken) {
-        throw new Error('Access token was not stored after login. Please try again.');
-      }
-      
-      // Small delay to ensure tokens are fully stored (especially for sessionStorage)
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // Use /me endpoint to validate token and get user data in one call
-      try {
-        const user = await authService.getCurrentUser();
-
-        // Store user data and tokens immediately before state update
-        // This ensures all data is in localStorage before React re-renders
-        authService.setStoredUser(user);
-        // Tokens are already stored by authService.login(), but ensure they're there
-        if (!authService.getAccessToken() || !authService.getRefreshToken()) {
-          console.warn('useAuth: Tokens not found in storage after login');
-        }
-
-        setAuthState(prev => {
-          return {
-            user: user,
-            accessToken: response.access_token,
-            refreshToken: response.refresh_token,
-            isAuthenticated: true,
-            isLoading: false,
-            error: null,
-          };
-        });
-
-        // Notify other components/hooks to refresh their view immediately
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
-        }
-
-        return response;
-      } catch (meError) {
-        console.error('useAuth: Failed to fetch user data / token validation failed:', meError);
-        const errorMessage = meError instanceof Error ? meError.message : 'Token validation failed';
-        console.error('useAuth: Error details:', {
-          message: errorMessage,
-          hasToken: !!authService.getAccessToken(),
-          tokenLength: authService.getAccessToken()?.length || 0,
-        });
-        
-        // Clear tokens if /me fails (token is invalid or expired)
-        authService.clearAuthTokens();
-        setAuthState(prev => ({
-          ...prev,
-          isLoading: false,
-          error: errorMessage.includes('timeout') 
-            ? 'Request timeout. The server is taking too long to respond. Please try again.'
-            : errorMessage.includes('401') || errorMessage.includes('Unauthorized')
-            ? 'Invalid credentials. Please check your username and password.'
-            : `Token validation failed: ${errorMessage}. Please try logging in again.`,
-        }));
-        throw new Error(errorMessage);
-      }
+      return completeLogin(response);
     } catch (error) {
       console.error('useAuth: Login failed:', error);
       let errorMessage = error instanceof Error ? error.message : 'Login failed';
@@ -253,11 +262,33 @@ export const useAuth = () => {
       setAuthState(prev => ({
         ...prev,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: errorMessage,
       }));
       throw new Error(errorMessage);
     }
-  }, []);
+  }, [completeLogin]);
+
+  const guestLogin = useCallback(async () => {
+    setAuthState(prev => ({ ...prev, isLoading: true, isLoginLoading: false, isGuestLoginLoading: true, error: null }));
+
+    try {
+      const response = await authService.guestLogin();
+      return await completeLogin(response);
+    } catch (error) {
+      console.error('useAuth: Guest login failed:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Guest login failed';
+      setAuthState(prev => ({
+        ...prev,
+        isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
+        error: errorMessage,
+      }));
+      throw new Error(errorMessage);
+    }
+  }, [completeLogin]);
 
   const register = useCallback(async (userData: RegisterRequest) => {
     setAuthState(prev => ({ ...prev, isLoading: true, error: null }));
@@ -295,6 +326,8 @@ export const useAuth = () => {
         refreshToken: null,
         isAuthenticated: false,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: null,
       });
 
@@ -317,6 +350,8 @@ export const useAuth = () => {
         refreshToken: null,
         isAuthenticated: false,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: null,
       });
       authService.clearStoredUser();
@@ -412,6 +447,7 @@ export const useAuth = () => {
   return {
     ...authState,
     login,
+    guestLogin,
     register,
     logout,
     refreshToken,

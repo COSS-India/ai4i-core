@@ -45,6 +45,8 @@ class PiiTypeCreate(BaseModel):
 class PiiTypeUpdate(BaseModel):
     pii_type_label: Optional[str] = None
     regex_pattern: Optional[str] = None
+    # Used only for validation during updates; not persisted.
+    example_values: Optional[List[str]] = Field(default=None, min_length=3)
     mask_format: Optional[str] = None
 
     @field_validator("mask_format")
@@ -80,8 +82,8 @@ class PolicyCreate(BaseModel):
     description: Optional[str] = None
     is_global: bool = False
     supported_languages: List[str]
-    tenant_id: Optional[str] = None
-    pii_types: Optional[List[PolicyPiiTypeLink]] = None
+    tenant_ids: Optional[List[str]] = None
+    pii_types: List[PolicyPiiTypeLink] = Field(..., min_length=1)
 
     @field_validator("supported_languages")
     @classmethod
@@ -98,7 +100,7 @@ class PolicyUpdate(BaseModel):
     description: Optional[str] = None
     supported_languages: Optional[List[str]] = None
     is_global: Optional[bool] = None
-    tenant_id: Optional[str] = None
+    tenant_ids: Optional[List[str]] = None
     pii_types: Optional[List[PolicyPiiTypeLink]] = None
 
 class PolicyStatusUpdate(BaseModel):
