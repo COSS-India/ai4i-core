@@ -8,15 +8,15 @@ import type {
 } from "../../../types/alerting";
 
 const EMPTY_CREATE_FORM: NotificationReceiverCreate = {
-  category: "application",
-  severity: "warning",
+  category: "",
+  severity: "",
   alert_type: null,
   alert_names: null,
   tenant: null,
   rule_name: null,
   description: null,
   email_to: [],
-  rbac_role: "ADMIN",
+  rbac_role: null,
   email_subject_template: null,
   email_body_template: null,
 };
@@ -114,6 +114,26 @@ export function useNotificationReceivers() {
   };
 
   const handleCreate = async () => {
+    if (!createForm.category) {
+      toast({
+        title: "Validation Error",
+        description: "Please select a category",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (!createForm.severity) {
+      toast({
+        title: "Validation Error",
+        description: "Please select a severity",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     if (
       recipientMode === "email" &&
       (!createForm.email_to || createForm.email_to.length === 0)

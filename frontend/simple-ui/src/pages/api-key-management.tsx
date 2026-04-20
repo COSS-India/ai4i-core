@@ -16,6 +16,7 @@ import Head from "next/head";
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth } from "../hooks/useAuth";
 import authService from "../services/authService";
 import CreateApiKeyTab from "../components/profile/CreateApiKeyTab";
@@ -131,9 +132,10 @@ const ApiKeyManagementPage: React.FC = () => {
 
       <ContentLayout>
         <Box maxW="7xl" mx="auto" py={8} px={4}>
-          <Heading size="xl" mb={8} color="gray.800" userSelect="none">
-            API Key Management
-          </Heading>
+          <ManagementPageHeader
+            title="API Key Management"
+            description="Create and manage API keys"
+          />
 
           <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px">
             <Tabs

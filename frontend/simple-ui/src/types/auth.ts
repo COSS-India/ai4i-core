@@ -168,5 +168,9 @@ export interface AuthState {
   refreshToken: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  // Separate loading states so "Sign in" and "Sign in as Guest" buttons
+  // can show their spinners independently.
+  isLoginLoading: boolean;
+  isGuestLoginLoading: boolean;
   error: string | null;
 }

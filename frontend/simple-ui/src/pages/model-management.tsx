@@ -48,6 +48,7 @@ import { SearchIcon, ViewIcon } from "@chakra-ui/icons";
 import { useRouter } from "next/router";
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import ContentLayout from "../components/common/ContentLayout";
+import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { getAllModels, createModel, getModelById, updateModel } from "../services/modelManagementService";
 import { listServices as listServicesForModels } from "../services/servicesManagementService";
 import { useAuth } from "../hooks/useAuth";
@@ -195,7 +196,7 @@ const ModelManagementPage: React.FC = () => {
       setIsLoading(true);
       try {
         const fetchedModels = await getAllModels();
-        setModels(fetchedModels);
+        setModels(fetchedModels as unknown as Model[]);
       } catch (error: any) {
         console.error("Failed to fetch models:", error);
         
@@ -530,7 +531,7 @@ const ModelManagementPage: React.FC = () => {
 
       // Refresh models list
       const fetchedModels = await getAllModels();
-      setModels(fetchedModels);
+      setModels(fetchedModels as unknown as Model[]);
 
       // Reset file input
       if (fileInputRef.current) {
@@ -642,11 +643,11 @@ const ModelManagementPage: React.FC = () => {
     
     try {
       const model = await getModelById(modelId);
-      setSelectedModel(model);
+      setSelectedModel(model as unknown as Model);
       // Ensure task field is properly initialized
       setUpdateFormData({
-        ...model,
-        task: model.task || { type: "" },
+        ...(model as unknown as Partial<Model>),
+        task: { type: model.task?.type ?? model.task_type ?? model.taskType ?? "" },
       });
       setIsViewingModel(true);
       setActiveTab(2); // Switch to View Model tab
@@ -694,10 +695,10 @@ const ModelManagementPage: React.FC = () => {
 
       // Refresh models list and selected model
       const fetchedModels = await getAllModels();
-      setModels(fetchedModels);
+      setModels(fetchedModels as unknown as Model[]);
       const updatedModel = await getModelById(selectedModel.modelId);
-      setSelectedModel(updatedModel);
-      setUpdateFormData(updatedModel);
+      setSelectedModel(updatedModel as unknown as Model);
+      setUpdateFormData(updatedModel as unknown as Partial<Model>);
       setIsEditingModel(false);
     } catch (error) {
       toast({
@@ -746,11 +747,11 @@ const ModelManagementPage: React.FC = () => {
       
       // Refresh models list and selected model
       const fetchedModels = await getAllModels();
-      setModels(fetchedModels);
+      setModels(fetchedModels as unknown as Model[]);
       if (selectedModel && selectedModel.modelId === model.modelId) {
         const updatedModel = await getModelById(model.modelId);
-        setSelectedModel(updatedModel);
-        setUpdateFormData(updatedModel);
+        setSelectedModel(updatedModel as unknown as Model);
+        setUpdateFormData(updatedModel as unknown as Partial<Model>);
       }
     } catch (error: any) {
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
@@ -800,11 +801,11 @@ const ModelManagementPage: React.FC = () => {
 
       // Refresh models list and selected model
       const fetchedModels = await getAllModels();
-      setModels(fetchedModels);
+      setModels(fetchedModels as unknown as Model[]);
       if (selectedModel && selectedModel.modelId === model.modelId) {
         const updatedModel = await getModelById(model.modelId);
-        setSelectedModel(updatedModel);
-        setUpdateFormData(updatedModel);
+        setSelectedModel(updatedModel as unknown as Model);
+        setUpdateFormData(updatedModel as unknown as Partial<Model>);
       }
     } catch (error: any) {
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
@@ -853,15 +854,10 @@ const ModelManagementPage: React.FC = () => {
 
       <ContentLayout>
            <VStack spacing={6} w="full">
-                  {/* Page Header */}
-                  <Box textAlign="center" mb={2}>
-                    <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
-                     Model Management
-                    </Heading>
-                    <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
-                    Manage and configure AI models
-                    </Text>
-                  </Box>
+                  <ManagementPageHeader
+                    title="Model Management"
+                    description="Manage and configure AI models"
+                  />
         
                   <Grid
                     gap={8}
