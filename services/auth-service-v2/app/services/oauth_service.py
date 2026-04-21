@@ -3,7 +3,6 @@ OAuth2 service — handles Google/GitHub login flows.
 """
 
 import logging
-import secrets
 from typing import Any, Optional
 
 import httpx

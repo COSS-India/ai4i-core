@@ -12,8 +12,6 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.cache_service import CacheService
-
 logger = logging.getLogger(__name__)
 
 _TENANT_QUERY_TIMEOUT = 5.0
@@ -31,9 +29,8 @@ except ImportError:
 class TenantService:
     """Resolves tenant user IDs from the multi-tenant database."""
 
-    def __init__(self, session_or_factory=None, cache_service: CacheService | None = None) -> None:
+    def __init__(self, session_or_factory=None) -> None:
         self._session_or_factory = session_or_factory
-        self._cache_service = cache_service
 
     async def _get_session(self) -> Optional[AsyncSession]:
         if self._session_or_factory is None:

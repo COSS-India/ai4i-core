@@ -125,10 +125,6 @@ class RoleService:
         """Direct DB lookup (use get_user_permission_ids_cached for hot paths)."""
         return await self._roles.get_user_permission_ids(user_id)
 
-    async def check_permission(self, user_id: int, resource: str, action: str) -> bool:
-        permissions = await self._roles.get_user_permission_names(user_id)
-        return f"{resource}.{action}" in permissions
-
     async def list_roles(self) -> list[Role]:
         return await self._roles.list_roles()
 

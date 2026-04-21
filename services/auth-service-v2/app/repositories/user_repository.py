@@ -93,6 +93,16 @@ class UserRepository:
         )
         return list(result.scalars().all())
 
+    async def get_distinct_tenant_ids_for_users(self, user_ids: list[int]) -> list[str]:
+        if not user_ids:
+            return []
+        result = await self._db.execute(
+            select(User.tenant_id)
+            .where(User.id.in_(user_ids), User.tenant_id.is_not(None))
+            .distinct()
+        )
+        return [row[0] for row in result.fetchall() if row[0]]
+
     async def count(self) -> int:
         result = await self._db.execute(select(func.count(User.id)))
         return result.scalar_one()

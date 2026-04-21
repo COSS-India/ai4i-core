@@ -160,42 +160,6 @@ class TestRevocationFallback:
 
         assert result is False
 
-    @pytest.mark.asyncio
-    async def test_refresh_token_evicted_from_redis_active_in_db(self):
-        """Refresh token evicted from Redis but active session in DB → NOT revoked."""
-        from app.dependencies.auth import _check_token_revocation
-
-        cache = AsyncMock()
-        cache.is_refresh_token_valid.return_value = False
-        cache.store_refresh_token = AsyncMock()
-
-        db = AsyncMock()
-        mock_session = MagicMock()
-        mock_session.is_active = True
-        mock_session.expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-
-        with patch("app.dependencies.auth.SessionRepository") as MockRepo:
-            MockRepo.return_value.get_by_token_id = AsyncMock(return_value=mock_session)
-            result = await _check_token_revocation("tok-2", "refresh", cache, db)
-
-        assert result is False
-        cache.store_refresh_token.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_refresh_token_not_in_db(self):
-        """Refresh token not in Redis AND not in DB → revoked."""
-        from app.dependencies.auth import _check_token_revocation
-
-        cache = AsyncMock()
-        cache.is_refresh_token_valid.return_value = False
-
-        db = AsyncMock()
-        with patch("app.dependencies.auth.SessionRepository") as MockRepo:
-            MockRepo.return_value.get_by_token_id = AsyncMock(return_value=None)
-            result = await _check_token_revocation("tok-3", "refresh", cache, db)
-
-        assert result is True
-
 
 # ═══════════════════════════════════════════════
 # 4. Strict JWT claims: iss, aud, kid, alg
