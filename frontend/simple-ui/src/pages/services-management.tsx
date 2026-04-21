@@ -1275,7 +1275,7 @@ const ServicesManagementPage: React.FC = () => {
                               <Select
                                 value={formData.modelId || ""}
                                 onChange={(e) => handleModelNameChange(e.target.value)}
-                                placeholder={isLoadingModels ? "Loading models..." : "Select a model"}
+                                placeholder={isLoadingModels ? "Loading models..." : "Select the model to be associated with this service"}
                                 bg="white"
                                 isDisabled={isLoadingModels}
                               >
