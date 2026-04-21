@@ -483,8 +483,8 @@ const Sidebar: React.FC = () => {
     if (item.id === "traces") {
       return false;
     }
-    // Hide Model Management and Services Management for GUEST and USER users
-    if ((isGuest || isUser) && (item.id === "model-management" || item.id === "services-management")) {
+    // Hide Model Management and Services Management for GUEST, USER, and TENANT ADMIN users
+    if ((isGuest || isUser || isTenantAdmin) && (item.id === "model-management" || item.id === "services-management")) {
       return false;
     }
     // Hide Tenant Management for users who are not superuser or tenant
