@@ -34,6 +34,11 @@ paths:
           in: query
           required: false
           schema: { type: string }
+        - name: tenant_id
+          in: query
+          required: false
+          description: Return policies assigned to this tenant (tenant must be active).
+          schema: { type: string }
         - name: page
           in: query
           required: false

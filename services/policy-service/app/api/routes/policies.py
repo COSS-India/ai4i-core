@@ -36,15 +36,24 @@ def _svc(db: AsyncSession = Depends(get_db)) -> PolicyService:
 
 @router.get("", response_model=PolicyListResponse, summary="List all policies")
 async def list_policies(
+    request: Request,
     is_global: Optional[bool] = Query(None),
     is_active: Optional[bool] = Query(None),
     search: Optional[str] = Query(None),
+    tenant_id: Optional[str] = Query(None, description="Optional tenant filter for scoped retrieval"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     svc: PolicyService = Depends(_svc),
 ):
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     rows, total = await svc.list(
-        is_global=is_global, is_active=is_active, search=search, page=page, limit=limit
+        is_global=is_global,
+        is_active=is_active,
+        search=search,
+        tenant_id=tenant_id,
+        page=page,
+        limit=limit,
+        auth_header=auth_header,
     )
     # Build list response explicitly (PolicyOut includes pii_types details)
     data: list[PolicyOut] = []

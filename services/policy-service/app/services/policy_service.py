@@ -60,12 +60,17 @@ class PolicyService:
         is_global: Optional[bool],
         is_active: Optional[bool],
         search: Optional[str],
+        tenant_id: Optional[str],
         page: int,
         limit: int,
+        auth_header: Optional[str] = None,
     ) -> tuple[Sequence[PiiPolicy], int]:
+        if tenant_id:
+            active_tenant_ids = await self._get_active_tenant_ids(auth_header=auth_header)
+            self._validate_tenant_id(tenant_id, active_tenant_ids)
         rows, total = await self.repo.list(
             is_global=is_global, is_active=is_active, search=search,
-            page=page, limit=min(limit, 100),
+            tenant_id=tenant_id, page=page, limit=min(limit, 100),
         )
         return rows, total
 

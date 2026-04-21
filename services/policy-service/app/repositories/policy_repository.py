@@ -49,6 +49,7 @@ class PolicyRepository:
         is_global: Optional[bool] = None,
         is_active: Optional[bool] = None,
         search: Optional[str] = None,
+        tenant_id: Optional[str] = None,
         page: int = 1,
         limit: int = 20,
     ) -> tuple[Sequence[PiiPolicy], int]:
@@ -62,6 +63,8 @@ class PolicyRepository:
             stmt = stmt.where(PiiPolicy.is_active == is_active)
         if search:
             stmt = stmt.where(PiiPolicy.name.ilike(f"%{search}%"))
+        if tenant_id:
+            stmt = stmt.where(PiiPolicy.tenant_ids.contains([tenant_id]))
 
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total = (await self.db.execute(count_stmt)).scalar_one()
