@@ -11,7 +11,12 @@ from models.user_status import TenantUserStatusUpdateRequest, TenantUserStatusUp
 from models.tenant_update import TenantUpdateRequest, TenantUpdateResponse
 from models.tenant_view import TenantViewResponse, ListTenantsResponse
 from models.user_view import TenantUserViewResponse, ListUsersResponse
-from models.tenant_email import TenantSendEmailVerificationRequest, TenantSendEmailVerificationResponse
+from models.tenant_email import (
+    TenantSendEmailVerificationRequest,
+    TenantSendEmailVerificationResponse,
+    TenantResendSetupLinkRequest,
+    TenantResendSetupLinkResponse,
+)
 from models.user_update import TenantUserUpdateRequest , TenantUserUpdateResponse
 from models.user_delete import TenantUserDeleteRequest , TenantUserDeleteResponse
 
@@ -28,6 +33,7 @@ from services.tenant_service import (
     view_tenant_user_details,
     list_all_tenants,
     list_all_users,
+    resend_setup_link_email,
 )
 
 from logger import logger
@@ -416,4 +422,34 @@ async def send_verification_email_admin(
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as exc:
         logger.exception(f"Error sending initial verification email | tenant_id={payload.tenant_id}: {exc}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post(
+    "/email/resend-setup-link",
+    response_model=TenantResendSetupLinkResponse,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_admin)],
+)
+async def resend_setup_link_admin(
+    payload: TenantResendSetupLinkRequest,
+    background_tasks: BackgroundTasks,
+    tenant_db: AsyncSession = Depends(get_tenant_db_session),
+    auth_db: AsyncSession = Depends(get_auth_db_session),
+):
+    """Admin-only endpoint to resend a fresh setup link email."""
+    try:
+        return await resend_setup_link_email(
+            email=str(payload.email),
+            tenant_db=tenant_db,
+            auth_db=auth_db,
+            background_tasks=background_tasks,
+        )
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        logger.error(f"Validation error during setup link resend | email={payload.email}: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception(f"Error resending setup link | email={payload.email}: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")

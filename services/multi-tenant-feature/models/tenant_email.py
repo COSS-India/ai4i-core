@@ -29,3 +29,14 @@ class TenantResendEmailVerificationResponse(BaseModel):
 
 class EmailVerificationPayload(BaseModel):
     contact_email: EmailStr
+
+
+class TenantResendSetupLinkRequest(BaseModel):
+    """Request model for resending setup link to a user."""
+    email: EmailStr
+
+
+class TenantResendSetupLinkResponse(BaseModel):
+    """Response model for admin resend setup link action."""
+    email: EmailStr
+    message: str

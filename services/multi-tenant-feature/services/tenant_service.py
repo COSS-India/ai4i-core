@@ -18,8 +18,6 @@ from utils.utils import (
     generate_billing_customer_id,
     generate_email_verification_token,
     generate_service_id,
-    generate_random_password,
-    hash_password,
     hash_email,
     encrypt_sensitive_data,
     decrypt_sensitive_data,
@@ -63,7 +61,12 @@ from models.user_subscription import UserSubscriptionResponse
 from models.user_update import TenantUserUpdateRequest, TenantUserUpdateResponse
 from models.user_delete import TenantUserDeleteRequest,TenantUserDeleteResponse
 
-from models.tenant_email import TenantSendEmailVerificationResponse, TenantResendEmailVerificationResponse, EmailVerificationPayload
+from models.tenant_email import (
+    TenantSendEmailVerificationResponse,
+    TenantResendEmailVerificationResponse,
+    TenantResendSetupLinkResponse,
+    EmailVerificationPayload,
+)
 from services.email_service import send_welcome_email, send_verification_email , send_user_welcome_email
 from models.billing_update import BillingUpdateRequest, BillingUpdateResponse
 
@@ -1242,7 +1245,12 @@ async def send_initial_verification_email(
     )
 
 
-async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: AsyncSession, background_tasks: BackgroundTasks):
+async def verify_email_token(
+    token: str,
+    tenant_db: AsyncSession,
+    auth_db: AsyncSession,
+    background_tasks: BackgroundTasks,
+):
     """
     Verify email token, activate tenant, create admin user, and trigger schema provisioning.
 
@@ -1287,18 +1295,11 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     verification.verified_at = now_utc()
     tenant.status = TenantStatus.ACTIVE
 
-    # Use password from registration request instead of generating one
-    # Decrypt the password that was stored during tenant registration
     admin_username = f"admin@{tenant.tenant_id}"
-    plain_password = generate_random_password(length = 8)
-
-    hashed_password = hash_password(plain_password)
-
     tenant.temp_admin_username = admin_username
-    tenant.temp_admin_password_hash = hashed_password
+    tenant.temp_admin_password_hash = None
 
-    # Create tenant admin user in auth-service via /api/v1/auth/register
-    # Store the password provided during registration so tenant admin can login with it
+    # Create tenant admin user and issue setup token via internal auth endpoint.
     try:
         async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
             # Decrypt email and phone_number before sending to auth service
@@ -1316,16 +1317,12 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
                 raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
 
             auth_response = await client.post(
-                f"{API_GATEWAY_URL}/api/v1/auth/register",
+                f"{API_GATEWAY_URL}/api/v1/auth/internal/provision-user",
                 json={
                     "email": decrypted_email,
                     "username": admin_username,
-                    "password": plain_password,  # Password from registration request
-                    "confirm_password": plain_password,
                     "full_name": tenant.organization_name,
                     "phone_number": decrypted_phone,
-                    "timezone": "UTC",
-                    "language": "en",
                     "tenant_id": tenant.tenant_id,
                     "is_tenant": True,
                 },
@@ -1337,11 +1334,11 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
             detail="Authentication service unavailable while creating tenant admin user",
         )
 
-    # auth-service /auth/register returns HTTP 200 (not 201) on success.
+    # internal endpoint returns HTTP 200 on success.
     # Treat both 200 and 201 as success to avoid surfacing the upstream payload.
     if auth_response.status_code not in (200, 201):
         logger.error(
-            f"Auth-service /api/v1/auth/register failed for tenant {tenant.tenant_id}: "
+            f"Auth-service /api/v1/auth/internal/provision-user failed for tenant {tenant.tenant_id}: "
             f"status={auth_response.status_code}, body={auth_response.text}"
         )
         
@@ -1351,9 +1348,9 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
         )
 
     auth_user_payload = auth_response.json()
-    # auth-service responses are wrapped like: {"success": true, "data": {...}}
-    auth_data = auth_user_payload.get("data") if isinstance(auth_user_payload, dict) else None
-    admin_user_id = auth_data.get("id") if isinstance(auth_data, dict) else None
+    auth_data = auth_user_payload.get("data") if isinstance(auth_user_payload, dict) else auth_user_payload
+    admin_user_id = auth_data.get("user_id") if isinstance(auth_data, dict) else None
+    setup_token = auth_data.get("setup_token") if isinstance(auth_data, dict) else None
     if not admin_user_id:
         logger.error(
             f"Auth-service did not return user id for tenant admin {tenant.tenant_id}: {auth_user_payload}"
@@ -1362,6 +1359,8 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
             status_code=500,
             detail="Authentication service response missing user id for tenant admin",
         )
+    if not setup_token:
+        raise HTTPException(status_code=500, detail="Authentication service response missing setup token")
 
 
 
@@ -1435,16 +1434,14 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
 
     tenant_id_str = str(tenant.tenant_id)
     contact_email_str = decrypted_email
-    admin_username_str = str(tenant.temp_admin_username) if tenant.temp_admin_username else admin_username
-    password_str = str(plain_password)
+    set_password_url = f"{API_GATEWAY_URL}/api/v1/auth/set-password?token={setup_token}"
 
     background_tasks.add_task(
         send_welcome_email,
         tenant_id_str,
         contact_email_str,
         None,  # use subdomain if required
-        admin_username_str,
-        password_str,
+        set_password_url
     )
 
     background_tasks.add_task(
@@ -1527,6 +1524,73 @@ async def resend_verification_email(
     )
 
     return response
+
+
+async def resend_setup_link_email(
+    email: str,
+    tenant_db: AsyncSession,
+    auth_db: AsyncSession,
+    background_tasks: BackgroundTasks,
+) -> TenantResendSetupLinkResponse:
+    """
+    Admin-only flow:
+    1) call auth-service /auth/resend-setup-link
+    2) send a fresh setup email from multi-tenant service templates
+    """
+    try:
+        async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
+            auth_response = await client.post(
+                f"{API_GATEWAY_URL}/api/v1/auth/resend-setup-link",
+                json={"email": email},
+            )
+    except httpx.RequestError as e:
+        logger.error(f"Failed to call auth-service for setup-link resend: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication service unavailable while resending setup link",
+        )
+
+    if auth_response.status_code not in (200, 201):
+        raise HTTPException(
+            status_code=auth_response.status_code,
+            detail=auth_response.json() if auth_response.headers.get("content-type", "").startswith("application/json") else auth_response.text,
+        )
+
+    auth_payload = auth_response.json()
+    auth_data = auth_payload.get("data") if isinstance(auth_payload, dict) else auth_payload
+    setup_token = auth_data.get("setup_token") if isinstance(auth_data, dict) else None
+    if not setup_token:
+        raise HTTPException(status_code=500, detail="Authentication service response missing setup token")
+
+    auth_user = await auth_db.scalar(select(UserDB).where(UserDB.email == email))
+    if not auth_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    set_password_url = f"{API_GATEWAY_URL}/api/v1/auth/set-password?token={setup_token}"
+    tenant_admin = await tenant_db.scalar(select(Tenant).where(Tenant.user_id == auth_user.id))
+
+    if tenant_admin:
+        background_tasks.add_task(
+            send_welcome_email,
+            str(tenant_admin.tenant_id),
+            email,
+            None,
+            set_password_url,
+            PORTAL_BASE_URL,
+        )
+    else:
+        background_tasks.add_task(
+            send_user_welcome_email,
+            str(auth_user.id),
+            email,
+            None,
+            set_password_url,
+        )
+
+    return TenantResendSetupLinkResponse(
+        email=email,
+        message="Setup link resent successfully",
+    )
 
 
 async def create_service(payload: ServiceCreateRequest,db: AsyncSession,) -> ServiceResponse:
@@ -2031,23 +2095,16 @@ async def register_user(
     if existing_tenant_user:
         raise HTTPException(status_code=409,detail="Email already registered , please use a different email")
     
-    # No password collected in create-user flow; generate one so user can set password later (e.g. via reset)
-    user_password = generate_random_password(length=12)
-
-    # Create user in AUTH-SERVICE via /api/v1/auth/register
+    # Create user and issue setup token via internal auth endpoint.
     try:
         async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
             auth_response = await client.post(
-                f"{API_GATEWAY_URL}/api/v1/auth/register",
+                f"{API_GATEWAY_URL}/api/v1/auth/internal/provision-user",
                 json={
                     "email": payload.email,
                     "username": payload.username,
-                    "password": user_password,
-                    "confirm_password": user_password,
                     "full_name": payload.full_name,
                     "phone_number": payload.phone_number,
-                    "timezone": "UTC",
-                    "language": "en",
                     "tenant_id": tenant.tenant_id,
                     "is_tenant": False,
                 },
@@ -2059,11 +2116,11 @@ async def register_user(
             detail="Authentication service unavailable while creating tenant user",
         )
 
-    # auth-service /auth/register returns HTTP 200 (not 201) on success.
+    # internal endpoint returns HTTP 200 on success.
     # Treat both 200 and 201 as success.
     if auth_response.status_code not in (200, 201):
         logger.error(
-            f"Auth-service /api/v1/auth/register failed for tenant user {payload.username} "
+            f"Auth-service /api/v1/auth/internal/provision-user failed for tenant user {payload.username} "
             f"under tenant {tenant.tenant_id}: status={auth_response.status_code}, body={auth_response.text}"
         )
         raise HTTPException(
@@ -2072,9 +2129,9 @@ async def register_user(
         )
 
     auth_user_payload = auth_response.json()
-    # auth-service responses are wrapped like: {"success": true, "data": {...}}
-    auth_data = auth_user_payload.get("data") if isinstance(auth_user_payload, dict) else None
-    user_id = auth_data.get("id") if isinstance(auth_data, dict) else None
+    auth_data = auth_user_payload.get("data") if isinstance(auth_user_payload, dict) else auth_user_payload
+    user_id = auth_data.get("user_id") if isinstance(auth_data, dict) else None
+    setup_token = auth_data.get("setup_token") if isinstance(auth_data, dict) else None
     if not user_id:
         logger.error(
             f"Auth-service did not return user id for tenant user {payload.username}: {auth_user_payload}"
@@ -2083,6 +2140,8 @@ async def register_user(
             status_code=500,
             detail="Authentication service response missing user id for tenant user",
         )
+    if not setup_token:
+        raise HTTPException(status_code=500, detail="Authentication service response missing setup token")
 
     # Assign role in auth service (one role per user). Auth register already sets USER by default.
     # Role is validated by UserRegisterRequest (ADMIN, USER, GUEST, MODERATOR)
@@ -2091,9 +2150,6 @@ async def register_user(
         assigned = await _assign_role_in_auth(user_id, role_name, auth_header)
         if not assigned:
             logger.warning(f"Could not assign role {role_name} to user_id={user_id}; auth may use default.")
-    
-    # Password is stored in auth-service, user can login with the password they provided
-    # No need to log or send password via email
     
     #Create TenantUser entry only if user is approved
     # Encrypt sensitive data before saving
@@ -2155,16 +2211,13 @@ async def register_user(
         raise HTTPException(status_code=500, detail="Failed to register user")
 
 
-    # Commented out: Sending generated password over email
-    # Instead, password is provided by user in request and stored in auth-service
-    # User can login with the password they provided via auth/login endpoint
+    set_password_url = f"{API_GATEWAY_URL}/api/v1/auth/set-password?token={setup_token}"
     background_tasks.add_task(
         send_user_welcome_email,
         user_id,
         payload.email,
         None,  # add subdomain if required
-        payload.username,
-        user_password,
+        set_password_url,
     )
 
     logger.info(

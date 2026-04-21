@@ -6,15 +6,14 @@ Welcome to AI4I!
 Your tenant has been successfully activated.
 
 Tenant Id: {tenant_id}
-Admin Username: {username}
 Email: {email}
-Password: {password}
+Set your password using the secure setup link below:
+{set_password_url}
 
-Login here:
+This setup link is valid for 48 hours and can be used only once.
+
+Login URL:
 {login_url}
-
-
-copy and paste the login in your browser to access your account.
 
 """.strip()
 
@@ -25,15 +24,11 @@ Welcome to AI4I!
 
 User has been successfully activated.
 
-User id: {user_id}
-Username: {username}
 Email: {email}
-Password: {password}
+Set your password using the secure setup link below:
+{set_password_url}
 
-Login here:
-{login_url}
-
-copy and paste the login in your browser to access your account.
+This setup link is valid for 48 hours and can be used only once.
 
 
 """.strip()

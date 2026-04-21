@@ -21,8 +21,7 @@ async def send_welcome_email(
     tenant_id: str,
     contact_email: str,
     subdomain: str,
-    temp_admin_username: str,
-    temp_admin_password: str,
+    set_password_url: str,
 ):
     """
     Send welcome email to tenant admin with login credentials after tenant activation.
@@ -31,18 +30,16 @@ async def send_welcome_email(
         tenant_id: The ID of the tenant
         contact_email: The contact email of the tenant
         subdomain: The tenant's subdomain
-        temp_admin_username: Temporary admin username
-        temp_admin_password: Temporary admin password
+        set_password_url: Single-use set-password URL
+        login_url: Portal login URL
         email: Admin email address
     """  
     
     body = WELCOME_EMAIL_BODY.format(
             tenant_id=tenant_id,
-            # subdomain=subdomain,
-            username=temp_admin_username,
-            password=temp_admin_password,
             email=contact_email,
             login_url=f"{LOGIN_URL}",
+            set_password_url=set_password_url,
         )
 
     await email_service.send(
@@ -57,8 +54,7 @@ async def send_user_welcome_email(
     user_id: str,
     contact_email: str,
     subdomain: str,
-    temp_username: str,
-    temp_password: str,
+    set_password_url: str,
 ):
     """
     Send welcome email to tenant user with login credentials after user registration.
@@ -67,18 +63,13 @@ async def send_user_welcome_email(
         user_id: The ID of the user
         contact_email: The contact email of the user
         subdomain: The tenant's subdomain
-        temp_username: Temporary username
-        temp_password: Temporary password
+        set_password_url: Single-use set-password URL
         email: User email address
     """  
     
     body = USER_WELCOME_EMAIL_BODY.format(
-            user_id=user_id,
-            # subdomain=subdomain,
-            username=temp_username,
-            password=temp_password,
             email=contact_email,
-            login_url=f"{LOGIN_URL}",
+            set_password_url=set_password_url,
         )
 
     await email_service.send(

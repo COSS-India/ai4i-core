@@ -18,12 +18,16 @@ from app.dependencies.services import get_auth_service, get_cache_service
 from app.models.user import User
 from app.repositories.session_repository import SessionRepository
 from app.schemas.auth import (
+    InternalProvisionUserRequest,
+    InternalProvisionUserResponse,
     LoginRequest,
     LoginResponse,
     LogoutRequest,
     LogoutResponse,
     PasswordChangeRequest,
     RegisterRequest,
+    ResendSetupLinkRequest,
+    SetPasswordRequest,
     TokenRefreshRequest,
     TokenRefreshResponse,
 )
@@ -136,6 +140,47 @@ async def change_password(
         confirm_password=body.confirm_password,
     )
     return success_response(data={"message": "Password changed successfully."})
+
+
+@router.post(
+    "/internal/provision-user",
+    include_in_schema=False,
+    response_model=InternalProvisionUserResponse,
+)
+async def provision_user_internal(
+    body: InternalProvisionUserRequest,
+    svc: AuthService = Depends(get_auth_service),
+):
+    return await svc.provision_user(
+        email=body.email,
+        username=body.username,
+        full_name=body.full_name,
+        phone_number=body.phone_number,
+        tenant_id=body.tenant_id,
+        is_tenant=body.is_tenant,
+    )
+
+
+@router.post("/set-password")
+async def set_password(
+    body: SetPasswordRequest,
+    svc: AuthService = Depends(get_auth_service),
+):
+    await svc.set_password_with_setup_token(
+        token=body.token,
+        new_password=body.new_password,
+        confirm_password=body.confirm_password,
+    )
+    return success_response(data={"message": "Password set successfully."})
+
+
+@router.post("/resend-setup-link")
+async def resend_setup_link(
+    body: ResendSetupLinkRequest,
+    svc: AuthService = Depends(get_auth_service),
+):
+    setup_token = await svc.resend_setup_link(email=body.email)
+    return success_response(data={"setup_token": setup_token})
 
 
 @router.post("/sessions/revoke-by-tenant/{tenant_id}")

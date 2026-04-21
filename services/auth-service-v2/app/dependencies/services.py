@@ -21,6 +21,7 @@ from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.oauth_repository import OAuthRepository
 from app.repositories.role_repository import RoleRepository
 from app.repositories.session_repository import SessionRepository
+from app.repositories.setup_token_repository import SetupTokenRepository
 from app.repositories.user_repository import UserRepository
 from app.services.api_key_service import APIKeyService
 from app.services.auth_service import AuthService
@@ -79,6 +80,7 @@ async def get_auth_service(
         password_service=PasswordService(),
         session_service=SessionService(SessionRepository(db), cache),
         cache_service=cache,
+        setup_token_repo=SetupTokenRepository(db),
         tenant_service=tenant_service,
     )
 
