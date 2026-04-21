@@ -41,18 +41,19 @@ class TestSchemaValidation:
         assert resp.status_code == 422
 
     def test_correction_action_accepted(self, client):
-        with patch("app.routes.feedback.redact_pair", new_callable=AsyncMock) as mp:
+        with patch("app.routes.feedback.redact_pair", new_callable=AsyncMock) as mp, \
+             patch("app.routes.feedback._bg_evaluate"):
             mp.return_value = ("src", "out")
             payload = make_event_payload(action="CORRECTION", reward_score=-0.6)
             resp = client.post("/api/v1/feedback/event", json=payload)
         assert resp.status_code == 200
 
     def test_abandon_action_accepted(self, client):
-        with patch("app.routes.feedback.redact_pair", new_callable=AsyncMock) as mp:
+        with patch("app.routes.feedback.redact_pair", new_callable=AsyncMock) as mp, \
+             patch("app.routes.feedback._bg_evaluate"):
             mp.return_value = ("src", "out")
             payload = make_event_payload(action="ABANDON", reward_score=-1.0)
             resp = client.post("/api/v1/feedback/event", json=payload)
-        # reward_score == -1.0 triggers background eval; patch _bg_evaluate too
         assert resp.status_code == 200
 
 
@@ -146,6 +147,7 @@ class TestImplicitEvent:
     def test_implicit_score_accumulates(self, client, mock_db):
         """implicit_score is updated by int(reward_score * 100) per event."""
         existing = MagicMock()
+        existing.trace_id = "tr-score-test"
         existing.implicit_score = 70   # 0.7 * 100 from a previous COPY_TRANSLATION
         existing.event_log = []
         existing.ai_status = "PASS"

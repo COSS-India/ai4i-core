@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Translation Quality Analysis Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0b1120; color: #e2e8f0; }
+        .font-mono-custom { font-family: 'JetBrains Mono', monospace; }
+        .card { background-color: #111827; border: 1px solid #1f2937; border-radius: 12px; }
+        .header-title { font-family: 'JetBrains Mono', monospace; font-weight: 800; letter-spacing: -1px; }
+
+        .pulse-dot { animation: pulse 2s infinite; }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0px rgba(16, 185, 129, 0.5); }
+            100% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+        }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #111827; }
+        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+    </style>
+</head>
+<body class="p-6 min-h-screen flex flex-col overflow-x-hidden">
+
+    <!-- Login Modal -->
+    <div id="loginModal" class="hidden fixed inset-0 bg-[#0b1120]/98 z-50 flex items-center justify-center backdrop-blur-sm">
+        <div class="card p-8 w-full max-w-sm border border-cyan-500/30">
+            <div class="text-xs text-cyan-500 font-mono-custom mb-2">// AUTHENTICATION REQUIRED</div>
+            <h2 class="text-2xl header-title text-white mb-1">Sign In</h2>
+            <p class="text-xs text-gray-500 font-mono-custom mb-6">Feedback Service Dashboard</p>
+            <div class="flex flex-col gap-3">
+                <input id="loginEmail" type="email" placeholder="Email" value="admin@ai4inclusion.org"
+                    class="bg-gray-900 text-white text-sm border border-gray-700 rounded px-3 py-2 focus:outline-none focus:border-cyan-500">
+                <input id="loginPassword" type="password" placeholder="Password"
+                    class="bg-gray-900 text-white text-sm border border-gray-700 rounded px-3 py-2 focus:outline-none focus:border-cyan-500">
+                <div id="loginError" class="hidden text-red-400 text-xs font-mono-custom"></div>
+                <button onclick="login()" class="bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-mono-custom py-2 rounded transition duration-200">
+                    LOGIN
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <header class="flex justify-between items-end mb-6 border-b border-gray-800 pb-4">
+        <div>
+            <div class="text-xs text-cyan-500 font-mono-custom mb-1 flex items-center gap-2">
+                <div id="statusDot" class="w-2 h-2 bg-green-500 rounded-full pulse-dot"></div>
+                // LLM-POWERED NMT EVALUATION
+            </div>
+            <h1 class="text-4xl header-title text-white">Translation Quality</h1>
+            <h1 class="text-4xl header-title text-cyan-400">Analysis Dashboard</h1>
+        </div>
+        <div class="text-right font-mono-custom text-xs text-gray-400 flex flex-col gap-1 items-end">
+            <div>Evaluation Date: <span class="text-gray-200" id="currentDate">--</span></div>
+            <div>Sample Size: <span class="text-gray-200" id="sampleSize">0</span> sentences</div>
+            <div class="flex gap-2 mt-2">
+                <button onclick="document.getElementById('goldenModal').classList.remove('hidden')" class="bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-500 border border-yellow-500/50 py-1.5 px-4 rounded text-xs font-bold transition duration-200 shadow-[0_0_10px_rgba(234,179,8,0.2)]">
+                    ★ View Golden Dataset
+                </button>
+                <button onclick="logout()" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-400 py-1.5 px-3 rounded text-xs transition duration-200">
+                    Sign Out
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="card p-5 border-t-2 border-t-cyan-500">
+            <h3 class="text-gray-400 text-xs font-mono-custom uppercase tracking-wider mb-2">Total Evaluated</h3>
+            <p class="text-4xl font-mono-custom font-bold text-cyan-400" id="totalCount">0</p>
+            <p class="text-xs text-gray-500 mt-2">sentences processed</p>
+        </div>
+        <div class="card p-5 border-t-2 border-t-green-500">
+            <h3 class="text-gray-400 text-xs font-mono-custom uppercase tracking-wider mb-2">Pass Rate</h3>
+            <p class="text-4xl font-mono-custom font-bold text-green-500" id="passRate">0.0%</p>
+            <p class="text-xs text-gray-500 mt-2" id="passCount">0 correct translations</p>
+        </div>
+        <div class="card p-5 border-t-2 border-t-orange-500">
+            <h3 class="text-gray-400 text-xs font-mono-custom uppercase tracking-wider mb-2">Error Rate</h3>
+            <p class="text-4xl font-mono-custom font-bold text-orange-500" id="errorRate">0.0%</p>
+            <p class="text-xs text-gray-500 mt-2" id="errorCount">0 errors detected</p>
+        </div>
+        <div class="card p-5 border-t-2 border-t-red-500">
+            <h3 class="text-gray-400 text-xs font-mono-custom uppercase tracking-wider mb-2">Critical Error Rate</h3>
+            <p class="text-4xl font-mono-custom font-bold text-red-500" id="criticalRate">0.0%</p>
+            <p class="text-xs text-gray-500 mt-2" id="criticalCount">0 critical errors</p>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div class="card p-5 col-span-2">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-gray-400 text-xs font-mono-custom uppercase tracking-wider">Error Category Breakdown</h3>
+                <span class="text-xs font-mono-custom text-cyan-400" id="totalErrorsBadge">0 Total Errors</span>
+            </div>
+            <div class="relative h-64 w-full">
+                <canvas id="barChart"></canvas>
+            </div>
+        </div>
+
+        <div class="card p-5 col-span-1">
+            <h3 class="text-gray-400 text-xs font-mono-custom uppercase tracking-wider mb-4">Distribution</h3>
+            <div class="relative h-64 w-full flex justify-center items-center">
+                <canvas id="donutChart"></canvas>
+                <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                    <span class="text-3xl font-mono-custom font-bold text-white" id="donutCenterCount">0</span>
+                    <span class="text-[10px] text-gray-400 uppercase tracking-widest">Total<br>Errors</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
+
+        <div class="flex flex-col gap-4 col-span-1">
+            <div class="card p-5 flex flex-col min-h-[250px]">
+                <h3 class="text-gray-400 text-xs font-mono-custom uppercase tracking-wider mb-4">Severity Matrix</h3>
+                <div class="overflow-y-auto flex-1">
+                    <table class="w-full text-left text-[11px]">
+                        <thead class="font-mono-custom text-gray-500 border-b border-gray-800 sticky top-0 bg-[#111827]">
+                            <tr>
+                                <th class="pb-2 font-normal">CATEGORY</th>
+                                <th class="pb-2 font-normal text-center">HIGH</th>
+                                <th class="pb-2 font-normal text-center">MED</th>
+                                <th class="pb-2 font-normal text-center">LOW</th>
+                            </tr>
+                        </thead>
+                        <tbody id="severityTableBody" class="divide-y divide-gray-800">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card p-5 flex flex-col min-h-[250px]">
+                <h3 class="text-gray-400 text-xs font-mono-custom uppercase tracking-wider mb-4">Performance by Language</h3>
+                <div class="overflow-y-auto flex-1">
+                    <table class="w-full text-left text-[11px]">
+                        <thead class="font-mono-custom text-gray-500 border-b border-gray-800 sticky top-0 bg-[#111827]">
+                            <tr>
+                                <th class="pb-2 font-normal">LANG</th>
+                                <th class="pb-2 font-normal text-center">TOTAL</th>
+                                <th class="pb-2 font-normal text-center">PASS %</th>
+                                <th class="pb-2 font-normal text-center">ERRORS</th>
+                            </tr>
+                        </thead>
+                        <tbody id="languageTableBody" class="divide-y divide-gray-800">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="card p-5 flex flex-col col-span-2">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-gray-400 text-xs font-mono-custom uppercase tracking-wider">Live Evaluation Stream</h3>
+                <div class="flex items-center gap-3">
+                    <div class="flex bg-gray-900 rounded p-0.5 border border-gray-800">
+                        <button id="filterActionable" onclick="setFilter('ACTIONABLE')" class="px-3 py-1 text-[10px] font-mono-custom rounded bg-gray-700 text-white transition">ACTIONABLE</button>
+                        <button id="filterAll" onclick="setFilter('ALL')" class="px-3 py-1 text-[10px] font-mono-custom rounded text-gray-500 hover:text-gray-300 transition">ALL</button>
+                    </div>
+                    <span class="text-[10px] text-green-500 border border-green-500/30 bg-green-500/10 px-2 py-0.5 rounded">LIVE</span>
+                </div>
+            </div>
+            <div class="overflow-y-auto h-[600px] pr-2">
+                <table class="w-full text-left text-xs">
+                    <tbody id="streamTableBody" class="divide-y divide-gray-800">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div id="goldenModal" class="hidden fixed inset-0 bg-[#0b1120]/95 z-50 flex flex-col p-8 backdrop-blur-sm">
+        <div class="flex justify-between items-center mb-6 border-b border-gray-800 pb-4">
+            <div>
+                <h2 class="text-2xl header-title text-yellow-500 flex items-center gap-2">★ Golden Dataset (RLHF Pairs)</h2>
+                <p class="text-xs text-gray-400 font-mono-custom mt-1">Human-verified pairwise corrections for model fine-tuning</p>
+            </div>
+            <button onclick="document.getElementById('goldenModal').classList.add('hidden')" class="text-gray-400 hover:text-white text-4xl">&times;</button>
+        </div>
+        <div class="card p-0 flex-1 overflow-hidden flex flex-col border border-yellow-500/30">
+            <div class="overflow-y-auto flex-1 p-5 bg-[#111827]">
+                <table class="w-full text-left text-xs">
+                    <thead class="text-xs font-mono-custom text-gray-500 border-b border-gray-800 sticky top-0 bg-[#111827] z-10">
+                        <tr>
+                            <th class="pb-3 font-normal w-24">LANG</th>
+                            <th class="pb-3 font-normal w-24">TRACE ID</th>
+                            <th class="pb-3 font-normal w-1/4">PROMPT (SOURCE)</th>
+                            <th class="pb-3 font-normal w-1/4">REJECTED (MODEL)</th>
+                            <th class="pb-3 font-normal w-1/4 text-yellow-500">CHOSEN (CORRECTION)</th>
+                            <th class="pb-3 font-normal">METADATA</th>
+                        </tr>
+                    </thead>
+                    <tbody id="goldenTableBody" class="divide-y divide-gray-800">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('currentDate').innerText = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+        // Auth-service URL — update if running behind a gateway
+        const AUTH_SERVICE_URL = window.location.protocol + '//' + window.location.hostname + ':8081';
+        const API_URL = "/api/v1/feedback/latest?limit=1000";
+
+        let barChartInst = null;
+        let donutChartInst = null;
+        let currentFilter = 'ACTIONABLE';
+        let latestDataCache = [];
+
+        // ── Auth helpers ──────────────────────────────────────────────────
+        function getToken() { return localStorage.getItem('feedback_token'); }
+        function setToken(t) { localStorage.setItem('feedback_token', t); }
+        function clearToken() { localStorage.removeItem('feedback_token'); }
+
+        function authHeaders() {
+            return {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + getToken(),
+            };
+        }
+
+        async function login() {
+            const email = document.getElementById('loginEmail').value.trim();
+            const password = document.getElementById('loginPassword').value;
+            const errEl = document.getElementById('loginError');
+            errEl.classList.add('hidden');
+
+            try {
+                const res = await fetch(AUTH_SERVICE_URL + '/api/v1/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password }),
+                });
+                if (!res.ok) {
+                    const body = await res.json().catch(() => ({}));
+                    errEl.innerText = body.detail || 'Invalid credentials.';
+                    errEl.classList.remove('hidden');
+                    return;
+                }
+                const data = await res.json();
+                setToken(data.access_token);
+                document.getElementById('loginModal').classList.add('hidden');
+                initCharts();
+                fetchFeed();
+            } catch (e) {
+                errEl.innerText = 'Could not reach auth service at ' + AUTH_SERVICE_URL;
+                errEl.classList.remove('hidden');
+            }
+        }
+
+        function logout() {
+            clearToken();
+            document.getElementById('loginModal').classList.remove('hidden');
+        }
+
+        // Allow Enter key in login form
+        document.getElementById('loginPassword').addEventListener('keydown', e => {
+            if (e.key === 'Enter') login();
+        });
+
+        // ── Chart setup ───────────────────────────────────────────────────
+        const COLORS = {
+            "Meaning Errors": "#ef4444",
+            "Grammar Errors": "#facc15",
+            "Terminology Errors": "#22c55e",
+            "Pronunciation/Acoustic Errors": "#3b82f6",
+            "Structural/Alignment Errors": "#a855f7",
+            "Context/Pragmatic Errors": "#f97316",
+            "Formatting/Script Errors": "#06b6d4",
+            "Robustness Errors": "#ec4899"
+        };
+        const DEFAULT_COLOR = "#64748b";
+
+        function setFilter(mode) {
+            currentFilter = mode;
+            if(mode === 'ACTIONABLE') {
+                document.getElementById('filterActionable').classList.add('bg-gray-700', 'text-white');
+                document.getElementById('filterActionable').classList.remove('text-gray-500');
+                document.getElementById('filterAll').classList.remove('bg-gray-700', 'text-white');
+                document.getElementById('filterAll').classList.add('text-gray-500');
+            } else {
+                document.getElementById('filterAll').classList.add('bg-gray-700', 'text-white');
+                document.getElementById('filterAll').classList.remove('text-gray-500');
+                document.getElementById('filterActionable').classList.remove('bg-gray-700', 'text-white');
+                document.getElementById('filterActionable').classList.add('text-gray-500');
+            }
+            updateDashboard(latestDataCache);
+        }
+
+        function initCharts() {
+            Chart.defaults.color = '#9ca3af';
+            Chart.defaults.font.family = "'JetBrains Mono', monospace";
+
+            const barCtx = document.getElementById('barChart').getContext('2d');
+            barChartInst = new Chart(barCtx, {
+                type: 'bar',
+                data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderRadius: 4, barPercentage: 0.6 }] },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { grid: { color: '#1f2937' }, border: { display: false } },
+                        y: { grid: { display: false }, border: { display: false } }
+                    }
+                }
+            });
+
+            const donutCtx = document.getElementById('donutChart').getContext('2d');
+            donutChartInst = new Chart(donutCtx, {
+                type: 'doughnut',
+                data: { labels: [], datasets: [{ data: [], backgroundColor: [], borderWidth: 0 }] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '75%',
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+
+        function updateDashboard(data) {
+            const total = data.length;
+            document.getElementById('sampleSize').innerText = total.toLocaleString();
+            document.getElementById('totalCount').innerText = total.toLocaleString();
+
+            const passes = data.filter(d => d.ai_status === 'PASS').length;
+            const errors = data.filter(d => d.ai_status === 'FAIL').length;
+            const criticals = data.filter(d => d.ai_status === 'FAIL' && d.severity === 'HIGH').length;
+
+            const resolved = passes + errors;
+            const passRate = resolved > 0 ? ((passes / resolved) * 100).toFixed(1) : 0;
+            const errRate = resolved > 0 ? ((errors / resolved) * 100).toFixed(1) : 0;
+            const critRate = errors > 0 ? ((criticals / errors) * 100).toFixed(1) : 0;
+
+            document.getElementById('passRate').innerText = `${passRate}%`;
+            document.getElementById('passCount').innerText = `${passes.toLocaleString()} correct translations`;
+
+            document.getElementById('errorRate').innerText = `${errRate}%`;
+            document.getElementById('errorCount').innerText = `${errors.toLocaleString()} errors detected`;
+            document.getElementById('totalErrorsBadge').innerText = `${errors.toLocaleString()} Total Errors`;
+            document.getElementById('donutCenterCount').innerText = errors.toLocaleString();
+
+            document.getElementById('criticalRate').innerText = `${critRate}%`;
+            document.getElementById('criticalCount').innerText = `${criticals.toLocaleString()} critical errors`;
+
+            const catCounts = {};
+            const sevMatrix = {};
+            const langStats = {};
+
+            data.forEach(item => {
+                const lang = (item.language && item.language !== "None") ? item.language : "UNKNOWN";
+                if (!langStats[lang]) langStats[lang] = { total: 0, passes: 0, errors: 0 };
+                langStats[lang].total++;
+                if (item.ai_status === 'PASS') langStats[lang].passes++;
+                if (item.ai_status === 'FAIL') langStats[lang].errors++;
+
+                if (item.ai_status === 'FAIL') {
+                    const cat = (item.error_type && item.error_type !== "None") ? item.error_type : "Unknown Error";
+                    const sev = item.severity || "UNKNOWN";
+
+                    catCounts[cat] = (catCounts[cat] || 0) + 1;
+
+                    if (!sevMatrix[cat]) sevMatrix[cat] = { HIGH: 0, MEDIUM: 0, LOW: 0 };
+                    if (sevMatrix[cat][sev] !== undefined) sevMatrix[cat][sev]++;
+                }
+            });
+
+            const sortedCats = Object.keys(catCounts).sort((a, b) => catCounts[b] - catCounts[a]);
+            const barData = sortedCats.map(c => catCounts[c]);
+            const barColors = sortedCats.map(c => COLORS[c] || DEFAULT_COLOR);
+
+            barChartInst.data.labels = sortedCats;
+            barChartInst.data.datasets[0].data = barData;
+            barChartInst.data.datasets[0].backgroundColor = barColors;
+            barChartInst.update();
+
+            donutChartInst.data.labels = sortedCats;
+            donutChartInst.data.datasets[0].data = barData;
+            donutChartInst.data.datasets[0].backgroundColor = barColors;
+            donutChartInst.update();
+
+            const tbodySev = document.getElementById('severityTableBody');
+            tbodySev.innerHTML = '';
+            sortedCats.forEach(cat => {
+                const tr = document.createElement('tr');
+                const color = COLORS[cat] || DEFAULT_COLOR;
+                const m = sevMatrix[cat];
+                tr.innerHTML = `
+                    <td class="py-2 font-medium" style="color: ${color}">${cat}</td>
+                    <td class="py-2 text-center text-red-400 font-mono-custom">${m.HIGH > 0 ? m.HIGH : '-'}</td>
+                    <td class="py-2 text-center text-yellow-400 font-mono-custom">${m.MEDIUM > 0 ? m.MEDIUM : '-'}</td>
+                    <td class="py-2 text-center text-green-400 font-mono-custom">${m.LOW > 0 ? m.LOW : '-'}</td>
+                `;
+                tbodySev.appendChild(tr);
+            });
+
+            const tbodyLang = document.getElementById('languageTableBody');
+            tbodyLang.innerHTML = '';
+            Object.keys(langStats).sort().forEach(lang => {
+                const stats = langStats[lang];
+                const res = stats.passes + stats.errors;
+                const pr = res > 0 ? ((stats.passes / res) * 100).toFixed(1) : '0.0';
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="py-2 font-mono-custom text-cyan-400">${lang}</td>
+                    <td class="py-2 text-center text-gray-400 font-mono-custom">${stats.total}</td>
+                    <td class="py-2 text-center text-green-400 font-mono-custom">${pr}%</td>
+                    <td class="py-2 text-center text-red-400 font-mono-custom">${stats.errors}</td>
+                `;
+                tbodyLang.appendChild(tr);
+            });
+
+            const activeEl = document.activeElement;
+            const isEditingStream = activeEl && activeEl.tagName === 'INPUT' && activeEl.id.startsWith('input-');
+
+            if (!isEditingStream) {
+                latestDataCache = data;
+                const tbodyStream = document.getElementById('streamTableBody');
+                tbodyStream.innerHTML = '';
+
+                let displayData = data;
+                if (currentFilter === 'ACTIONABLE') {
+                    displayData = data.filter(item => item.ai_status !== 'PASS' && !item.human_correction);
+                }
+
+                displayData.slice(0, 50).forEach(item => {
+                    const tr = document.createElement('tr');
+
+                    let badge = `<span class="text-yellow-500 font-mono-custom">PENDING</span>`;
+                    let details = `<span class="text-gray-500 italic">Awaiting evaluation...</span>`;
+
+                    const src = item.source_input || '';
+                    const out = item.model_output || '';
+                    const reason = item.reasoning || (item.payload && item.payload.ai_reasoning) || (item.payload && item.payload.error) || 'No reasoning provided';
+                    const aiCorrection = (item.payload && item.payload.ai_correction) ? item.payload.ai_correction : '';
+                    const langTag = (item.language && item.language !== "None") ? `<div class="mt-1"><span class="px-1 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-400 text-[9px] font-mono-custom">${item.language}</span></div>` : '';
+
+                    if(item.ai_status === 'PASS') {
+                        badge = `<span class="px-2 py-0.5 rounded bg-green-500/10 text-green-400 border border-green-500/20 font-mono-custom">PASS</span>`;
+                        details = `<div class="text-gray-300 text-xs">${src}</div><div class="text-gray-500 text-[11px] mt-0.5">↳ ${out}</div>`;
+                    } else if(item.ai_status === 'FAIL') {
+                        const sevColor = item.severity === 'HIGH' ? 'text-red-400 border-red-500/30' : (item.severity === 'MEDIUM' ? 'text-yellow-400 border-yellow-500/30' : 'text-green-400 border-green-500/30');
+                        badge = `<span class="px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 font-mono-custom">FAIL</span>`;
+
+                        const suggestionHtml = aiCorrection ? `<div class="text-[10px] text-cyan-400/80 mb-2 flex items-center gap-1"><span class="text-cyan-500">💡 AI Suggestion:</span> ${aiCorrection}</div>` : '';
+                        const inputValue = aiCorrection ? `value="${aiCorrection.replace(/"/g, '&quot;')}"` : '';
+
+                        details = `
+                            <div class="text-gray-300 text-xs mb-1.5">${src} <span class="text-gray-600 mx-1">→</span> <span class="text-gray-400">${out}</span></div>
+                            <div class="flex items-center gap-2 mb-1.5">
+                                <span class="font-medium text-[11px]" style="color: ${COLORS[item.error_type] || DEFAULT_COLOR}">${item.error_type}</span>
+                                <span class="text-[9px] px-1 py-0.5 border rounded ${sevColor}">SEV: ${item.severity}</span>
+                            </div>
+                            <div class="text-[10px] text-gray-500 italic border-l-2 border-gray-700 pl-2 py-0.5 mb-2">${reason}</div>
+
+                            ${suggestionHtml}
+
+                            <div class="flex gap-2 items-center mt-2" id="correction-box-${item.trace_id}">
+                                ${item.human_correction ?
+                                    `<span class="text-green-500 text-[10px] font-mono-custom">✔ RECORDED: ${item.human_correction}</span>` :
+                                    `<input type="text" id="input-${item.trace_id}" ${inputValue} placeholder="Enter human correction..." class="flex-1 bg-gray-900 text-white text-xs border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-cyan-500">
+                                    <button onclick="submitCorrection('${item.trace_id}')" class="bg-gray-700 hover:bg-cyan-600 text-white text-[10px] px-3 py-1 rounded transition duration-200">SAVE</button>
+                                    <button onclick="overrideToPass('${item.trace_id}')" class="bg-gray-700 hover:bg-green-600 text-white text-[10px] px-3 py-1 rounded transition duration-200" title="Force PASS if AI is wrong">OVERRIDE</button>`
+                                }
+                            </div>
+                        `;
+                    } else if(item.ai_status === 'ERROR') {
+                        badge = `<span class="px-2 py-0.5 rounded bg-orange-500/10 text-orange-400 border border-orange-500/20 font-mono-custom">ERROR</span>`;
+                        details = `<div class="text-gray-400 text-xs">${src}</div><div class="text-[10px] text-orange-500 italic mt-1">System Issue: ${reason}</div>`;
+                    }
+
+                    tr.innerHTML = `
+                        <td class="py-3 pr-3 w-16 align-top">${badge}</td>
+                        <td class="py-3 pr-3 font-mono-custom text-gray-500 text-[10px] w-24 align-top">
+                            ${item.trace_id.substring(0, 8)}
+                            ${langTag}
+                        </td>
+                        <td class="py-3 align-top">${details}</td>
+                    `;
+                    tbodyStream.appendChild(tr);
+                });
+            }
+
+            const goldenData = data.filter(d => d.human_correction);
+            const tbodyGolden = document.getElementById('goldenTableBody');
+            tbodyGolden.innerHTML = '';
+
+            goldenData.forEach(item => {
+                const lang = (item.language && item.language !== "None") ? item.language : "UNKNOWN";
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="py-3 pr-3 font-mono-custom text-cyan-400 text-[10px] align-top">${lang}</td>
+                    <td class="py-3 pr-3 font-mono-custom text-gray-500 text-[10px] align-top">${item.trace_id.substring(0, 8)}</td>
+                    <td class="py-3 pr-3 text-gray-300 align-top">${item.source_input}</td>
+                    <td class="py-3 pr-3 text-red-400 align-top bg-red-500/5 px-2 rounded">${item.model_output}</td>
+                    <td class="py-3 pr-3 text-green-400 align-top font-medium bg-green-500/5 px-2 rounded">${item.human_correction}</td>
+                    <td class="py-3 align-top">
+                        <div class="flex flex-col gap-1">
+                            <span class="text-[9px] px-1 py-0.5 border rounded text-gray-400 border-gray-700 w-max">${item.error_type}</span>
+                            <span class="text-[9px] px-1 py-0.5 border rounded text-gray-400 border-gray-700 w-max">SEV: ${item.severity}</span>
+                        </div>
+                    </td>
+                `;
+                tbodyGolden.appendChild(tr);
+            });
+        }
+
+        async function submitCorrection(traceId) {
+            const inputField = document.getElementById(`input-${traceId}`);
+            const correctedText = inputField.value.trim();
+            if (!correctedText) return;
+
+            try {
+                const res = await fetch("/api/v1/feedback/human_correction", {
+                    method: "POST",
+                    headers: authHeaders(),
+                    body: JSON.stringify({ trace_id: traceId, corrected_output: correctedText })
+                });
+                if (res.status === 401) { logout(); return; }
+                if (res.ok) {
+                    const box = document.getElementById(`correction-box-${traceId}`);
+                    box.innerHTML = `<span class="text-green-500 text-[10px] font-mono-custom">✔ RECORDED: ${correctedText}</span>`;
+                    fetchFeed();
+                } else {
+                    alert("Failed to save correction.");
+                }
+            } catch (e) {
+                console.error("Error saving correction:", e);
+            }
+        }
+
+        async function overrideToPass(traceId) {
+            try {
+                const res = await fetch("/api/v1/feedback/override_pass", {
+                    method: "POST",
+                    headers: authHeaders(),
+                    body: JSON.stringify({ trace_id: traceId })
+                });
+                if (res.status === 401) { logout(); return; }
+                if (res.ok) fetchFeed();
+                else alert("Failed to override record.");
+            } catch (e) {
+                console.error("Error overriding record:", e);
+            }
+        }
+
+        async function fetchFeed() {
+            try {
+                const res = await fetch(API_URL, { headers: authHeaders() });
+                if (res.status === 401) { logout(); return; }
+                if(!res.ok) throw new Error("API Error");
+                const data = await res.json();
+
+                document.getElementById("statusDot").classList.remove("bg-red-500");
+                document.getElementById("statusDot").classList.add("bg-green-500", "pulse-dot");
+
+                updateDashboard(data);
+            } catch (e) {
+                document.getElementById("statusDot").classList.remove("bg-green-500", "pulse-dot");
+                document.getElementById("statusDot").classList.add("bg-red-500");
+                console.error("Fetch error:", e);
+            }
+        }
+
+        // ── Boot ─────────────────────────────────────────────────────────
+        if (getToken()) {
+            initCharts();
+            fetchFeed();
+            setInterval(fetchFeed, 2500);
+        } else {
+            document.getElementById('loginModal').classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>

@@ -31,10 +31,6 @@ def _llm_judge_url() -> str:
     return os.getenv("LLM_JUDGE_URL", "http://localhost:11434/api/generate")
 
 
-def _llm_model() -> str:
-    import os
-    return os.getenv("LLM_JUDGE_MODEL", "llama3:8b")
-
 
 # ---------------------------------------------------------------------------
 # Error taxonomy
@@ -94,15 +90,10 @@ async def evaluate_single(record_id: str, source: str, output: str,
         async with httpx.AsyncClient(timeout=300.0) as client:
             resp = await client.post(
                 _llm_judge_url(),
-                json={
-                    "model": _llm_model(),
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.0, "num_ctx": 4096},
-                },
+                json={"query": prompt},
             )
             resp.raise_for_status()
-            raw = resp.json().get("response", "")
+            raw = resp.json().get("result", "")
 
         result = _parse_json_object(raw)
         if not result:
@@ -191,15 +182,10 @@ async def _evaluate_chunk(chunk: List[FeedbackMetric], db: AsyncSession,
             async with httpx.AsyncClient(timeout=300.0) as client:
                 resp = await client.post(
                     _llm_judge_url(),
-                    json={
-                        "model": _llm_model(),
-                        "prompt": prompt,
-                        "stream": False,
-                        "options": {"temperature": 0.0, "num_ctx": 8192},
-                    },
+                    json={"query": prompt},
                 )
                 resp.raise_for_status()
-                raw = resp.json().get("response", "")
+                raw = resp.json().get("result", "")
 
             results = _parse_json_array(raw)
             if not results or len(results) != len(chunk):

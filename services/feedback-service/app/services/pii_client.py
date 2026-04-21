@@ -11,6 +11,7 @@ Language support mirrors the pii-guard-service pattern library (en, hi, mr, ta).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Optional
@@ -24,6 +25,10 @@ PII_SUPPORTED_LANG_CODES = frozenset({"en", "hi", "mr", "ta"})
 
 def _pii_base_url() -> str:
     return os.getenv("PII_SERVICE_URL", "http://pii-guard-service:8000").rstrip("/")
+
+
+def _pii_timeout() -> float:
+    return float(os.getenv("PII_TIMEOUT_SECONDS", "3.0"))
 
 
 def _lang_code(raw: str) -> str:
@@ -73,7 +78,7 @@ async def redact(
         if tenant_id:
             headers["X-Tenant-Id"] = tenant_id
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=_pii_timeout()) as client:
             resp = await client.post(
                 f"{_pii_base_url()}/redact",
                 json={"text": text},
@@ -103,6 +108,8 @@ async def redact_pair(
     """
     src_lang = _source_lang(language)
     tgt_lang = _target_lang(language)
-    redacted_source = await redact(source_input, src_lang, tenant_id)
-    redacted_output = await redact(model_output, tgt_lang, tenant_id)
+    redacted_source, redacted_output = await asyncio.gather(
+        redact(source_input, src_lang, tenant_id),
+        redact(model_output, tgt_lang, tenant_id),
+    )
     return redacted_source, redacted_output

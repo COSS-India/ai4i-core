@@ -32,15 +32,16 @@ class MigrationCLI:
     
     DATABASES = ['postgres', 'redis', 'influxdb', 'elasticsearch', 'kafka']
     POSTGRES_DBS = [
-        'auth_db', 
-        'config_db', 
+        'auth_db',
+        'config_db',
         'alerting_db',
         'metrics_db',
         'telemetry_db',
         'dashboard_db',
-        'model_management_db', 
+        'model_management_db',
         'multi_tenant_db',
-        'ai4i_platform'
+        'ai4i_platform',
+        'feedback_db',
     ]
     
     # External service databases (managed by third-party services, not our migration framework)

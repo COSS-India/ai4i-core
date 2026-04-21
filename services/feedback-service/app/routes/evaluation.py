@@ -74,10 +74,13 @@ async def batch_process(
 
     organization = _org_from_request(request)
     tenant_id = getattr(request.state, "tenant_id", None)
+    schema_name = getattr(request.state, "tenant_schema", None)
 
     # --- 1. Fetch NMT records from the NMT DB ---
     try:
-        nmt_rows = await fetch_nmt_records(limit=body.limit, offset=body.offset)
+        nmt_rows = await fetch_nmt_records(
+            limit=body.limit, offset=body.offset, schema_name=schema_name
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
@@ -144,9 +147,8 @@ async def batch_process(
 
     # --- 4. Queue background LLM evaluation ---
     db_session_factory = request.app.state.db_session_factory
-    schema_name = getattr(request.state, "tenant_schema", None)
     background_tasks.add_task(
-        _bg_batch_evaluate, record_ids, db_session_factory, schema_name
+        _bg_batch_evaluate_async, record_ids, db_session_factory, schema_name
     )
 
     return BatchProcessResponse(
@@ -180,8 +182,3 @@ async def _bg_batch_evaluate_async(
         await evaluate_batch(records, db)
 
 
-def _bg_batch_evaluate(
-    record_ids: list[str], db_session_factory, schema_name: str | None
-) -> None:
-    import asyncio
-    asyncio.run(_bg_batch_evaluate_async(record_ids, db_session_factory, schema_name))

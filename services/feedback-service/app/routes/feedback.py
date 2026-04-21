@@ -139,7 +139,7 @@ async def ingest_implicit_event(
         db_session_factory = request.app.state.db_session_factory
         schema_name = getattr(request.state, "tenant_schema", None)
         background_tasks.add_task(
-            _bg_evaluate, record_id, record.source_input, record.model_output,
+            _bg_evaluate_async, record_id, record.source_input, record.model_output,
             record.task_type, record.language or "unknown", db_session_factory,
             schema_name,
         )
@@ -204,7 +204,7 @@ async def submit_feedback(
         db_session_factory = request.app.state.db_session_factory
         schema_name = getattr(request.state, "tenant_schema", None)
         background_tasks.add_task(
-            _bg_evaluate, record_id, body.source_input, body.model_output,
+            _bg_evaluate_async, record_id, body.source_input, body.model_output,
             body.task_type, body.language or "unknown", db_session_factory,
             schema_name,
         )
@@ -281,9 +281,3 @@ async def _bg_evaluate_async(record_id: str, source: str, output: str,
         await evaluate_single(record_id, source, output, task_type, language, db)
 
 
-def _bg_evaluate(record_id: str, source: str, output: str,
-                 task_type: str, language: str, db_session_factory,
-                 schema_name: str | None) -> None:
-    import asyncio
-    asyncio.run(_bg_evaluate_async(record_id, source, output, task_type, language,
-                                   db_session_factory, schema_name))

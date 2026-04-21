@@ -12,6 +12,7 @@ environment variable and reused for the lifetime of the process.
 
 import logging
 import os
+import re
 from typing import List
 
 from sqlalchemy import text
@@ -21,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 _nmt_engine = None
 _nmt_session_factory = None
+
+# Allowlist for schema names — prevents SQL injection in SET search_path.
+_SAFE_SCHEMA_RE = re.compile(r'^[a-z0-9_]+$')
 
 
 def _get_nmt_session_factory() -> async_sessionmaker:
@@ -48,7 +52,9 @@ def _get_nmt_session_factory() -> async_sessionmaker:
     return _nmt_session_factory
 
 
-async def fetch_nmt_records(limit: int, offset: int = 0) -> List[dict]:
+async def fetch_nmt_records(
+    limit: int, offset: int = 0, schema_name: str | None = None
+) -> List[dict]:
     """
     Fetch recent completed NMT translations from the NMT database.
 
@@ -56,12 +62,23 @@ async def fetch_nmt_records(limit: int, offset: int = 0) -> List[dict]:
     - status is not 'processing' or 'error'
     - source_text and translated_text are both present
 
+    schema_name: if the NMT tables live in a tenant-specific PostgreSQL schema,
+    pass the schema name here so search_path is set before the query runs.
+
     Returns a list of dicts with keys:
         trace_id, source_text, translated_text,
         source_language, target_language, model_id, created_at
     """
     factory = _get_nmt_session_factory()
     async with factory() as db:
+        if schema_name:
+            if _SAFE_SCHEMA_RE.match(schema_name):
+                await db.execute(text(f'SET search_path TO "{schema_name}", public'))
+            else:
+                logger.warning(
+                    "Unsafe NMT schema_name rejected: %r — using default search_path",
+                    schema_name,
+                )
         result = await db.execute(
             text("""
                 SELECT

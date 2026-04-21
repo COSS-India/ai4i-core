@@ -45,13 +45,13 @@ def upgrade():
 
         # Implicit telemetry
         sa.Column("implicit_score", sa.Integer, nullable=True, server_default="0"),
-        sa.Column("event_log", JSONB, nullable=True, server_default="'[]'::jsonb"),
+        sa.Column("event_log", JSONB, nullable=True, server_default=sa.text("'[]'::jsonb")),
 
         # AI evaluation
         sa.Column("ai_status", sa.String(50), nullable=False, server_default="PENDING"),
         sa.Column("error_type", sa.String(100), nullable=True),
         sa.Column("severity", sa.String(20), nullable=True),
-        sa.Column("payload", JSONB, nullable=True, server_default="'{}'::jsonb"),
+        sa.Column("payload", JSONB, nullable=True, server_default=sa.text("'{}'::jsonb")),
 
         # Timestamps
         sa.Column(

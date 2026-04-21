@@ -42,6 +42,9 @@ def create_require_auth(jwt_verifier: JWTVerifier):
         if not token:
             raise AuthenticationRequiredError("Empty token.")
 
+        if jwt_verifier.loaded_key_count == 0:
+            await jwt_verifier.initialize()
+
         try:
             claims = await jwt_verifier.verify(token)
         except JWTExpiredError:

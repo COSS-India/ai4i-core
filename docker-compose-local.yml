@@ -46,6 +46,7 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       AUTH_DB_HOST: postgres
+      AUTH_DB_PORT: "5432"
       APP_DB_HOST: postgres
     depends_on:
       postgres:
@@ -1667,6 +1668,19 @@ services:
       - ENV_FILE=.env
       - AUTH_ENABLED=true
       - REQUIRE_API_KEY=false
+    volumes:
+      - ./services/feedback-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
+      - ./libs/ai4icore_env:/app/libs/ai4icore_env
+      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_service_base:/app/libs/ai4icore_service_base
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
+      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -1682,8 +1696,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 30s
+      retries: 5
+      start_period: 90s
     restart: unless-stopped
 
 
