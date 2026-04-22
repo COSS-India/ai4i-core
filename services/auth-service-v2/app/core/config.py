@@ -27,8 +27,7 @@ class AuthSettings(BaseSettings):
     debug: bool = False
 
     # ── Behaviour flags ──
-    # Set these explicitly per environment in .env rather than branching on `environment`.
-    allow_rsa_key_autogeneration: bool = True   # set False in production
+    allow_rsa_key_autogeneration: bool = False
 
     # ── Database ──
     database_url: Optional[str] = None
