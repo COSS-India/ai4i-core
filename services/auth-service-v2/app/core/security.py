@@ -47,42 +47,40 @@ class RS256KeyManager:
 
     async def initialize(self) -> None:
         """
-        Load keys from disk. In production, FAIL FAST if keys are missing.
-        Auto-generation is only allowed in development/testing.
+        Load keys from disk. Fails fast if keys are missing and
+        ALLOW_RSA_KEY_AUTOGENERATION is disabled.
         """
         key_dir = settings.get_rs256_key_path()
-        is_production = settings.environment in ("production", "staging")
 
         if key_dir.exists() and any(key_dir.glob("*.pem")):
             self._load_from_directory(key_dir)
-        elif is_production:
-            raise RuntimeError(
-                f"FATAL: No RSA keys found at '{key_dir}'. "
-                f"In production/staging, pre-provisioned PEM key pairs are required. "
-                f"Mount them via Docker volume or Kubernetes secret. "
-                f"Auto-generation is disabled in '{settings.environment}' to prevent "
-                f"cross-replica key mismatch and token invalidation."
-            )
-        else:
+        elif settings.allow_rsa_key_autogeneration:
             logger.warning(
-                "No RSA keys found at %s — generating %d key pairs for development.",
+                "No RSA keys found at %s — generating %d key pairs.",
                 key_dir, settings.rs256_min_key_count,
             )
             key_dir.mkdir(parents=True, exist_ok=True)
             self._generate_keys(key_dir, settings.rs256_min_key_count)
+        else:
+            raise RuntimeError(
+                f"FATAL: No RSA keys found at '{key_dir}' and "
+                f"ALLOW_RSA_KEY_AUTOGENERATION is disabled. "
+                f"Mount pre-provisioned PEM key pairs via Docker volume or Kubernetes secret."
+            )
 
         if len(self._keys) < settings.rs256_min_key_count:
-            if is_production:
+            if settings.allow_rsa_key_autogeneration:
+                logger.warning(
+                    "Only %d key pair(s) found, minimum is %d. Generating additional keys.",
+                    len(self._keys), settings.rs256_min_key_count,
+                )
+                self._generate_keys(key_dir, settings.rs256_min_key_count - len(self._keys))
+            else:
                 raise RuntimeError(
                     f"FATAL: Only {len(self._keys)} key pair(s) found, "
                     f"minimum required is {settings.rs256_min_key_count}. "
                     f"Provision at least {settings.rs256_min_key_count} RSA key pairs."
                 )
-            logger.warning(
-                "Only %d key pair(s) found, minimum is %d. Generating additional keys.",
-                len(self._keys), settings.rs256_min_key_count,
-            )
-            self._generate_keys(key_dir, settings.rs256_min_key_count - len(self._keys))
 
         self._active_index = min(settings.rs256_active_key_index, len(self._keys) - 1)
         logger.info("RS256 KeyManager: %d key(s) loaded, active kid=%s", len(self._keys), self.active_kid)

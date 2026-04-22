@@ -5,20 +5,17 @@ Checks permission_ids (ints) from JWT against the api_permissions.json
 mapping (resolved to DB IDs at startup).
 
 Fail-closed: if permission map is not loaded or cache is corrupt,
-requests to guarded routes are DENIED in production.
+requests to guarded routes are always DENIED.
 """
 
 import logging
 
 from fastapi import Depends, Request
 
-from app.core.config import settings
 from app.dependencies.auth import get_current_token
 from app.services.token_service import TokenPayload
 
 logger = logging.getLogger(__name__)
-
-_is_production = settings.environment in ("production", "staging")
 
 
 async def enforce_endpoint_permission(
@@ -30,16 +27,22 @@ async def enforce_endpoint_permission(
 
     checker = get_permission_checker()
 
-    # Fail-closed: if permission map didn't load, deny in production
+    # Fail-closed: if permission map didn't load, deny unconditionally.
+    # A service whose permission system failed to initialize must not serve guarded traffic.
     if checker is None:
-        if _is_production:
-            logger.error("Permission checker not loaded — denying request in production.")
-            raise InsufficientPermissionsError("system", "permission-map-unavailable")
-        return payload  # Dev/test: allow without map
+        logger.error("Permission checker not loaded — denying request.")
+        raise InsufficientPermissionsError("system", "permission-map-unavailable")
 
-    required_str = await checker.get_required_permission(
-        request.method, request.url.path,
-    )
+    try:
+        required_str = await checker.get_required_permission(
+            request.method, request.url.path,
+        )
+    except Exception:
+        logger.error(
+            "Permission lookup failed for %s:%s — denying request.",
+            request.method, request.url.path,
+        )
+        raise InsufficientPermissionsError("system", "permission-lookup-failed")
 
     # No mapping for this endpoint → public, allow
     if required_str is None:

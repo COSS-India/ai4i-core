@@ -23,8 +23,12 @@ class AuthSettings(BaseSettings):
     service_name: str = "auth-service"
     service_version: str = "2.0.0"
     api_version: str = "v1"
-    environment: str = "development"
+    environment: str = "development"  # informational only — used for logging/tracing
     debug: bool = False
+
+    # ── Behaviour flags ──
+    # Set these explicitly per environment in .env rather than branching on `environment`.
+    allow_rsa_key_autogeneration: bool = True   # set False in production
 
     # ── Database ──
     database_url: Optional[str] = None

@@ -53,16 +53,6 @@ async def lifespan(app: FastAPI):
 
     logger.info("Starting %s v%s [%s]", settings.service_name, settings.service_version, settings.environment)
 
-    # Production safety checks
-    is_prod = settings.environment in ("production", "staging")
-    if is_prod and settings.cors_origins == "*":
-        raise RuntimeError(
-            "FATAL: CORS_ORIGINS='*' is not allowed in production/staging. "
-            "Set CORS_ORIGINS to specific origins (comma-separated)."
-        )
-    if is_prod and settings.debug:
-        raise RuntimeError("FATAL: DEBUG=true is not allowed in production/staging.")
-
     # Startup
     await init_database(
         db_url=settings.get_database_url(),
@@ -164,7 +154,11 @@ async def _load_api_permissions() -> None:
 
     json_path = pathlib.Path(__file__).parent.parent / "api_permissions.json"
     if not json_path.exists():
-        logger.info("No api_permissions.json found, skipping.")
+        # No mapping file — treat all endpoints as public.
+        # Set an empty checker (not None) so the endpoint guard distinguishes
+        # "intentionally no map" from "load failed". None → fail-closed (infra error).
+        logger.info("No api_permissions.json found — all endpoints treated as public.")
+        _permission_checker = PermissionChecker(redis_client=None)
         return
 
     try:
@@ -243,22 +237,17 @@ async def _load_api_permissions_with_retry(
 
 def create_app() -> FastAPI:
     """Build and return the FastAPI application."""
-    is_prod = settings.environment == "production"
-
     app = FastAPI(
         title="Auth Service",
         version=settings.service_version,
         description="Authentication & Authorization microservice",
         lifespan=lifespan,
-        docs_url=None if is_prod else "/docs",
-        redoc_url=None if is_prod else "/redoc",
-        openapi_url=None if is_prod else "/openapi.json",
     )
 
     # Exception handlers
     register_exception_handlers(app)
 
-    # CORS — restricted in production, open in dev
+    # CORS — controlled via CORS_ORIGINS env var
     origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
     allow_all = origins == ["*"]
     app.add_middleware(
