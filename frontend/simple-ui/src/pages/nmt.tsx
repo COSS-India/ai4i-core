@@ -146,7 +146,7 @@ const NMTPage: React.FC = () => {
                   {showRateLimitWarning ? (
                     <>
                       You have approximately <strong>{remainingRequests} translation{remainingRequests !== 1 ? 's' : ''}</strong> remaining.
-                      Sign in to get unlimited access to all services.
+                      Sign in to get access to all services.
                     </>
                   ) : (
                     <>
