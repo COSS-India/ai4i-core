@@ -16,6 +16,8 @@ const protectedRoutes = ['/asr', '/tts', '/llm', '/pipeline', '/pipeline-builder
 
 // Routes that require ADMIN role
 const adminOnlyRoutes = ['/alerts-management'];
+// Routes blocked for TENANT ADMIN users
+const tenantAdminBlockedRoutes = ['/model-management', '/services-management'];
 
 // Routes that allow anonymous access with limited functionality
 const tryItRoutes = ['/nmt'];
@@ -31,6 +33,9 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   
   // Check if user is ADMIN
   const isAdmin = user?.roles?.includes('ADMIN') || false;
+  // Check if user is TENANT ADMIN
+  const isTenantAdmin = user?.roles?.some((role) => (role ?? '').trim().toUpperCase() === 'TENANT ADMIN') || false;
+  const isTenantAdminBlockedRoute = tenantAdminBlockedRoutes.includes(router.pathname);
 
   // Redirect to auth page if accessing protected route without authentication
   // Allow access to try-it routes (like /nmt) for anonymous users
@@ -49,6 +54,14 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
     }
   }, [isLoading, isAdminOnlyRoute, isAuthenticated, isAdmin, router]);
 
+  // Redirect TENANT ADMIN users away from blocked routes
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && isTenantAdmin && isTenantAdminBlockedRoute) {
+      console.log('AuthGuard: Tenant admin blocked route detected, redirecting to home');
+      router.push('/');
+    }
+  }, [isLoading, isAuthenticated, isTenantAdmin, isTenantAdminBlockedRoute, router]);
+
   // Show loading spinner while checking auth
   if (isLoading) {
     return (
@@ -66,6 +79,11 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
 
   // If admin-only route and user is not ADMIN, don't render children (will redirect)
   if (isAdminOnlyRoute && (!isAuthenticated || !isAdmin)) {
+    return null; // Will redirect via useEffect
+  }
+
+  // If route is blocked for tenant admins, don't render children (will redirect)
+  if (isAuthenticated && isTenantAdmin && isTenantAdminBlockedRoute) {
     return null; // Will redirect via useEffect
   }
 

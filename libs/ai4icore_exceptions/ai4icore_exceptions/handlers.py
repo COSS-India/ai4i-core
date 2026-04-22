@@ -283,7 +283,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     # ------------------------------------------------------------------
     @app.exception_handler(RequestValidationError)
     async def request_validation_error_handler(
-        request: Request, exc: RequestValidationError
+        _request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         errors = exc.errors()
 
@@ -294,11 +294,6 @@ def register_exception_handlers(app: FastAPI) -> None:
             error_message=f"Validation failed with {len(errors)} error(s)",
             http_status=422,
             extra_attrs={"validation.error_count": len(errors)},
-        )
-
-        logger.warning(
-            "%s %s - 422 validation error (%d errors)",
-            request.method, request.url.path, len(errors),
         )
 
         # Return raw Pydantic errors (consistent with existing service behavior)
