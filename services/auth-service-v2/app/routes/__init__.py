@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.dependencies.endpoint_guard import enforce_endpoint_permission
 from app.routes.health import router as health_router
 from app.routes.auth import router as auth_router
+from app.routes.token_revocation import router as token_revocation_router
 from app.routes.user import router as user_router
 from app.routes.role import router as role_router
 from app.routes.permission import inference_router as inference_permission_router
@@ -42,6 +43,7 @@ v1_router = versioning.create_router("v1")
 
 # Public (no endpoint guard)
 v1_router.include_router(auth_router)
+v1_router.include_router(token_revocation_router)
 v1_router.include_router(validation_router)
 v1_router.include_router(oauth_router)
 v1_router.include_router(internal_router)

@@ -33,10 +33,6 @@ class SessionService:
         await self._cache.revoke_refresh_token(token_id)
         await self._cache.remove_user_token(user_id, token_id)
 
-    async def invalidate_all_for_users(self, user_ids: list[int]) -> int:
-        """Revoke all refresh tokens for multiple users. Returns count revoked."""
-        return await self._cache.revoke_all_user_tokens(user_ids)
-
     async def is_refresh_token_active(self, token_id: str) -> bool:
         """Check if a refresh token is still active. Redis only."""
         return await self._cache.is_refresh_token_valid(token_id)

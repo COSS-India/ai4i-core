@@ -3,7 +3,6 @@ Redis client lifecycle for auth-service.
 
 Uses dedicated logical Redis DBs for:
 - API permissions map
-- Role permission cache
 - API key token cache
 - Refresh token cache
 """
@@ -17,7 +16,6 @@ import redis.asyncio as aioredis
 logger = logging.getLogger(__name__)
 
 _redis_api_permissions: aioredis.Redis | None = None
-_redis_role_permissions: aioredis.Redis | None = None
 _redis_api_keys: aioredis.Redis | None = None
 _redis_refresh_tokens: aioredis.Redis | None = None
 
@@ -67,25 +65,17 @@ async def init_redis(
     url: str,
     socket_timeout: int = 10,
     api_permissions_db: int = 0,
-    role_permissions_db: int = 1,
     api_keys_db: int = 2,
     refresh_tokens_db: int = 3,
 ) -> None:
     """Create dedicated Redis clients for each auth cache domain."""
-    global _redis_api_permissions, _redis_role_permissions, _redis_api_keys, _redis_refresh_tokens
+    global _redis_api_permissions, _redis_api_keys, _redis_refresh_tokens
 
     base_url = _strip_db_from_redis_url(url)
 
     _redis_api_permissions = aioredis.from_url(
         base_url,
         db=api_permissions_db,
-        socket_timeout=socket_timeout,
-        socket_connect_timeout=socket_timeout,
-        decode_responses=True,
-    )
-    _redis_role_permissions = aioredis.from_url(
-        base_url,
-        db=role_permissions_db,
         socket_timeout=socket_timeout,
         socket_connect_timeout=socket_timeout,
         decode_responses=True,
@@ -106,26 +96,22 @@ async def init_redis(
     )
 
     await _connect_with_retry(_redis_api_permissions, "api-permissions")
-    await _connect_with_retry(_redis_role_permissions, "role-permissions")
     await _connect_with_retry(_redis_api_keys, "api-keys")
     await _connect_with_retry(_redis_refresh_tokens, "refresh-tokens")
 
 
 async def close_redis() -> None:
     """Close all Redis connections."""
-    global _redis_api_permissions, _redis_role_permissions, _redis_api_keys, _redis_refresh_tokens
+    global _redis_api_permissions, _redis_api_keys, _redis_refresh_tokens
 
     if _redis_api_permissions:
         await _redis_api_permissions.aclose()
-    if _redis_role_permissions:
-        await _redis_role_permissions.aclose()
     if _redis_api_keys:
         await _redis_api_keys.aclose()
     if _redis_refresh_tokens:
         await _redis_refresh_tokens.aclose()
 
     _redis_api_permissions = None
-    _redis_role_permissions = None
     _redis_api_keys = None
     _redis_refresh_tokens = None
     logger.info("Redis connections closed.")
@@ -135,12 +121,6 @@ def get_redis_client_api_permissions() -> aioredis.Redis:
     if _redis_api_permissions is None:
         raise RuntimeError("Redis (api permissions) not initialized.")
     return _redis_api_permissions
-
-
-def get_redis_client_role_permissions() -> aioredis.Redis:
-    if _redis_role_permissions is None:
-        raise RuntimeError("Redis (role permissions) not initialized.")
-    return _redis_role_permissions
 
 
 def get_redis_client_api_keys() -> aioredis.Redis:
@@ -168,10 +148,6 @@ async def get_redis() -> AsyncGenerator[aioredis.Redis, None]:
 
 async def get_redis_api_permissions() -> AsyncGenerator[aioredis.Redis, None]:
     yield get_redis_client_api_permissions()
-
-
-async def get_redis_role_permissions() -> AsyncGenerator[aioredis.Redis, None]:
-    yield get_redis_client_role_permissions()
 
 
 async def get_redis_api_keys() -> AsyncGenerator[aioredis.Redis, None]:
