@@ -426,7 +426,7 @@ async def send_verification_email_admin(
 
 
 @router.post(
-    "/email/resend-setup-link",
+    "/email/resend/setup/link",
     response_model=TenantResendSetupLinkResponse,
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(require_admin)],

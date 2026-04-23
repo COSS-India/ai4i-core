@@ -240,6 +240,23 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TenantResendEmailVerificationResponse" }
+  /api/v1/multi-tenant/admin/email/resend/setup/link:
+    post:
+      tags: [Multi-Tenant]
+      summary: Resend Setup Link
+      description: Admin-only endpoint to resend a fresh setup link email.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantResendSetupLinkRequest" }
+      responses:
+        "200":
+          description: Setup link resent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantResendSetupLinkResponse" }
   /api/v1/multi-tenant/tenant/subscriptions/add:
     post:
       tags: [Multi-Tenant]
@@ -559,6 +576,16 @@ components:
         tenant_uuid: { type: string }
         tenant_id: { type: string }
         token: { type: string }
+        message: { type: string }
+    TenantResendSetupLinkRequest:
+      type: object
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+    TenantResendSetupLinkResponse:
+      type: object
+      properties:
+        email: { type: string, format: email }
         message: { type: string }
     TenantSubscriptionAddRequest:
       type: object

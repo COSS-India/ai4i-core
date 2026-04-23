@@ -11,6 +11,7 @@ ai4icore-multi-tenant>=1.0.0
 
 # ── Core ──
 fastapi>=0.104.0
+python-multipart>=0.0.9
 uvicorn[standard]>=0.24.0
 pydantic>=2.5.0
 pydantic-settings>=2.1.0

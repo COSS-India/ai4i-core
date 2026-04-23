@@ -92,9 +92,33 @@ EMAIL_VERIFICATION_RESEND_MAX_PER_DAY = app_env.email_verification_resend_max_pe
 DB_NAME                 = str(app_env.app_db_name)
 API_GATEWAY_URL        = app_env.api_gateway_url
 API_GATEWAY_TIMEOUT       = app_env.api_gateway_timeout
+EMAIL_PASSWORD_SETUP_URL = app_env.email_password_setup_url
 _AUTH_TENANT_STATUS_PREFIX = "auth:tenant_status:"
 _AUTH_TENANT_USER_STATUS_PREFIX = "auth:tenant_user_status:"
 _auth_cache_client = get_async_cache_connection()
+
+
+def _extract_provision_user_data(auth_payload: object) -> Tuple[Optional[int], Optional[str]]:
+    """Extract user_id and setup_token from auth provision response across payload shapes."""
+    if not isinstance(auth_payload, dict):
+        return None, None
+
+    data = auth_payload.get("data") if isinstance(auth_payload.get("data"), dict) else auth_payload
+
+    user_id = (
+        data.get("user_id")
+        or data.get("id")
+        or (data.get("user") or {}).get("user_id")
+        or (data.get("user") or {}).get("id")
+    )
+    setup_token = data.get("setup_token") or (data.get("setup") or {}).get("token")
+
+    try:
+        user_id = int(user_id) if user_id is not None else None
+    except (TypeError, ValueError):
+        user_id = None
+
+    return user_id, setup_token
 
 
 async def _invalidate_auth_tenant_status_cache(tenant_id: str) -> None:
@@ -1348,9 +1372,7 @@ async def verify_email_token(
         )
 
     auth_user_payload = auth_response.json()
-    auth_data = auth_user_payload.get("data") if isinstance(auth_user_payload, dict) else auth_user_payload
-    admin_user_id = auth_data.get("user_id") if isinstance(auth_data, dict) else None
-    setup_token = auth_data.get("setup_token") if isinstance(auth_data, dict) else None
+    admin_user_id, setup_token = _extract_provision_user_data(auth_user_payload)
     if not admin_user_id:
         logger.error(
             f"Auth-service did not return user id for tenant admin {tenant.tenant_id}: {auth_user_payload}"
@@ -1434,7 +1456,7 @@ async def verify_email_token(
 
     tenant_id_str = str(tenant.tenant_id)
     contact_email_str = decrypted_email
-    set_password_url = f"{API_GATEWAY_URL}/api/v1/auth/set-password?token={setup_token}"
+    set_password_url = f"{EMAIL_PASSWORD_SETUP_URL}/set-password?token={setup_token}"
 
     background_tasks.add_task(
         send_welcome_email,
@@ -1537,6 +1559,22 @@ async def resend_setup_link_email(
     1) call auth-service /auth/resend-setup-link
     2) send a fresh setup email from multi-tenant service templates
     """
+    auth_user = await auth_db.scalar(select(UserDB).where(UserDB.email == email))
+    if not auth_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    tenant_admin = await tenant_db.scalar(select(Tenant).where(Tenant.user_id == auth_user.id))
+    tenant_user = await tenant_db.scalar(select(TenantUser).where(TenantUser.user_id == auth_user.id))
+    linked_tenant = tenant_admin
+    if not linked_tenant and tenant_user:
+        linked_tenant = await tenant_db.get(Tenant, tenant_user.tenant_id)
+
+    if linked_tenant and linked_tenant.status != TenantStatus.ACTIVE:
+        raise HTTPException(
+            status_code=400,
+            detail="Tenant email is not verified. Setup link can be resent only for active tenants.",
+        )
+
     try:
         async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
             auth_response = await client.post(
@@ -1562,12 +1600,7 @@ async def resend_setup_link_email(
     if not setup_token:
         raise HTTPException(status_code=500, detail="Authentication service response missing setup token")
 
-    auth_user = await auth_db.scalar(select(UserDB).where(UserDB.email == email))
-    if not auth_user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    set_password_url = f"{API_GATEWAY_URL}/api/v1/auth/set-password?token={setup_token}"
-    tenant_admin = await tenant_db.scalar(select(Tenant).where(Tenant.user_id == auth_user.id))
+    set_password_url = f"{EMAIL_PASSWORD_SETUP_URL}/set-password?token={setup_token}"
 
     if tenant_admin:
         background_tasks.add_task(
@@ -1576,7 +1609,6 @@ async def resend_setup_link_email(
             email,
             None,
             set_password_url,
-            PORTAL_BASE_URL,
         )
     else:
         background_tasks.add_task(
@@ -2129,9 +2161,7 @@ async def register_user(
         )
 
     auth_user_payload = auth_response.json()
-    auth_data = auth_user_payload.get("data") if isinstance(auth_user_payload, dict) else auth_user_payload
-    user_id = auth_data.get("user_id") if isinstance(auth_data, dict) else None
-    setup_token = auth_data.get("setup_token") if isinstance(auth_data, dict) else None
+    user_id, setup_token = _extract_provision_user_data(auth_user_payload)
     if not user_id:
         logger.error(
             f"Auth-service did not return user id for tenant user {payload.username}: {auth_user_payload}"
@@ -2211,7 +2241,7 @@ async def register_user(
         raise HTTPException(status_code=500, detail="Failed to register user")
 
 
-    set_password_url = f"{API_GATEWAY_URL}/api/v1/auth/set-password?token={setup_token}"
+    set_password_url = f"{EMAIL_PASSWORD_SETUP_URL}/set-password?token={setup_token}"
     background_tasks.add_task(
         send_user_welcome_email,
         user_id,
