@@ -35,8 +35,7 @@ class RS256KeyManager:
     Manages multiple RSA key pairs for RS256 JWT signing/verification.
 
     - Loads PEM files from disk. Keys must be pre-provisioned; use
-      scripts/generate-keys.sh to create them locally or mount them
-      via Docker volume / Kubernetes secret in production.
+      scripts/generate-keys.sh to create them locally.
     - Supports key rotation: sign with the active key, verify with any loaded key.
     - Exposes JWKS for external verification (APISIX, other services).
     """
