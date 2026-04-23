@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: AI4I PII Guardrail API
-  description: Multi-lingual PII detection engine with trace observability and admin orchestration.
+  description: Multi-lingual PII detection engine backed by external Policy Service.
   version: 3.0.0
 
 servers:
@@ -13,23 +13,3 @@ paths:
     post:
       summary: Redact PII from unstructured text
       tags: [Guardrail]
-  /admin/all-domains:
-    get:
-      summary: List all available domain templates
-      tags: [Admin]
-  /admin/domain:
-    post:
-      summary: Create a new domain template
-      tags: [Admin]
-  /admin/deploy:
-    post:
-      summary: Update and activate a domain policy
-      tags: [Admin]
-  /admin/activate-domains:
-    post:
-      summary: Bulk update activation status
-      tags: [Admin]
-  /admin/generate-regex:
-    post:
-      summary: Use Local LLM to generate regex from examples
-      tags: [Admin]

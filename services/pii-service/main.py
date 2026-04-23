@@ -8,7 +8,6 @@ import json
 import time
 import asyncpg
 import httpx
-import redis.asyncio as aioredis
 import asyncio
 from aiokafka import AIOKafkaProducer
 from dotenv import load_dotenv
@@ -26,13 +25,15 @@ DB_HOST = os.getenv("DB_HOST", "postgres")
 DB_NAME = os.getenv("DB_NAME", "pii_guardrail")
 DB_USER = os.getenv("DB_USER", "admin")
 DB_PASS = os.getenv("DB_PASS", "secret")
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 NER_SERVICE_URL = os.getenv("NER_SERVICE_URL", "http://localhost:9001/ner")
+POLICY_SERVICE_BASE_URL = os.getenv("POLICY_SERVICE_BASE_URL", "http://localhost:8107")
+POLICY_SERVICE_TIMEOUT = float(os.getenv("POLICY_SERVICE_TIMEOUT", "5.0"))
+POLICY_CACHE_TTL_SECONDS = int(os.getenv("POLICY_CACHE_TTL_SECONDS", "60"))
+POLICY_CACHE_STALE_GRACE_SECONDS = int(os.getenv("POLICY_CACHE_STALE_GRACE_SECONDS", "300"))
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 KAFKA_AUDIT_TOPIC = os.getenv("KAFKA_AUDIT_TOPIC", "pii_audit_logs")
 
 db_pool = None
-redis_client = None
 kafka_producer = None
 
 app = FastAPI()
@@ -263,69 +264,140 @@ detection_engine = DetectionEngine()
 
 class PolicySyncAgent:
     def __init__(self):
-        self._cache = {}
-        self._active_domain_ids: set = set()
-        self._tenant_domain: Dict[str, str] = {}
-        self.connected = False
+        # tenant_id -> {"policy": {...}, "expires_at": float}
+        self._cache: Dict[str, Dict[str, Any]] = {}
+        self._locks: Dict[str, asyncio.Lock] = {}
 
-    async def refresh_policies(self):
-        global db_pool
-        if not db_pool:
-            return
-        try:
-            async with db_pool.acquire() as conn:
-                rows = await conn.fetch(
-                    "SELECT domain_id, policy_json, is_active FROM domain_policies"
-                )
-                self._cache = {
-                    row["domain_id"]: json.loads(row["policy_json"])
-                    if isinstance(row["policy_json"], str)
-                    else row["policy_json"]
-                    for row in rows
+    def _lock_for(self, tenant_id: str) -> asyncio.Lock:
+        if tenant_id not in self._locks:
+            self._locks[tenant_id] = asyncio.Lock()
+        return self._locks[tenant_id]
+
+    async def get_policy_for_tenant(self, tenant_id: str, auth_header: Optional[str]) -> Dict[str, Any]:
+        tenant_key = tenant_id.strip()
+        if not tenant_key:
+            raise HTTPException(400, "tenant_id is required")
+        now = time.time()
+        cached = self._cache.get(tenant_key)
+        if cached and cached.get("expires_at", 0) > now:
+            return cached["policy"]
+
+        lock = self._lock_for(tenant_key)
+        async with lock:
+            now = time.time()
+            cached = self._cache.get(tenant_key)
+            if cached and cached.get("expires_at", 0) > now:
+                return cached["policy"]
+
+            try:
+                policy = await self._fetch_policy_from_policy_service(tenant_key, auth_header)
+                self._cache[tenant_key] = {
+                    "policy": policy,
+                    "expires_at": now + max(1, POLICY_CACHE_TTL_SECONDS),
                 }
-                self._active_domain_ids = {row["domain_id"] for row in rows if row["is_active"]}
+                return policy
+            except HTTPException:
+                if cached and cached.get("expires_at", 0) + max(0, POLICY_CACHE_STALE_GRACE_SECONDS) > now:
+                    # Prefer stale policy over hard failure for resilience.
+                    return cached["policy"]
+                raise
+
+    async def _fetch_policy_from_policy_service(self, tenant_id: str, auth_header: Optional[str]) -> Dict[str, Any]:
+        headers: Dict[str, str] = {"accept": "application/json"}
+        if auth_header:
+            headers["Authorization"] = auth_header
+        base = POLICY_SERVICE_BASE_URL.rstrip("/")
+        url = f"{base}/api/v1/policy-service/policies"
+
+        page = 1
+        limit = 20
+        collected: List[Dict[str, Any]] = []
+        async with httpx.AsyncClient(timeout=POLICY_SERVICE_TIMEOUT) as client:
+            while True:
+                params = {
+                    "tenant_id": tenant_id,
+                    "is_active": "true",
+                    "page": page,
+                    "limit": limit,
+                }
                 try:
-                    trows = await conn.fetch(
-                        "SELECT tenant_id, domain_id FROM tenant_pii_domain_map"
-                    )
-                    self._tenant_domain = {
-                        row["tenant_id"]: row["domain_id"] for row in trows
-                    }
-                except Exception:
-                    self._tenant_domain = {}
-                self.connected = True
-        except Exception as exc:
-            print(f"Policy sync failed: {exc}")
+                    response = await client.get(url, params=params, headers=headers)
+                except httpx.TimeoutException:
+                    raise HTTPException(502, "Policy Service request timed out")
+                except httpx.RequestError as exc:
+                    raise HTTPException(502, f"Policy Service unavailable: {type(exc).__name__}")
 
-    async def listen_for_updates(self):
-        global redis_client
-        if not redis_client:
-            return
-        try:
-            pubsub = redis_client.pubsub()
-            await pubsub.subscribe("policy_updates")
-            async for message in pubsub.listen():
-                if message["type"] == "message":
-                    await self.refresh_policies()
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            print(f"Redis listen error: {exc}")
+                if response.status_code == 401:
+                    raise HTTPException(401, "Unauthorized to fetch policies from Policy Service")
+                if response.status_code == 403:
+                    raise HTTPException(403, "Forbidden while fetching policies from Policy Service")
+                if response.status_code >= 400:
+                    raise HTTPException(502, f"Policy Service error: status {response.status_code}")
 
-    async def get_policy(self, domain):
-        if not self.connected:
-            await self.refresh_policies()
-        return self._cache.get(domain)
+                payload = response.json() or {}
+                rows = payload.get("data") or []
+                if isinstance(rows, list):
+                    collected.extend(rows)
 
-    async def list_domains(self):
-        if not self.connected:
-            await self.refresh_policies()
-        return sorted(self._active_domain_ids)
+                meta = payload.get("meta") or {}
+                total = int(meta.get("total", len(collected) or 0))
+                if len(collected) >= total or not rows:
+                    break
+                page += 1
 
-    def resolve_domain_for_tenant(self, tenant_id: Optional[str]) -> Optional[str]:
-        if not tenant_id:
-            return None
-        return self._tenant_domain.get(str(tenant_id).strip())
+        active_policies = [p for p in collected if p.get("is_active", True)]
+        if not active_policies:
+            raise HTTPException(404, f"No active policy found for tenant '{tenant_id}'")
+        adapted = self._adapt_policy_response(active_policies[0], tenant_id)
+        return adapted
+
+    def _adapt_policy_response(self, policy: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
+        rules: List[Dict[str, Any]] = []
+        pii_types = policy.get("pii_types") or []
+        for pii in pii_types:
+            entity_label = (
+                pii.get("pii_type_label")
+                or pii.get("entity_type")
+                or pii.get("label")
+            )
+            if not entity_label:
+                continue
+            mask_format = str(pii.get("mask_format", "redact")).lower()
+            if mask_format == "full":
+                action = "MASK"
+                config: Dict[str, Any] = {"mask_char": "X"}
+            elif mask_format == "partial":
+                action = "REDACT_TAG"
+                config = {"tag_label": f"[{entity_label}]"}
+            else:
+                action = "REDACT_TAG"
+                config = {"tag_label": "[REDACTED]"}
+
+            # Support optional regex fields when policy service includes them.
+            custom_regex = pii.get("regex_pattern") or pii.get("regex") or None
+            rule = {
+                "entity_type": str(entity_label).upper(),
+                "action": action,
+                "config": config,
+            }
+            if custom_regex:
+                rule["custom_regex"] = custom_regex
+            rules.append(rule)
+
+        if not rules:
+            raise HTTPException(
+                422,
+                f"Policy '{policy.get('name')}' for tenant '{tenant_id}' does not contain usable PII rules",
+            )
+
+        return {
+            "meta": {
+                "tenant_id": tenant_id,
+                "policy_id": policy.get("policy_id"),
+                "policy_name": policy.get("name"),
+            },
+            "rules": rules,
+        }
 
 
 policy_agent = PolicySyncAgent()
@@ -391,36 +463,9 @@ class RedactionRequest(BaseModel):
     text: str = Field(..., max_length=20000)
 
 
-class TenantDomainUpsertRequest(BaseModel):
-    tenant_id: str
-    domain_id: str
-
-
-class TenantDomainDeleteRequest(BaseModel):
-    tenant_id: str
-
-
-class DeployRequest(BaseModel):
-    domain_id: str
-    rules: List[Dict]
-
-
-class BulkActivateRequest(BaseModel):
-    domain_ids: List[str]
-
-
-class GenerateRegexRequest(BaseModel):
-    example_text: str
-
-
-class NewDomainRequest(BaseModel):
-    domain_id: str
-    description: str
-
-
 @app.on_event("startup")
 async def startup_event():
-    global db_pool, redis_client, kafka_producer
+    global db_pool, kafka_producer
     for _ in range(10):
         try:
             db_pool = await asyncpg.create_pool(user=DB_USER, password=DB_PASS, database=DB_NAME, host=DB_HOST, min_size=3, max_size=20)
@@ -431,10 +476,6 @@ async def startup_event():
     if not db_pool:
         raise RuntimeError("Could not connect to PostgreSQL")
 
-    redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
-    app.state.redis_client = redis_client
-    asyncio.create_task(policy_agent.listen_for_updates())
-
     try:
         kafka_producer = AIOKafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS)
         await kafka_producer.start()
@@ -442,16 +483,13 @@ async def startup_event():
         print(f"Kafka connection failed: {exc}")
 
     await KB.refresh()
-    await policy_agent.refresh_policies()
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global db_pool, redis_client, kafka_producer
+    global db_pool, kafka_producer
     if db_pool:
         await db_pool.close()
-    if redis_client:
-        await redis_client.close()
     if kafka_producer:
         await kafka_producer.stop()
 
@@ -466,27 +504,10 @@ async def health():
     return {"status": "healthy"}
 
 
-@app.get("/domains")
-async def get_domains(auth=Depends(AuthProvider)):
-    _ = auth
-    return await policy_agent.list_domains()
-
-
-@app.get("/policy/{domain}")
-async def get_policy(domain: str, auth=Depends(AuthProvider)):
-    _ = auth
-    return await policy_agent.get_policy(domain) or {}
-
-
-def require_pii_admin(auth_claims):
-    roles = [str(r).upper() for r in (getattr(auth_claims, "roles", []) or [])]
-    if "ADMIN" not in roles and "TENANT ADMIN" not in roles:
-        raise HTTPException(403, "Admin privileges required.")
-
-
 @app.post("/redact")
 async def redact_text(
-    request: RedactionRequest,
+    payload: RedactionRequest,
+    http_request: Request,
     background_tasks: BackgroundTasks,
     auth=Depends(AuthProvider),
     include_original_text: bool = Query(default=False),
@@ -494,7 +515,7 @@ async def redact_text(
     x_language: str = Header("en"),
     x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-Id"),
 ):
-    claims_tid = getattr(auth, "tenant_id", None) if auth is not None else None
+    claims_tid = (getattr(auth, "tenant_id", None) or "").strip() if auth is not None else ""
     header_tid = (x_tenant_id or "").strip() or None
     if header_tid and header_tid != claims_tid:
         # Prevent tenant spoofing when token already carries tenant_id.
@@ -503,7 +524,9 @@ async def redact_text(
                 403,
                 "X-Tenant-Id header does not match token tenant_id.",
             )
-    tenant_id = claims_tid
+    tenant_id = claims_tid or header_tid
+    if not tenant_id:
+        raise HTTPException(400, "tenant_id is required in token or X-Tenant-Id header")
     start = time.time()
     span_ctx = trace.get_current_span().get_span_context()
     trace_id = f"{span_ctx.trace_id:032x}" if getattr(span_ctx, "is_valid", False) else ""
@@ -512,49 +535,14 @@ async def redact_text(
     if not KB.connected:
         await KB.refresh()
 
-    if not policy_agent.connected:
-        await policy_agent.refresh_policies()
-    effective_domain = policy_agent.resolve_domain_for_tenant(tenant_id)
-    fallback_message: Optional[str] = None
-    if not tenant_id:
-        effective_domain = "logistics"
-        fallback_message = (
-            "Token has no tenant_id claim. Using 'logistics' as fallback. "
-            "Map/authenticate with tenant context for tenant-specific redaction."
-        )
-        trace_log.append(
-            {
-                "step": "DomainResolution",
-                "status": "Fallback",
-                "details": "Token missing tenant_id. Using 'logistics'.",
-            }
-        )
-    if not effective_domain:
-        effective_domain = "logistics"
-        fallback_message = (
-            "No domain is mapped to this tenant. Using 'logistics' as fallback because it is comprehensive. "
-            "Map the tenant to the appropriate domain for specific redaction behavior."
-        )
-        trace_log.append(
-            {
-                "step": "DomainResolution",
-                "status": "Fallback",
-                "details": f"Tenant '{tenant_id}' has no mapped domain. Using 'logistics'.",
-            }
-        )
-
-    policy = await policy_agent.get_policy(effective_domain)
-    if not policy:
-        raise HTTPException(
-            400,
-            f"Unknown domain '{effective_domain}'. Create the domain or fix tenant_pii_domain_map.",
-        )
+    auth_header = http_request.headers.get("Authorization") or http_request.headers.get("authorization")
+    policy = await policy_agent.get_policy_for_tenant(tenant_id, auth_header)
 
     is_strict = x_target.lower() != "user"
-    entities = await detection_engine.detect(request.text, policy["rules"], trace_log, is_strict, x_language)
+    entities = await detection_engine.detect(payload.text, policy["rules"], trace_log, is_strict, x_language)
     entities.sort(key=lambda x: x.start_index)
 
-    redacted = request.text
+    redacted = payload.text
     for ent in sorted(entities, key=lambda x: x.start_index, reverse=True):
         rule = next((r for r in policy["rules"] if r["entity_type"] == ent.entity_type), None)
         if not rule:
@@ -569,7 +557,14 @@ async def redact_text(
 
     ms = int((time.time() - start) * 1000)
     background_tasks.add_task(
-        audit_logger.log_event, trace_id, tenant_id, effective_domain, x_target, len(entities), ms, trace_log
+        audit_logger.log_event,
+        trace_id,
+        tenant_id,
+        policy.get("meta", {}).get("policy_name"),
+        x_target,
+        len(entities),
+        ms,
+        trace_log,
     )
     response_payload = {
         "redacted_text": redacted,
@@ -578,159 +573,13 @@ async def redact_text(
         "metadata": {
             "processing_time_ms": ms,
             "language": x_language,
-            "domain": effective_domain,
-            "tenant_id": tenant_id or "unknown",
-            "message": fallback_message,
+            "policy_id": policy.get("meta", {}).get("policy_id"),
+            "policy_name": policy.get("meta", {}).get("policy_name"),
+            "tenant_id": tenant_id,
         },
     }
     if include_original_text:
-        response_payload["original_text"] = request.text
+        response_payload["original_text"] = payload.text
     return response_payload
 
 
-@app.get("/admin/all-domains")
-async def get_all_domains(auth=Depends(AuthProvider)):
-    require_pii_admin(auth)
-    global db_pool
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT domain_id, is_active, policy_json->'meta'->>'description' as description FROM domain_policies ORDER BY domain_id;"
-        )
-        return [dict(row) for row in rows]
-
-
-@app.post("/admin/deploy")
-async def deploy(req: DeployRequest, auth=Depends(AuthProvider)):
-    require_pii_admin(auth)
-    global db_pool, redis_client
-    async with db_pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT policy_json FROM domain_policies WHERE domain_id = $1", req.domain_id)
-        if not row:
-            raise HTTPException(404, "Domain not found")
-        policy = json.loads(row["policy_json"]) if isinstance(row["policy_json"], str) else row["policy_json"]
-        policy["rules"] = req.rules
-        await conn.execute("UPDATE domain_policies SET policy_json = $1 WHERE domain_id = $2", json.dumps(policy), req.domain_id)
-    if redis_client:
-        await redis_client.publish("policy_updates", "deployed")
-    return {"status": "saved"}
-
-
-@app.post("/admin/activate-domains")
-async def activate(req: BulkActivateRequest, auth=Depends(AuthProvider)):
-    require_pii_admin(auth)
-    global db_pool, redis_client
-    async with db_pool.acquire() as conn:
-        await conn.execute("UPDATE domain_policies SET is_active = FALSE")
-        if req.domain_ids:
-            await conn.execute("UPDATE domain_policies SET is_active = TRUE WHERE domain_id = ANY($1)", req.domain_ids)
-    if redis_client:
-        await redis_client.publish("policy_updates", "activated")
-    return {"status": "success"}
-
-
-@app.post("/admin/generate-regex")
-async def gen_regex(req: GenerateRegexRequest, auth=Depends(AuthProvider)):
-    require_pii_admin(auth)
-    base_ip = NER_SERVICE_URL.split(":")[1].replace("//", "")
-    llm_url = f"http://{base_ip}:8000/api/query"
-    prompt = (
-        f"Generate a general python regex pattern to EXTRACT data similar to this example: '{req.example_text}'. "
-        "Use word boundaries (\\b). Return only the raw regex string."
-    )
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(llm_url, json={"query": prompt, "system_prompt": None, "context": None}, timeout=20.0)
-            if response.status_code == 200:
-                data = response.json()
-                return {"regex": data.get("result", "").strip('`"\'\n ')}
-            return {"regex": f"HTTP_ERROR_{response.status_code}"}
-        except Exception as exc:
-            return {"regex": f"LLM_ERROR: {exc}"}
-
-
-@app.post("/admin/domain")
-async def create_domain(req: NewDomainRequest, auth=Depends(AuthProvider)):
-    require_pii_admin(auth)
-    global db_pool
-    async with db_pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO domain_policies VALUES ($1, FALSE, $2)",
-            req.domain_id,
-            json.dumps({"meta": {"version": "1.0", "description": req.description}, "rules": []}),
-        )
-    return {"status": "success"}
-
-
-@app.get("/admin/tenant-domains")
-async def list_tenant_domain_mappings(auth=Depends(AuthProvider)):
-    require_pii_admin(auth)
-    global db_pool
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT tenant_id, domain_id, updated_at FROM tenant_pii_domain_map ORDER BY tenant_id"
-        )
-        return [dict(row) for row in rows]
-
-
-@app.post("/admin/tenant-domain")
-async def upsert_tenant_domain_mapping(req: TenantDomainUpsertRequest, auth=Depends(AuthProvider)):
-    require_pii_admin(auth)
-    global db_pool, redis_client
-    tid, did = req.tenant_id.strip(), req.domain_id.strip()
-    if not tid or not did:
-        raise HTTPException(400, "tenant_id and domain_id are required")
-    async with db_pool.acquire() as conn:
-        exists = await conn.fetchrow(
-            "SELECT 1 FROM domain_policies WHERE domain_id = $1 LIMIT 1", did
-        )
-        if not exists:
-            raise HTTPException(404, f"domain_id '{did}' not found in domain_policies")
-        await conn.execute(
-            """
-            INSERT INTO tenant_pii_domain_map (tenant_id, domain_id, updated_at)
-            VALUES ($1, $2, CURRENT_TIMESTAMP)
-            ON CONFLICT (tenant_id)
-            DO UPDATE SET domain_id = EXCLUDED.domain_id, updated_at = CURRENT_TIMESTAMP
-            """,
-            tid,
-            did,
-        )
-    if redis_client:
-        await redis_client.publish("policy_updates", "tenant_map")
-    await policy_agent.refresh_policies()
-    return {"status": "success", "tenant_id": tid, "domain_id": did}
-
-
-@app.post("/admin/tenant-domain/delete")
-async def delete_tenant_domain_mapping(req: TenantDomainDeleteRequest, auth=Depends(AuthProvider)):
-    require_pii_admin(auth)
-    global db_pool, redis_client
-    tid = req.tenant_id.strip()
-    if not tid:
-        raise HTTPException(400, "tenant_id is required")
-    async with db_pool.acquire() as conn:
-        await conn.execute("DELETE FROM tenant_pii_domain_map WHERE tenant_id = $1", tid)
-    if redis_client:
-        await redis_client.publish("policy_updates", "tenant_map")
-    await policy_agent.refresh_policies()
-    return {"status": "success"}
-
-
-@app.get("/admin/audit-logs")
-async def list_audit_logs(
-    auth=Depends(AuthProvider),
-    limit: int = Query(default=50, ge=1, le=500),
-):
-    require_pii_admin(auth)
-    global db_pool
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT id, trace_id, tenant_id, domain_id, target_context, pii_count, processing_ms, trace_json, created_at
-            FROM audit_logs
-            ORDER BY created_at DESC
-            LIMIT $1
-            """,
-            limit,
-        )
-        return [dict(row) for row in rows]
