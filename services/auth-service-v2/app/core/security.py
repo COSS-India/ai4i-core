@@ -9,7 +9,6 @@ import secrets
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
 
 from app.core.config import settings
@@ -35,7 +34,9 @@ class RS256KeyManager:
     """
     Manages multiple RSA key pairs for RS256 JWT signing/verification.
 
-    - Loads PEM files from disk (production) or auto-generates (development).
+    - Loads PEM files from disk. Keys must be pre-provisioned; use
+      scripts/generate-keys.sh to create them locally or mount them
+      via Docker volume / Kubernetes secret in production.
     - Supports key rotation: sign with the active key, verify with any loaded key.
     - Exposes JWKS for external verification (APISIX, other services).
     """
@@ -47,40 +48,26 @@ class RS256KeyManager:
 
     async def initialize(self) -> None:
         """
-        Load keys from disk. Fails fast if keys are missing and
-        ALLOW_RSA_KEY_AUTOGENERATION is disabled.
+        Load keys from disk. Fails fast if keys are missing or below the
+        configured minimum count.
         """
         key_dir = settings.get_rs256_key_path()
 
-        if key_dir.exists() and any(key_dir.glob("*.pem")):
-            self._load_from_directory(key_dir)
-        elif settings.allow_rsa_key_autogeneration:
-            logger.warning(
-                "No RSA keys found at %s — generating %d key pairs.",
-                key_dir, settings.rs256_min_key_count,
-            )
-            key_dir.mkdir(parents=True, exist_ok=True)
-            self._generate_keys(key_dir, settings.rs256_min_key_count)
-        else:
+        if not (key_dir.exists() and any(key_dir.glob("*.pem"))):
             raise RuntimeError(
-                f"FATAL: No RSA keys found at '{key_dir}' and "
-                f"ALLOW_RSA_KEY_AUTOGENERATION is disabled. "
-                f"Mount pre-provisioned PEM key pairs via Docker volume or Kubernetes secret."
+                f"FATAL: No RSA keys found at '{key_dir}'. "
+                f"Generate keys with scripts/generate-keys.sh or mount "
+                f"pre-provisioned PEM key pairs via Docker volume or Kubernetes secret."
             )
 
+        self._load_from_directory(key_dir)
+
         if len(self._keys) < settings.rs256_min_key_count:
-            if settings.allow_rsa_key_autogeneration:
-                logger.warning(
-                    "Only %d key pair(s) found, minimum is %d. Generating additional keys.",
-                    len(self._keys), settings.rs256_min_key_count,
-                )
-                self._generate_keys(key_dir, settings.rs256_min_key_count - len(self._keys))
-            else:
-                raise RuntimeError(
-                    f"FATAL: Only {len(self._keys)} key pair(s) found, "
-                    f"minimum required is {settings.rs256_min_key_count}. "
-                    f"Provision at least {settings.rs256_min_key_count} RSA key pairs."
-                )
+            raise RuntimeError(
+                f"FATAL: Only {len(self._keys)} key pair(s) found at '{key_dir}', "
+                f"minimum required is {settings.rs256_min_key_count}. "
+                f"Run scripts/generate-keys.sh to provision the required keys."
+            )
 
         self._active_index = min(settings.rs256_active_key_index, len(self._keys) - 1)
         logger.info("RS256 KeyManager: %d key(s) loaded, active kid=%s", len(self._keys), self.active_kid)
@@ -106,41 +93,6 @@ class RS256KeyManager:
                 self._keys_by_kid[kid] = pair
             except (ValueError, TypeError, OSError):
                 logger.exception("Failed to load key pair %s", kid)
-
-    def _generate_keys(self, key_dir: Path, count: int) -> None:
-        """Generate RSA key pairs and persist to disk."""
-        existing = len(self._keys)
-        for i in range(count):
-            idx = existing + i + 1
-            kid = f"key_{idx:02d}"
-            private_key = rsa.generate_private_key(
-                public_exponent=65537,
-                key_size=2048,
-                backend=default_backend(),
-            )
-            public_key = private_key.public_key()
-
-            priv_path = key_dir / f"{kid}_private.pem"
-            pub_path = key_dir / f"{kid}_public.pem"
-            priv_path.write_bytes(
-                private_key.private_bytes(
-                    encoding=serialization.Encoding.PEM,
-                    format=serialization.PrivateFormat.PKCS8,
-                    encryption_algorithm=serialization.NoEncryption(),
-                )
-            )
-            pub_path.write_bytes(
-                public_key.public_bytes(
-                    encoding=serialization.Encoding.PEM,
-                    format=serialization.PublicFormat.SubjectPublicKeyInfo,
-                )
-            )
-
-            pair = RSAKeyPair(kid=kid, private_key=private_key, public_key=public_key)
-            self._keys.append(pair)
-            self._keys_by_kid[kid] = pair
-
-        logger.info("Generated %d RSA key pair(s) in %s", count, key_dir)
 
     # ── Public API ──
 

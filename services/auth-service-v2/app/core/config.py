@@ -26,9 +26,6 @@ class AuthSettings(BaseSettings):
     environment: str = "development"  # informational only — used for logging/tracing
     debug: bool = False
 
-    # ── Behaviour flags ──
-    allow_rsa_key_autogeneration: bool = False
-
     # ── Database ──
     database_url: Optional[str] = None
     postgres_user: Optional[str] = None

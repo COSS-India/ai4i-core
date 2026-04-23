@@ -7,6 +7,7 @@ This guide provides step-by-step instructions for setting up and running the AI4
 - **[Docker](https://docs.docker.com/get-started/get-docker/)** and **[Docker Compose](https://docs.docker.com/compose/install/)** installed
 - **[Git](https://git-scm.com/install/)** installed
 - **[Python](https://www.python.org/downloads/)** and **[pip](https://pip.pypa.io/en/stable/installation/)** installed
+- **[OpenSSL](https://openssl-library.org/source/)** installed
 - At least **8GB RAM** and **20GB disk space**
 
 ## Important Note
@@ -57,6 +58,16 @@ Run the setup script to generate `.env` files for every service, the frontend, a
 ```
 
 This command will copy `env.template` to `.env` for each service. It always overwrites existing `.env` files, so you can re-run it any time you change values in the root `.env`.
+
+### 2.3 Generate Keys for the Auth Service
+
+The auth service signs JWTs using RS256 and requires pre-provisioned RSA key pairs. Generate keys using:
+
+```bash
+./scripts/generate-keys.sh
+```
+
+This reads `RS256_KEY_DIRECTORY` and `RS256_MIN_KEY_COUNT` from `services/auth-service-v2/.env` and produces the required PEM pairs.
 
 ## Step 3: Build Docker Images
 
