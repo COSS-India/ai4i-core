@@ -15,7 +15,7 @@ from logger import logger
 from ai4icore_env import app_env
 
 LOGIN_URL = app_env.login_url
-EMAIL_PASSWORD_SETUP_LINK_EXPIRE_HOURS = app_env.email_password_setup_token_expire_hours
+EMAIL_PASSWORD_SETUP_TOKEN_EXPIRE_HOURS = app_env.email_password_setup_token_expire_hours
 
 
 async def send_welcome_email(
