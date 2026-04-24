@@ -19,7 +19,7 @@ import {
 } from "@chakra-ui/react";
 import Head from "next/head";
 import { useRouter } from "next/router";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "../services/api";
 
 type RuleState = {
@@ -45,8 +45,11 @@ const SetPasswordPage: React.FC = () => {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [checkingToken, setCheckingToken] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [isCompleted, setIsCompleted] = useState(false);
+  const [isTokenUsable, setIsTokenUsable] = useState(true);
 
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
@@ -62,6 +65,63 @@ const SetPasswordPage: React.FC = () => {
   const isRuleOkColor = useColorModeValue("green.600", "green.300");
   const isRuleBadColor = useColorModeValue("gray.600", "gray.400");
 
+  useEffect(() => {
+    if (!isCompleted) return;
+    const timer = setTimeout(() => {
+      router.push("/auth");
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [isCompleted, router]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkTokenStatus = async () => {
+      if (!token) {
+        if (!cancelled) {
+          setError("Invalid setup link. Missing token.");
+          setIsTokenUsable(false);
+          setCheckingToken(false);
+        }
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/v1/auth/set-password/status?token=${encodeURIComponent(token)}`,
+        );
+        const payload = await response.json().catch(() => ({}));
+        const data = payload?.data || payload;
+
+        if (!response.ok) {
+          const message = payload?.detail || payload?.message || "Failed to validate setup link.";
+          throw new Error(typeof message === "string" ? message : JSON.stringify(message));
+        }
+
+        if (!data?.valid) {
+          if (!cancelled) {
+            setIsTokenUsable(false);
+            setError(data?.message || "This setup link is no longer valid. Please login.");
+          }
+        }
+      } catch (statusError: any) {
+        if (!cancelled) {
+          setIsTokenUsable(false);
+          setError(statusError?.message || "Failed to validate setup link.");
+        }
+      } finally {
+        if (!cancelled) {
+          setCheckingToken(false);
+        }
+      }
+    };
+
+    checkTokenStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
@@ -69,6 +129,10 @@ const SetPasswordPage: React.FC = () => {
 
     if (!token) {
       setError("Invalid setup link. Missing token.");
+      return;
+    }
+    if (!isTokenUsable) {
+      setError("Password has already been set. Please login.");
       return;
     }
     if (!isPasswordValid) {
@@ -100,6 +164,7 @@ const SetPasswordPage: React.FC = () => {
       }
 
       setSuccess("Password setup successfully. You can now login using the portal.");
+      setIsCompleted(true);
       setNewPassword("");
       setConfirmPassword("");
     } catch (submitError: any) {
@@ -139,6 +204,7 @@ const SetPasswordPage: React.FC = () => {
                   value={newPassword}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewPassword(e.target.value)}
                   autoComplete="new-password"
+                  isDisabled={isCompleted || !isTokenUsable || checkingToken}
                 />
               </FormControl>
 
@@ -149,6 +215,7 @@ const SetPasswordPage: React.FC = () => {
                   value={confirmPassword}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfirmPassword(e.target.value)}
                   autoComplete="new-password"
+                  isDisabled={isCompleted || !isTokenUsable || checkingToken}
                 />
                 {!!error && !rules.match && <FormErrorMessage>Passwords must match.</FormErrorMessage>}
               </FormControl>
@@ -175,19 +242,26 @@ const SetPasswordPage: React.FC = () => {
                   <Box>
                     <AlertTitle>Password updated</AlertTitle>
                     <AlertDescription>{success}</AlertDescription>
+                    <AlertDescription mt={1}>Redirecting to login...</AlertDescription>
                   </Box>
                 </Alert>
               )}
 
-              <Button
-                type="submit"
-                colorScheme="blue"
-                isLoading={submitting}
-                loadingText="Setting password"
-                isDisabled={!token}
-              >
-                Setup Password
-              </Button>
+              {isCompleted || !isTokenUsable ? (
+                <Button colorScheme="blue" onClick={() => router.push("/auth")}>
+                  Go to Login
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  colorScheme="blue"
+                  isLoading={submitting}
+                  loadingText="Setting password"
+                  isDisabled={!token || checkingToken}
+                >
+                  Setup Password
+                </Button>
+              )}
             </VStack>
           </Box>
         </Container>

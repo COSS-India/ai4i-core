@@ -1366,10 +1366,12 @@ async def verify_email_token(
             f"status={auth_response.status_code}, body={auth_response.text}"
         )
         
-        raise HTTPException(
-            status_code=auth_response.status_code,
-            detail=auth_response.json() if auth_response.headers.get("content-type", "").startswith("application/json") else auth_response.text,
-        )
+        if auth_response.headers.get("content-type", "").startswith("application/json"):
+            auth_error = auth_response.json()
+            detail = auth_error.get("detail", auth_error) if isinstance(auth_error, dict) else auth_error
+        else:
+            detail = auth_response.text
+        raise HTTPException(status_code=auth_response.status_code, detail=detail)
 
     auth_user_payload = auth_response.json()
     admin_user_id, setup_token = _extract_provision_user_data(auth_user_payload)
@@ -1589,10 +1591,12 @@ async def resend_setup_link_email(
         )
 
     if auth_response.status_code not in (200, 201):
-        raise HTTPException(
-            status_code=auth_response.status_code,
-            detail=auth_response.json() if auth_response.headers.get("content-type", "").startswith("application/json") else auth_response.text,
-        )
+        if auth_response.headers.get("content-type", "").startswith("application/json"):
+            auth_error = auth_response.json()
+            detail = auth_error.get("detail", auth_error) if isinstance(auth_error, dict) else auth_error
+        else:
+            detail = auth_response.text
+        raise HTTPException(status_code=auth_response.status_code, detail=detail)
 
     auth_payload = auth_response.json()
     auth_data = auth_payload.get("data") if isinstance(auth_payload, dict) else auth_payload
@@ -2155,10 +2159,12 @@ async def register_user(
             f"Auth-service /api/v1/auth/internal/provision-user failed for tenant user {payload.username} "
             f"under tenant {tenant.tenant_id}: status={auth_response.status_code}, body={auth_response.text}"
         )
-        raise HTTPException(
-            status_code=auth_response.status_code,
-            detail=auth_response.json() if auth_response.headers.get("content-type", "").startswith("application/json") else auth_response.text,
-        )
+        if auth_response.headers.get("content-type", "").startswith("application/json"):
+            auth_error = auth_response.json()
+            detail = auth_error.get("detail", auth_error) if isinstance(auth_error, dict) else auth_error
+        else:
+            detail = auth_response.text
+        raise HTTPException(status_code=auth_response.status_code, detail=detail)
 
     auth_user_payload = auth_response.json()
     user_id, setup_token = _extract_provision_user_data(auth_user_payload)

@@ -15,6 +15,7 @@ from logger import logger
 from ai4icore_env import app_env
 
 LOGIN_URL = app_env.login_url
+PASSWORD_SETUP_LINK_EXPIRE_HOURS = app_env.email_password_setup_token_expire_hours
 
 
 async def send_welcome_email(
@@ -40,6 +41,7 @@ async def send_welcome_email(
             email=contact_email,
             login_url=f"{LOGIN_URL}",
             set_password_url=set_password_url,
+            setup_link_expiry_hours=PASSWORD_SETUP_LINK_EXPIRE_HOURS,
         )
 
     html_body = f"""
@@ -58,6 +60,9 @@ async def send_welcome_email(
             <p style="color:#374151;">
               Click the button below to set your password on the AI4I portal.
             </p>
+            <p style="color:#6b7280;font-size:13px;margin:0 0 12px 0;">
+              This setup link is valid for <b>{PASSWORD_SETUP_LINK_EXPIRE_HOURS} hours</b> and can be used only once.
+            </p>
             <p style="margin:24px 0;">
               <a
                 href="{set_password_url}"
@@ -71,6 +76,9 @@ async def send_welcome_email(
             </p>
             <p style="font-size:13px;word-break:break-all;margin:0 0 8px 0;">
               <a href="{set_password_url}">{set_password_url}</a>
+            </p>
+            <p style="color:#6b7280;font-size:13px;margin:0 0 8px 0;">
+              If this link has expired, please provide your email and contact your platform administrator.
             </p>
             <p style="color:#6b7280;font-size:13px;margin:0;">
               Login URL: <a href="{LOGIN_URL}">{LOGIN_URL}</a>
@@ -110,6 +118,7 @@ async def send_user_welcome_email(
     body = USER_WELCOME_EMAIL_BODY.format(
             email=contact_email,
             set_password_url=set_password_url,
+            setup_link_expiry_hours=PASSWORD_SETUP_LINK_EXPIRE_HOURS,
         )
 
     html_body = f"""
@@ -127,6 +136,9 @@ async def send_user_welcome_email(
             <p style="color:#374151;">
               Click the button below to set your password on the AI4I portal.
             </p>
+            <p style="color:#6b7280;font-size:13px;margin:0 0 12px 0;">
+              This setup link is valid for <b>{PASSWORD_SETUP_LINK_EXPIRE_HOURS} hours</b> and can be used only once.
+            </p>
             <p style="margin:24px 0;">
               <a
                 href="{set_password_url}"
@@ -138,6 +150,9 @@ async def send_user_welcome_email(
             <p style="color:#6b7280;font-size:13px;margin:0;">
               If the button does not work, use this link:
               <a href="{set_password_url}"> {set_password_url}</a>
+            </p>
+            <p style="color:#6b7280;font-size:13px;margin:8px 0 0 0;">
+              If this link has expired, please provide your email and contact your platform administrator.
             </p>
           </div>
         </div>

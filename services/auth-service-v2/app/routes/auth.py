@@ -298,6 +298,17 @@ async def set_password_page(
     return HTMLResponse(content=_build_set_password_page(token), status_code=200)
 
 
+@router.get("/set-password/status")
+async def set_password_status(
+    token: str | None = Query(default=None, alias="token"),
+    svc: AuthService = Depends(get_auth_service),
+):
+    if not token:
+        raise HTTPException(status_code=422, detail="token is required")
+    status = await svc.get_setup_token_status(token)
+    return success_response(data=status)
+
+
 @router.post("/login", response_model=LoginResponse)
 async def login(
     request: Request,

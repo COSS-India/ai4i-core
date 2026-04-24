@@ -467,6 +467,45 @@ class AuthService:
         await self._setup_tokens.mark_used(setup_token, datetime.now(timezone.utc))
         await self._users.commit()
 
+    async def get_setup_token_status(self, token: str) -> dict[str, str | bool]:
+        setup_token = await self._setup_tokens.get_by_token(token)
+        if not setup_token:
+            return {
+                "valid": False,
+                "status": "invalid",
+                "message": "Invalid setup link.",
+            }
+        if setup_token.used_at is not None or not setup_token.is_active:
+            return {
+                "valid": False,
+                "status": "used",
+                "message": "Password has already been set. Please login.",
+            }
+        if setup_token.expires_at <= datetime.now(timezone.utc):
+            return {
+                "valid": False,
+                "status": "expired",
+                "message": "This setup link has expired. Please request a new one.",
+            }
+        user = await self._users.get_by_id(setup_token.user_id)
+        if not user:
+            return {
+                "valid": False,
+                "status": "invalid",
+                "message": "Invalid setup link.",
+            }
+        if user.password_hash:
+            return {
+                "valid": False,
+                "status": "already_set",
+                "message": "Password has already been set. Please login.",
+            }
+        return {
+            "valid": True,
+            "status": "valid",
+            "message": "Setup link is valid.",
+        }
+
     async def resend_setup_link(self, email: str) -> str:
         user = await self._users.get_by_email(email)
         if not user:
