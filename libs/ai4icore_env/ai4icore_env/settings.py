@@ -238,6 +238,7 @@ class AppEnv(BaseSettings):
     email_password_setup_url: str = ""
     # Multi-tenant email verification token expiry (used by multi-tenant-feature)
     email_verification_token_expire_minutes: int = 15
+    email_password_setup_token_expire_hours: int = 48
     email_verification_resend_min_interval_seconds: int = 60
     email_verification_resend_max_per_hour: int = 5
     email_verification_resend_max_per_day: int = 10
