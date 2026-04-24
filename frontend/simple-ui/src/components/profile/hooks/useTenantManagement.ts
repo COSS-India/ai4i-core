@@ -141,6 +141,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
   const [editUserRow, setEditUserRow] = useState<TenantUserView | null>(null);
   const [editUserForm, setEditUserForm] = useState<EditUserFormState>({ tenant_id: "", user_id: 0, role: "USER" });
+  const [editUserFormErrors, setEditUserFormErrors] = useState<Record<string, string>>({});
   const [isSubmittingEditUser, setIsSubmittingEditUser] = useState(false);
 
   // Delete user confirmation
@@ -521,6 +522,14 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       toast({ title: "Validation", description: "Tenant, full name, email, and username are required.", status: "error", isClosable: true });
       return;
     }
+    if (!userForm.role?.trim()) {
+      setUserFormErrors((prev) => ({
+        ...prev,
+        role: "Role is required",
+      }));
+      toast({ title: "Validation", description: "Role is required.", status: "error", isClosable: true });
+      return;
+    }
     if (!isValidEmailFormat(userForm.email)) {
       toast({ title: "Validation", description: "Enter a valid email address (e.g. name@example.com).", status: "error", isClosable: true });
       return;
@@ -571,7 +580,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         full_name: userForm.full_name.trim() || undefined,
         services: servicesToSend,
         is_approved: userForm.is_approved,
-        role: userForm.role || "USER",
+        role: userForm.role.trim(),
       });
       toast({ title: "User added", description: "User " + userForm.username + " registered under tenant.", status: "success", duration: 4000, isClosable: true });
       closeUserModal();
@@ -746,8 +755,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       username: u.username ?? "",
       email: u.email ?? "",
       is_approved: (u as { is_approved?: boolean }).is_approved ?? false,
-      role: u.role ?? "USER",
+      role: u.role ?? "",
     });
+    setEditUserFormErrors({});
     setIsEditUserModalOpen(true);
   };
 
@@ -757,6 +767,14 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       toast({ title: "Validation", description: "Username must be at least 3 characters.", status: "error", isClosable: true });
       return;
     }
+    if (!editUserForm.role?.trim()) {
+      setEditUserFormErrors((prev) => ({
+        ...prev,
+        role: "Role is required",
+      }));
+      toast({ title: "Validation", description: "Role is required.", status: "error", isClosable: true });
+      return;
+    }
     setIsSubmittingEditUser(true);
     try {
       await multiTenantService.updateUser({
@@ -764,7 +782,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         user_id: editUserForm.user_id,
         ...(editUserForm.username !== undefined && editUserForm.username.trim().length >= 3 && { username: editUserForm.username.trim() }),
         ...(editUserForm.is_approved !== undefined && { is_approved: editUserForm.is_approved }),
-        ...(editUserForm.role !== undefined && editUserForm.role.trim() !== "" && { role: editUserForm.role.trim() }),
+        role: editUserForm.role.trim(),
       });
       toast({ title: "User updated", status: "success", isClosable: true });
       setIsEditUserModalOpen(false);
@@ -811,6 +829,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const closeEditUserModal = () => {
     setIsEditUserModalOpen(false);
     setEditUserRow(null);
+    setEditUserFormErrors({});
   };
   const closeStatusDialog = () => {
     if (!isSubmittingStatus) {
@@ -1180,6 +1199,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     editUserRow,
     editUserForm,
     setEditUserForm,
+    editUserFormErrors,
+    setEditUserFormErrors,
     isSubmittingEditUser,
     handleOpenEditUser,
     handleSaveEditUser,

@@ -18,7 +18,7 @@ import { ChevronDownIcon, SearchIcon } from "@chakra-ui/icons";
 import authService from "../../services/authService";
 import type { User } from "../../types/auth";
 
-export type UserSearchablePick = Pick<User, "id" | "email" | "username">;
+export type UserSearchablePick = Pick<User, "id" | "email" | "username" | "full_name">;
 
 const PAGE_SIZE = 100;
 
@@ -30,10 +30,17 @@ function mergeById(a: User[], b: User[]): User[] {
 }
 
 function formatUserLabel(u: UserSearchablePick): string {
-  const name = (u.username || "").trim();
+  const name = getUserDisplayName(u);
   const email = (u.email || "").trim();
   if (name && email) return `${name} (${email})`;
   return name || email || `User ${u.id}`;
+}
+
+function getUserDisplayName(u: Pick<User, "id" | "email" | "username" | "full_name">): string {
+  const fullName = (u.full_name || "").trim();
+  const username = (u.username || "").trim();
+  const email = (u.email || "").trim();
+  return fullName || username || email || `User ${u.id}`;
 }
 
 function matchesSearch(u: User, q: string): boolean {
@@ -171,9 +178,13 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
   const filtered = useMemo(() => {
     const list = mergedUsers.filter((u) => matchesSearch(u, search));
     return list.sort((a, b) => {
-      const ea = (a.email || "").localeCompare(b.email || "", undefined, { sensitivity: "base" });
-      if (ea !== 0) return ea;
-      return (a.username || "").localeCompare(b.username || "", undefined, { sensitivity: "base" });
+      const displayNameOrder = getUserDisplayName(a).localeCompare(getUserDisplayName(b), undefined, {
+        sensitivity: "base",
+      });
+      if (displayNameOrder !== 0) return displayNameOrder;
+      const emailOrder = (a.email || "").localeCompare(b.email || "", undefined, { sensitivity: "base" });
+      if (emailOrder !== 0) return emailOrder;
+      return a.id - b.id;
     });
   }, [mergedUsers, search]);
 
@@ -200,7 +211,7 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
 
   const handlePick = (u: User) => {
     if (props.variant === "pick") {
-      props.onChange(u.id, { id: u.id, email: u.email, username: u.username });
+      props.onChange(u.id, { id: u.id, email: u.email, username: u.username, full_name: u.full_name });
     } else {
       props.onChange(String(u.id));
     }

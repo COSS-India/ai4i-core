@@ -887,7 +887,8 @@ const LanguageDetectionPage: React.FC = () => {
     try {
       const response = await performLanguageDetectionInference([text], selectedServiceId);
       setResult(response.data);
-      setResponseTime(response.responseTime);
+      // request-duration is tracked in milliseconds by API interceptors.
+      setResponseTime(response.responseTime / 1000);
       setFetched(true);
     } catch (err: any) {
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(

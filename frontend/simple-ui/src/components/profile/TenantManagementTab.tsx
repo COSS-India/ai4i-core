@@ -1384,6 +1384,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 !tm.userForm.email.trim() ||
                 !tm.userForm.username.trim() ||
                 tm.userForm.username.trim().length < 3 ||
+                !tm.userForm.role?.trim() ||
                 (() => {
                   const selectedTenant = tm.tenants.find((t) => t.tenant_id === tm.userForm.tenant_id);
                   const tenantServices = selectedTenant?.subscriptions ?? [];
@@ -1434,13 +1435,34 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <FormLabel>Username</FormLabel>
                 <Input placeholder="Username (min 3 characters)" value={tm.userForm.username} onChange={(e) => tm.setUserForm((f) => ({ ...f, username: e.target.value }))} bg="white" />
               </FormControl>
-              <FormControl>
+              <FormControl isRequired isInvalid={!!tm.userFormErrors?.role}>
                 <FormLabel>Role</FormLabel>
-                <Select value={tm.userForm.role || ""} onChange={(e) => tm.setUserForm((f) => ({ ...f, role: e.target.value }))} bg="white" placeholder="Select role">
+                <Select
+                  value={tm.userForm.role || ""}
+                  onChange={(e) => {
+                    const nextRole = e.target.value;
+                    tm.setUserForm((f) => ({ ...f, role: nextRole }));
+                    if (nextRole.trim()) {
+                      tm.setUserFormErrors((prev) => {
+                        const next = { ...prev };
+                        delete next.role;
+                        return next;
+                      });
+                    }
+                  }}
+                  onBlur={() => {
+                    if (!tm.userForm.role?.trim()) {
+                      tm.setUserFormErrors((prev) => ({ ...prev, role: "Role is required" }));
+                    }
+                  }}
+                  bg="white"
+                  placeholder="Select role"
+                >
                   {tenantUserAssignableRoleOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </Select>
+                {tm.userFormErrors?.role && <FormErrorMessage>{tm.userFormErrors.role}</FormErrorMessage>}
               </FormControl>
               <FormControl
                 isInvalid={(() => {
@@ -1647,7 +1669,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
               colorScheme="blue"
               onClick={onEditUserConfirmOpen}
               isLoading={tm.isSubmittingEditUser}
-              isDisabled={!tm.editUserForm.username?.trim() || tm.editUserForm.username.trim().length < 3}
+              isDisabled={!tm.editUserForm.username?.trim() || tm.editUserForm.username.trim().length < 3 || !tm.editUserForm.role?.trim()}
             >
               Save Changes
             </Button>
@@ -1690,16 +1712,33 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 Email cannot be changed for now.
               </Text>
             </FormControl>
-            <FormControl>
-              <FormLabel>Role (optional)</FormLabel>
+            <FormControl isRequired isInvalid={!!tm.editUserFormErrors?.role}>
+              <FormLabel>Role</FormLabel>
               <Select
-                value={(tm.editUserForm.role ?? "USER") === "ADMIN" ? "USER" : (tm.editUserForm.role ?? "USER")}
-                onChange={(e) => tm.setEditUserForm((f) => ({ ...f, role: e.target.value }))}
+                value={tm.editUserForm.role ?? ""}
+                onChange={(e) => {
+                  const nextRole = e.target.value;
+                  tm.setEditUserForm((f) => ({ ...f, role: nextRole }));
+                  if (nextRole.trim()) {
+                    tm.setEditUserFormErrors((prev) => {
+                      const next = { ...prev };
+                      delete next.role;
+                      return next;
+                    });
+                  }
+                }}
+                onBlur={() => {
+                  if (!tm.editUserForm.role?.trim()) {
+                    tm.setEditUserFormErrors((prev) => ({ ...prev, role: "Role is required" }));
+                  }
+                }}
+                placeholder="Select role"
               >
                 {tenantUserAssignableRoleOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </Select>
+              {tm.editUserFormErrors?.role && <FormErrorMessage>{tm.editUserFormErrors.role}</FormErrorMessage>}
             </FormControl>
           </VStack>
         )}
