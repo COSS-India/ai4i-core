@@ -18,14 +18,12 @@ from app.core.redis import (
     get_redis_role_permissions,
 )
 from app.repositories.api_key_repository import APIKeyRepository
-from app.repositories.oauth_repository import OAuthRepository
 from app.repositories.role_repository import RoleRepository
 from app.repositories.session_repository import SessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.api_key_service import APIKeyService
 from app.services.auth_service import AuthService
 from app.services.cache_service import CacheService
-from app.services.oauth_service import OAuthService
 from app.services.password_service import PasswordService
 from app.services.role_service import RoleService
 from app.services.session_service import SessionService
@@ -90,15 +88,3 @@ async def get_api_key_service(
     return APIKeyService(APIKeyRepository(db), TokenService(), cache)
 
 
-async def get_oauth_service(
-    db: AsyncSession = Depends(get_db),
-    cache: CacheService = Depends(get_cache_service),
-) -> OAuthService:
-    return OAuthService(
-        user_repo=UserRepository(db),
-        oauth_repo=OAuthRepository(db),
-        role_repo=RoleRepository(db),
-        token_service=TokenService(),
-        session_service=SessionService(SessionRepository(db), cache),
-        cache_service=cache,
-    )

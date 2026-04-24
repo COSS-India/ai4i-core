@@ -1,5 +1,5 @@
 """
-Role and permission schemas.
+Role, Permission, UserRole, and RolePermission schemas.
 """
 
 from datetime import datetime
@@ -52,6 +52,16 @@ class UserRoleResponse(BaseSchema):
     updated_by: Optional[str] = None
 
 
+class RolePermissionResponse(BaseSchema):
+    id: int
+    role_id: int
+    permission_id: int
+    created_at: datetime
+    created_by: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[str] = None
+
+
 class RoleAssignRequest(BaseSchema):
     user_id: UUID
     role_name: str = Field(..., min_length=1, max_length=100)
@@ -62,7 +72,11 @@ class RoleRemoveRequest(BaseSchema):
     role_name: str
 
 
+class RolePermissionAssignRequest(BaseSchema):
+    role_id: int
+    permission_id: int
+
+
 class GuestServicesAssignRequest(BaseSchema):
     """Replace GUEST role inference permissions; other GUEST permissions are unchanged."""
-
     services: list[str] = Field(default_factory=list)

@@ -3,12 +3,19 @@ User request/response schemas.
 """
 
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 from uuid import UUID
 
 from pydantic import EmailStr, Field
 
 from app.schemas.base import BaseSchema
+
+
+class CreationType(str, Enum):
+    DIRECT = "direct"
+    GOOGLE = "google"
+    TENANT = "tenant"
 
 
 class UserUpdate(BaseSchema):
@@ -25,6 +32,8 @@ class UserResponse(BaseSchema):
     full_name: Optional[str] = None
     is_active: bool
     is_delete: Optional[bool] = None
+    is_tenant_active: Optional[bool] = None
+    creation_type: Optional[CreationType] = None
     tenant_id: Optional[UUID] = Field(None, description="Tenant identifier")
     last_login: Optional[datetime] = None
     avatar_url: Optional[str] = None
@@ -46,6 +55,8 @@ class UserDetailResponse(BaseSchema):
     full_name: Optional[str] = None
     is_active: bool
     is_delete: Optional[bool] = None
+    is_tenant_active: Optional[bool] = None
+    creation_type: Optional[CreationType] = None
     tenant_id: Optional[UUID] = None
     created_at: datetime
     last_login: Optional[datetime] = None
@@ -59,3 +70,4 @@ class UserListResponse(BaseSchema):
     phone_number: Optional[str] = None
     full_name: Optional[str] = None
     is_active: bool
+    creation_type: Optional[CreationType] = None

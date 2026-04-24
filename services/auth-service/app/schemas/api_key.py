@@ -16,7 +16,6 @@ from app.schemas.base import BaseSchema
 class APIKeyCreateRequest(BaseSchema):
     key_name: str = Field(..., min_length=1, max_length=100)
     permissions: list[str] = Field(default_factory=list, description="Permission names")
-    tenant_id: Optional[UUID] = Field(None, description="Tenant ID for tenant-scoped API keys")
 
 
 class APIKeyUpdateRequest(BaseSchema):
@@ -37,7 +36,7 @@ class APIKeyValidationRequest(BaseSchema):
 class APIKeyResponse(BaseSchema):
     key_id: int
     key_name: str
-    tenant_id: Optional[UUID] = None
+    user_id: UUID
     permissions: list[str]
     is_active: bool
     created_at: datetime

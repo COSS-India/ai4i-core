@@ -1,5 +1,5 @@
 """
-User password schemas (for user_password table).
+UserCredentials request/response schemas (for user_credentials table).
 """
 
 from datetime import datetime
@@ -11,19 +11,18 @@ from pydantic import Field
 from app.schemas.base import BaseSchema
 
 
-class UserPasswordCreate(BaseSchema):
+class CredentialsCreate(BaseSchema):
     password: str = Field(..., min_length=8, max_length=100)
     confirm_password: str = Field(..., min_length=8, max_length=100)
 
 
-class UserPasswordUpdate(BaseSchema):
+class CredentialsUpdate(BaseSchema):
     current_password: str
     new_password: str = Field(..., min_length=8, max_length=100)
     confirm_password: str = Field(..., min_length=8, max_length=100)
 
 
-class UserPasswordResponse(BaseSchema):
-    id: int
+class CredentialsResponse(BaseSchema):
     user_id: UUID
     password_hash: str
     password_salt: str

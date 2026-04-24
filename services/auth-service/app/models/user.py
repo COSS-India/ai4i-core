@@ -2,14 +2,21 @@
 User ORM model.
 """
 
+import enum
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.models import Base
+
+
+class CreationType(str, enum.Enum):
+    DIRECT = "direct"
+    GOOGLE = "google"
+    TENANT = "tenant"
 
 
 class User(Base):
@@ -31,6 +38,12 @@ class User(Base):
     phone_number = Column(String(20), nullable=True)
     timezone = Column(String(50), server_default="UTC")
     is_delete = Column(Boolean, default=False, nullable=True)
+    is_tenant_active = Column(Boolean, default=True, nullable=True)
+    creation_type = Column(
+        Enum(CreationType, name="creation_type_enum", values_callable=lambda x: [e.value for e in x]),
+        nullable=True,
+        server_default=CreationType.DIRECT.value,
+    )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     created_by = Column(String(255), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -39,5 +52,6 @@ class User(Base):
     # Relationships
     tenant = relationship("Tenant", back_populates="users")
     user_roles = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
-    user_passwords = relationship("UserPassword", back_populates="user", cascade="all, delete-orphan")
-    oauth_accounts = relationship("OAuthProvider", back_populates="user", cascade="all, delete-orphan")
+    credentials = relationship("UserCredentials", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")

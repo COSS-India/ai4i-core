@@ -14,9 +14,9 @@ class APIKey(Base):
     __tablename__ = "api_key"
 
     key_id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(
+    user_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("tenants.tenant_id", ondelete="CASCADE"),
+        ForeignKey("users.user_id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -29,4 +29,4 @@ class APIKey(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     updated_by = Column(String(255), nullable=True)
 
-    tenant = relationship("Tenant", back_populates="api_keys")
+    user = relationship("User", back_populates="api_keys")

@@ -1,8 +1,8 @@
 """
-UserPassword ORM model.
+UserCredentials ORM model — password hash stored 1-to-1 with User.
 """
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -10,15 +10,13 @@ from sqlalchemy.sql import func
 from app.models import Base
 
 
-class UserPassword(Base):
-    __tablename__ = "user_password"
+class UserCredentials(Base):
+    __tablename__ = "user_credentials"
 
-    id = Column(Integer, primary_key=True, index=True)
     user_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.user_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
+        primary_key=True,
     )
     password_hash = Column(String(255), nullable=False)
     password_salt = Column(String(255), nullable=False)
@@ -27,4 +25,4 @@ class UserPassword(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     updated_by = Column(String(255), nullable=True)
 
-    user = relationship("User", back_populates="user_passwords")
+    user = relationship("User", back_populates="credentials")

@@ -1,5 +1,5 @@
 """
-Role, Permission, and UserRole ORM models.
+Role, Permission, UserRole, and RolePermission ORM models.
 """
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
@@ -22,6 +22,7 @@ class Role(Base):
     updated_by = Column(String(255), nullable=True)
 
     user_roles = relationship("UserRole", back_populates="role", cascade="all, delete-orphan")
+    role_permissions = relationship("RolePermission", back_populates="role", cascade="all, delete-orphan")
 
 
 class Permission(Base):
@@ -35,6 +36,8 @@ class Permission(Base):
     created_by = Column(String(255), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     updated_by = Column(String(255), nullable=True)
+
+    role_permissions = relationship("RolePermission", back_populates="permission", cascade="all, delete-orphan")
 
 
 class UserRole(Base):
@@ -60,3 +63,28 @@ class UserRole(Base):
 
     user = relationship("User", back_populates="user_roles")
     role = relationship("Role", back_populates="user_roles")
+
+
+class RolePermission(Base):
+    __tablename__ = "role_permission"
+
+    id = Column(Integer, primary_key=True, index=True)
+    role_id = Column(
+        Integer,
+        ForeignKey("roles.role_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    permission_id = Column(
+        Integer,
+        ForeignKey("permissions.permission_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_by = Column(String(255), nullable=True)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    updated_by = Column(String(255), nullable=True)
+
+    role = relationship("Role", back_populates="role_permissions")
+    permission = relationship("Permission", back_populates="role_permissions")
