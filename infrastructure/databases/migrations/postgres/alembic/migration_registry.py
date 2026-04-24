@@ -66,6 +66,7 @@ class DatabaseSpec:
 
 DATABASE_ORDER = [
     "alerting_db",
+    "ai4iplatform_auth",
     "auth_service_v2_db",
     "config_db",
     "dashboard_db",
@@ -143,6 +144,21 @@ def _ensure_package(name: str) -> None:
     package = types.ModuleType(name)
     package.__path__ = []  # type: ignore[attr-defined]
     sys.modules[name] = package
+
+
+def _load_auth_service_metadata():
+    """Load auth-service ORM metadata (users/passwords/tenants/roles/api keys/oauth/token verification)."""
+    auth_root = PROJECT_ROOT / "services" / "auth-service"
+    auth_path = str(auth_root)
+    if auth_path not in sys.path:
+        sys.path.insert(0, auth_path)
+    # Purge any previously imported `app.*` modules to avoid cross-service collisions.
+    for module_name in list(sys.modules.keys()):
+        if module_name == "app" or module_name.startswith("app."):
+            sys.modules.pop(module_name, None)
+
+    module = importlib.import_module("app.models")
+    return module.Base.metadata
 
 
 def _load_auth_metadata():
@@ -409,6 +425,15 @@ DATABASE_SPECS = {
         database_name_key="ALERTING_DB_NAME",
         metadata_loader=_load_alerting_metadata,
     ),
+    "ai4iplatform_auth": DatabaseSpec(
+        name="ai4iplatform_auth",
+        user_key="AUTH_DB_USER",
+        password_key="AUTH_DB_PASSWORD",
+        host_key="AUTH_DB_HOST",
+        port_key="AUTH_DB_PORT",
+        database_name_key="AUTH_SERVICE_DB_NAME",
+        metadata_loader=_load_auth_service_metadata,
+    ),
     "auth_service_v2_db": DatabaseSpec(
         name="auth_service_v2_db",
         user_key="AUTH_DB_USER",
@@ -521,6 +546,18 @@ def get_connection_parts(name: str) -> dict[str, str]:
             "host": _require_env_any([spec.host_key, "POSTGRES_HOST", "ALEMBIC_DB_HOST"]),
             "port": _require_env_any([spec.port_key, "POSTGRES_PORT", "ALEMBIC_DB_PORT"]),
             "database": _require_env_any([spec.database_name_key]),
+        }
+
+    # ai4iplatform_auth falls back to shared AUTH_DB_* vars when AUTH_SERVICE_DB_NAME is absent,
+    # ultimately defaulting to the literal database name "ai4iplatform_auth".
+    if name == "ai4iplatform_auth":
+        db_name = os.getenv("AUTH_SERVICE_DB_NAME") or os.getenv("AUTH_DB_NAME") or "ai4iplatform_auth"
+        return {
+            "user": _require_env_any([spec.user_key, "POSTGRES_USER"]),
+            "password": _require_env_any([spec.password_key, "POSTGRES_PASSWORD"]),
+            "host": _require_env_any([spec.host_key, "POSTGRES_HOST", "ALEMBIC_DB_HOST"]),
+            "port": _require_env_any([spec.port_key, "POSTGRES_PORT", "ALEMBIC_DB_PORT"]),
+            "database": db_name,
         }
 
     return {

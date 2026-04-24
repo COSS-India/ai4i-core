@@ -36,6 +36,7 @@ EXTRA_ARGS=("${@:3}")
 
 DATABASES=(
   "alerting_db"
+  "ai4iplatform_auth"
   "auth_service_v2_db"
   "config_db"
   "dashboard_db"
@@ -85,6 +86,7 @@ Prerequisite:
 
 Examples:
   ./scripts/migrate.sh all upgrade
+  ./scripts/migrate.sh ai4iplatform_auth upgrade head
   ./scripts/migrate.sh auth_service_v2_db upgrade head
   ./scripts/migrate.sh config_db current
   ./scripts/migrate.sh model_management_db revision --autogenerate -m "add column"
@@ -242,7 +244,7 @@ PY
   local output
   local status
   set +e
-  output="$(alembic -c "$temp_ini" -x "db=$db" "$@" 2>&1)"
+  output="$("$PYTHON_BIN" -m alembic -c "$temp_ini" -x "db=$db" "$@" 2>&1)"
   status=$?
   set -e
   rm -f "$temp_ini"
