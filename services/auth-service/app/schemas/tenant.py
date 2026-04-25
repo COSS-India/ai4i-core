@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import EmailStr, Field
 
 from app.schemas.base import BaseSchema
+from app.models.tenant import TenantStatus
 
 
 class TenantCreate(BaseSchema):
@@ -23,7 +24,7 @@ class TenantUpdate(BaseSchema):
     organisation: Optional[str] = Field(None, min_length=1, max_length=255)
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = Field(None, max_length=20)
-    status: Optional[str] = Field(None, max_length=50)
+    status: Optional[TenantStatus] = None
 
 
 class TenantResponse(BaseSchema):
@@ -32,7 +33,7 @@ class TenantResponse(BaseSchema):
     organisation: str
     email: str
     phone_number: Optional[str] = None
-    status: str
+    status: TenantStatus
     created_at: datetime
     created_by: Optional[str] = None
     updated_at: Optional[datetime] = None
