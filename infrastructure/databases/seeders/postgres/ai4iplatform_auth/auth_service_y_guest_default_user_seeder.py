@@ -5,6 +5,9 @@ Mirrors auth_y_guest_default_user_seeder.py for the auth-service database.
 Creates/updates the default guest user, assigns the GUEST role, and maps
 the user to the default tenant created by auth_service_t_default_tenant_seeder.py.
 
+Rows created by this seeder carry created_by = SEEDER_ID so they can be
+distinguished from user-created records.
+
 Schema differences vs auth_db:
   - users.user_id is UUID (not serial int)
   - passwords stored in separate user_credentials table (no hash_rounds column)
@@ -21,9 +24,11 @@ from passlib.context import CryptContext
 
 from infrastructure.databases.core.base_seeder import BaseSeeder
 
+# Fixed identity for all rows written by seeders — readable as "seed0000…"
+SEEDER_ID = "5eed0000-0000-0000-0000-000000000000"
 
 GUEST_USERNAME = "guest"
-DEFAULT_TENANT_ORG = "AI4Inclusion"
+DEFAULT_TENANT_ORG = "default organisation"
 _CTX = CryptContext(schemes=["argon2"], default="argon2")
 
 
@@ -80,11 +85,13 @@ class AuthServiceGuestDefaultUserSeeder(BaseSeeder):
             """
             INSERT INTO users (
                 user_id, email, username, full_name,
-                is_active, tenant_id, timezone, is_delete, is_tenant_active, creation_type
+                is_active, tenant_id, timezone, is_delete, is_tenant_active,
+                creation_type, created_by
             )
             VALUES (
                 :user_id, :email, :username, :full_name,
-                :is_active, :tenant_id, :timezone, :is_delete, :is_tenant_active, :creation_type
+                :is_active, :tenant_id, :timezone, :is_delete, :is_tenant_active,
+                :creation_type, :created_by
             )
             ON CONFLICT (email) DO UPDATE
             SET
@@ -107,6 +114,7 @@ class AuthServiceGuestDefaultUserSeeder(BaseSeeder):
                 "is_delete": False,
                 "is_tenant_active": True,
                 "creation_type": "direct",
+                "created_by": SEEDER_ID,
             },
         )
 
@@ -120,8 +128,8 @@ class AuthServiceGuestDefaultUserSeeder(BaseSeeder):
         # Upsert credentials (PK = user_id)
         adapter.execute(
             """
-            INSERT INTO user_credentials (user_id, password_hash, password_salt)
-            VALUES (:user_id, :password_hash, :password_salt)
+            INSERT INTO user_credentials (user_id, password_hash, password_salt, created_by)
+            VALUES (:user_id, :password_hash, :password_salt, :created_by)
             ON CONFLICT (user_id) DO UPDATE
             SET
                 password_hash = EXCLUDED.password_hash,
@@ -131,6 +139,7 @@ class AuthServiceGuestDefaultUserSeeder(BaseSeeder):
                 "user_id": actual_user_id,
                 "password_hash": password_hash,
                 "password_salt": salt,
+                "created_by": SEEDER_ID,
             },
         )
         tenant_info = f" → tenant '{tenant_org}'" if tenant_id else " (no default tenant found)"
@@ -138,9 +147,9 @@ class AuthServiceGuestDefaultUserSeeder(BaseSeeder):
 
         # Assign GUEST role (user_role has no unique constraint on (user_id, role_id))
         adapter.execute(
-            """
-            INSERT INTO user_role (user_id, role_id)
-            SELECT u.user_id, r.role_id
+            f"""
+            INSERT INTO user_role (user_id, role_id, created_by)
+            SELECT u.user_id, r.role_id, '{SEEDER_ID}'
             FROM users u
             JOIN roles r ON r.name = 'GUEST'
             WHERE u.email = :email

@@ -10,9 +10,15 @@ Schema differences vs auth_db:
   - join table is `role_permission` (not `role_permissions`) with no unique
     constraint on (role_id, permission_id) → uses DELETE + INSERT pattern
 
+Rows created by this seeder carry created_by = SEEDER_ID so they can be
+distinguished from user-created records.
+
 Runs before tenant and user seeders (filename order: auth_service_r... < auth_service_t/y/z...).
 """
 from infrastructure.databases.core.base_seeder import BaseSeeder
+
+# Fixed identity for all rows written by seeders — readable as "seed0000…"
+SEEDER_ID = "5eed0000-0000-0000-0000-000000000000"
 
 
 class AuthServiceRolesSeeder(BaseSeeder):
@@ -51,12 +57,12 @@ class AuthServiceRolesSeeder(BaseSeeder):
         for name, description in roles:
             adapter.execute(
                 """
-                INSERT INTO roles (name, description)
-                VALUES (:name, :description)
+                INSERT INTO roles (name, description, created_by)
+                VALUES (:name, :description, :created_by)
                 ON CONFLICT (name) DO UPDATE
                   SET description = EXCLUDED.description
                 """,
-                {"name": name, "description": description},
+                {"name": name, "description": description, "created_by": SEEDER_ID},
             )
         print(f"    ✓ Seeded {len(roles)} roles in ai4iplatform_auth")
 
@@ -164,13 +170,13 @@ class AuthServiceRolesSeeder(BaseSeeder):
         for name, resource, action in permissions:
             adapter.execute(
                 """
-                INSERT INTO permissions (name, resource, action)
-                VALUES (:name, :resource, :action)
+                INSERT INTO permissions (name, resource, action, created_by)
+                VALUES (:name, :resource, :action, :created_by)
                 ON CONFLICT (name) DO UPDATE
                   SET resource = EXCLUDED.resource,
                       action   = EXCLUDED.action
                 """,
-                {"name": name, "resource": resource, "action": action},
+                {"name": name, "resource": resource, "action": action, "created_by": SEEDER_ID},
             )
         print(f"    ✓ Seeded {len(permissions)} permissions in ai4iplatform_auth")
 
@@ -188,9 +194,9 @@ class AuthServiceRolesSeeder(BaseSeeder):
 
         # ADMIN — full access
         adapter.execute(
-            """
-            INSERT INTO role_permission (role_id, permission_id)
-            SELECT r.role_id, p.permission_id
+            f"""
+            INSERT INTO role_permission (role_id, permission_id, created_by)
+            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.create','users.read','users.update','users.delete',
@@ -212,9 +218,9 @@ class AuthServiceRolesSeeder(BaseSeeder):
 
         # USER
         adapter.execute(
-            """
-            INSERT INTO role_permission (role_id, permission_id)
-            SELECT r.role_id, p.permission_id
+            f"""
+            INSERT INTO role_permission (role_id, permission_id, created_by)
+            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.read','users.update',
@@ -233,9 +239,9 @@ class AuthServiceRolesSeeder(BaseSeeder):
 
         # GUEST — read-only + core inference
         adapter.execute(
-            """
-            INSERT INTO role_permission (role_id, permission_id)
-            SELECT r.role_id, p.permission_id
+            f"""
+            INSERT INTO role_permission (role_id, permission_id, created_by)
+            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.read','roles.read','service.read',
@@ -248,9 +254,9 @@ class AuthServiceRolesSeeder(BaseSeeder):
 
         # MODERATOR
         adapter.execute(
-            """
-            INSERT INTO role_permission (role_id, permission_id)
-            SELECT r.role_id, p.permission_id
+            f"""
+            INSERT INTO role_permission (role_id, permission_id, created_by)
+            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.create','users.read','users.update','users.delete',
@@ -276,9 +282,9 @@ class AuthServiceRolesSeeder(BaseSeeder):
 
         # TENANT ADMIN
         adapter.execute(
-            """
-            INSERT INTO role_permission (role_id, permission_id)
-            SELECT r.role_id, p.permission_id
+            f"""
+            INSERT INTO role_permission (role_id, permission_id, created_by)
+            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.create','users.read','users.update',

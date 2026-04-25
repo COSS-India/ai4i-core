@@ -7,9 +7,12 @@ is idempotent even though the tenants table has no unique constraint on
 organisation or email.
 
 Environment variables (all optional — defaults shown):
-  DEFAULT_TENANT_ORG      → "AI4Inclusion"
-  DEFAULT_TENANT_CONTACT  → "System Administrator"
+  DEFAULT_TENANT_ORG      → "default organisation"
+  DEFAULT_TENANT_CONTACT  → "default"
   DEFAULT_TENANT_EMAIL    → "admin@ai4inclusion.org"
+
+Rows created by this seeder carry created_by = SEEDER_ID so they can be
+distinguished from user-created records.
 
 Runs after auth_service_roles_seeder.py and before user seeders
 (filename order: auth_service_r... < auth_service_t... < auth_service_y/z...).
@@ -19,9 +22,11 @@ import uuid
 
 from infrastructure.databases.core.base_seeder import BaseSeeder
 
+# Fixed identity for all rows written by seeders — readable as "seed0000…"
+SEEDER_ID = "5eed0000-0000-0000-0000-000000000000"
 
-DEFAULT_ORG = "AI4Inclusion"
-DEFAULT_CONTACT = "System Administrator"
+DEFAULT_ORG = "default organisation"
+DEFAULT_CONTACT = "default"
 DEFAULT_EMAIL = "admin@ai4inclusion.org"
 
 
@@ -41,30 +46,31 @@ class AuthServiceDefaultTenantSeeder(BaseSeeder):
         )
 
         if existing:
-            # Update contact details in case they changed via env, but preserve tenant_id
             adapter.execute(
                 """
                 UPDATE tenants
                 SET contact_name = :contact,
                     email        = :email,
-                    status       = 'activated'
+                    status       = 'activated',
+                    updated_by   = :seeder_id
                 WHERE organisation = :org
                 """,
-                {"contact": contact, "email": email, "org": org},
+                {"contact": contact, "email": email, "org": org, "seeder_id": SEEDER_ID},
             )
             print(f"    ✓ Default tenant already exists — updated contact details ({org})")
         else:
             tenant_id = str(uuid.uuid4())
             adapter.execute(
                 """
-                INSERT INTO tenants (tenant_id, contact_name, organisation, email, status)
-                VALUES (:tenant_id, :contact, :org, :email, 'activated')
+                INSERT INTO tenants (tenant_id, contact_name, organisation, email, status, created_by)
+                VALUES (:tenant_id, :contact, :org, :email, 'activated', :seeder_id)
                 """,
                 {
                     "tenant_id": tenant_id,
                     "contact": contact,
                     "org": org,
                     "email": email,
+                    "seeder_id": SEEDER_ID,
                 },
             )
             print(f"    ✓ Created default tenant '{org}' (tenant_id: {tenant_id})")

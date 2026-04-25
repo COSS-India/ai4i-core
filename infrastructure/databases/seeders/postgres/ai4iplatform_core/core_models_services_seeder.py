@@ -31,6 +31,9 @@ try:
 except ImportError:
     app_env = None  # type: ignore[assignment]
 
+# Fixed identity for all rows written by seeders — readable as "seed0000…"
+SEEDER_ID = "5eed0000-0000-0000-0000-000000000000"
+
 
 class CoreModelsServicesSeeder(BaseSeeder):
     """Seed default models and services for ai4iplatform_core (mm_models / mm_services)."""
@@ -70,7 +73,7 @@ class CoreModelsServicesSeeder(BaseSeeder):
                 INSERT INTO mm_models (
                     id, model_id, version, name, description,
                     task, languages, domain, license,
-                    inference_endpoint, submitter, version_status
+                    inference_endpoint, submitter, version_status, created_by
                 )
                 VALUES (
                     '{generate_uuid("model", name, version)}',
@@ -84,7 +87,8 @@ class CoreModelsServicesSeeder(BaseSeeder):
                     '{_sql_lit(m["license"])}',
                     '{inference_endpoint_lit}'::jsonb,
                     '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
-                    'ACTIVE'
+                    'ACTIVE',
+                    '{SEEDER_ID}'
                 )
                 ON CONFLICT (name, version) DO UPDATE SET
                     inference_endpoint       = '{inference_endpoint_lit}'::jsonb,
@@ -104,7 +108,7 @@ class CoreModelsServicesSeeder(BaseSeeder):
                         model_id, model_version,
                         endpoint, inference_server_type, ssl_verify,
                         service_description, hardware_description,
-                        is_published
+                        is_published, created_by
                     )
                     VALUES (
                         '{generate_uuid("service", name, version, svc_name)}',
@@ -117,7 +121,8 @@ class CoreModelsServicesSeeder(BaseSeeder):
                         true,
                         '{_sql_lit(svc["description"])}',
                         '{_sql_lit(svc["hardware"])}',
-                        true
+                        true,
+                        '{SEEDER_ID}'
                     )
                     ON CONFLICT (name) DO UPDATE SET
                         service_id          = '{service_id}',

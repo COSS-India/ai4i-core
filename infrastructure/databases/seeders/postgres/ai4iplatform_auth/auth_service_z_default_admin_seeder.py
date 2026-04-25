@@ -8,6 +8,9 @@ the user to the default tenant created by auth_service_t_default_tenant_seeder.p
 IMPORTANT: After first login, change the default admin password immediately.
 The default password is set via ADMIN_DEFAULT_PASSWORD env var (falls back to 'ADMIN_PASSWORD').
 
+Rows created by this seeder carry created_by = SEEDER_ID so they can be
+distinguished from user-created records.
+
 Schema differences vs auth_db:
   - users.user_id is UUID (not serial int)
   - passwords stored in separate user_credentials table (no hash_rounds column)
@@ -24,8 +27,10 @@ from passlib.context import CryptContext
 
 from infrastructure.databases.core.base_seeder import BaseSeeder
 
+# Fixed identity for all rows written by seeders — readable as "seed0000…"
+SEEDER_ID = "5eed0000-0000-0000-0000-000000000000"
 
-DEFAULT_TENANT_ORG = "AI4Inclusion"
+DEFAULT_TENANT_ORG = "default organisation"
 _CTX = CryptContext(schemes=["argon2"], default="argon2")
 
 
@@ -82,11 +87,13 @@ class AuthServiceDefaultAdminSeeder(BaseSeeder):
             """
             INSERT INTO users (
                 user_id, email, username, full_name,
-                is_active, tenant_id, timezone, is_delete, is_tenant_active, creation_type
+                is_active, tenant_id, timezone, is_delete, is_tenant_active,
+                creation_type, created_by
             )
             VALUES (
                 :user_id, :email, :username, :full_name,
-                :is_active, :tenant_id, :timezone, :is_delete, :is_tenant_active, :creation_type
+                :is_active, :tenant_id, :timezone, :is_delete, :is_tenant_active,
+                :creation_type, :created_by
             )
             ON CONFLICT (email) DO UPDATE
             SET
@@ -109,6 +116,7 @@ class AuthServiceDefaultAdminSeeder(BaseSeeder):
                 "is_delete": False,
                 "is_tenant_active": True,
                 "creation_type": "direct",
+                "created_by": SEEDER_ID,
             },
         )
 
@@ -122,8 +130,8 @@ class AuthServiceDefaultAdminSeeder(BaseSeeder):
         # Upsert credentials (PK = user_id)
         adapter.execute(
             """
-            INSERT INTO user_credentials (user_id, password_hash, password_salt)
-            VALUES (:user_id, :password_hash, :password_salt)
+            INSERT INTO user_credentials (user_id, password_hash, password_salt, created_by)
+            VALUES (:user_id, :password_hash, :password_salt, :created_by)
             ON CONFLICT (user_id) DO UPDATE
             SET
                 password_hash = EXCLUDED.password_hash,
@@ -133,6 +141,7 @@ class AuthServiceDefaultAdminSeeder(BaseSeeder):
                 "user_id": actual_user_id,
                 "password_hash": password_hash,
                 "password_salt": salt,
+                "created_by": SEEDER_ID,
             },
         )
         tenant_info = f" → tenant '{tenant_org}'" if tenant_id else " (no default tenant found)"
@@ -140,9 +149,9 @@ class AuthServiceDefaultAdminSeeder(BaseSeeder):
 
         # Assign ADMIN role (user_role has no unique constraint on (user_id, role_id))
         adapter.execute(
-            """
-            INSERT INTO user_role (user_id, role_id)
-            SELECT u.user_id, r.role_id
+            f"""
+            INSERT INTO user_role (user_id, role_id, created_by)
+            SELECT u.user_id, r.role_id, '{SEEDER_ID}'
             FROM users u
             JOIN roles r ON r.name = 'ADMIN'
             WHERE u.email = :email
