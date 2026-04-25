@@ -29,9 +29,6 @@ def require_permission(resource: str, action: str) -> Callable:
         current_user: User = Depends(get_current_active_user),
         db: AsyncSession = Depends(get_db),
     ) -> User:
-        if current_user.is_superuser:
-            return current_user
-
         repo = RoleRepository(db)
         permission_names = await repo.get_user_permission_names(current_user.user_id)
         required = f"{resource}.{action}"
@@ -55,9 +52,6 @@ def require_any_role(*role_names: str) -> Callable:
         current_user: User = Depends(get_current_active_user),
         db: AsyncSession = Depends(get_db),
     ) -> User:
-        if current_user.is_superuser:
-            return current_user
-
         repo = RoleRepository(db)
         user_roles = await repo.get_user_roles(current_user.user_id)
 
