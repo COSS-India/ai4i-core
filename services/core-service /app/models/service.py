@@ -14,7 +14,6 @@ from app.models import Base
 
 class Service(Base):
     __tablename__ = "mm_services"
-    __table_args__ = {"schema": "ai4iplatform_core"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     service_id = Column(String(255), nullable=False, unique=True, index=True)
@@ -23,7 +22,7 @@ class Service(Base):
     hardware_description = Column(Text, nullable=True)
     model_id = Column(
         String(255),
-        ForeignKey("ai4iplatform_core.mm_models.model_id", ondelete="RESTRICT"),
+        ForeignKey("mm_models.model_id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )

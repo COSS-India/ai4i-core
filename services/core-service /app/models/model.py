@@ -24,7 +24,6 @@ class Model(Base):
     __tablename__ = "mm_models"
     __table_args__ = (
         UniqueConstraint("name", "version", name="uq_mm_models_name_version"),
-        {"schema": "ai4iplatform_core"},
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

@@ -73,6 +73,7 @@ DATABASE_ORDER = [
     "ai4i_platform_db",
     "metrics_db",
     "model_management_db",
+    "ai4iplatform_core",
     "policy_db",
     "multi_tenant_db",
     "telemetry_db",
@@ -273,6 +274,20 @@ def _load_model_management_metadata():
         return fake_db_connection.AppDBBase.metadata
 
     return _with_temp_module("db_connection", fake_db_connection, loader)
+
+
+def _load_core_service_metadata():
+    """Load core-service ORM metadata (mm_models/mm_services in ai4iplatform_core schema)."""
+    core_root = PROJECT_ROOT / "services" / "core-service "
+    core_path = str(core_root)
+    if core_path not in sys.path:
+        sys.path.insert(0, core_path)
+    for module_name in list(sys.modules.keys()):
+        if module_name == "app" or module_name.startswith("app."):
+            sys.modules.pop(module_name, None)
+
+    module = importlib.import_module("app.models")
+    return module.Base.metadata
 
 
 def _load_policy_service_metadata():
@@ -488,6 +503,15 @@ DATABASE_SPECS = {
         database_name_key="APP_DB_NAME",
         metadata_loader=_load_model_management_metadata,
     ),
+    "ai4iplatform_core": DatabaseSpec(
+        name="ai4iplatform_core",
+        user_key="CORE_SERVICE_DB_USER",
+        password_key="CORE_SERVICE_DB_PASSWORD",
+        host_key="CORE_SERVICE_DB_HOST",
+        port_key="CORE_SERVICE_DB_PORT",
+        database_name_key="CORE_SERVICE_DB_NAME",
+        metadata_loader=_load_core_service_metadata,
+    ),
     "policy_db": DatabaseSpec(
         name="policy_db",
         user_key="POLICY_DB_USER",
@@ -546,6 +570,17 @@ def get_connection_parts(name: str) -> dict[str, str]:
             "host": _require_env_any([spec.host_key, "POSTGRES_HOST", "ALEMBIC_DB_HOST"]),
             "port": _require_env_any([spec.port_key, "POSTGRES_PORT", "ALEMBIC_DB_PORT"]),
             "database": _require_env_any([spec.database_name_key]),
+        }
+
+    # ai4iplatform_core falls back to shared POSTGRES_* vars when CORE_SERVICE_DB_* are absent.
+    if name == "ai4iplatform_core":
+        db_name = os.getenv("CORE_SERVICE_DB_NAME") or "ai4iplatform_core"
+        return {
+            "user": _require_env_any([spec.user_key, "POSTGRES_USER"]),
+            "password": _require_env_any([spec.password_key, "POSTGRES_PASSWORD"]),
+            "host": _require_env_any([spec.host_key, "POSTGRES_HOST", "ALEMBIC_DB_HOST"]),
+            "port": _require_env_any([spec.port_key, "POSTGRES_PORT", "ALEMBIC_DB_PORT"]),
+            "database": db_name,
         }
 
     # ai4iplatform_auth falls back to shared AUTH_DB_* vars when AUTH_SERVICE_DB_NAME is absent,

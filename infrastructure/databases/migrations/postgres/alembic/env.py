@@ -85,12 +85,23 @@ def process_revision_directives(migration_context, revision, directives) -> None
             ops.ExecuteSQLOp('CREATE EXTENSION IF NOT EXISTS "pgcrypto"'),
         )
 
+    schemas_needed = set()
+    for operation in script.upgrade_ops.ops:
+        if isinstance(operation, ops.CreateTableOp) and operation.schema:
+            schemas_needed.add(operation.schema)
+    for schema in sorted(schemas_needed, reverse=True):
+        script.upgrade_ops.ops.insert(
+            0,
+            ops.ExecuteSQLOp(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'),
+        )
+
 
 def include_object(object_, name, type_, reflected, compare_to) -> bool:
     """Skip reflected objects that are not part of the target metadata.
 
     This prevents autogenerate from emitting DROP TABLE for tables that
     exist in the database but belong to a different service/migration scope.
+    Handles schema-qualified table keys (e.g. "ai4iplatform_core.mm_models").
     """
     if is_autogenerate and reflected and compare_to is None:
         # No model metadata at all – skip everything reflected.
@@ -99,13 +110,17 @@ def include_object(object_, name, type_, reflected, compare_to) -> bool:
         # Has model metadata – only include tables/indexes/constraints
         # that are actually declared in the target metadata.
         if type_ == "table":
-            return name in target_metadata.tables
+            schema = getattr(object_, "schema", None)
+            qualified_name = f"{schema}.{name}" if schema else name
+            return qualified_name in target_metadata.tables or name in target_metadata.tables
         # For non-table objects (indexes, constraints, etc.) on tables
         # outside our metadata, skip them as well.
-        table_name = getattr(object_, "table", None)
-        if table_name is not None:
-            table_name = getattr(table_name, "name", table_name)
-            return table_name in target_metadata.tables
+        table_obj = getattr(object_, "table", None)
+        if table_obj is not None:
+            tname = getattr(table_obj, "name", table_obj)
+            tschema = getattr(table_obj, "schema", None)
+            qualified = f"{tschema}.{tname}" if tschema else tname
+            return qualified in target_metadata.tables or tname in target_metadata.tables
     return True
 
 

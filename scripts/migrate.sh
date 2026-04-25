@@ -43,6 +43,7 @@ DATABASES=(
   "ai4i_platform_db"
   "metrics_db"
   "model_management_db"
+  "ai4iplatform_core"
   "policy_db"
   "multi_tenant_db"
   "telemetry_db"
@@ -90,6 +91,7 @@ Examples:
   ./scripts/migrate.sh auth_service_v2_db upgrade head
   ./scripts/migrate.sh config_db current
   ./scripts/migrate.sh model_management_db revision --autogenerate -m "add column"
+  ./scripts/migrate.sh ai4iplatform_core upgrade head
   ./scripts/migrate.sh alerting_db revision -m "manual migration"
 
 Notes:
