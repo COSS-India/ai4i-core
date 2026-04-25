@@ -141,9 +141,12 @@ class AuthServiceRolesSeeder(BaseSeeder):
             # Observability
             ("logs.read",   "logs",   "read"),
             ("traces.read", "traces", "read"),
-            # Multi-tenant
-            ("multi-tenant.read",      "multi_tenant", "read"),
-            ("multi-tenant.inference", "multi_tenant", "inference"),
+            # Tenant management (consolidated into auth-service)
+            ("tenant.create",       "tenant",       "create"),
+            ("tenant.read",         "tenant",       "read"),
+            ("tenant.update",       "tenant",       "update"),
+            ("tenant.users.read",   "tenant.users", "read"),
+            ("tenant.users.update", "tenant.users", "update"),
             # PII Guard
             ("pii_guard.inference", "pii_guard", "inference"),
             ("pii_guard.admin",     "pii_guard", "admin"),
@@ -209,7 +212,9 @@ class AuthServiceRolesSeeder(BaseSeeder):
               'model.create','model.read','model.update','model.delete',
               'model.publish','model.unpublish',
               'roles.assign','roles.remove','roles.read',
-              'pii_guard.admin','pii_guard.inference'
+              'pii_guard.admin','pii_guard.inference',
+              'tenant.create','tenant.read','tenant.update',
+              'tenant.users.read','tenant.users.update'
             )
             WHERE r.name = 'ADMIN'
             """
@@ -228,7 +233,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
               'asr.inference','audio-lang-detection.inference',
               'language-detection.inference','language-diarization.inference',
               'llm.inference','model-management.inference',
-              'multi-tenant.inference','ner.inference','nmt.inference',
+              'ner.inference','nmt.inference',
               'ocr.inference','pipeline.inference','pii_guard.inference',
               'speaker-diarization.inference','transliteration.inference','tts.inference'
             )
@@ -271,16 +276,18 @@ class AuthServiceRolesSeeder(BaseSeeder):
               'asr.inference','audio-lang-detection.inference',
               'language-detection.inference','language-diarization.inference',
               'llm.inference','model-management.inference',
-              'multi-tenant.inference','ner.inference','nmt.inference',
+              'ner.inference','nmt.inference',
               'ocr.inference','pipeline.inference','pii_guard.inference',
-              'speaker-diarization.inference','transliteration.inference','tts.inference'
+              'speaker-diarization.inference','transliteration.inference','tts.inference',
+              'tenant.read','tenant.users.read','tenant.users.update'
             )
             WHERE r.name = 'MODERATOR'
             """
         )
         print("    ✓ Assigned permissions to MODERATOR role")
 
-        # TENANT ADMIN
+        # TENANT ADMIN — tenant-scoped management of their own tenant's users.
+        # Cannot create or modify peer tenants (tenant.create / tenant.update bound to ADMIN/MODERATOR only).
         adapter.execute(
             f"""
             INSERT INTO role_permission (role_id, permission_id, created_by)
@@ -295,9 +302,10 @@ class AuthServiceRolesSeeder(BaseSeeder):
               'asr.inference','audio-lang-detection.inference',
               'language-detection.inference','language-diarization.inference',
               'llm.inference','model-management.inference',
-              'multi-tenant.inference','ner.inference','nmt.inference',
+              'ner.inference','nmt.inference',
               'ocr.inference','pipeline.inference',
-              'speaker-diarization.inference','transliteration.inference','tts.inference'
+              'speaker-diarization.inference','transliteration.inference','tts.inference',
+              'tenant.read','tenant.users.read','tenant.users.update'
             )
             WHERE r.name = 'TENANT ADMIN'
             """

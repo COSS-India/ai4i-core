@@ -51,8 +51,8 @@ redis_client = None
 db_engine = None
 db_session = None
 es_client = None
-multi_tenant_db_engine = None
-multi_tenant_db_session = None
+auth_db_engine = None
+auth_db_session = None
 
 # Observability clients (for querying logs and traces)
 opensearch_query_client = None
@@ -63,7 +63,7 @@ rbac_enforcer = None
 async def startup_event():
     """Initialize connections on startup"""
     global redis_client, db_engine, db_session, es_client
-    global multi_tenant_db_engine, multi_tenant_db_session
+    global auth_db_engine, auth_db_session
     global opensearch_query_client, jaeger_query_client, rbac_enforcer
     
     try:
@@ -87,20 +87,20 @@ async def startup_event():
         )
         logger.info("Connected to PostgreSQL")
         
-        # Initialize Multi-tenant PostgreSQL connection
-        multi_tenant_db_url = app_env.get_multi_tenant_db_url()
-        multi_tenant_db_engine = create_async_engine(
-            multi_tenant_db_url,
+        # Initialize auth-DB PostgreSQL connection (used to resolve tenant_id by user_id)
+        auth_db_url = app_env.get_auth_database_url()
+        auth_db_engine = create_async_engine(
+            auth_db_url,
             pool_size=10,
             max_overflow=5,
             echo=False
         )
-        multi_tenant_db_session = sessionmaker(
-            multi_tenant_db_engine,
+        auth_db_session = sessionmaker(
+            auth_db_engine,
             class_=AsyncSession,
             expire_on_commit=False
         )
-        logger.info("Connected to Multi-tenant PostgreSQL")
+        logger.info("Connected to auth PostgreSQL for tenant lookup")
         
         # Initialize Elasticsearch client
         es_url = app_env.elasticsearch_url
@@ -219,7 +219,7 @@ async def startup_event():
         
         # Set global in router module
         observability_router.rbac_enforcer = rbac_enforcer
-        observability_router.multi_tenant_db_session = multi_tenant_db_session
+        observability_router.auth_db_session = auth_db_session
         
     except Exception as e:
         logger.error(f"Failed to initialize connections: {e}")
@@ -229,7 +229,7 @@ async def startup_event():
 async def shutdown_event():
     """Clean up connections on shutdown"""
     global redis_client, db_engine, es_client
-    global multi_tenant_db_engine
+    global auth_db_engine
     global opensearch_query_client, jaeger_query_client
     
     if redis_client:
@@ -240,9 +240,9 @@ async def shutdown_event():
         await db_engine.dispose()
         logger.info("PostgreSQL connection closed")
     
-    if multi_tenant_db_engine:
-        await multi_tenant_db_engine.dispose()
-        logger.info("Multi-tenant PostgreSQL connection closed")
+    if auth_db_engine:
+        await auth_db_engine.dispose()
+        logger.info("auth PostgreSQL connection closed")
     
     if es_client:
         await es_client.close()

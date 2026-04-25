@@ -24,6 +24,7 @@ from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
 from app.repositories.credentials_repository import CredentialsRepository
 from app.repositories.refresh_token_repository import RefreshTokenRepository
+from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
 from app.schemas.auth import LoginResponse, TokenRefreshResponse
@@ -44,6 +45,7 @@ class AuthService:
         credentials_repo: CredentialsRepository,
         refresh_token_repo: RefreshTokenRepository,
         verification_repo: VerificationRepository,
+        tenant_repo: TenantRepository,
     ) -> None:
         self._users = user_repo
         self._roles = role_service
@@ -52,6 +54,20 @@ class AuthService:
         self._credentials = credentials_repo
         self._refresh_tokens = refresh_token_repo
         self._verifications = verification_repo
+        self._tenants = tenant_repo
+
+    async def _resolve_tenant_id(self, explicit: Optional[str]) -> Optional[UUID]:
+        """Honor an explicit tenant_id, otherwise fall back to the default tenant."""
+        if explicit:
+            return UUID(explicit)
+        default = await self._tenants.get_by_organisation(settings.default_tenant_org)
+        if default is None:
+            logger.warning(
+                "Default tenant '%s' not found; user will be created without a tenant_id.",
+                settings.default_tenant_org,
+            )
+            return None
+        return default.tenant_id
 
     # ── Register (direct portal signup) ──
 
@@ -74,7 +90,7 @@ class AuthService:
         if await self._users.get_by_username(username):
             raise DuplicateEntityError("User", "username")
 
-        parsed_tenant_id = UUID(tenant_id) if tenant_id else None
+        parsed_tenant_id = await self._resolve_tenant_id(tenant_id)
 
         user = User(
             email=email,
@@ -230,7 +246,7 @@ class AuthService:
     ) -> tuple[str, str]:
         """
         Create an inactive user without credentials and generate a setup token.
-        Called by the multi-tenant service during tenant user onboarding.
+        Used by the tenant-user provisioning route during tenant user onboarding.
         Returns (user_id_str, setup_token).
         """
         if await self._users.get_by_email(email):
@@ -238,7 +254,7 @@ class AuthService:
         if await self._users.get_by_username(username):
             raise DuplicateEntityError("User", "username")
 
-        parsed_tenant_id = UUID(tenant_id) if tenant_id else None
+        parsed_tenant_id = await self._resolve_tenant_id(tenant_id)
         creation = CreationType(creation_type) if creation_type in CreationType._value2member_map_ else CreationType.TENANT
 
         user = User(

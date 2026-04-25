@@ -114,7 +114,7 @@ async def provision_user(
 ):
     """
     Internal: provision an inactive user and return a one-time setup token.
-    Called by the multi-tenant service during tenant user onboarding.
+    Used by tenant-user onboarding (POST /api/v1/tenants/{tenant_id}/users).
     """
     user_id, setup_token = await svc.provision_user(
         email=body.email,

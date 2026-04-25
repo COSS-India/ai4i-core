@@ -1,10 +1,9 @@
 """Tenant scoping for auth routes: TENANT ADMIN limited to their tenant's users."""
 
-from fastapi import Request
+from fastapi import HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4icore_auth.permission_checker import PermissionChecker
-from ai4icore_multi_tenant import enforce_tenant_scope
 
 from app.core.exceptions import EntityNotFoundError
 from app.models.user import User
@@ -15,14 +14,14 @@ from app.repositories.user_repository import UserRepository
 async def enforce_target_user_same_tenant(
     request: Request,
     current_user: User,
-    target_user_id: int,
+    target_user_id,
     db: AsyncSession,
     *,
     bypass_roles: tuple[str, ...],
 ) -> None:
-    """Load target user and ensure TENANT ADMIN may only act on users in their tenant.
+    """Load target user and ensure tenant admin may only act on users in their tenant.
 
-    Callers with ``bypass_roles`` (from DB role names) or ``is_superuser`` skip the check.
+    Callers with any role in ``bypass_roles`` skip the check.
     """
     role_repo = RoleRepository(db)
     user_roles = await role_repo.get_user_roles(current_user.user_id)
@@ -35,11 +34,16 @@ async def enforce_target_user_same_tenant(
         raise EntityNotFoundError(f"User {target_user_id}")
 
     jwt_tid = getattr(request.state, "tenant_id", None)
-    caller_tid = jwt_tid if jwt_tid else current_user.tenant_id_cached
+    caller_tid = jwt_tid if jwt_tid else current_user.tenant_id
 
-    enforce_tenant_scope(
-        request,
-        target.tenant_id_cached,
-        is_platform_admin=False,
-        caller_tenant_id=str(caller_tid) if caller_tid else None,
-    )
+    target_tid = str(target.tenant_id) if target.tenant_id else None
+    caller_tid_str = str(caller_tid) if caller_tid else None
+
+    if not caller_tid_str or caller_tid_str != target_tid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "TENANT_FORBIDDEN",
+                "message": "Cannot access user outside your tenant.",
+            },
+        )

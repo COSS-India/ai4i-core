@@ -20,6 +20,7 @@ from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.credentials_repository import CredentialsRepository
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.role_repository import RoleRepository
+from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
 from app.services.api_key_service import APIKeyService
@@ -68,6 +69,7 @@ async def get_auth_service(
         credentials_repo=CredentialsRepository(db),
         refresh_token_repo=RefreshTokenRepository(db),
         verification_repo=VerificationRepository(db),
+        tenant_repo=TenantRepository(db),
     )
 
 

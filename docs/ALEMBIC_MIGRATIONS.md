@@ -27,7 +27,6 @@ AI4I Core uses **Alembic** for managing PostgreSQL database schema changes. Alem
 
 - `auth_db` - Authentication and authorization
 - `model_management_db` - Model management and experiments
-- `multi_tenant_db` - Multi-tenant management
 - `config_db` - Configuration management
 - `dashboard_db` - Dashboard data
 - `telemetry_db` - Telemetry and observability
@@ -232,7 +231,7 @@ The `scripts/migrate.sh` script simplifies common operations:
 ./scripts/migrate.sh all upgrade
 
 # Or manually
-for db in auth_db model_management_db multi_tenant_db config_db; do
+for db in auth_db model_management_db config_db; do
     alembic -x db=$db upgrade head
 done
 ```

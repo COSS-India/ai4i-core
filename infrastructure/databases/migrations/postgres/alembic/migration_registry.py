@@ -75,7 +75,6 @@ DATABASE_ORDER = [
     "model_management_db",
     "ai4iplatform_core",
     "policy_db",
-    "multi_tenant_db",
     "telemetry_db",
 ]
 
@@ -318,30 +317,6 @@ def _load_policy_service_metadata():
     return module.AppDBBase.metadata
 
 
-def _load_multi_tenant_metadata():
-    fake_db_connection = types.ModuleType("db_connection")
-    fake_db_connection.TenantDBBase = declarative_base()
-    fake_db_connection.AuthDBBase = declarative_base()
-    fake_db_connection.ServiceSchemaBase = declarative_base()
-
-    def loader():
-        _ensure_package("ai4i_alembic_dynamic")
-        _ensure_package("ai4i_alembic_dynamic.multi_tenant")
-        _ensure_package("ai4i_alembic_dynamic.multi_tenant.models")
-
-        _load_module(
-            "ai4i_alembic_dynamic.multi_tenant.models.enum_tenant",
-            PROJECT_ROOT / "services" / "multi-tenant-feature" / "models" / "enum_tenant.py",
-        )
-        _load_module(
-            "ai4i_alembic_dynamic.multi_tenant.models.db_models",
-            PROJECT_ROOT / "services" / "multi-tenant-feature" / "models" / "db_models.py",
-        )
-        return fake_db_connection.TenantDBBase.metadata
-
-    return _with_temp_module("db_connection", fake_db_connection, loader)
-
-
 def _load_ai4i_platform_metadata():
     # policy-engine service was removed; define all ai4i_platform_db tables
     # inline so autogenerate sees them and doesn't emit spurious DROPs.
@@ -520,15 +495,6 @@ DATABASE_SPECS = {
         port_key="POLICY_DB_PORT",
         database_name_key="POLICY_DB_NAME",
         metadata_loader=_load_policy_service_metadata,
-    ),
-    "multi_tenant_db": DatabaseSpec(
-        name="multi_tenant_db",
-        user_key="APP_DB_USER",
-        password_key="APP_DB_PASSWORD",
-        host_key="APP_DB_HOST",
-        port_key="APP_DB_PORT",
-        database_name_key="MULTI_TENANT_DB_NAME",
-        metadata_loader=_load_multi_tenant_metadata,
     ),
     "telemetry_db": DatabaseSpec(
         name="telemetry_db",

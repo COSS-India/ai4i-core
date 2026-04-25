@@ -534,6 +534,110 @@
           X-Correlation-ID: $request_id
           X-Gateway: apisix
       use_real_request_uri_unsafe: false
+# --- Tenants CRUD routes (served by auth-service) ---
+- uri: /api/v1/tenants/*
+  name: tenants-route
+  priority: 0
+  methods:
+  - GET
+  - POST
+  - PUT
+  - PATCH
+  - DELETE
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+      - |
+        return function(conf, ctx)
+          ngx.req.set_header("X-User-Id", nil)
+        end
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+- uri: /api/v1/tenants
+  name: tenants-collection-route
+  priority: 1
+  methods:
+  - GET
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+      - |
+        return function(conf, ctx)
+          ngx.req.set_header("X-User-Id", nil)
+        end
+    forward-auth:
+      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+      request_headers:
+        - Authorization
+        - X-API-Key
+        - x-api-key
+        - apikey
+      upstream_headers:
+        - X-User-ID
+      client_headers:
+        - WWW-Authenticate
+      timeout: 3000
+      keepalive: true
+      keepalive_timeout: 60000
+      keepalive_pool: 5
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
 - uri: /api/v1/config/*
   name: config-route
   priority: 0
@@ -932,119 +1036,6 @@
       time_window: 60
       allow_degradation: false
       count: 120
-- uri: /api/v1/multi-tenant/email/verify
-  name: multi-tenant-email-verify-route
-  priority: 210
-  methods:
-  - GET
-  - POST
-  - OPTIONS
-  upstream:
-    scheme: http
-    type: roundrobin
-    pass_host: pass
-    nodes:
-      "multi-tenant-service${APISIX_UPSTREAM_SUFFIX}:8001": 1
-  plugins:
-    cors:
-      allow_origins: "${APISIX_PUBLIC_ORIGIN}"
-      allow_methods: "GET,POST,OPTIONS"
-      max_age: 3600
-      allow_credential: true
-      expose_headers: "X-Correlation-ID"
-      allow_headers: "Accept,Accept-Version,Content-Length,Content-Type,Date,request-startTime,Request-StartTime,Request-Starttime"
-    proxy-rewrite:
-      regex_uri:
-      - "^/api/v1/multi-tenant/(.*)"
-      - "/$1"
-      headers:
-        add:
-          X-Correlation-ID: "$request_id"
-          X-Gateway: "apisix"
-    response-rewrite:
-      headers:
-        X-Service: "multi-tenant-service"
-      body_base64: false
-    limit-count:
-      policy: local
-      key_type: var
-      key: remote_addr
-      count: 20
-      time_window: 60
-      rejected_code: 429
-      show_limit_quota_header: true
-      allow_degradation: false
-- uri: /api/v1/multi-tenant/*
-  name: multi-tenant-catch-all-route
-  priority: 200
-  methods:
-  - GET
-  - POST
-  - PUT
-  - DELETE
-  - PATCH
-  - OPTIONS
-  upstream:
-    hash_on: vars
-    scheme: http
-    type: roundrobin
-    pass_host: pass
-    nodes:
-      multi-tenant-service${APISIX_UPSTREAM_SUFFIX}:8001: 1
-  plugins:
-    serverless-pre-function:
-      phase: rewrite
-      functions:
-      - |
-        return function(conf, ctx)
-          ngx.req.set_header("X-User-Id", nil)
-        end
-    forward-auth:
-      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
-      request_headers:
-        - Authorization
-        - X-API-Key
-        - x-api-key
-        - apikey
-      upstream_headers:
-        - X-User-ID
-      client_headers:
-        - WWW-Authenticate
-      timeout: 3000
-      keepalive: true
-      keepalive_timeout: 60000
-      keepalive_pool: 5
-    cors:
-      allow_origins: ${APISIX_PUBLIC_ORIGIN}
-      allow_methods: GET,POST,PUT,DELETE,PATCH,OPTIONS
-      max_age: 3600
-      allow_credential: true
-      expose_headers: X-Auth-Token,X-Correlation-ID
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-    proxy-rewrite:
-      regex_uri:
-      - ^/api/v1/multi-tenant/(.*)
-      - /$1
-      headers:
-        add:
-          X-Correlation-ID: $request_id
-          X-Gateway: apisix
-        set:
-          X-Auth-Source: AUTH_TOKEN
-      use_real_request_uri_unsafe: false
-    response-rewrite:
-      headers:
-        X-Service: multi-tenant-service
-      body_base64: false
-    limit-count:
-      policy: local
-      key_type: var
-      count: 200
-      show_limit_quota_header: true
-      key: http_x_user_id
-      time_window: 60
-      rejected_code: 429
-      allow_degradation: false
 - uri: /api/v1/ner/*
   name: ner-route
   priority: 0

@@ -81,8 +81,8 @@ import {
   SearchIcon,
   LockIcon,
 } from "@chakra-ui/icons";
-import * as multiTenantService from "../../services/multiTenantService";
-import type { TenantView } from "../../types/multiTenant";
+import * as tenantService from "../../services/tenantService";
+import type { TenantView } from "../../types/tenant";
 import type { NotificationReceiver } from "../../types/alerting";
 import { useAlertDefinitions } from "./hooks/useAlertDefinitions";
 import { useNotificationReceivers } from "./hooks/useNotificationReceivers";
@@ -271,8 +271,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     if (tenants.length > 0) return;
     setIsLoadingTenants(true);
     try {
-      const res = await multiTenantService.listTenants();
-      setTenants((res.tenants || []).filter((t) => t.status === "ACTIVE"));
+      const res = await tenantService.listTenants();
+      setTenants((res.tenants || []).filter((t) => t.status === "activated"));
     } catch {
       // ignore
     } finally {
@@ -296,7 +296,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       isInfrastructure
         ? null
         : createRuleScope === "specific_tenant" && createRuleTenant
-          ? tenants.find((t) => t.tenant_id === createRuleTenant)?.organization_name ?? createRuleTenant
+          ? tenants.find((t) => t.tenant_id === createRuleTenant)?.organisation ?? createRuleTenant
           : null;
     await rules.handleCreate({
       tenant: tenantName,
@@ -2332,7 +2332,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       isDisabled={isLoadingTenants}
                     >
                       {tenants.map((t) => (
-                        <option key={t.tenant_id} value={t.tenant_id}>{t.organization_name || t.tenant_id}</option>
+                        <option key={t.tenant_id} value={t.tenant_id}>{t.organisation || t.tenant_id}</option>
                       ))}
                     </Select>
                     <FormErrorMessage>{createRuleErrors.tenant}</FormErrorMessage>
@@ -2745,12 +2745,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       value={
                         tenants.find(
                           (t) =>
-                            t.tenant_id === rules.updateForm.tenant || t.organization_name === rules.updateForm.tenant
+                            t.tenant_id === rules.updateForm.tenant || t.organisation === rules.updateForm.tenant
                         )?.tenant_id ?? rules.updateForm.tenant ?? ""
                       }
                       onChange={(e) => {
                         const selectedName =
-                          tenants.find((t) => t.tenant_id === e.target.value)?.organization_name ?? e.target.value;
+                          tenants.find((t) => t.tenant_id === e.target.value)?.organisation ?? e.target.value;
                         rules.setUpdateForm({ ...rules.updateForm, tenant: e.target.value ? selectedName : null });
                         if (e.target.value) setEditRuleErrors((prev) => { const n = { ...prev }; delete n.tenant; return n; });
                       }}
@@ -2759,7 +2759,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       isDisabled={isLoadingTenants}
                     >
                       {tenants.map((t) => (
-                        <option key={t.tenant_id} value={t.tenant_id}>{t.organization_name || t.tenant_id}</option>
+                        <option key={t.tenant_id} value={t.tenant_id}>{t.organisation || t.tenant_id}</option>
                       ))}
                     </Select>
                     <FormErrorMessage>{editRuleErrors.tenant}</FormErrorMessage>

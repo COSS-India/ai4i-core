@@ -18,8 +18,7 @@ The AI4I alerting system is a multi-service pipeline that enables users to defin
 | Store | Used by | Purpose |
 |---|---|---|
 | **alerting_db** (PostgreSQL) | alert-management-service, alert-config-sync-service | Alert definitions, receivers, routing rules, alert history, audit log |
-| **auth_db** (PostgreSQL) | alert-management-service, alert-config-sync-service | RBAC role-based email resolution (ADMIN, MODERATOR, etc.) |
-| **multi_tenant_db** (PostgreSQL) | alert-management-service, alert-config-sync-service | Tenant name → tenant_id → tenant user email resolution |
+| **auth_db** (PostgreSQL) | alert-management-service, alert-config-sync-service | Tenant + tenant-user resolution and RBAC role-based email resolution (ADMIN, MODERATOR, etc.) |
 
 ---
 
@@ -173,7 +172,7 @@ When a receiver is created, the service resolves who should receive the emails:
 
 | Priority | Field | Resolution |
 |---|---|---|
-| 1 | `tenant` | Queries `multi_tenant_db.tenants` for `organization_name` → gets `user_id` → queries `auth_db.users` where `is_tenant=true` → returns that user's email |
+| 1 | `tenant` | Queries `auth_db.tenants` for `organisation` → joins `users` and `user_role` on `tenant_id` to find active TENANT ADMIN users → returns their emails |
 | 2 | `rbac_role` | Queries `auth_db` for all active users with the specified role (ADMIN, MODERATOR, USER, GUEST) → returns their emails |
 | 3 | `email_to` | Uses the provided email list as-is |
 | 4 | (fallback) | Queries `auth_db` for all ADMIN users → returns their emails |
@@ -211,7 +210,7 @@ Controlled by `ALERT_SYNC_ENABLED=true` environment variable.
 ### 4.1 Responsibilities
 
 1. Read all enabled alert definitions, receivers, and routing rules from `alerting_db`
-2. Resolve email recipients from `auth_db` (RBAC roles) and `multi_tenant_db` (tenant users)
+2. Resolve email recipients from `auth_db` (RBAC roles + TENANT ADMIN users per tenant)
 3. Generate Prometheus alert rule YAML files (one per category: application, infrastructure)
 4. Generate the full Alertmanager configuration YAML (receivers, routes, email templates)
 5. Write files to the shared volumes
@@ -575,10 +574,10 @@ This ensures the `tenant` label survives the aggregation and is present on the f
 ### Step 3: Alertmanager routing (sync service)
 
 When a receiver has a `tenant` field, the sync service:
-1. Resolves `tenant_name` → `tenant_id` via `multi_tenant_db`
-2. Resolves `tenant_id` → `user_id` → tenant user email via `auth_db`
+1. Resolves `tenant_name` → `tenant_id` via `auth_db.tenants`
+2. Joins `auth_db.users` and `auth_db.user_role` on `tenant_id` to find TENANT ADMIN emails
 3. Adds a route with `match: { tenant: <tenant_id> }` in the Alertmanager config
-4. Creates a dedicated receiver with the tenant user's email
+4. Creates a dedicated receiver with the resolved tenant-admin emails
 
 ### Step 4: Alert delivery
 

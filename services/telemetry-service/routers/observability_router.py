@@ -30,7 +30,7 @@ _jwt_verifier = build_jwt_verifier()
 opensearch_client: Optional[OpenSearchQueryClient] = None
 jaeger_client: Optional[JaegerQueryClient] = None
 rbac_enforcer = None  # Casbin enforcer (will be set in main.py)
-multi_tenant_db_session = None  # Multi-tenant database session (will be set in main.py)
+auth_db_session = None  # Auth DB session (set in main.py); used for tenant_id lookup
 
 
 def get_opensearch_client() -> OpenSearchQueryClient:
@@ -65,46 +65,37 @@ def get_rbac_enforcer():
 
 async def query_tenant_id_from_db(user_id: str) -> Optional[str]:
     """
-    Query tenant_id from multi_tenant_db for a user.
-    This is a fallback when tenant_id is missing from JWT token.
+    Resolve tenant_id from the auth DB for a user.
+    Used as a fallback when tenant_id is missing from the JWT.
     """
-    if multi_tenant_db_session is None:
-        logger.warning("multi_tenant_db_session is None, cannot query tenant_id")
+    if auth_db_session is None:
+        logger.warning("auth_db_session is None, cannot query tenant_id")
         return None
-    
+
     try:
-        logger.info(f"Querying tenant_id from database for user_id: {user_id} (type: {type(user_id)})")
-        logger.info(f"multi_tenant_db_session type: {type(multi_tenant_db_session)}")
-        
-        async with multi_tenant_db_session() as session:
-            logger.info(f"Session created, executing query for user_id: {int(user_id)}")
-            # Query tenant_users table for the user
+        async with auth_db_session() as session:
             result = await session.execute(
                 text("""
-                    SELECT tu.tenant_id
-                    FROM tenant_users tu
-                    JOIN tenants t ON tu.tenant_uuid = t.id
-                    WHERE tu.user_id = :user_id
-                    AND t.status = 'ACTIVE'
-                    AND tu.status = 'ACTIVE'
+                    SELECT u.tenant_id
+                    FROM users u
+                    JOIN tenants t ON t.tenant_id = u.tenant_id
+                    WHERE u.user_id = :user_id
+                      AND t.status = 'activated'
+                      AND u.is_active = true
+                      AND COALESCE(u.is_tenant_active, true) = true
                     LIMIT 1
                 """),
-                {"user_id": int(user_id)}
+                {"user_id": user_id},
             )
-            logger.info(f"Query executed, fetching result for user_id: {user_id}")
             row = result.fetchone()
-            logger.info(f"Query result for user_id {user_id}: row={row}, type={type(row)}")
-            if row:
-                tenant_id = row[0]
-                logger.info(f"Found tenant_id '{tenant_id}' for user {user_id} from database")
+            if row and row[0]:
+                tenant_id = str(row[0])
+                logger.info(f"Found tenant_id '{tenant_id}' for user {user_id} from auth_db")
                 return tenant_id
-            else:
-                logger.warning(f"No tenant_id found in database for user {user_id} (row is None or empty)")
-                return None
+            logger.warning(f"No active tenant_id found in auth_db for user {user_id}")
+            return None
     except Exception as e:
-        logger.error(f"Error querying tenant_id from database for user {user_id}: {e}", exc_info=True)
-        import traceback
-        logger.error(f"Full traceback: {traceback.format_exc()}")
+        logger.error(f"Error querying tenant_id from auth_db for user {user_id}: {e}", exc_info=True)
         return None
 
 
@@ -190,50 +181,8 @@ async def is_user_tenant_admin(request: Request) -> bool:
 
 
 async def get_tenant_subscriptions(tenant_id: str) -> Optional[List[str]]:
-    """
-    Query tenant subscriptions (registered services) from multi_tenant_db.
-    Maps subscription names to actual service names as they appear in logs.
-    
-    Args:
-        tenant_id: The tenant identifier
-        
-    Returns:
-        List of service names (as they appear in logs) that the tenant is subscribed to, 
-        or None if tenant not found
-    """
-    if multi_tenant_db_session is None:
-        logger.warning("multi_tenant_db_session is None, cannot query tenant subscriptions")
-        return None
-    
-    try:
-        logger.debug(f"Querying subscriptions for tenant_id: {tenant_id}")
-        
-        async with multi_tenant_db_session() as session:
-            # Query tenants table for subscriptions
-            result = await session.execute(
-                text("""
-                    SELECT subscriptions
-                    FROM tenants
-                    WHERE tenant_id = :tenant_id
-                    AND status = 'ACTIVE'
-                    LIMIT 1
-                """),
-                {"tenant_id": tenant_id}
-            )
-            row = result.fetchone()
-            
-            if row:
-                subscriptions = row[0] if row[0] else []
-                # Map subscription names to actual service names
-                service_names = [map_subscription_to_service_name(sub) for sub in subscriptions]
-                logger.debug(f"Found subscriptions for tenant {tenant_id}: {subscriptions} -> mapped to service names: {service_names}")
-                return service_names
-            else:
-                logger.warning(f"No active tenant found with tenant_id: {tenant_id}")
-                return None
-    except Exception as e:
-        logger.error(f"Error querying tenant subscriptions for tenant_id {tenant_id}: {e}", exc_info=True)
-        return None
+    """Returns None — tenant subscriptions are not part of the consolidated tenant model."""
+    return None
 
 
 # ==================== Logs Endpoints ====================

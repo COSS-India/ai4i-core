@@ -87,56 +87,30 @@ async def validate_token(
         if user:
             username = user.username
 
-        tenant_service = None
-        mt_factory = getattr(request.app.state, "multi_tenant_session_factory", None)
-        if mt_factory:
-            tenant_service = TenantService(mt_factory, cache_svc)
+        if user and user.tenant_id:
+            tenant_service = TenantService(db, cache_svc)
+            tenant_id_str = str(user.tenant_id)
 
-        # Enforce tenant lifecycle status on every token validation.
-        # This ensures suspended/deactivated tenant admins/users are cut off on next request.
-        if tenant_service and user:
-            tenant_id = user.tenant_id_cached or claims.tenant_id
-            is_tenant_user = bool(user.is_tenant)
+            tenant_status = await tenant_service.get_tenant_status_cached(tenant_id_str)
+            if is_suspended_or_deactivated(tenant_status):
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "valid": False,
+                        "error": "TENANT_INACTIVE",
+                        "message": _tenant_inactive_message(),
+                    },
+                )
 
-            if not tenant_id:
-                tenant_id = await tenant_service.resolve_and_cache_tenant_id(claims.user_id, is_tenant_user)
-
-            if tenant_id:
-                tenant_status = await tenant_service.get_tenant_status_cached(tenant_id)
-                # Cache-first: only hit source-of-truth when cache misses.
-                if tenant_status is None:
-                    tenant_status = await tenant_service.get_tenant_status_by_user_id(claims.user_id, is_tenant_user)
-                if is_suspended_or_deactivated(tenant_status):
-                    return JSONResponse(
-                        status_code=401,
-                        content={
-                            "valid": False,
-                            "error": "TENANT_INACTIVE",
-                            "message": _tenant_inactive_message(),
-                        },
-                    )
-
-                # tenant admin only checks tenant status; tenant user checks both tenant and tenant-user status
-                if not is_tenant_user:
-                    tenant_user_status = await tenant_service.get_tenant_user_status_cached(
-                        tenant_id,
-                        claims.user_id,
-                    )
-                    # Cache-first: only hit source-of-truth when cache misses.
-                    if tenant_user_status is None:
-                        tenant_user_status = await tenant_service.get_tenant_user_status(
-                            tenant_id,
-                            claims.user_id,
-                        )
-                    if is_suspended_or_deactivated(tenant_user_status):
-                        return JSONResponse(
-                            status_code=401,
-                            content={
-                                "valid": False,
-                                "error": "TENANT_USER_INACTIVE",
-                                "message": _user_inactive_message(str(tenant_user_status)),
-                            },
-                        )
+            if user.is_tenant_active is False:
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "valid": False,
+                        "error": "TENANT_USER_INACTIVE",
+                        "message": _user_inactive_message("deactivated"),
+                    },
+                )
 
     # Backward-compatible: keep JSON body and add user id header for consumers
     if claims.user_id:
