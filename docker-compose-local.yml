@@ -113,7 +113,7 @@ services:
       - xpack.security.enabled=true
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
       - ELASTIC_USERNAME=${ELASTIC_USERNAME}
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "ES_JAVA_OPTS=-Xms256m -Xmx256m"
     ports:
       - "9203:9200"
     volumes:
@@ -228,16 +228,16 @@ services:
   auth-service:
     build:
       context: .
-      dockerfile: ./services/auth-service-v2/Dockerfile
+      dockerfile: ./services/auth-service/Dockerfile
     container_name: ai4v-auth-service
     ports:
       - "8081:8081"
     environment:
       - ENV_FILE=.env
     env_file:
-      - ./services/auth-service-v2/.env
+      - ./services/auth-service/.env
     volumes:
-      - ./services/auth-service-v2:/app
+      - ./services/auth-service:/app
       - ./libs/ai4icore_exceptions:/tmp/ai4icore_exceptions
       - ./libs/ai4icore_constants:/tmp/ai4icore_constants
       - ./libs/ai4icore_env:/tmp/ai4icore_env
@@ -1530,7 +1530,7 @@ services:
     image: opensearchproject/opensearch:2.11.0
     container_name: ai4v-opensearch
     environment:
-      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "OPENSEARCH_JAVA_OPTS=-Xms256m -Xmx256m"
     volumes:
       - opensearch-data:/usr/share/opensearch/data
       - ./infrastructure/opensearch/opensearch.yml:/usr/share/opensearch/config/opensearch.yml

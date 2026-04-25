@@ -27,11 +27,11 @@ RUN pip install --no-cache-dir \
     rm -rf /tmp/ai4icore_*
 
 # Install service dependencies
-COPY services/auth-service-v2/requirements.txt .
+COPY services/auth-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY services/auth-service-v2/ .
+COPY services/auth-service/ .
 
 # Create keys directory (mount production keys via volume)
 RUN mkdir -p /app/keys
