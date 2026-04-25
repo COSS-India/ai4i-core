@@ -112,12 +112,29 @@ async def get_current_token(
         "token_id": claims.token_id,
     })
 
-    if payload.token_id and payload.token_type == "api_key":
-        revoked = await _check_api_key_revocation(payload.token_id, cache_service, db)
+    if payload.token_id:
+        revoked = await _check_token_revocation(
+            payload.token_id, payload.token_type, cache_service, db,
+        )
         if revoked:
             raise TokenRevokedError()
 
     return payload
+
+
+async def _check_token_revocation(
+    token_id: str,
+    token_type: str | None,
+    cache_service: CacheService,
+    db: AsyncSession,
+) -> bool:
+    """
+    Generic revocation check. Currently only api_key tokens are tracked;
+    other token types are considered non-revocable here.
+    """
+    if token_type == "api_key":
+        return await _check_api_key_revocation(token_id, cache_service, db)
+    return False
 
 
 async def _check_api_key_revocation(
