@@ -1,0 +1,19 @@
+"""
+SQLAlchemy ORM models for core-service.
+
+Tables are placed in the ai4iplatform_core schema with the mm_ prefix.
+Import order: Model first (FK dependency for Service).
+"""
+
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
+
+from app.models.model import Model  # noqa: E402
+from app.models.service import Service  # noqa: E402
+
+__all__ = [
+    "Base",
+    "Model",
+    "Service",
+]
