@@ -2,7 +2,8 @@
 Auth-service cache — extends shared CacheService with auth-specific operations.
 
 Generic caching (role permissions, API permission map) comes from shared lib.
-Auth-specific caching (API key tokens, refresh tokens) is added here.
+Auth-specific caching (API key tokens) is added here.
+Refresh tokens are stored in DB only — no Redis caching.
 """
 
 import json
@@ -14,7 +15,6 @@ from ai4icore_bootstrap.cache import CacheService as _BaseCacheService
 from app.core.config import settings
 
 _API_KEY_PREFIX = "auth:apikey:"
-_REFRESH_PREFIX = "auth:refresh:"
 _ROLE_PERMS_PREFIX = "auth:role:"
 _API_PERMS_KEY = "auth:api_perms"
 _TENANT_STATUS_PREFIX = "auth:tenant_status:"
@@ -28,14 +28,11 @@ class CacheService(_BaseCacheService):
     def __init__(
         self,
         redis_api_keys: aioredis.Redis,
-        redis_refresh_tokens: aioredis.Redis,
         redis_role_permissions: aioredis.Redis,
         redis_api_permissions: aioredis.Redis,
     ) -> None:
-        # Base class still provides generic helpers on the default token cache.
         super().__init__(redis_api_keys)
         self._redis_api_keys = redis_api_keys
-        self._redis_refresh_tokens = redis_refresh_tokens
         self._redis_role_permissions = redis_role_permissions
         self._redis_api_permissions = redis_api_permissions
 
@@ -75,29 +72,6 @@ class CacheService(_BaseCacheService):
 
     async def revoke_api_key_token(self, token_id: str) -> None:
         await self._redis_api_keys.delete(f"{_API_KEY_PREFIX}{token_id}")
-
-    # ── Refresh token_id ──
-
-    async def store_refresh_token(self, token_id: str, ttl_seconds: int) -> None:
-        await self._redis_refresh_tokens.setex(f"{_REFRESH_PREFIX}{token_id}", ttl_seconds, "1")
-
-    async def is_refresh_token_valid(self, token_id: str) -> bool:
-        return await self._redis_refresh_tokens.exists(f"{_REFRESH_PREFIX}{token_id}") > 0
-
-    async def revoke_refresh_token(self, token_id: str) -> None:
-        await self._redis_refresh_tokens.delete(f"{_REFRESH_PREFIX}{token_id}")
-
-    async def revoke_refresh_tokens(self, token_ids: list[str]) -> None:
-        """Revoke multiple refresh token_ids in a single Redis pipeline."""
-        if not token_ids:
-            return
-        keys = [f"{_REFRESH_PREFIX}{token_id}" for token_id in token_ids if token_id]
-        if not keys:
-            return
-        async with self._redis_refresh_tokens.pipeline(transaction=False) as pipe:
-            for key in keys:
-                pipe.delete(key)
-            await pipe.execute()
 
     # ── Tenant status caches (short TTL for validate path) ──
 

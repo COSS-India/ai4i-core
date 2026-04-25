@@ -1,17 +1,18 @@
 """
 JWT token creation and validation (RS256 only).
 
-Strict JWT contract:
-- All tokens include: iss (issuer), kid (key ID), alg (RS256)
-- Access tokens: type=access_token, no token_id
-- Refresh tokens: type=refresh, token_id (UUID) for revocation
-- API key tokens: type=api_key, token_id (UUID) for revocation
+Token contract:
+- Access tokens:  sub, tenant_id, permission_ids, type=access_token — no roles, no token_id
+- Refresh tokens: sub, tenant_id, type=refresh — no roles, no token_id
+- API key tokens: sub, tenant_id, permission_ids, type=api_key, token_id (for revocation)
+- Setup tokens:   sub, email, type=setup (for email activation)
+All tokens include: iss, iat, kid, alg=RS256
 """
 
 import logging
-import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+import uuid
 
 from jose import jwt, JWTError, ExpiredSignatureError
 from cryptography.hazmat.primitives import serialization
@@ -29,9 +30,9 @@ class TokenPayload:
         self.sub: str = str(data.get("sub", ""))
         self.tenant_id: Optional[str] = data.get("tenant_id")
         self.permission_ids: list[int] = data.get("permission_ids", [])
-        self.roles: list[str] = data.get("roles", [])
         self.token_type: str = data.get("type", "")
         self.token_id: Optional[str] = data.get("token_id")
+        self.email: Optional[str] = data.get("email")
         self.exp: Optional[datetime] = None
         self.iss: Optional[str] = data.get("iss")
         self.aud: Optional[str] = data.get("aud")
@@ -46,7 +47,6 @@ class TokenService:
     """Creates and validates RS256 JWT tokens with strict iss/aud/alg/kid claims."""
 
     def _base_claims(self) -> dict[str, Any]:
-        """Standard claims included in every token."""
         claims: dict[str, Any] = {
             "iss": settings.jwt_issuer,
             "iat": datetime.now(timezone.utc),
@@ -60,21 +60,20 @@ class TokenService:
 
     def create_access_token(
         self,
-        user_id: int,
+        user_id: str,
         tenant_id: Optional[str] = None,
         permission_ids: list[int] | None = None,
-        roles: list[str] | None = None,
         expires_delta: Optional[timedelta] = None,
     ) -> str:
-        """Create a short-lived access token (default 1 hour)."""
-        expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=settings.access_token_expire_minutes))
-
+        """Short-lived access token. Contains permission_ids only — no roles."""
+        expire = datetime.now(timezone.utc) + (
+            expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
+        )
         payload = {
             **self._base_claims(),
             "sub": str(user_id),
             "tenant_id": tenant_id,
             "permission_ids": permission_ids or [],
-            "roles": roles or [],
             "type": "access_token",
             "exp": expire,
         }
@@ -82,43 +81,35 @@ class TokenService:
 
     def create_refresh_token(
         self,
-        user_id: int,
+        user_id: str,
         tenant_id: Optional[str] = None,
-        roles: list[str] | None = None,
         expires_delta: Optional[timedelta] = None,
-    ) -> tuple[str, str]:
-        """
-        Create a refresh token with a unique token_id for revocation.
-        Returns (jwt_string, token_id).
-        """
-        expire = datetime.now(timezone.utc) + (expires_delta or timedelta(days=settings.refresh_token_expire_days))
-        token_id = str(uuid.uuid4())
-
+    ) -> str:
+        """Refresh token. No roles, no token_id — revocation is via DB row deletion."""
+        expire = datetime.now(timezone.utc) + (
+            expires_delta or timedelta(days=settings.refresh_token_expire_days)
+        )
         payload = {
             **self._base_claims(),
             "sub": str(user_id),
             "tenant_id": tenant_id,
-            "roles": roles or [],
             "type": "refresh",
-            "token_id": token_id,
             "exp": expire,
         }
-        return self._sign(payload), token_id
+        return self._sign(payload)
 
     def create_api_key_token(
         self,
-        user_id: int,
+        user_id: str,
         token_id: str,
         tenant_id: Optional[str] = None,
         permission_ids: list[int] | None = None,
         expires_delta: Optional[timedelta] = None,
     ) -> str:
-        """
-        Create a long-lived API key JWT (default 1 year).
-        The token_id is stored in DB+Redis; the full JWT is shown once.
-        """
-        expire = datetime.now(timezone.utc) + (expires_delta or timedelta(days=settings.api_key_expire_days))
-
+        """Long-lived API key token. token_id stored in DB for revocation lookups."""
+        expire = datetime.now(timezone.utc) + (
+            expires_delta or timedelta(days=settings.api_key_expire_days)
+        )
         payload = {
             **self._base_claims(),
             "sub": str(user_id),
@@ -130,12 +121,30 @@ class TokenService:
         }
         return self._sign(payload)
 
+    def create_setup_token(
+        self,
+        user_id: str,
+        email: str,
+        expires_delta: Optional[timedelta] = None,
+    ) -> str:
+        """Short-lived email activation token. Signed JWT, stored in token_verification table."""
+        expire = datetime.now(timezone.utc) + (
+            expires_delta or timedelta(hours=settings.setup_token_expire_hours)
+        )
+        payload = {
+            **self._base_claims(),
+            "sub": str(user_id),
+            "email": email,
+            "type": "setup",
+            "exp": expire,
+        }
+        return self._sign(payload)
+
     # ── Validation ──
 
     def validate_token(self, token: str) -> TokenPayload:
         """
-        Validate a JWT token with strict checks (RS256 only).
-
+        Validate a JWT token (RS256 only).
         Verifies: signature, expiry, kid, alg, issuer, audience (if configured).
         Raises TokenInvalidError or TokenExpiredError on failure.
         """
@@ -189,7 +198,6 @@ class TokenService:
     # ── Internal ──
 
     def _sign(self, payload: dict[str, Any]) -> str:
-        """Sign a payload with the active RS256 private key."""
         private_key = key_manager.get_signing_key()
         private_pem = private_key.private_bytes(
             encoding=serialization.Encoding.PEM,

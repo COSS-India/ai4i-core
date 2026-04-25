@@ -2,8 +2,8 @@
 APIKey table queries.
 """
 
-from datetime import datetime, timezone
 from typing import Optional
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,32 +23,37 @@ class APIKeyRepository:
         return api_key
 
     async def get_by_id(self, key_id: int) -> Optional[APIKey]:
-        result = await self._db.execute(select(APIKey).where(APIKey.id == key_id))
+        result = await self._db.execute(select(APIKey).where(APIKey.key_id == key_id))
         return result.scalar_one_or_none()
 
-    async def get_by_token_id(self, token_id: str) -> Optional[APIKey]:
-        result = await self._db.execute(select(APIKey).where(APIKey.token_id == token_id))
+    async def get_by_api_key(self, api_key_value: str) -> Optional[APIKey]:
+        """Look up a key by the token_id stored in the api_key column."""
+        result = await self._db.execute(
+            select(APIKey).where(APIKey.api_key == api_key_value)
+        )
         return result.scalar_one_or_none()
 
     async def get_permission_names_by_ids(self, permission_ids: list[int]) -> dict[int, str]:
         if not permission_ids:
             return {}
         result = await self._db.execute(
-            select(Permission.id, Permission.name).where(Permission.id.in_(permission_ids))
+            select(Permission.permission_id, Permission.name).where(
+                Permission.permission_id.in_(permission_ids)
+            )
         )
         return {pid: name for pid, name in result.all()}
 
-    async def list_by_user(self, user_id: int, active_only: bool = False) -> list[APIKey]:
+    async def list_by_user(self, user_id: UUID, active_only: bool = False) -> list[APIKey]:
         query = select(APIKey).where(APIKey.user_id == user_id)
         if active_only:
-            query = query.where(APIKey.is_active == True, APIKey.is_revoked == False)  # noqa: E712
+            query = query.where(APIKey.is_active == True)  # noqa: E712
         result = await self._db.execute(query.order_by(APIKey.created_at.desc()))
         return list(result.scalars().all())
 
     async def list_all_with_users(self, offset: int = 0, limit: int = 100) -> list[tuple[APIKey, User]]:
         result = await self._db.execute(
             select(APIKey, User)
-            .join(User, APIKey.user_id == User.id)
+            .join(User, APIKey.user_id == User.user_id)
             .order_by(APIKey.created_at.desc())
             .offset(offset)
             .limit(limit)
@@ -62,14 +67,8 @@ class APIKeyRepository:
         await self._db.flush()
         return api_key
 
-    async def revoke(self, api_key: APIKey) -> None:
-        api_key.is_revoked = True
+    async def deactivate(self, api_key: APIKey) -> None:
         api_key.is_active = False
-        api_key.status = "revoked"
-        await self._db.flush()
-
-    async def update_last_used(self, api_key: APIKey) -> None:
-        api_key.last_used = datetime.now(timezone.utc)
         await self._db.flush()
 
     async def commit(self) -> None:

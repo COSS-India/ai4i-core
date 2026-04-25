@@ -112,20 +112,6 @@ async def lifespan(app: FastAPI):
     # Load API-to-permission mapping
     await _load_api_permissions_with_retry()
 
-    # Casbin RBAC policies
-    try:
-        from app.casbin.enforcer import load_policies_from_db
-        from app.core.database import get_db
-
-        async for db in get_db():
-            await load_policies_from_db(db)
-            break
-        logger.info("Casbin RBAC policies loaded from database.")
-    except ImportError:
-        logger.info("Casbin module not available, skipping.")
-    except (RuntimeError, OSError) as exc:
-        logger.warning("Casbin policy loading failed: %s", exc)
-
     # Telemetry (optional)
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -169,7 +155,6 @@ async def _load_api_permissions() -> None:
     from app.core.redis import (
         get_redis_client_api_keys,
         get_redis_client_api_permissions,
-        get_redis_client_refresh_tokens,
         get_redis_client_role_permissions,
     )
     from app.core.database import get_db
@@ -188,7 +173,7 @@ async def _load_api_permissions() -> None:
         # One DB query: permission name → DB ID
         name_to_id: dict[str, int] = {}
         async for db in get_db():
-            result = await db.execute(select(Permission.name, Permission.id))
+            result = await db.execute(select(Permission.name, Permission.permission_id))
             for name, pid in result.all():
                 name_to_id[name] = pid
             break
@@ -208,7 +193,6 @@ async def _load_api_permissions() -> None:
         checker = PermissionChecker(redis_client=redis_api_permissions)
         cache_service = CacheService(
             redis_api_keys=get_redis_client_api_keys(),
-            redis_refresh_tokens=get_redis_client_refresh_tokens(),
             redis_role_permissions=get_redis_client_role_permissions(),
             redis_api_permissions=redis_api_permissions,
         )

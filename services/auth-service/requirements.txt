@@ -33,9 +33,6 @@ passlib[argon2]>=1.7.4
 authlib>=1.2.0
 httpx>=0.25.0
 
-# ── RBAC ──
-casbin>=1.33.0
-
 # ── Observability (optional) ──
 opentelemetry-api>=1.20.0
 opentelemetry-sdk>=1.20.0

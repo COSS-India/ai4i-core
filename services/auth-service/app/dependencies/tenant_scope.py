@@ -25,8 +25,8 @@ async def enforce_target_user_same_tenant(
     Callers with ``bypass_roles`` (from DB role names) or ``is_superuser`` skip the check.
     """
     role_repo = RoleRepository(db)
-    user_roles = await role_repo.get_user_roles(current_user.id)
-    if current_user.is_superuser or PermissionChecker.has_any_role(list(bypass_roles), user_roles):
+    user_roles = await role_repo.get_user_roles(current_user.user_id)
+    if PermissionChecker.has_any_role(list(bypass_roles), user_roles):
         return
 
     user_repo = UserRepository(db)

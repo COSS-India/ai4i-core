@@ -21,7 +21,7 @@ class RegisterRequest(BaseSchema):
     timezone: str = Field(default="UTC", max_length=50)
     tenant_id: Optional[str] = Field(
         None,
-        description="Tenant identifier to associate with the user.",
+        description="Tenant UUID to associate with the user.",
         max_length=100,
     )
 
@@ -29,7 +29,6 @@ class RegisterRequest(BaseSchema):
 class LoginRequest(BaseSchema):
     email: EmailStr
     password: str
-    remember_me: bool = False
 
 
 class TokenRefreshRequest(BaseSchema):
@@ -42,18 +41,27 @@ class PasswordChangeRequest(BaseSchema):
     confirm_password: str = Field(..., min_length=8, max_length=100)
 
 
-class PasswordResetRequest(BaseSchema):
+class LogoutRequest(BaseSchema):
+    refresh_token: Optional[str] = None
+
+
+class ProvisionUserRequest(BaseSchema):
     email: EmailStr
+    username: str = Field(..., min_length=3, max_length=100)
+    full_name: Optional[str] = Field(None, max_length=255)
+    phone_number: Optional[str] = Field(None, max_length=20)
+    tenant_id: Optional[str] = Field(None, max_length=100)
+    creation_type: str = Field(default="tenant")
 
 
-class PasswordResetConfirm(BaseSchema):
+class SetPasswordRequest(BaseSchema):
     token: str
     new_password: str = Field(..., min_length=8, max_length=100)
     confirm_password: str = Field(..., min_length=8, max_length=100)
 
 
-class LogoutRequest(BaseSchema):
-    refresh_token: Optional[str] = None
+class ResendSetupLinkRequest(BaseSchema):
+    email: EmailStr
 
 
 # ── Responses ──
@@ -74,3 +82,15 @@ class TokenRefreshResponse(BaseSchema):
 class LogoutResponse(BaseSchema):
     message: str
     logged_out: bool
+
+
+class ProvisionUserResponse(BaseSchema):
+    user_id: str
+    setup_token: str
+    message: str
+
+
+class SetPasswordStatusResponse(BaseSchema):
+    valid: bool
+    status: str
+    message: str
