@@ -12,4 +12,5 @@ httpx>=0.25.0
 python-jose[cryptography]>=3.3.0
 pydantic[email]
 sendgrid==6.12.5
+aiosmtplib>=3.0.0
 tldextract>=3.4.0

@@ -11,6 +11,7 @@ from app.models.session import UserSession  # noqa: E402
 from app.models.api_key import APIKey  # noqa: E402
 from app.models.role import Role, Permission, UserRole, RolePermission  # noqa: E402
 from app.models.oauth import OAuthProvider  # noqa: E402
+from app.models.setup_token import SetupToken  # noqa: E402
 
 __all__ = [
     "Base",
@@ -22,4 +23,5 @@ __all__ = [
     "UserRole",
     "RolePermission",
     "OAuthProvider",
+    "SetupToken",
 ]

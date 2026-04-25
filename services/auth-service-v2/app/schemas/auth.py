@@ -61,6 +61,25 @@ class LogoutRequest(BaseSchema):
     refresh_token: Optional[str] = None
 
 
+class InternalProvisionUserRequest(BaseSchema):
+    email: EmailStr
+    username: str = Field(..., min_length=3, max_length=100)
+    full_name: Optional[str] = Field(None, max_length=255)
+    phone_number: Optional[str] = Field(None, max_length=20)
+    tenant_id: str = Field(..., min_length=1, max_length=100)
+    is_tenant: bool
+
+
+class SetPasswordRequest(BaseSchema):
+    token: str = Field(..., min_length=8, max_length=255)
+    new_password: str = Field(..., min_length=8, max_length=100)
+    confirm_password: str = Field(..., min_length=8, max_length=100)
+
+
+class ResendSetupLinkRequest(BaseSchema):
+    email: EmailStr
+
+
 # ── Responses ──
 
 class LoginResponse(BaseSchema):
@@ -79,3 +98,8 @@ class TokenRefreshResponse(BaseSchema):
 class LogoutResponse(BaseSchema):
     message: str
     logged_out: bool
+
+
+class InternalProvisionUserResponse(BaseSchema):
+    user_id: int
+    setup_token: str

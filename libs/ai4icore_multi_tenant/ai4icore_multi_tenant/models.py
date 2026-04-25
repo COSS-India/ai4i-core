@@ -28,6 +28,10 @@ class TenantUserStatus(str, enum.Enum):
     ACTIVE = "ACTIVE"            # user created and approved by tenant admin
     SUSPENDED = "SUSPENDED"
 
+class TenantUserSuspensionTag(str, enum.Enum):
+    ADMIN_SUSPENDED = "ADMIN_SUSPENDED"
+    TENANT_SUSPENDED = "TENANT_SUSPENDED"
+
 
 TenantDBBase = declarative_base()
 
@@ -94,6 +98,10 @@ class TenantUser(TenantDBBase):
         Enum(TenantUserStatus, native_enum=False, create_type=False),
         nullable=False,
         default=TenantUserStatus.PENDING,
+    )
+    suspension_tag = Column(
+        Enum(TenantUserSuspensionTag, native_enum=False, create_type=False),
+        nullable=True,
     )
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -3,6 +3,8 @@ Core authentication business logic: register, login, refresh, logout.
 """
 
 import logging
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -11,16 +13,20 @@ from ai4icore_env import app_env
 from app.core.config import settings
 from app.core.exceptions import (
     DuplicateEntityError,
+    EntityNotFoundError,
     AuthorizationError,
     InvalidCredentialsError,
     TokenExpiredError,
     TokenInvalidError,
     TokenRevokedError,
     UserInactiveError,
+    ValidationError,
 )
 from app.models.user import User
+from app.models.setup_token import SetupToken
+from app.repositories.setup_token_repository import SetupTokenRepository
 from app.repositories.user_repository import UserRepository
-from app.schemas.auth import LoginResponse, TokenRefreshResponse
+from app.schemas.auth import InternalProvisionUserResponse, LoginResponse, TokenRefreshResponse
 from app.services.cache_service import CacheService
 from app.services.password_service import PasswordService
 from app.services.role_service import RoleService
@@ -41,6 +47,7 @@ class AuthService:
         password_service: PasswordService,
         session_service: SessionService,
         cache_service: CacheService,
+        setup_token_repo: SetupTokenRepository,
         tenant_service=TenantService,
     ) -> None:
         self._users = user_repo
@@ -49,6 +56,7 @@ class AuthService:
         self._passwords = password_service
         self._sessions = session_service
         self._cache = cache_service
+        self._setup_tokens = setup_token_repo
         self._tenants = tenant_service
 
     def _format_tenant_inactive_message(self) -> str:
@@ -387,3 +395,134 @@ class AuthService:
         await self._users.update_password(user, hash_result.hashed, hash_result.salt, hash_result.rounds)
         await self._users.commit()
         logger.info("Password changed for user id=%d", user.id)
+
+    async def provision_user(
+        self,
+        email: str,
+        username: str,
+        full_name: Optional[str],
+        phone_number: Optional[str],
+        tenant_id: str,
+        is_tenant: bool,
+    ) -> InternalProvisionUserResponse:
+        existing_email = await self._users.get_by_email(email)
+        if existing_email:
+            raise DuplicateEntityError("User", "email")
+        if await self._users.get_by_username(username):
+            raise DuplicateEntityError("User", "username")
+
+        user = User(
+            email=email,
+            username=username,
+            password_hash=None,
+            password_salt=None,
+            full_name=full_name,
+            phone_number=phone_number,
+            timezone="UTC",
+            language="en",
+            is_tenant=is_tenant,
+            tenant_id_cached=tenant_id,
+            is_active=True,
+            is_verified=False,
+        )
+        await self._users.create(user)
+        await self._setup_tokens.deactivate_unused_for_user(user.id)
+        raw_token = secrets.token_urlsafe(48)
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.setup_token_expire_hours)
+        await self._setup_tokens.create(
+            SetupToken(
+                user_id=user.id,
+                token=raw_token,
+                expires_at=expires_at,
+                is_active=True,
+            )
+        )
+        await self._users.commit()
+        return InternalProvisionUserResponse(user_id=user.id, setup_token=raw_token)
+
+    async def set_password_with_setup_token(
+        self,
+        token: str,
+        new_password: str,
+        confirm_password: str,
+    ) -> None:
+        self._passwords.validate_and_confirm(new_password, confirm_password)
+        setup_token = await self._setup_tokens.get_by_token(token)
+        if not setup_token:
+            raise TokenInvalidError("Invalid setup link.")
+        if setup_token.used_at is not None:
+            raise TokenInvalidError("This setup link has already been used.")
+        if not setup_token.is_active:
+            raise TokenInvalidError("Invalid setup link.")
+        if setup_token.expires_at <= datetime.now(timezone.utc):
+            raise TokenExpiredError("This setup link has expired. Please request a new one.")
+
+        user = await self._users.get_by_id(setup_token.user_id)
+        if not user:
+            raise TokenInvalidError("Invalid setup link.")
+
+        hash_result = self._passwords.hash_password(new_password)
+        await self._users.update_password(user, hash_result.hashed, hash_result.salt, hash_result.rounds)
+        user.is_verified = True
+        await self._setup_tokens.mark_used(setup_token, datetime.now(timezone.utc))
+        await self._users.commit()
+
+    async def get_setup_token_status(self, token: str) -> dict[str, str | bool]:
+        setup_token = await self._setup_tokens.get_by_token(token)
+        if not setup_token:
+            return {
+                "valid": False,
+                "status": "invalid",
+                "message": "Invalid setup link.",
+            }
+        if setup_token.used_at is not None or not setup_token.is_active:
+            return {
+                "valid": False,
+                "status": "used",
+                "message": "Password has already been set. Please login.",
+            }
+        if setup_token.expires_at <= datetime.now(timezone.utc):
+            return {
+                "valid": False,
+                "status": "expired",
+                "message": "This setup link has expired. Please request a new one.",
+            }
+        user = await self._users.get_by_id(setup_token.user_id)
+        if not user:
+            return {
+                "valid": False,
+                "status": "invalid",
+                "message": "Invalid setup link.",
+            }
+        if user.password_hash:
+            return {
+                "valid": False,
+                "status": "already_set",
+                "message": "Password has already been set. Please login.",
+            }
+        return {
+            "valid": True,
+            "status": "valid",
+            "message": "Setup link is valid.",
+        }
+
+    async def resend_setup_link(self, email: str) -> str:
+        user = await self._users.get_by_email(email)
+        if not user:
+            raise EntityNotFoundError("User", "email")
+        if user.password_hash:
+            raise ValidationError("Password is already set. Use login or change password.")
+
+        await self._setup_tokens.deactivate_unused_for_user(user.id)
+        raw_token = secrets.token_urlsafe(48)
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.setup_token_expire_hours)
+        await self._setup_tokens.create(
+            SetupToken(
+                user_id=user.id,
+                token=raw_token,
+                expires_at=expires_at,
+                is_active=True,
+            )
+        )
+        await self._setup_tokens.commit()
+        return raw_token

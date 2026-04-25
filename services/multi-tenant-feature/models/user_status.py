@@ -1,5 +1,6 @@
 from pydantic import BaseModel
-from .enum_tenant import TenantUserStatus
+from typing import Optional
+from .enum_tenant import TenantUserStatus, TenantUserSuspensionTag
 
 
 
@@ -14,3 +15,4 @@ class TenantUserStatusUpdateResponse(BaseModel):
     user_id: int
     old_status: TenantUserStatus
     new_status: TenantUserStatus
+    suspension_tag: Optional[TenantUserSuspensionTag] = None

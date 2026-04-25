@@ -8,21 +8,21 @@ from utils.utils import (
 )
 from models.db_models import Tenant, TenantEmailVerification
 from models.tenant_create import TenantRegisterRequest
-from _email_service.sendgrid import email_service
+from _email_service.amazon_ses import email_service
 from _email_service.templates import WELCOME_EMAIL_SUBJECT, WELCOME_EMAIL_BODY ,USER_WELCOME_EMAIL_BODY
 
 from logger import logger
 from ai4icore_env import app_env
 
 LOGIN_URL = app_env.login_url
+EMAIL_PASSWORD_SETUP_TOKEN_EXPIRE_HOURS = app_env.email_password_setup_token_expire_hours
 
 
 async def send_welcome_email(
     tenant_id: str,
     contact_email: str,
     subdomain: str,
-    temp_admin_username: str,
-    temp_admin_password: str,
+    set_password_url: str,
 ):
     """
     Send welcome email to tenant admin with login credentials after tenant activation.
@@ -31,24 +31,69 @@ async def send_welcome_email(
         tenant_id: The ID of the tenant
         contact_email: The contact email of the tenant
         subdomain: The tenant's subdomain
-        temp_admin_username: Temporary admin username
-        temp_admin_password: Temporary admin password
+        set_password_url: Single-use set-password URL
+        login_url: Portal login URL
         email: Admin email address
     """  
     
     body = WELCOME_EMAIL_BODY.format(
             tenant_id=tenant_id,
-            # subdomain=subdomain,
-            username=temp_admin_username,
-            password=temp_admin_password,
             email=contact_email,
             login_url=f"{LOGIN_URL}",
+            set_password_url=set_password_url,
+            setup_link_expiry_hours=EMAIL_PASSWORD_SETUP_LINK_EXPIRE_HOURS,
         )
+
+    html_body = f"""
+    <html>
+      <body style="font-family:Arial,sans-serif;background:#f8fafc;margin:0;padding:24px;">
+        <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+          <div style="padding:20px 24px;background:#0f172a;">
+            <h2 style="color:#ffffff;margin:0;">Welcome to AI4I</h2>
+          </div>
+          <div style="padding:24px;">
+            <p style="color:#374151;margin-top:0;">Your tenant has been successfully activated.</p>
+            <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin:16px 0;">
+              <p style="margin:0 0 8px 0;color:#111827;"><b>Tenant ID:</b> {tenant_id}</p>
+              <p style="margin:0;color:#111827;"><b>Email ID:</b> {contact_email}</p>
+            </div>
+            <p style="color:#374151;">
+              Click the button below to set your password on the AI4I portal.
+            </p>
+            <p style="color:#6b7280;font-size:13px;margin:0 0 12px 0;">
+              This setup link is valid for <b>{EMAIL_PASSWORD_SETUP_LINK_EXPIRE_HOURS} hours</b> and can be used only once.
+            </p>
+            <p style="margin:24px 0;">
+              <a
+                href="{set_password_url}"
+                style="display:inline-block;padding:12px 20px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;"
+              >
+                Setup Password
+              </a>
+            </p>
+            <p style="color:#6b7280;font-size:13px;margin:0 0 8px 0;">
+              If the button does not work, use this link:
+            </p>
+            <p style="font-size:13px;word-break:break-all;margin:0 0 8px 0;">
+              <a href="{set_password_url}">{set_password_url}</a>
+            </p>
+            <p style="color:#6b7280;font-size:13px;margin:0 0 8px 0;">
+              If this link has expired, please provide your email and contact your platform administrator.
+            </p>
+            <p style="color:#6b7280;font-size:13px;margin:0;">
+              Login URL: <a href="{LOGIN_URL}">{LOGIN_URL}</a>
+            </p>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
 
     await email_service.send(
         to_email=contact_email,
         subject=WELCOME_EMAIL_SUBJECT,
         body=body,
+        html_body=html_body,
     )
 
 
@@ -57,8 +102,7 @@ async def send_user_welcome_email(
     user_id: str,
     contact_email: str,
     subdomain: str,
-    temp_username: str,
-    temp_password: str,
+    set_password_url: str,
 ):
     """
     Send welcome email to tenant user with login credentials after user registration.
@@ -67,24 +111,60 @@ async def send_user_welcome_email(
         user_id: The ID of the user
         contact_email: The contact email of the user
         subdomain: The tenant's subdomain
-        temp_username: Temporary username
-        temp_password: Temporary password
+        set_password_url: Single-use set-password URL
         email: User email address
     """  
     
     body = USER_WELCOME_EMAIL_BODY.format(
-            user_id=user_id,
-            # subdomain=subdomain,
-            username=temp_username,
-            password=temp_password,
             email=contact_email,
-            login_url=f"{LOGIN_URL}",
+            set_password_url=set_password_url,
+            setup_link_expiry_hours=EMAIL_PASSWORD_SETUP_LINK_EXPIRE_HOURS,
         )
+
+    html_body = f"""
+    <html>
+      <body style="font-family:Arial,sans-serif;background:#f8fafc;margin:0;padding:24px;">
+        <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+          <div style="padding:20px 24px;background:#0f172a;">
+            <h2 style="color:#ffffff;margin:0;">Welcome to AI4I</h2>
+          </div>
+          <div style="padding:24px;">
+            <p style="color:#374151;margin-top:0;">Your account has been successfully activated.</p>
+            <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin:16px 0;">
+              <p style="margin:0;color:#111827;"><b>Email ID:</b> {contact_email}</p>
+            </div>
+            <p style="color:#374151;">
+              Click the button below to set your password on the AI4I portal.
+            </p>
+            <p style="color:#6b7280;font-size:13px;margin:0 0 12px 0;">
+              This setup link is valid for <b>{EMAIL_PASSWORD_SETUP_LINK_EXPIRE_HOURS} hours</b> and can be used only once.
+            </p>
+            <p style="margin:24px 0;">
+              <a
+                href="{set_password_url}"
+                style="display:inline-block;padding:12px 20px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;"
+              >
+                Setup Password
+              </a>
+            </p>
+            <p style="color:#6b7280;font-size:13px;margin:0;">
+              If the button does not work, use this link:
+              <a href="{set_password_url}"> {set_password_url}</a>
+            </p>
+            <p style="color:#6b7280;font-size:13px;margin:8px 0 0 0;">
+              If this link has expired, please provide your email and contact your platform administrator.
+            </p>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
 
     await email_service.send(
         to_email=contact_email,
         subject=WELCOME_EMAIL_SUBJECT,
         body=body,
+        html_body=html_body,
     )
 
 
