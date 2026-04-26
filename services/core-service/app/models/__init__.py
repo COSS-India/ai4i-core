@@ -1,7 +1,7 @@
 """
 SQLAlchemy ORM models for core-service.
 
-Tables are placed in the ai4iplatform_core schema with the mm_ prefix.
+Tables are placed in the public schema (models, services).
 Import order: Model first (FK dependency for Service).
 """
 

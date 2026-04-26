@@ -1,5 +1,5 @@
 """
-Request/response schemas for mm_models.
+Request/response schemas for models.
 """
 
 from datetime import datetime
@@ -13,10 +13,8 @@ from app.schemas.base import BaseSchema
 
 
 class VersionStatus(str, Enum):
-    DRAFT = "DRAFT"
     ACTIVE = "ACTIVE"
     DEPRECATED = "DEPRECATED"
-    ARCHIVED = "ARCHIVED"
 
 
 class ModelCreate(BaseSchema):

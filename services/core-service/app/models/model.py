@@ -1,5 +1,5 @@
 """
-ORM model for mm_models table (ai4iplatform_core schema).
+ORM model for public.models table.
 """
 
 import enum
@@ -14,23 +14,22 @@ from app.models import Base
 
 
 class VersionStatus(str, enum.Enum):
-    DRAFT = "DRAFT"
     ACTIVE = "ACTIVE"
     DEPRECATED = "DEPRECATED"
-    ARCHIVED = "ARCHIVED"
 
 
 class Model(Base):
-    __tablename__ = "mm_models"
+    __tablename__ = "models"
     __table_args__ = (
-        UniqueConstraint("name", "version", name="uq_mm_models_name_version"),
+        UniqueConstraint("model_id", name="uq_models_model_id"),
+        UniqueConstraint("name", "version", name="uq_name_version"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    model_id = Column(String(255), nullable=False, unique=True, index=True)
+    model_id = Column(String(255), nullable=False, index=True)
     version = Column(String(100), nullable=False)
     version_status = Column(
-        Enum(VersionStatus, name="version_status_enum", values_callable=lambda x: [e.value for e in x]),
+        Enum(VersionStatus, name="version_status", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
     )
     version_status_updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

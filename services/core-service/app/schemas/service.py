@@ -1,5 +1,5 @@
 """
-Request/response schemas for mm_services.
+Request/response schemas for services.
 """
 
 from datetime import datetime

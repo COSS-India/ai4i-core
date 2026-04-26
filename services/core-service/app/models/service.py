@@ -1,10 +1,10 @@
 """
-ORM model for mm_services table (ai4iplatform_core schema).
+ORM model for public.services table.
 """
 
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKeyConstraint, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -13,19 +13,23 @@ from app.models import Base
 
 
 class Service(Base):
-    __tablename__ = "mm_services"
+    __tablename__ = "services"
+    __table_args__ = (
+        UniqueConstraint("service_id", name="services_service_id_key"),
+        UniqueConstraint("name", name="uq_service_name"),
+        ForeignKeyConstraint(
+            ["model_id"],
+            ["models.model_id"],
+            name="fk_services_model_id"
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    service_id = Column(String(255), nullable=False, unique=True, index=True)
-    name = Column(String(255), nullable=False, unique=True)
+    service_id = Column(String(255), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
     service_description = Column(Text, nullable=True)
     hardware_description = Column(Text, nullable=True)
-    model_id = Column(
-        String(255),
-        ForeignKey("mm_models.model_id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True,
-    )
+    model_id = Column(String(255), nullable=False, index=True)
     model_version = Column(String(100), nullable=False)
     endpoint = Column(String(500), nullable=False)
     api_key = Column(String(255), nullable=True)
@@ -33,8 +37,8 @@ class Service(Base):
     benchmarks = Column(JSONB, nullable=True)
     policy = Column(JSONB, nullable=True)
     is_published = Column(Boolean, nullable=False)
-    published_at = Column(DateTime(timezone=True), server_default=func.now())
-    unpublished_at = Column(DateTime(timezone=True), server_default=func.now())
+    published_at = Column(DateTime(timezone=True), nullable=True)
+    unpublished_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
