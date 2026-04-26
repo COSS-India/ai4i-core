@@ -7,9 +7,9 @@ of the shared lib, not a parallel implementation.
 """
 
 import logging
-from datetime import datetime, timezone
+from uuid import UUID
 
-from fastapi import Depends, Request
+from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +21,6 @@ from ai4icore_auth.jwt_verifier import (
 
 from app.core.database import get_db
 from app.core.exceptions import (
-    AuthorizationError,
     AuthenticationRequiredError,
     TokenExpiredError,
     TokenInvalidError,
@@ -32,10 +31,8 @@ from app.core.exceptions import (
 from app.dependencies.services import get_cache_service
 from app.models.user import User
 from app.repositories.api_key_repository import APIKeyRepository
-from app.repositories.session_repository import SessionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.cache_service import CacheService
-from app.services.tenant_service import TenantService, is_suspended_or_deactivated
 from app.services.token_service import TokenPayload, TokenService
 
 logger = logging.getLogger(__name__)
@@ -69,7 +66,6 @@ async def init_jwt_verifier() -> None:
         audience=settings.jwt_audience,
     )
 
-    # Load public keys via the public API (no private internals)
     for pair in key_manager.get_all_public_keys():
         pem = pair.public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
@@ -93,7 +89,7 @@ async def get_current_token(
 ) -> TokenPayload:
     """
     Validate the Bearer token using the shared ai4icore_auth JWTVerifier.
-    If token has a token_id, verifies revocation via Redis with DB fallback.
+    API key tokens with a token_id are checked for revocation via Redis + DB fallback.
     """
     if credentials is None:
         raise AuthenticationRequiredError()
@@ -101,7 +97,6 @@ async def get_current_token(
     token = credentials.credentials
     verifier = get_jwt_verifier()
 
-    # Verify via shared library (RS256)
     try:
         claims: AuthClaims = await verifier.verify(token)
     except JWTExpiredError:
@@ -109,23 +104,17 @@ async def get_current_token(
     except JWTVerificationError as exc:
         raise TokenInvalidError(exc.message)
 
-    # Convert shared AuthClaims → local TokenPayload for service-internal use
     payload = TokenPayload({
         "sub": str(claims.user_id),
         "tenant_id": claims.tenant_id,
         "permission_ids": claims.permission_ids,
-        "roles": claims.roles,
         "type": claims.token_type,
         "token_id": claims.token_id,
     })
 
-    # Revocation check for tokens with token_id
     if payload.token_id:
         revoked = await _check_token_revocation(
-            payload.token_id,
-            payload.token_type,
-            cache_service,
-            db,
+            payload.token_id, payload.token_type, cache_service, db,
         )
         if revoked:
             raise TokenRevokedError()
@@ -135,91 +124,59 @@ async def get_current_token(
 
 async def _check_token_revocation(
     token_id: str,
-    token_type: str,
+    token_type: str | None,
     cache_service: CacheService,
     db: AsyncSession,
 ) -> bool:
     """
-    Check if a token_id has been revoked.
-    Redis first, DB fallback to avoid false revocations on Redis eviction.
-    Returns True if revoked, False if valid.
+    Generic revocation check. Currently only api_key tokens are tracked;
+    other token types are considered non-revocable here.
     """
     if token_type == "api_key":
-        if await cache_service.is_api_key_valid(token_id):
-            return False
+        return await _check_api_key_revocation(token_id, cache_service, db)
+    return False
 
-        repo = APIKeyRepository(db)
-        db_key = await repo.get_by_token_id(token_id)
-        if not db_key or db_key.is_revoked or not db_key.is_active:
-            return True
 
-        if db_key.expires_at:
-            remaining = (db_key.expires_at - datetime.now(timezone.utc)).total_seconds()
-            if remaining > 0:
-                await cache_service.store_api_key_token(token_id, int(remaining))
+async def _check_api_key_revocation(
+    token_id: str,
+    cache_service: CacheService,
+    db: AsyncSession,
+) -> bool:
+    """
+    Check if an API key token_id has been revoked.
+    Redis first (presence = valid), DB fallback on cache miss.
+    Returns True if revoked, False if valid.
+    """
+    if await cache_service.is_api_key_valid(token_id):
         return False
 
-    else:
-        if await cache_service.is_refresh_token_valid(token_id):
-            return False
+    repo = APIKeyRepository(db)
+    db_key = await repo.get_by_api_key(token_id)
+    if not db_key or not db_key.is_active:
+        return True
 
-        repo = SessionRepository(db)
-        session = await repo.get_by_token_id(token_id)
-        if not session or not session.is_active:
-            return True
+    ttl = await _remaining_api_key_ttl(db_key)
+    if ttl > 0:
+        await cache_service.store_api_key_token(token_id, ttl)
+    return False
 
-        if session.expires_at:
-            remaining = (session.expires_at - datetime.now(timezone.utc)).total_seconds()
-            if remaining > 0:
-                await cache_service.store_refresh_token(token_id, int(remaining))
-        return False
+
+async def _remaining_api_key_ttl(db_key) -> int:
+    from app.core.config import settings
+    return settings.api_key_expire_days * 86400
 
 
 async def get_current_user(
-    request: Request,
     payload: TokenPayload = Depends(get_current_token),
     db: AsyncSession = Depends(get_db),
-    cache_service: CacheService = Depends(get_cache_service),
 ) -> User:
     """Resolve the authenticated user from the token payload."""
     repo = UserRepository(db)
-    user = await repo.get_by_id(int(payload.sub))
+    user = await repo.get_by_id(UUID(payload.sub))
     if not user:
         raise UserNotFoundError()
     if not user.is_active:
         raise UserInactiveError()
-
-    mt_factory = getattr(request.app.state, "multi_tenant_session_factory", None)
-    if mt_factory:
-        tenant_service = TenantService(mt_factory, cache_service)
-
-        tenant_id = user.tenant_id_cached or payload.tenant_id
-        is_tenant_user = bool(user.is_tenant)
-        if not tenant_id:
-            tenant_id = await tenant_service.resolve_and_cache_tenant_id(user.id, is_tenant_user)
-
-        if tenant_id:
-            tenant_status = await tenant_service.get_tenant_status_cached(tenant_id)
-            # Fast path: trust cached ACTIVE status in normal auth dependency.
-            # Source-of-truth rechecks are enforced on /auth/validate.
-            if tenant_status is None:
-                tenant_status = await tenant_service.get_tenant_status_by_user_id(
-                    user.id,
-                    is_tenant_user,
-                )
-            if is_suspended_or_deactivated(tenant_status):
-                raise AuthorizationError(
-                    message="Tenant access is restricted. Contact your administrator.",
-                    code="TENANT_INACTIVE",
-                )
-
-            if not is_tenant_user:
-                tenant_user_status = await tenant_service.get_tenant_user_status_cached(tenant_id, user.id)
-                if is_suspended_or_deactivated(tenant_user_status):
-                    raise AuthorizationError(
-                        message=f"User is {str(tenant_user_status).lower()}, please contact your admin",
-                        code="TENANT_USER_INACTIVE",
-                    )
     return user
 
 

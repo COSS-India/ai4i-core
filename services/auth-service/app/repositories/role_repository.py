@@ -3,6 +3,7 @@ Role, Permission, UserRole, RolePermission queries.
 """
 
 from typing import Optional
+from uuid import UUID
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +22,7 @@ class RoleRepository:
         return result.scalar_one_or_none()
 
     async def get_role_by_id(self, role_id: int) -> Optional[Role]:
-        result = await self._db.execute(select(Role).where(Role.id == role_id))
+        result = await self._db.execute(select(Role).where(Role.role_id == role_id))
         return result.scalar_one_or_none()
 
     async def list_roles(self) -> list[Role]:
@@ -30,31 +31,38 @@ class RoleRepository:
 
     # ── User roles ──
 
-    async def get_user_roles(self, user_id: int) -> list[str]:
-        """Return role names for a user (most recent first)."""
+    async def get_user_roles(self, user_id: UUID) -> list[str]:
         result = await self._db.execute(
             select(Role.name)
-            .join(UserRole, Role.id == UserRole.role_id)
+            .join(UserRole, Role.role_id == UserRole.role_id)
             .where(UserRole.user_id == user_id)
-            .order_by(UserRole.assigned_at.desc())
+            .order_by(UserRole.created_at.desc())
         )
         return list(result.scalars().all())
 
-    async def get_user_role_records(self, user_id: int) -> list[UserRole]:
+    async def get_user_role_records(self, user_id: UUID) -> list[UserRole]:
         result = await self._db.execute(
             select(UserRole)
             .where(UserRole.user_id == user_id)
-            .order_by(UserRole.assigned_at.desc())
+            .order_by(UserRole.created_at.desc())
         )
         return list(result.scalars().all())
 
-    async def assign_role(self, user_id: int, role_id: int) -> UserRole:
+    async def get_user_role_record(self, user_id: UUID, role_id: int) -> Optional[UserRole]:
+        result = await self._db.execute(
+            select(UserRole).where(
+                UserRole.user_id == user_id, UserRole.role_id == role_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def assign_role(self, user_id: UUID, role_id: int) -> UserRole:
         user_role = UserRole(user_id=user_id, role_id=role_id)
         self._db.add(user_role)
         await self._db.flush()
         return user_role
 
-    async def remove_role(self, user_id: int, role_id: int) -> bool:
+    async def remove_role(self, user_id: UUID, role_id: int) -> bool:
         result = await self._db.execute(
             select(UserRole).where(
                 UserRole.user_id == user_id, UserRole.role_id == role_id
@@ -90,25 +98,25 @@ class RoleRepository:
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_user_permission_ids(self, user_id: int) -> list[int]:
-        """Return permission IDs for a user (via roles)."""
+    async def get_user_permission_ids(self, user_id: UUID) -> list[int]:
         result = await self._db.execute(
-            select(Permission.id)
-            .join(RolePermission, Permission.id == RolePermission.permission_id)
-            .join(Role, RolePermission.role_id == Role.id)
-            .join(UserRole, Role.id == UserRole.role_id)
+            select(Permission.permission_id)
+            .join(RolePermission, Permission.permission_id == RolePermission.permission_id)
+            .join(Role, RolePermission.role_id == Role.role_id)
+            .join(UserRole, Role.role_id == UserRole.role_id)
             .where(UserRole.user_id == user_id)
+            .distinct()
         )
         return list(result.scalars().all())
 
-    async def get_user_permission_names(self, user_id: int) -> list[str]:
-        """Return permission names for a user (via roles)."""
+    async def get_user_permission_names(self, user_id: UUID) -> list[str]:
         result = await self._db.execute(
             select(Permission.name)
-            .join(RolePermission, Permission.id == RolePermission.permission_id)
-            .join(Role, RolePermission.role_id == Role.id)
-            .join(UserRole, Role.id == UserRole.role_id)
+            .join(RolePermission, Permission.permission_id == RolePermission.permission_id)
+            .join(Role, RolePermission.role_id == Role.role_id)
+            .join(UserRole, Role.role_id == UserRole.role_id)
             .where(UserRole.user_id == user_id)
+            .distinct()
         )
         return list(result.scalars().all())
 
@@ -118,10 +126,19 @@ class RoleRepository:
         )
         return list(result.scalars().all())
 
+    async def get_permission_names_by_ids(self, permission_ids: list[int]) -> dict[int, str]:
+        if not permission_ids:
+            return {}
+        result = await self._db.execute(
+            select(Permission.permission_id, Permission.name).where(
+                Permission.permission_id.in_(permission_ids)
+            )
+        )
+        return {pid: name for pid, name in result.all()}
+
     async def delete_role_permissions_for_permission_ids(
         self, role_id: int, permission_ids: list[int]
     ) -> None:
-        """Remove links for this role where permission_id is in the given set."""
         if not permission_ids:
             return
         await self._db.execute(
@@ -133,7 +150,6 @@ class RoleRepository:
         await self._db.flush()
 
     async def insert_role_permissions(self, role_id: int, permission_ids: list[int]) -> None:
-        """Insert role_permission rows (caller ensures no duplicates / PK conflicts)."""
         for pid in permission_ids:
             self._db.add(RolePermission(role_id=role_id, permission_id=pid))
         await self._db.flush()

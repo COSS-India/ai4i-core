@@ -33,7 +33,7 @@ def require_permission(resource: str, action: str) -> Callable:
             return current_user
 
         repo = RoleRepository(db)
-        permission_names = await repo.get_user_permission_names(current_user.id)
+        permission_names = await repo.get_user_permission_names(current_user.user_id)
         required = f"{resource}.{action}"
 
         if not PermissionChecker.has_permission(required, permission_names):
@@ -59,7 +59,7 @@ def require_any_role(*role_names: str) -> Callable:
             return current_user
 
         repo = RoleRepository(db)
-        user_roles = await repo.get_user_roles(current_user.id)
+        user_roles = await repo.get_user_roles(current_user.user_id)
 
         # Reuse these role names in downstream services to avoid duplicate DB queries.
         # (Routes can read `request.state.user_roles`.)

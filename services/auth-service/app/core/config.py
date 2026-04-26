@@ -75,6 +75,7 @@ class AuthSettings(BaseSettings):
     # ── Token expiry ──
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 7
+    setup_token_expire_hours: int = 48
     api_key_expire_days: int = Field(
         default=365,
         validation_alias=AliasChoices("API_KEY_EXPIRE_DAYS", "APIKEY_EXPIRY"),

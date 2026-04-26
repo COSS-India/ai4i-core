@@ -32,7 +32,9 @@ class MigrationCLI:
     
     DATABASES = ['postgres', 'redis', 'influxdb', 'elasticsearch', 'kafka']
     POSTGRES_DBS = [
-        'auth_db', 
+        'auth_db',
+        'ai4iplatform_auth',
+        'ai4iplatform_core',
         'config_db', 
         'alerting_db',
         'metrics_db',
@@ -340,7 +342,8 @@ Examples:
         
         # Databases that have seeders
         postgres_dbs_with_seeders = [
-            'auth_db', 'config_db', 'alerting_db',
+            'auth_db', 'ai4iplatform_auth', 'ai4iplatform_core',
+            'config_db', 'alerting_db',
             'dashboard_db', 'model_management_db', 'multi_tenant_db', 'ai4i_platform'
         ]
         
