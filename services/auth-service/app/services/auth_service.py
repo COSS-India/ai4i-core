@@ -67,7 +67,7 @@ class AuthService:
                 settings.default_tenant_org,
             )
             return None
-        return default.tenant_id
+        return default.id
 
     # ── Register (direct portal signup) ──
 
@@ -100,25 +100,25 @@ class AuthService:
             timezone=tz,
             tenant_id=parsed_tenant_id,
             is_active=True,
-            creation_type=CreationType.DIRECT,
+            creation_type=CreationType.DEFAULT,
         )
         await self._users.create(user)
 
         hash_result = self._passwords.hash_password(password)
         creds = UserCredentials(
-            user_id=user.user_id,
+            user_id=user.id,
             password_hash=hash_result.hashed,
             password_salt=hash_result.salt,
         )
         await self._credentials.create(creds)
 
         try:
-            await self._roles.assign_role(user.user_id, "USER")
+            await self._roles.assign_role(user.id, "USER")
         except EntityNotFoundError:
             logger.warning("Default USER role not found, skipping role assignment.")
 
         await self._users.commit()
-        logger.info("User registered: %s (id=%s)", email, user.user_id)
+        logger.info("User registered: %s (id=%s)", email, user.id)
         return user
 
     # ── Login ──
@@ -132,7 +132,7 @@ class AuthService:
         if not user.is_active:
             raise UserInactiveError()
 
-        creds = await self._credentials.get_by_user_id(user.user_id)
+        creds = await self._credentials.get_by_user_id(user.id)
         if not creds or not creds.password_hash or not creds.password_salt:
             raise InvalidCredentialsError()
 
@@ -141,23 +141,23 @@ class AuthService:
 
         tenant_id = str(user.tenant_id) if user.tenant_id else None
 
-        permission_ids = await self._roles.get_user_permission_ids_cached(user.user_id)
+        permission_ids = await self._roles.get_user_permission_ids_cached(user.id)
 
         access_token = self._tokens.create_access_token(
-            user_id=str(user.user_id),
+            user_id=str(user.id),
             tenant_id=tenant_id,
             permission_ids=permission_ids,
         )
         refresh_token = self._tokens.create_refresh_token(
-            user_id=str(user.user_id),
+            user_id=str(user.id),
             tenant_id=tenant_id,
         )
 
-        await self._refresh_tokens.upsert(user.user_id, refresh_token)
+        await self._refresh_tokens.upsert(user.id, refresh_token)
         await self._users.update_last_login(user)
         await self._users.commit()
 
-        logger.info("User logged in: %s (id=%s)", email, user.user_id)
+        logger.info("User logged in: %s (id=%s)", email, user.id)
         return LoginResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -188,10 +188,10 @@ class AuthService:
             raise UserInactiveError()
 
         tenant_id = str(user.tenant_id) if user.tenant_id else None
-        permission_ids = await self._roles.get_user_permission_ids_cached(user.user_id)
+        permission_ids = await self._roles.get_user_permission_ids_cached(user.id)
 
         access_token = self._tokens.create_access_token(
-            user_id=str(user.user_id),
+            user_id=str(user.id),
             tenant_id=tenant_id,
             permission_ids=permission_ids,
         )
@@ -221,7 +221,7 @@ class AuthService:
     ) -> None:
         self._passwords.validate_and_confirm(new_password, confirm_password)
 
-        creds = await self._credentials.get_by_user_id(user.user_id)
+        creds = await self._credentials.get_by_user_id(user.id)
         if not creds:
             raise InvalidCredentialsError("No credentials found for user.")
 
@@ -231,7 +231,7 @@ class AuthService:
         hash_result = self._passwords.hash_password(new_password)
         await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
         await self._credentials.commit()
-        logger.info("Password changed for user id=%s", user.user_id)
+        logger.info("Password changed for user id=%s", user.id)
 
     # ── Email Activation: Provision User ──
 
@@ -255,7 +255,7 @@ class AuthService:
             raise DuplicateEntityError("User", "username")
 
         parsed_tenant_id = await self._resolve_tenant_id(tenant_id)
-        creation = CreationType(creation_type) if creation_type in CreationType._value2member_map_ else CreationType.TENANT
+        creation = CreationType(creation_type) if creation_type in CreationType._value2member_map_ else CreationType.DEFAULT
 
         user = User(
             email=email,
@@ -269,11 +269,11 @@ class AuthService:
         await self._users.create(user)
 
         try:
-            await self._roles.assign_role(user.user_id, "USER")
+            await self._roles.assign_role(user.id, "USER")
         except EntityNotFoundError:
             logger.warning("Default USER role not found, skipping role assignment.")
 
-        user_uuid_str = str(user.user_id)
+        user_uuid_str = str(user.id)
         setup_token = self._tokens.create_setup_token(
             user_id=user_uuid_str,
             email=email,
@@ -289,7 +289,7 @@ class AuthService:
         await self._verifications.create(token_obj)
         await self._users.commit()
 
-        logger.info("User provisioned (no credentials): %s (id=%s)", email, user.user_id)
+        logger.info("User provisioned (no credentials): %s (id=%s)", email, user.id)
         return user_uuid_str, setup_token
 
     # ── Email Activation: Set Password ──
@@ -322,7 +322,7 @@ class AuthService:
 
         hash_result = self._passwords.hash_password(new_password)
         creds = UserCredentials(
-            user_id=user.user_id,
+            user_id=user.id,
             password_hash=hash_result.hashed,
             password_salt=hash_result.salt,
         )
@@ -331,7 +331,7 @@ class AuthService:
         user.is_active = True
         await self._verifications.deactivate(token_obj)
         await self._users.commit()
-        logger.info("Password set via activation link for user id=%s", user.user_id)
+        logger.info("Password set via activation link for user id=%s", user.id)
 
     # ── Email Activation: Token Status ──
 
@@ -363,7 +363,7 @@ class AuthService:
         if not user:
             raise EntityNotFoundError("User")
 
-        existing_creds = await self._credentials.get_by_user_id(user.user_id)
+        existing_creds = await self._credentials.get_by_user_id(user.id)
         if existing_creds:
             raise ValidationError(
                 message="User has already set a password.",
@@ -371,7 +371,7 @@ class AuthService:
                 errors=["Cannot resend setup link for an already-activated account."],
             )
 
-        user_uuid_str = str(user.user_id)
+        user_uuid_str = str(user.id)
         await self._verifications.deactivate_all_for_user(user_uuid_str)
 
         setup_token = self._tokens.create_setup_token(
@@ -388,5 +388,5 @@ class AuthService:
         await self._verifications.create(token_obj)
         await self._users.commit()
 
-        logger.info("Setup link resent for user id=%s", user.user_id)
+        logger.info("Setup link resent for user id=%s", user.id)
         return setup_token

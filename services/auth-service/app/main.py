@@ -142,7 +142,7 @@ async def _load_api_permissions() -> None:
         # One DB query: permission name → DB ID
         name_to_id: dict[str, int] = {}
         async for db in get_db():
-            result = await db.execute(select(Permission.name, Permission.permission_id))
+            result = await db.execute(select(Permission.name, Permission.id))
             for name, pid in result.all():
                 name_to_id[name] = pid
             break

@@ -22,7 +22,7 @@ class RoleRepository:
         return result.scalar_one_or_none()
 
     async def get_role_by_id(self, role_id: int) -> Optional[Role]:
-        result = await self._db.execute(select(Role).where(Role.role_id == role_id))
+        result = await self._db.execute(select(Role).where(Role.id == role_id))
         return result.scalar_one_or_none()
 
     async def list_roles(self) -> list[Role]:
@@ -34,7 +34,7 @@ class RoleRepository:
     async def get_user_roles(self, user_id: UUID) -> list[str]:
         result = await self._db.execute(
             select(Role.name)
-            .join(UserRole, Role.role_id == UserRole.role_id)
+            .join(UserRole, Role.id == UserRole.id)
             .where(UserRole.user_id == user_id)
             .order_by(UserRole.created_at.desc())
         )
@@ -51,7 +51,7 @@ class RoleRepository:
     async def get_user_role_record(self, user_id: UUID, role_id: int) -> Optional[UserRole]:
         result = await self._db.execute(
             select(UserRole).where(
-                UserRole.user_id == user_id, UserRole.role_id == role_id
+                UserRole.user_id == user_id, UserRole.id == role_id
             )
         )
         return result.scalar_one_or_none()
@@ -65,7 +65,7 @@ class RoleRepository:
     async def remove_role(self, user_id: UUID, role_id: int) -> bool:
         result = await self._db.execute(
             select(UserRole).where(
-                UserRole.user_id == user_id, UserRole.role_id == role_id
+                UserRole.user_id == user_id, UserRole.id == role_id
             )
         )
         user_role = result.scalar_one_or_none()
@@ -100,10 +100,10 @@ class RoleRepository:
 
     async def get_user_permission_ids(self, user_id: UUID) -> list[int]:
         result = await self._db.execute(
-            select(Permission.permission_id)
-            .join(RolePermission, Permission.permission_id == RolePermission.permission_id)
-            .join(Role, RolePermission.role_id == Role.role_id)
-            .join(UserRole, Role.role_id == UserRole.role_id)
+            select(Permission.id)
+            .join(RolePermission, Permission.id == RolePermission.id)
+            .join(Role, RolePermission.role_id == Role.id)
+            .join(UserRole, Role.id == UserRole.id)
             .where(UserRole.user_id == user_id)
             .distinct()
         )
@@ -112,9 +112,9 @@ class RoleRepository:
     async def get_user_permission_names(self, user_id: UUID) -> list[str]:
         result = await self._db.execute(
             select(Permission.name)
-            .join(RolePermission, Permission.permission_id == RolePermission.permission_id)
-            .join(Role, RolePermission.role_id == Role.role_id)
-            .join(UserRole, Role.role_id == UserRole.role_id)
+            .join(RolePermission, Permission.id == RolePermission.id)
+            .join(Role, RolePermission.role_id == Role.id)
+            .join(UserRole, Role.id == UserRole.id)
             .where(UserRole.user_id == user_id)
             .distinct()
         )
@@ -122,7 +122,7 @@ class RoleRepository:
 
     async def get_role_permission_ids(self, role_id: int) -> list[int]:
         result = await self._db.execute(
-            select(RolePermission.permission_id).where(RolePermission.role_id == role_id)
+            select(RolePermission.id).where(RolePermission.role_id == role_id)
         )
         return list(result.scalars().all())
 
@@ -130,8 +130,8 @@ class RoleRepository:
         if not permission_ids:
             return {}
         result = await self._db.execute(
-            select(Permission.permission_id, Permission.name).where(
-                Permission.permission_id.in_(permission_ids)
+            select(Permission.id, Permission.name).where(
+                Permission.id.in_(permission_ids)
             )
         )
         return {pid: name for pid, name in result.all()}
@@ -144,7 +144,7 @@ class RoleRepository:
         await self._db.execute(
             delete(RolePermission).where(
                 RolePermission.role_id == role_id,
-                RolePermission.permission_id.in_(permission_ids),
+                RolePermission.id.in_(permission_ids),
             )
         )
         await self._db.flush()

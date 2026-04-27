@@ -13,7 +13,7 @@ class TenantRepository:
 
     async def get_by_id(self, tenant_id: UUID) -> Optional[Tenant]:
         result = await self._db.execute(
-            select(Tenant).where(Tenant.tenant_id == tenant_id)
+            select(Tenant).where(Tenant.id == tenant_id)
         )
         return result.scalar_one_or_none()
 
@@ -51,7 +51,7 @@ class TenantRepository:
         if status is not None:
             stmt = stmt.where(Tenant.status == status)
         stmt = (
-            stmt.order_by(func.lower(Tenant.organisation).asc(), Tenant.tenant_id.asc())
+            stmt.order_by(func.lower(Tenant.organisation).asc(), Tenant.id.asc())
             .offset(offset)
             .limit(limit)
         )

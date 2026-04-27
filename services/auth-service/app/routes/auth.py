@@ -46,7 +46,7 @@ async def register(
         tenant_id=body.tenant_id,
     )
     return success_response(data={
-        "user_id": str(user.user_id),
+        "user_id": str(user.id),
         "email": user.email,
         "username": user.username,
         "message": "User registered successfully.",
@@ -86,7 +86,7 @@ async def logout(
     current_user: User = Depends(get_current_active_user),
     svc: AuthService = Depends(get_auth_service),
 ):
-    await svc.logout(user_id=current_user.user_id)
+    await svc.logout(user_id=current_user.id)
     return LogoutResponse(message="Logged out successfully.", logged_out=True)
 
 

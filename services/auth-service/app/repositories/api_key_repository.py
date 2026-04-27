@@ -23,7 +23,7 @@ class APIKeyRepository:
         return api_key
 
     async def get_by_id(self, key_id: int) -> Optional[APIKey]:
-        result = await self._db.execute(select(APIKey).where(APIKey.key_id == key_id))
+        result = await self._db.execute(select(APIKey).where(APIKey.id == key_id))
         return result.scalar_one_or_none()
 
     async def get_by_api_key(self, api_key_value: str) -> Optional[APIKey]:
@@ -37,8 +37,8 @@ class APIKeyRepository:
         if not permission_ids:
             return {}
         result = await self._db.execute(
-            select(Permission.permission_id, Permission.name).where(
-                Permission.permission_id.in_(permission_ids)
+            select(Permission.id, Permission.name).where(
+                Permission.id.in_(permission_ids)
             )
         )
         return {pid: name for pid, name in result.all()}
@@ -53,7 +53,7 @@ class APIKeyRepository:
     async def list_all_with_users(self, offset: int = 0, limit: int = 100) -> list[tuple[APIKey, User]]:
         result = await self._db.execute(
             select(APIKey, User)
-            .join(User, APIKey.user_id == User.user_id)
+            .join(User, APIKey.user_id == User.id)
             .order_by(APIKey.created_at.desc())
             .offset(offset)
             .limit(limit)

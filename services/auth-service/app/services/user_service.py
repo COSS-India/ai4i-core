@@ -15,9 +15,9 @@ class UserService:
         self._roles = role_repo
 
     async def get_user_profile(self, user: User) -> dict:
-        roles = await self._roles.get_user_roles(user.user_id)
+        roles = await self._roles.get_user_roles(user.id)
         return {
-            "user_id": str(user.user_id),
+            "user_id": str(user.id),
             "email": user.email,
             "username": user.username,
             "full_name": user.full_name,
@@ -52,7 +52,7 @@ class UserService:
         """ADMIN/MODERATOR see all users; TENANT ADMIN sees only their own tenant."""
         effective_role_set = role_set
         if effective_role_set is None:
-            roles = await self._roles.get_user_roles(caller.user_id)
+            roles = await self._roles.get_user_roles(caller.id)
             effective_role_set = set(roles)
 
         if "ADMIN" in effective_role_set or "MODERATOR" in effective_role_set:
@@ -88,7 +88,7 @@ class UserService:
 
         effective_role_set = role_set
         if effective_role_set is None:
-            roles = await self._roles.get_user_roles(caller.user_id)
+            roles = await self._roles.get_user_roles(caller.id)
             effective_role_set = set(roles)
 
         if "ADMIN" in effective_role_set or "MODERATOR" in effective_role_set:

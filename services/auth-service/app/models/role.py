@@ -50,13 +50,13 @@ class UserRole(Base):
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     user_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("users.user_id", ondelete="CASCADE"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     role_id = Column(
         Integer,
-        ForeignKey("roles.role_id", ondelete="CASCADE"),
+        ForeignKey("roles.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -75,13 +75,13 @@ class RolePermission(Base):
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     role_id = Column(
         Integer,
-        ForeignKey("roles.role_id", ondelete="CASCADE"),
+        ForeignKey("roles.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     permission_id = Column(
         Integer,
-        ForeignKey("permissions.permission_id", ondelete="CASCADE"),
+        ForeignKey("permissions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

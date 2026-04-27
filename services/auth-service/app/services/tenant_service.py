@@ -43,7 +43,7 @@ class TenantService:
         try:
             result = await asyncio.wait_for(
                 self._db.execute(
-                    select(Tenant.status).where(Tenant.tenant_id == tenant_uuid).limit(1)
+                    select(Tenant.status).where(Tenant.id == tenant_uuid).limit(1)
                 ),
                 timeout=_TENANT_QUERY_TIMEOUT,
             )

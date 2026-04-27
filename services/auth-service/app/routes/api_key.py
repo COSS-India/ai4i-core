@@ -31,14 +31,14 @@ async def create_api_key(
 ):
     tenant_id = str(current_user.tenant_id) if current_user.tenant_id else None
     jwt_token, api_key = await svc.create_api_key(
-        user_id=current_user.user_id,
+        user_id=current_user.id,
         key_name=body.key_name,
         permissions=body.permissions,
         tenant_id=tenant_id,
         expires_days=body.expires_days,
     )
     return success_response(data={
-        "key_id": api_key.key_id,
+        "key_id": api_key.id,
         "key_name": api_key.key_name,
         "api_key": jwt_token,
         "permissions": api_key.permissions,
@@ -53,7 +53,7 @@ async def list_api_keys(
     current_user: User = Depends(get_current_active_user),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
-    keys = await svc.list_by_user(current_user.user_id)
+    keys = await svc.list_by_user(current_user.id)
     items = [APIKeyResponse.model_validate(k, from_attributes=True).model_dump() for k in keys]
     return success_response(data={"api_keys": items})
 
@@ -66,7 +66,7 @@ async def update_api_key(
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     data = body.model_dump(exclude_unset=True)
-    api_key = await svc.update_key(key_id, data, user_id=current_user.user_id)
+    api_key = await svc.update_key(key_id, data, user_id=current_user.id)
     return success_response(data=APIKeyResponse.model_validate(api_key, from_attributes=True).model_dump())
 
 
@@ -77,8 +77,8 @@ async def revoke_api_key(
     svc: APIKeyService = Depends(get_api_key_service),
     role_svc: RoleService = Depends(get_role_service),
 ):
-    owner_scoped_user_id = current_user.user_id
-    roles = await role_svc.get_user_roles(current_user.user_id)
+    owner_scoped_user_id = current_user.id
+    roles = await role_svc.get_user_roles(current_user.id)
     if "ADMIN" in roles:
         owner_scoped_user_id = None
 
@@ -97,7 +97,7 @@ async def list_all_api_keys(
     items = []
     for api_key, user in results:
         item = APIKeyResponse.model_validate(api_key, from_attributes=True).model_dump()
-        item["user_id"] = str(user.user_id)
+        item["user_id"] = str(user.id)
         item["user_email"] = user.email
         item["username"] = user.username
         items.append(item)
