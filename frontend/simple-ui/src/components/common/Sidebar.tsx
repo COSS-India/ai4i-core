@@ -447,8 +447,8 @@ const Sidebar: React.FC = () => {
   // Check if user is TENANT ADMIN
   const isTenantAdmin = user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === 'TENANT ADMIN') || false;
 
-  // Show Tenant Management to superusers, tenant-scoped users, and tenant admins
-  const showTenantManagement = Boolean(user?.is_superuser || user?.is_tenant || isTenantAdmin);
+  // Show Tenant Management to superusers, admins, tenant-scoped users, and tenant admins
+  const showTenantManagement = Boolean(user?.is_superuser || isAdmin || user?.is_tenant || isTenantAdmin);
 
   // Single bulk request shared with home page (same queryKey = one request for whole app)
   const { flags: sidebarFlags } = useBulkFlags({

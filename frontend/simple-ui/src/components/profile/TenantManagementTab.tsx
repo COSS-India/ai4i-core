@@ -111,16 +111,18 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
   const { user } = useAuth();
   const tm = useTenantManagement({ user });
 
+  const isAdminOrSuperuser = Boolean(user?.is_superuser) || Boolean(user?.roles?.includes('ADMIN'));
+
   // Initial fetch when this tab becomes active.
   useEffect(() => {
     if (!isActive || !user?.id) return;
-    if (user.is_superuser) {
+    if (isAdminOrSuperuser) {
       void tm.handleFetchTenants();
     } else {
       void tm.handleFetchTenantUsers();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, user?.id, user?.is_superuser, tm.tenantSubView]);
+  }, [isActive, user?.id, isAdminOrSuperuser, tm.tenantSubView]);
 
   // Refresh users when tenant detail view changes.
   useEffect(() => {
@@ -129,7 +131,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tm.tenantDetailView?.tenant_id]);
 
-  const isSuperuser = Boolean(user?.is_superuser);
+  const isSuperuser = isAdminOrSuperuser;
   const showAdopterView = isSuperuser && tm.tenantSubView === "adopter";
   const showTenantView =
     !isSuperuser || tm.tenantSubView === "tenant" || Boolean(tm.tenantDetailView);

@@ -18,8 +18,9 @@ const TenantManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
+  const isAdmin = user?.roles?.includes("ADMIN") || false;
   const isTenantAdmin = user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === "TENANT ADMIN");
-  const showTenantManagement = Boolean(user?.is_superuser || user?.is_tenant || isTenantAdmin);
+  const showTenantManagement = Boolean(user?.is_superuser || isAdmin || user?.is_tenant || isTenantAdmin);
 
   React.useEffect(() => {
     if (!authLoading && (!isAuthenticated || !showTenantManagement)) {
