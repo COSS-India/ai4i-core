@@ -11,7 +11,7 @@ export interface Role {
 }
 
 export interface UserRole {
-  user_id: number;
+  user_id: string;
   username: string;
   email: string;
   roles: string[];
@@ -81,14 +81,14 @@ class RoleService {
   /**
    * Get roles for a specific user
    */
-  async getUserRoles(userId: number): Promise<UserRole> {
+  async getUserRoles(userId: string): Promise<UserRole> {
     return this.request<UserRole>(`/user/${userId}`);
   }
 
   /**
    * Assign a role to a user
    */
-  async assignRole(userId: number, roleName: string): Promise<{ message: string }> {
+  async assignRole(userId: string, roleName: string): Promise<{ message: string }> {
     return this.request<{ message: string }>('/assign', {
       method: 'POST',
       body: JSON.stringify({ user_id: userId, role_name: roleName }),
@@ -98,7 +98,7 @@ class RoleService {
   /**
    * Remove a role from a user
    */
-  async removeRole(userId: number, roleName: string): Promise<{ message: string }> {
+  async removeRole(userId: string, roleName: string): Promise<{ message: string }> {
     return this.request<{ message: string }>('/remove', {
       method: 'POST',
       body: JSON.stringify({ user_id: userId, role_name: roleName }),

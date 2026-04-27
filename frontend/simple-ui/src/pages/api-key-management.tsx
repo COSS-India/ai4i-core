@@ -30,14 +30,13 @@ const ApiKeyManagementPage: React.FC = () => {
 
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [apiKeys, setApiKeys] = useState<APIKeyResponse[]>([]);
-  const [selectedApiKeyId, setSelectedApiKeyId] = useState<number | null>(null);
 
   const [users, setUsers] = useState<User[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [isFetchingApiKey, setIsFetchingApiKey] = useState(false);
   const [isLoadingApiKeys, setIsLoadingApiKeys] = useState(false);
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN") || user?.is_superuser);
+  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
   const isTenantAdmin = Boolean(user?.roles?.includes("TENANT ADMIN"));
 
   const showApiKeyManagement = isAdmin || isTenantAdmin;
@@ -160,7 +159,6 @@ const ApiKeyManagementPage: React.FC = () => {
                         users={users}
                         isLoadingUsers={isLoadingUsers}
                         setApiKeys={setApiKeys}
-                        setSelectedApiKeyId={setSelectedApiKeyId}
                       />
                     )}
                     {t.id === "manage" && (

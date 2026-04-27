@@ -51,7 +51,7 @@ const ProfilePage: React.FC = () => {
   // Fetch all users (Admin only)
   useEffect(() => {
     if (!isAuthenticated || authLoading || !user) return;
-    const isAdmin = user?.roles?.includes("ADMIN") || user?.is_superuser ||  user?.roles?.includes("TENANT ADMIN");
+    const isAdmin = user?.roles?.includes("ADMIN") || user?.roles?.includes("TENANT ADMIN");
     if (!isAdmin) return;
 
     setIsLoadingUsers(true);
@@ -82,7 +82,7 @@ const ProfilePage: React.FC = () => {
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN") || user?.is_superuser);
+  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
   // Single source of truth: tab order must match TabPanels 1:1
   const tabConfig = React.useMemo(() => {
     const tabs: { id: string; label: string; show: boolean }[] = [
@@ -139,7 +139,7 @@ const ProfilePage: React.FC = () => {
       <ContentLayout>
         <Box
           maxW={
-            user?.roles?.includes("ADMIN") || user?.roles?.includes("MODERATOR") || user?.is_superuser
+            user?.roles?.includes("ADMIN") || user?.roles?.includes("MODERATOR")
               ? "7xl"
               : "4xl"
           }
