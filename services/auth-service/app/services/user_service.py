@@ -1,6 +1,5 @@
 """User CRUD business logic."""
 
-import logging
 from typing import Optional
 from uuid import UUID
 
@@ -8,8 +7,6 @@ from app.core.exceptions import AuthorizationError
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
-
-logger = logging.getLogger(__name__)
 
 
 class UserService:
@@ -38,12 +35,11 @@ class UserService:
         }
 
     async def update_profile(self, user: User, data: dict) -> User:
+        """Apply a partial update. Callers must validate `data` keys at the route layer
+        (route Pydantic schema); the repo silently drops unknown keys."""
         await self._users.update(user, data)
         await self._users.commit()
         return user
-
-    async def list_users(self, offset: int = 0, limit: int = 100) -> list[User]:
-        return await self._users.list_all(offset, limit)
 
     async def list_users_for_caller(
         self,
@@ -83,7 +79,9 @@ class UserService:
         *,
         role_set: set[str] | None = None,
     ) -> Optional[User]:
-        """ADMIN/MODERATOR can fetch any user; TENANT ADMIN scope is enforced at the route layer."""
+        """ADMIN/MODERATOR can fetch any user; TENANT ADMIN can only fetch users
+        in their own tenant (enforced both here and at the route layer via
+        `enforce_target_user_same_tenant`)."""
         user = await self._users.get_by_id(user_id)
         if not user:
             return None
@@ -101,11 +99,13 @@ class UserService:
                     message="Your account has no tenant context; cannot view users.",
                     code="TENANT_CONTEXT_REQUIRED",
                 )
+            if user.tenant_id != caller.tenant_id:
+                raise AuthorizationError(
+                    message="Cannot view a user outside your tenant.",
+                    code="TENANT_FORBIDDEN",
+                )
             return user
         raise AuthorizationError(
             message="You are not authorized to view this user.",
             code="INSUFFICIENT_ROLE",
         )
-
-    async def get_user_permission_names(self, user_id: UUID) -> list[str]:
-        return await self._roles.get_user_permission_names(user_id)

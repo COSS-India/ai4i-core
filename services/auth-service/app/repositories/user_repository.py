@@ -17,15 +17,21 @@ class UserRepository:
         self._db = db
 
     async def get_by_id(self, user_id: UUID) -> Optional[User]:
-        result = await self._db.execute(select(User).where(User.user_id == user_id))
+        result = await self._db.execute(
+            select(User).where(User.user_id == user_id, User.is_delete.isnot(True))
+        )
         return result.scalar_one_or_none()
 
     async def get_by_email(self, email: str) -> Optional[User]:
-        result = await self._db.execute(select(User).where(User.email == email))
+        result = await self._db.execute(
+            select(User).where(User.email == email, User.is_delete.isnot(True))
+        )
         return result.scalar_one_or_none()
 
     async def get_by_username(self, username: str) -> Optional[User]:
-        result = await self._db.execute(select(User).where(User.username == username))
+        result = await self._db.execute(
+            select(User).where(User.username == username, User.is_delete.isnot(True))
+        )
         return result.scalar_one_or_none()
 
     async def create(self, user: User) -> User:
@@ -47,6 +53,7 @@ class UserRepository:
     async def list_all(self, offset: int = 0, limit: int = 100) -> list[User]:
         result = await self._db.execute(
             select(User)
+            .where(User.is_delete.isnot(True))
             .order_by(func.lower(User.username).asc(), User.user_id.asc())
             .offset(offset)
             .limit(limit)
@@ -56,7 +63,7 @@ class UserRepository:
     async def list_by_tenant(self, tenant_id: UUID, offset: int = 0, limit: int = 100) -> list[User]:
         result = await self._db.execute(
             select(User)
-            .where(User.tenant_id == tenant_id)
+            .where(User.tenant_id == tenant_id, User.is_delete.isnot(True))
             .order_by(User.user_id)
             .offset(offset)
             .limit(limit)
@@ -64,7 +71,9 @@ class UserRepository:
         return list(result.scalars().all())
 
     async def count(self) -> int:
-        result = await self._db.execute(select(func.count(User.user_id)))
+        result = await self._db.execute(
+            select(func.count(User.user_id)).where(User.is_delete.isnot(True))
+        )
         return result.scalar_one()
 
     async def commit(self) -> None:
