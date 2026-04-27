@@ -1,5 +1,7 @@
 FROM python:3.12-slim
 
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 # Install system build dependencies
@@ -8,19 +10,17 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # ── Install shared platform libraries (cacheable layer) ──
-# Dependency order: exceptions → constants → env → logging → auth → bootstrap
+# Dependency order: exceptions → constants → env → logging → bootstrap
 COPY libs/ai4icore_exceptions /tmp/ai4icore_exceptions
 COPY libs/ai4icore_constants  /tmp/ai4icore_constants
 COPY libs/ai4icore_env        /tmp/ai4icore_env
 COPY libs/ai4icore_logging    /tmp/ai4icore_logging
-COPY libs/ai4icore_auth       /tmp/ai4icore_auth
 COPY libs/ai4icore_bootstrap  /tmp/ai4icore_bootstrap
 RUN pip install --no-cache-dir \
     /tmp/ai4icore_exceptions \
     /tmp/ai4icore_constants \
     /tmp/ai4icore_env \
     /tmp/ai4icore_logging \
-    /tmp/ai4icore_auth \
     /tmp/ai4icore_bootstrap && \
     rm -rf /tmp/ai4icore_*
 
