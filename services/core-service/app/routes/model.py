@@ -9,8 +9,7 @@ Path layout (mounted under /api/v1):
   PATCH  /models                  — update a model (modelId+version in body)
   DELETE /models/{model_id}       — delete a model by internal UUID
 
-Permissions are enforced by the shared AuthProvider, which reads the
-endpoint→permission map from Redis (loaded by auth-service at startup).
+Authentication is handled at the gateway layer.
 """
 
 import logging
@@ -19,7 +18,7 @@ from typing import Optional
 from fastapi import APIRouter, Body, Depends, Query, Request
 
 from app.core.responses import success_response
-from app.dependencies.auth import AuthProvider, get_user_id
+from app.dependencies.auth import get_user_id
 from app.dependencies.services import get_model_service
 from app.schemas.enums import TaskTypeEnum
 from app.schemas.model import (
@@ -34,7 +33,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/models",
     tags=["Model Management"],
-    dependencies=[Depends(AuthProvider)],
 )
 
 

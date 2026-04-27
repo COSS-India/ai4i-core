@@ -59,13 +59,6 @@ class CoreSettings(BaseSettings):
     model_cache_ttl_seconds: int = 3600
     service_cache_ttl_seconds: int = 3600
 
-    # ── JWT verification (for shared ai4icore_auth) ──
-    jwt_issuer: str = "auth-service"
-    jwt_audience: Optional[str] = None
-    auth_service_url: Optional[str] = None
-    # Public keys directory for RS256 verification
-    rs256_public_key_directory: str = "keys"
-
     # ── Model management business rules ──
     max_active_versions_per_model: int = 5
     allow_deprecated_model_changes: bool = True

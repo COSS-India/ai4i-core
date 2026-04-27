@@ -12,8 +12,7 @@ Path layout (mounted under /api/v1):
   PATCH  /services/{service_id}/health          — update service health
   POST   /services/{service_id}/policy          — set service policy
 
-Permissions are enforced by the shared AuthProvider; the try-it endpoint
-intentionally bypasses auth.
+Authentication is handled at the gateway layer.
 """
 
 import logging
@@ -23,7 +22,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.core.exceptions import ValidationError
 from app.core.responses import success_response
-from app.dependencies.auth import AuthProvider, OptionalAuthProvider, get_user_id
+from app.dependencies.auth import get_user_id
 from app.dependencies.services import get_service_service
 from app.schemas.enums import TaskTypeEnum
 from app.schemas.service import (
@@ -48,13 +47,12 @@ def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
     return TaskTypeEnum(task_type).value
 
 
-# ── Public try-it (no auth) — must be declared before /{service_id} ──
+# ── Must be declared before /{service_id} to avoid path shadowing ──
 
 
 @router.get(
     "/try-it-service-list",
     summary="Public try-it service listing API",
-    dependencies=[Depends(OptionalAuthProvider)],
 )
 async def list_try_it_services(
     task_type: str = Query(
@@ -75,10 +73,7 @@ async def list_try_it_services(
     return success_response(data=items, meta={"total": len(items)})
 
 
-# ── Authenticated routes ──
-
-
-@router.get("", dependencies=[Depends(AuthProvider)])
+@router.get("")
 async def list_services(
     task_type: Optional[str] = Query(
         None, description="Filter by task type."
@@ -100,7 +95,7 @@ async def list_services(
     return success_response(data=items, meta={"total": len(items)})
 
 
-@router.get("/policies", dependencies=[Depends(AuthProvider)])
+@router.get("/policies")
 async def list_service_policies(
     task_type: Optional[str] = Query(None, description="Filter by task type."),
     svc: ServiceService = Depends(get_service_service),
@@ -109,7 +104,7 @@ async def list_service_policies(
     return success_response(data={"services": items}, meta={"total": len(items)})
 
 
-@router.post("/{service_id:path}/policy", dependencies=[Depends(AuthProvider)])
+@router.post("/{service_id:path}/policy")
 async def upsert_service_policy(
     service_id: str,
     payload: ServicePolicyUpdateRequest,
@@ -121,7 +116,7 @@ async def upsert_service_policy(
     return success_response(data=result)
 
 
-@router.patch("/{service_id:path}/health", dependencies=[Depends(AuthProvider)])
+@router.patch("/{service_id:path}/health")
 async def update_service_health(
     service_id: str,
     payload: ServiceHealthUpdateRequest,
@@ -134,7 +129,7 @@ async def update_service_health(
     )
 
 
-@router.post("/{service_id:path}", dependencies=[Depends(AuthProvider)])
+@router.post("/{service_id:path}")
 async def view_service(
     service_id: str,
     svc: ServiceService = Depends(get_service_service),
@@ -144,7 +139,7 @@ async def view_service(
     return success_response(data=data)
 
 
-@router.post("", dependencies=[Depends(AuthProvider)])
+@router.post("")
 async def create_service(
     request: Request,
     payload: ServiceCreateRequest,
@@ -158,7 +153,7 @@ async def create_service(
     )
 
 
-@router.patch("", dependencies=[Depends(AuthProvider)])
+@router.patch("")
 async def update_service(
     request: Request,
     payload: ServiceUpdateRequest,
@@ -172,7 +167,7 @@ async def update_service(
     )
 
 
-@router.delete("/{service_id:path}", dependencies=[Depends(AuthProvider)])
+@router.delete("/{service_id:path}")
 async def delete_service(
     service_id: str,
     svc: ServiceService = Depends(get_service_service),

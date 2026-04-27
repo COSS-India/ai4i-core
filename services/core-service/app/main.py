@@ -7,12 +7,7 @@ Startup sequence:
   3. ORM table creation (dev-only; production uses Alembic migrations)
 
 Middleware stack (outermost → innermost):
-  CORSMiddleware → RequestLoggingMiddleware → AuthMiddleware (context only)
-
-Auth is enforced at the route level via AuthProvider / OptionalAuthProvider
-dependencies.  The AuthMiddleware here only extracts JWT claims into
-request.state so logging and tracing can access them without incurring DB
-round-trips on every request.
+  CORSMiddleware → RequestLoggingMiddleware
 """
 
 import logging
@@ -28,9 +23,6 @@ _uvicorn_access.disabled = True
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from ai4icore_auth import AuthMiddleware
-from ai4icore_auth.providers import build_jwt_verifier
-
 from app.core.config import settings
 from app.core.database import close_database, init_database
 from app.core.exceptions import register_exception_handlers
@@ -39,17 +31,6 @@ from app.middleware.request_logging import RequestLoggingMiddleware
 from app.routes import api_router, versioning
 
 logger = logging.getLogger(__name__)
-
-# Module-level JWT verifier — resolved lazily on first request so that the
-# verifier is available to the AuthMiddleware before keys are fully initialised.
-_jwt_verifier = None
-
-
-def get_jwt_verifier():
-    global _jwt_verifier
-    if _jwt_verifier is None:
-        _jwt_verifier = build_jwt_verifier()
-    return _jwt_verifier
 
 
 @asynccontextmanager
@@ -157,14 +138,6 @@ def create_app() -> FastAPI:
 
     # ── Custom middleware (outermost first) ──
     app.add_middleware(RequestLoggingMiddleware)
-
-    # Auth middleware: context extraction only (require_auth=False).
-    # Actual permission enforcement happens at the route level via AuthProvider.
-    app.add_middleware(
-        AuthMiddleware,
-        jwt_verifier_factory=get_jwt_verifier,
-        require_auth=False,
-    )
 
     # ── API versioning headers ──
     versioning.register(app)
