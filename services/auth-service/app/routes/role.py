@@ -2,6 +2,8 @@
 Role and permission management routes.
 """
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,7 +63,7 @@ async def remove_role(
 @router.get("/user/{user_id}")
 async def get_user_roles(
     request: Request,
-    user_id: int,
+    user_id: UUID,
     _admin: User = Depends(require_any_role("ADMIN", "MODERATOR", "TENANT ADMIN")),
     svc: RoleService = Depends(get_role_service),
     db: AsyncSession = Depends(get_db),
@@ -70,7 +72,7 @@ async def get_user_roles(
         request, _admin, user_id, db, bypass_roles=("ADMIN", "MODERATOR")
     )
     roles = await svc.get_user_roles(user_id)
-    return success_response(data={"user_id": user_id, "roles": roles})
+    return success_response(data={"user_id": str(user_id), "roles": roles})
 
 
 @router.post("/assign/guest/services")
