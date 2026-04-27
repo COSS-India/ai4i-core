@@ -40,7 +40,6 @@ from ai4icore_model_management import (
     ModelManagementConfig,
     ModelManagementPlugin,
 )
-from ai4icore_multi_tenant import MultiTenantConfig, MultiTenantPlugin
 
 from .rate_limit import RateLimitMiddleware
 from .service_registry import ServiceRegistryClient
@@ -290,7 +289,7 @@ def create_inference_app(
 
     This factory wires up: lifespan (Redis, PostgreSQL, service registry),
     observability, tracing, model management, CORS, logging, rate limiting,
-    exception handlers, and multi-tenant support.
+    and exception handlers.
 
     Args:
         service_name: e.g. ``"ner-service"``
@@ -414,14 +413,6 @@ def create_inference_app(
 
     # ── Exception Handlers ──
     register_exception_handlers(application)
-
-    # ── Multi-Tenant ──
-    mt_config = MultiTenantConfig.from_env()
-    mt_config.tenant_paths = [config.api_prefix]
-    MultiTenantPlugin(mt_config).register_plugin(
-        application,
-        multi_tenant_db_url=app_env.get_multi_tenant_db_url() or app_env.get_database_url(),
-    )
 
     # ── Routes ──
     application.include_router(router)

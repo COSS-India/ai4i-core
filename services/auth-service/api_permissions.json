@@ -436,20 +436,6 @@
       "description": "Read traces"
     },
     {
-      "code": "P_63",
-      "name": "multi-tenant.read",
-      "resource": "multi_tenant",
-      "action": "read",
-      "description": "Multi-tenant read"
-    },
-    {
-      "code": "P_64",
-      "name": "multi-tenant.inference",
-      "resource": "multi_tenant",
-      "action": "inference",
-      "description": "Multi-tenant inference"
-    },
-    {
       "code": "P_65",
       "name": "pii_guard.inference",
       "resource": "pii_guard",
@@ -462,6 +448,41 @@
       "resource": "pii_guard",
       "action": "admin",
       "description": "Manage PII policies"
+    },
+    {
+      "code": "P_67",
+      "name": "tenant.create",
+      "resource": "tenant",
+      "action": "create",
+      "description": "Create tenants"
+    },
+    {
+      "code": "P_68",
+      "name": "tenant.read",
+      "resource": "tenant",
+      "action": "read",
+      "description": "View tenants"
+    },
+    {
+      "code": "P_69",
+      "name": "tenant.update",
+      "resource": "tenant",
+      "action": "update",
+      "description": "Update tenants and tenant status"
+    },
+    {
+      "code": "P_70",
+      "name": "tenant.users.read",
+      "resource": "tenant.users",
+      "action": "read",
+      "description": "List users within a tenant"
+    },
+    {
+      "code": "P_71",
+      "name": "tenant.users.update",
+      "resource": "tenant.users",
+      "action": "update",
+      "description": "Create and update users within a tenant"
     }
   ],
   "roles": [
@@ -517,6 +538,11 @@
         "P_46",
         "P_47",
         "P_48",
+        "P_67",
+        "P_68",
+        "P_69",
+        "P_70",
+        "P_71",
         "P_49",
         "P_50",
         "P_51",
@@ -607,7 +633,10 @@
         "P_22",
         "P_33",
         "P_35",
-        "P_66"
+        "P_66",
+        "P_68",
+        "P_70",
+        "P_71"
       ]
     }
   ],
@@ -861,6 +890,56 @@
       "endpoint": "POST:/admin/tenant-domain/delete",
       "permissionRequired": "pii_guard.admin",
       "description": "Delete tenant_id PII domain mapping"
+    },
+    {
+      "endpoint": "GET:/api/v1/tenants",
+      "permissionRequired": "tenant.read",
+      "description": "List tenants"
+    },
+    {
+      "endpoint": "POST:/api/v1/tenants",
+      "permissionRequired": "tenant.create",
+      "description": "Create a tenant (system admin)"
+    },
+    {
+      "endpoint": "GET:/api/v1/tenants/{tenant_id}",
+      "permissionRequired": "tenant.read",
+      "description": "View tenant by id"
+    },
+    {
+      "endpoint": "PATCH:/api/v1/tenants/{tenant_id}",
+      "permissionRequired": "tenant.update",
+      "description": "Update tenant (system admin)"
+    },
+    {
+      "endpoint": "PATCH:/api/v1/tenants/{tenant_id}/status",
+      "permissionRequired": "tenant.update",
+      "description": "Change tenant status (activated/deactivated/suspended)"
+    },
+    {
+      "endpoint": "GET:/api/v1/tenants/{tenant_id}/users",
+      "permissionRequired": "tenant.users.read",
+      "description": "List users within a tenant"
+    },
+    {
+      "endpoint": "POST:/api/v1/tenants/{tenant_id}/users",
+      "permissionRequired": "tenant.users.update",
+      "description": "Provision a user under a tenant"
+    },
+    {
+      "endpoint": "PATCH:/api/v1/tenants/{tenant_id}/users/{user_id}/status",
+      "permissionRequired": "tenant.users.update",
+      "description": "Toggle a tenant user's activation status"
+    },
+    {
+      "endpoint": "PATCH:/api/v1/tenants/{tenant_id}/users/{user_id}",
+      "permissionRequired": "tenant.users.update",
+      "description": "Update a tenant user's profile fields"
+    },
+    {
+      "endpoint": "DELETE:/api/v1/tenants/{tenant_id}/users/{user_id}",
+      "permissionRequired": "tenant.users.update",
+      "description": "Soft-delete a tenant user"
     }
   ]
 }

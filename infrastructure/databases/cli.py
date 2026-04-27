@@ -40,8 +40,7 @@ class MigrationCLI:
         'metrics_db',
         'telemetry_db',
         'dashboard_db',
-        'model_management_db', 
-        'multi_tenant_db',
+        'model_management_db',
         'ai4i_platform'
     ]
     
@@ -344,7 +343,7 @@ Examples:
         postgres_dbs_with_seeders = [
             'auth_db', 'ai4iplatform_auth', 'ai4iplatform_core',
             'config_db', 'alerting_db',
-            'dashboard_db', 'model_management_db', 'multi_tenant_db', 'ai4i_platform'
+            'dashboard_db', 'model_management_db', 'ai4i_platform'
         ]
         
         # Seed PostgreSQL databases

@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ai4icore_multi_tenant import enforce_tenant_and_service_checks
 from ai4icore_constants.error_messages import SERVICE_UNAVAILABLE
 
 from app.dependencies.auth import AuthProvider
@@ -27,17 +26,6 @@ smr_service = SMRService()
 
 async def enforce_nmt_checks(request: Request):
     """Enforce tenant and service availability checks."""
-    await enforce_tenant_and_service_checks(
-        request,
-        service_name="nmt",
-        service_unavailable_code=SERVICE_UNAVAILABLE,
-        service_inactive_message="NMT service is not active at the moment. Please contact your administrator",
-        cannot_detect_message="Cannot detect NMT service availability. Please contact your administrator",
-        timeout_message="NMT service is temporarily unavailable. Please try again in a few minutes.",
-        generic_unavailable_message="NMT service is temporarily unavailable. Please try again in a few minutes.",
-    )
-
-
 router.dependencies.append(Depends(enforce_nmt_checks))
 
 

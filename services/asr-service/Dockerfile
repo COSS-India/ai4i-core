@@ -12,7 +12,6 @@ RUN apt-get update && \
 
 # ---- shared plugins (repo-root paths) ----
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
-COPY libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
@@ -23,8 +22,6 @@ COPY libs/ai4icore_env /app/libs/ai4icore_env
 COPY libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
 COPY libs/ai4icore_auth /app/libs/ai4icore_auth
 COPY libs/ai4icore_service_base /app/libs/ai4icore_service_base
-# ---- multi-tenant-feature (for tenant schema models) ----
-COPY services/multi-tenant-feature /app/services/multi-tenant-feature
 
 # ---- requirements ----
 COPY services/asr-service/requirements.txt .
@@ -34,7 +31,6 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Install AI4ICore plugins (editable) so logging, telemetry and observability are available
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_multi_tenant
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
@@ -70,7 +66,6 @@ RUN pip install --no-cache-dir packaging>=21.0 && \
 
 # Copy AI4ICore plugins into runtime image
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
-COPY --from=builder /app/libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
@@ -84,12 +79,7 @@ COPY --from=builder /app/libs/ai4icore_service_base /app/libs/ai4icore_service_b
 # ---- application code ----
 COPY services/asr-service /app
 
-# ---- multi-tenant-feature models (for tenant schema models) ----
 # Copy after asr-service to avoid conflicts
-COPY services/multi-tenant-feature/models/service_schema_models.py /app/services/multi-tenant-feature/models/service_schema_models.py
-COPY services/multi-tenant-feature/models/__init__.py /app/services/multi-tenant-feature/models/__init__.py
-COPY services/multi-tenant-feature/db_connection.py /app/services/multi-tenant-feature/db_connection.py
-COPY services/multi-tenant-feature/logger.py /app/services/multi-tenant-feature/logger.py
 
 RUN rm -f /app/.env || true
 

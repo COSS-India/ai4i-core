@@ -27,6 +27,10 @@ class TenantUpdate(BaseSchema):
     status: Optional[TenantStatus] = None
 
 
+class TenantStatusUpdate(BaseSchema):
+    status: TenantStatus
+
+
 class TenantResponse(BaseSchema):
     tenant_id: UUID
     contact_name: str
@@ -38,3 +42,28 @@ class TenantResponse(BaseSchema):
     created_by: Optional[str] = None
     updated_at: Optional[datetime] = None
     updated_by: Optional[str] = None
+
+
+class TenantUserCreate(BaseSchema):
+    email: EmailStr
+    username: str = Field(..., min_length=3, max_length=100)
+    full_name: Optional[str] = Field(None, max_length=255)
+    phone_number: Optional[str] = Field(None, max_length=20)
+
+
+class TenantUserCreateResponse(BaseSchema):
+    user_id: str
+    setup_token: str
+    message: str = "Tenant user provisioned. Share the setup link to complete onboarding."
+
+
+class TenantUserStatusUpdate(BaseSchema):
+    is_active: Optional[bool] = None
+    is_tenant_active: Optional[bool] = None
+
+
+class TenantUserUpdate(BaseSchema):
+    email: Optional[EmailStr] = None
+    full_name: Optional[str] = Field(None, max_length=255)
+    phone_number: Optional[str] = Field(None, max_length=20)
+    username: Optional[str] = Field(None, min_length=3, max_length=100)

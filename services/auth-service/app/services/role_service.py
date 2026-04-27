@@ -29,7 +29,6 @@ class RoleService:
     def _expanded_excluded_resources_for_platform_inference() -> tuple[str, ...]:
         base = (
             "model-management",
-            "multi_tenant",
             "pii_guard",
         )
         expanded: set[str] = set()

@@ -281,7 +281,7 @@ apiClient.interceptors.request.use(
     const isLanguageDiarizationEndpoint = url.includes('/api/v1/language-diarization');
     const isAudioLangDetectionEndpoint = url.includes('/api/v1/audio-lang-detection');
     const isObservabilityEndpoint = url.includes('/api/v1/telemetry');
-    const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
+    const isTenantsEndpoint = url.includes('/api/v1/tenants');
     const isFeatureFlagsEndpoint = url.includes('/api/v1/feature-flags');
     const isPolicyServiceEndpoint = url.includes('/api/v1/policy-service');
     const pathNoQuery = (url.split('?')[0] || '').toLowerCase();
@@ -296,7 +296,7 @@ apiClient.interceptors.request.use(
                         isLanguageDiarizationEndpoint || isSpeakerDiarizationEndpoint ||
                         isNEREndpoint || isOCREndpoint || isTransliterationEndpoint ||
                         isObservabilityEndpoint ||
-                        isMultiTenantEndpoint ||
+                        isTenantsEndpoint ||
                         isFeatureFlagsEndpoint ||
                         (isPolicyServiceEndpoint && !isPolicyServiceHealthPath);
     
@@ -372,7 +372,7 @@ apiClient.interceptors.response.use(
           if (typeof window !== 'undefined') {
             const url = (error.config?.url || '').toLowerCase();
             const isModelManagementEndpoint = url.includes('/model-management');
-            const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
+            const isTenantsEndpoint = url.includes('/api/v1/tenants');
             
             // Check if it's a service endpoint or model-management endpoint
             // These should NOT automatically logout - let the UI handle the error
@@ -391,9 +391,9 @@ apiClient.interceptors.response.use(
                                      url.includes('/api/v1/telemetry') ||
                                      url.includes('/api/v1/policy-service') ||
                                      isModelManagementEndpoint ||
-                                     isMultiTenantEndpoint;
+                                     isTenantsEndpoint;
             
-            if (isServiceEndpoint || isModelManagementEndpoint || isMultiTenantEndpoint) {
+            if (isServiceEndpoint || isModelManagementEndpoint || isTenantsEndpoint) {
               // For service endpoints and model-management endpoints
               // Check if it's a token expiration issue - if so, redirect to sign-in
               
@@ -503,10 +503,10 @@ apiClient.interceptors.response.use(
                 return Promise.reject(new Error('Session expired. Please sign in again.'));
               }
 
-              // Multi-tenant APIs back the app shell; any unresolved 401 should end the session
+              // Tenant APIs back the app shell; any unresolved 401 should end the session
               // instead of leaving the user on broken pages (e.g. logs, profile).
-              if (isMultiTenantEndpoint) {
-                console.warn('Multi-tenant API returned 401 — ending session');
+              if (isTenantsEndpoint) {
+                console.warn('Tenant API returned 401 — ending session');
                 const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
                 forceFrontendSessionEnd();
                 return Promise.reject(new Error('Session expired. Please sign in again.'));

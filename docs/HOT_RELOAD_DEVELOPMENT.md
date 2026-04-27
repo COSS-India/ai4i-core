@@ -34,7 +34,6 @@ All the following services have hot reload enabled:
 
 **Infrastructure Services:**
 - `model-management-service` (port 8094)
-- `multi-tenant-service` (port 8100)
 
 ## Quick Start
 
@@ -134,7 +133,6 @@ volumes:
   - ./services/<service-name>:/app
   - ./libs/ai4icore_*:/app/libs/ai4icore_*
   - ./services/constants:/app/services/constants
-  - ./services/multi-tenant-feature:/app/services/multi-tenant-feature
   - ./infrastructure:/app/infrastructure
   - ./shared:/app/shared
 ```
@@ -224,7 +222,6 @@ services=(
   "llm-service:ai4v-llm-service"
   "pipeline-service:ai4v-pipeline-service"
   "model-management-service:ai4v-model-management-service"
-  "multi-tenant-service:ai4v-multi-tenant-service"
   "transliteration-service:ai4v-transliteration-service"
   "language-detection-service:ai4v-language-detection-service"
   "audio-lang-detection-service:ai4v-audio-lang-detection-service"

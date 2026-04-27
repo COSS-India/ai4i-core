@@ -15,15 +15,13 @@ COPY libs/ai4icore_env /tmp/ai4icore_env
 COPY libs/ai4icore_logging /tmp/ai4icore_logging
 COPY libs/ai4icore_auth /tmp/ai4icore_auth
 COPY libs/ai4icore_bootstrap /tmp/ai4icore_bootstrap
-COPY libs/ai4icore_multi_tenant /tmp/ai4icore_multi_tenant
 RUN pip install --no-cache-dir \
     /tmp/ai4icore_exceptions \
     /tmp/ai4icore_constants \
     /tmp/ai4icore_env \
     /tmp/ai4icore_logging \
     /tmp/ai4icore_auth \
-    /tmp/ai4icore_bootstrap \
-    /tmp/ai4icore_multi_tenant && \
+    /tmp/ai4icore_bootstrap && \
     rm -rf /tmp/ai4icore_*
 
 # Install service dependencies

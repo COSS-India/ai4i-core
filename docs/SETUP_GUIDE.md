@@ -37,7 +37,6 @@ POSTGRES_HOST=postgres
 POSTGRES_PORT=5432
 POSTGRES_DB=ai4i_platform
 AUTH_DB_NAME=auth_db
-MULTI_TENANT_DB_NAME=multi_tenant_db
 CONFIG_DB_NAME=config_db
 MODEL_MANAGEMENT_DB_NAME=model_management_db
 DASHBOARD_DB_NAME=dashboard_db
@@ -134,7 +133,7 @@ Run migrations for all databases at once.
 ```
 
 This command will:
-- Create all required databases (auth_db, config_db, alerting_db, dashboard_db, metrics_db, telemetry_db, multi_tenant_db, model_management_db)
+- Create all required databases (auth_db, config_db, alerting_db, dashboard_db, metrics_db, telemetry_db, model_management_db)
 - Create all tables, indexes, constraints, and triggers
 - Set up Redis cache structures
 - Configure InfluxDB metrics buckets (if available)
@@ -242,10 +241,6 @@ Once all services are running, use the table below to find URLs and ports. The *
 - **URL**: http://localhost:4242/feature-flags
 - **Username**: `admin`
 - **Password**: `unleash4all`
-
-### Before running inference
-
-If you get a **SERVICE_UNAVAILABLE** error when calling inference (e.g. NMT, TTS, ASR), the multi-tenant service registry may not have the required services registered. See **[Multi-Tenant Service Registration](MULTI_TENANT_SERVICE_REGISTRATION.md)** for how to obtain an auth token, install curl (Windows/Linux/macOS), and register all services via the API.
 
 ## Troubleshooting
 
@@ -356,10 +351,6 @@ If login still fails:
 ### Port conflicts
 
 If ports are already in use, you can modify the port mappings in `docker-compose-local.yml` or stop the conflicting services.
-
-### Inference returns SERVICE_UNAVAILABLE
-
-If inference calls return a response like `"code": "SERVICE_UNAVAILABLE"` (e.g. "NMT service is not active at the moment"), the multi-tenant services have not been registered. Follow **[Multi-Tenant Service Registration](MULTI_TENANT_SERVICE_REGISTRATION.md)** to register the required services (tts, asr, nmt, llm, pipeline, ocr, ner, etc.) using the Register Services API.
 
 ## Architecture Notes
 

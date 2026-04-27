@@ -2,6 +2,8 @@
 User routes: profile, admin user management.
 """
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,7 +67,7 @@ async def list_users(
 @router.get("/users/{user_id}")
 async def get_user(
     request: Request,
-    user_id: int,
+    user_id: UUID,
     caller: User = Depends(require_any_role("ADMIN", "MODERATOR", "TENANT ADMIN")),
     svc: UserService = Depends(get_user_service),
     db: AsyncSession = Depends(get_db),

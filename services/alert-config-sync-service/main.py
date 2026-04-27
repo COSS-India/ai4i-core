@@ -56,9 +56,6 @@ AUTH_DB_NAME = app_env.auth_db_name
 if not AUTH_DB_NAME:
     raise EnvironmentError("AUTH_DB_NAME is required but not set. Set the AUTH_DB_NAME environment variable.")
 
-# Multi-tenant DB (same host/user/password) - for resolving tenant name -> tenant_id and tenant user email. Set via MULTI_TENANT_DB_NAME env.
-MULTI_TENANT_DB_NAME = (app_env.multi_tenant_db_name or os.getenv("MULTI_TENANT_DB_NAME") or "").strip() or None
-
 PROMETHEUS_URL = app_env.prometheus_url
 ALERTMANAGER_URL = app_env.alertmanager_url
 
@@ -83,8 +80,6 @@ db_pool: Optional[asyncpg.Pool] = None
 db_pool_lock = asyncio.Lock()
 auth_db_pool: Optional[asyncpg.Pool] = None
 auth_db_pool_lock = asyncio.Lock()
-multi_tenant_db_pool: Optional[asyncpg.Pool] = None
-multi_tenant_db_pool_lock = asyncio.Lock()
 
 # Lock to prevent concurrent sync operations
 sync_lock = asyncio.Lock()
@@ -145,89 +140,56 @@ async def close_auth_db_pool():
         auth_db_pool = None
         logger.info("Auth database connection pool closed")
 
-async def init_multi_tenant_db_pool():
-    """Initialize multi-tenant database connection pool for resolving tenant name to tenant_id and tenant user email. Requires MULTI_TENANT_DB_NAME env."""
-    global multi_tenant_db_pool
-    async with multi_tenant_db_pool_lock:
-        if multi_tenant_db_pool is None and MULTI_TENANT_DB_NAME:
-            try:
-                multi_tenant_db_pool = await asyncpg.create_pool(
-                    host=DB_HOST,
-                    port=DB_PORT,
-                    user=DB_USER,
-                    password=DB_PASSWORD,
-                    database=MULTI_TENANT_DB_NAME,
-                    min_size=1,
-                    max_size=3
-                )
-                logger.info("Multi-tenant database connection pool initialized")
-            except Exception as e:
-                logger.warning(f"Could not initialize multi_tenant_db pool (tenant resolution will be skipped): {e}")
-                multi_tenant_db_pool = None
-        elif not MULTI_TENANT_DB_NAME:
-            logger.debug("MULTI_TENANT_DB_NAME not set; tenant resolution will be skipped")
-
-async def close_multi_tenant_db_pool():
-    """Close multi-tenant database connection pool"""
-    global multi_tenant_db_pool
-    if multi_tenant_db_pool:
-        await multi_tenant_db_pool.close()
-        multi_tenant_db_pool = None
-        logger.info("Multi-tenant database connection pool closed")
-
 async def resolve_tenant_name_to_tenant_id_and_emails(tenant_name: str) -> Optional[Tuple[str, List[str]]]:
     """
-    Resolve tenant name to (tenant_id, list of emails) using multi_tenant_db and auth_db.
-    Matches tenant by organization_name only (case-insensitive, trimmed); then auth_db users where is_tenant=true.
-    Returns (tenant_id, [emails]) or None if not found or no tenant user.
+    Resolve tenant name to (tenant_id, list of emails) from the auth DB.
+    Matches tenant by `tenants.organisation` (case-insensitive, trimmed); then
+    pulls active users in that tenant who hold the TENANT ADMIN role.
+    Returns (tenant_id, [emails]) or None if not found.
     """
     if not tenant_name or not str(tenant_name).strip():
         return None
     tenant_name = str(tenant_name).strip()
     try:
-        if multi_tenant_db_pool is None:
-            await init_multi_tenant_db_pool()
-        if multi_tenant_db_pool is None:
-            logger.warning("multi_tenant_db pool not available; cannot resolve tenant to tenant_id/emails")
-            return None
-        async with multi_tenant_db_pool.acquire() as conn:
-            # Match by organization_name only (case-insensitive, trimmed)
-            row = await conn.fetchrow(
-                """
-                SELECT tenant_id, user_id
-                FROM tenants
-                WHERE LOWER(TRIM(organization_name)) = LOWER(TRIM($1))
-                LIMIT 1
-                """,
-                tenant_name
-            )
-            if not row:
-                logger.info(f"Tenant not found in multi_tenant_db for organization_name '{tenant_name}'")
-                return None
-            tenant_id = str(row['tenant_id'])
-            user_id = row.get('user_id')
-            if user_id is None:
-                logger.info(f"Tenant '{tenant_name}' (tenant_id={tenant_id}) has no user_id in multi_tenant_db; no tenant user email available")
-                return (tenant_id, [])
-        # Resolve tenant user email from auth_db (user where is_tenant = true)
         if auth_db_pool is None:
             await init_auth_db_pool()
         if auth_db_pool is None:
-            logger.warning("auth_db pool not available; cannot resolve tenant user email")
-            return (tenant_id, [])
+            logger.warning("auth_db pool not available; cannot resolve tenant to tenant_id/emails")
+            return None
         async with auth_db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT tenant_id
+                FROM tenants
+                WHERE LOWER(TRIM(organisation)) = LOWER(TRIM($1))
+                LIMIT 1
+                """,
+                tenant_name,
+            )
+            if not row:
+                logger.info(f"Tenant not found in auth_db for organisation '{tenant_name}'")
+                return None
+            tenant_id = str(row["tenant_id"])
+
             rows = await conn.fetch(
                 """
-                SELECT email FROM users
-                WHERE id = $1 AND is_tenant = true AND is_active = true AND email IS NOT NULL AND email != ''
+                SELECT u.email
+                FROM users u
+                JOIN user_role ur ON ur.user_id = u.user_id
+                JOIN roles r ON r.role_id = ur.role_id
+                WHERE u.tenant_id = $1
+                  AND u.is_active = true
+                  AND COALESCE(u.is_tenant_active, true) = true
+                  AND r.name = 'TENANT ADMIN'
+                  AND u.email IS NOT NULL AND u.email != ''
                 """,
-                user_id
+                row["tenant_id"],
             )
-            emails = [r['email'] for r in rows if r.get('email')]
+            emails = [r["email"] for r in rows if r.get("email")]
         if not emails:
-            logger.info(f"Tenant '{tenant_name}' (tenant_id={tenant_id}, user_id={user_id}): no auth_db user with is_tenant=true and valid email")
+            logger.info(f"Tenant '{tenant_name}' (tenant_id={tenant_id}): no active TENANT ADMIN users")
         else:
-            logger.info(f"Resolved tenant '{tenant_name}' -> tenant_id={tenant_id}, {len(emails)} tenant user email(s)")
+            logger.info(f"Resolved tenant '{tenant_name}' -> tenant_id={tenant_id}, {len(emails)} admin email(s)")
         return (tenant_id, emails)
     except Exception as e:
         logger.warning(f"Failed to resolve tenant '{tenant_name}' to tenant_id/emails: {e}")
@@ -1397,7 +1359,6 @@ async def lifespan(app: FastAPI):
             logger.info("Background sync task stopped")
         await close_db_pool()
         await close_auth_db_pool()
-        await close_multi_tenant_db_pool()
         logger.info("Database connection pools closed")
 
 

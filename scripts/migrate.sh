@@ -45,7 +45,6 @@ DATABASES=(
   "model_management_db"
   "ai4iplatform_core"
   "policy_db"
-  "multi_tenant_db"
   "telemetry_db"
 )
 

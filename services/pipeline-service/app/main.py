@@ -172,18 +172,6 @@ def create_app() -> FastAPI:
     # -- Exception Handlers --
     register_exception_handlers(application)
 
-    # -- Multi-Tenant --
-    try:
-        from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
-        mt_config = MultiTenantConfig.from_env()
-        mt_config.tenant_paths = ["/api/v1/pipeline"]
-        MultiTenantPlugin(mt_config).register_plugin(
-            application,
-            multi_tenant_db_url=app_env.get_multi_tenant_db_url() or app_env.get_database_url(),
-        )
-    except Exception as e:
-        logger.warning("Multi-Tenant plugin failed: %s", e)
-
     # -- Routes --
     from app.routes import api_router
     application.include_router(api_router)

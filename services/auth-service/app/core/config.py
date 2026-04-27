@@ -44,10 +44,10 @@ class AuthSettings(BaseSettings):
     db_pool_size: int = 20
     db_max_overflow: int = 10
 
-    # ── Multi-tenant DB ──
-    multi_tenant_db_url: Optional[str] = None
-    multi_tenant_db_pool_size: int = 20
-    multi_tenant_db_max_overflow: int = 10
+    # ── Default tenant ──
+    # Direct portal signups without a tenant_id fall back to this tenant
+    # (seeded by auth_service_t_default_tenant_seeder.py).
+    default_tenant_org: str = "default organisation"
 
     # ── Redis ──
     redis_host: str = "localhost"

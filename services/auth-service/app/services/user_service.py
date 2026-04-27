@@ -1,16 +1,12 @@
-"""
-User CRUD business logic.
-"""
+"""User CRUD business logic."""
 
-import logging
 from typing import Optional
+from uuid import UUID
 
 from app.core.exceptions import AuthorizationError
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
-
-logger = logging.getLogger(__name__)
 
 
 class UserService:
@@ -19,36 +15,31 @@ class UserService:
         self._roles = role_repo
 
     async def get_user_profile(self, user: User) -> dict:
-        """Get user profile with roles."""
-        roles = await self._roles.get_user_roles(user.id)
+        roles = await self._roles.get_user_roles(user.user_id)
         return {
-            "id": user.id,
+            "user_id": str(user.user_id),
             "email": user.email,
             "username": user.username,
             "full_name": user.full_name,
             "is_active": user.is_active,
-            "is_verified": user.is_verified,
-            "is_superuser": user.is_superuser,
-            "is_tenant": user.is_tenant,
-            "created_at": user.created_at,
-            "updated_at": user.updated_at,
+            "is_tenant_active": user.is_tenant_active,
+            "creation_type": user.creation_type.value if user.creation_type else None,
+            "tenant_id": str(user.tenant_id) if user.tenant_id else None,
             "last_login": user.last_login,
             "avatar_url": user.avatar_url,
             "phone_number": user.phone_number,
             "timezone": user.timezone,
-            "language": user.language,
             "roles": roles,
-            "tenant_id": user.tenant_id_cached,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
         }
 
     async def update_profile(self, user: User, data: dict) -> User:
-        """Update user profile fields."""
+        """Apply a partial update. Callers must validate `data` keys at the route layer
+        (route Pydantic schema); the repo silently drops unknown keys."""
         await self._users.update(user, data)
         await self._users.commit()
         return user
-
-    async def list_users(self, offset: int = 0, limit: int = 100) -> list[User]:
-        return await self._users.list_all(offset, limit)
 
     async def list_users_for_caller(
         self,
@@ -58,77 +49,63 @@ class UserService:
         *,
         role_set: set[str] | None = None,
     ) -> list[User]:
-        """ADMIN/MODERATOR: all users. TENANT ADMIN: users in caller.tenant_id_cached only."""
-        if caller.is_superuser:
-            return await self._users.list_all(offset, limit)
-
+        """ADMIN/MODERATOR see all users; TENANT ADMIN sees only their own tenant."""
         effective_role_set = role_set
         if effective_role_set is None:
-            roles = await self._roles.get_user_roles(caller.id)
+            roles = await self._roles.get_user_roles(caller.user_id)
             effective_role_set = set(roles)
 
         if "ADMIN" in effective_role_set or "MODERATOR" in effective_role_set:
             return await self._users.list_all(offset, limit)
         if "TENANT ADMIN" in effective_role_set:
-            tid = (caller.tenant_id_cached or "").strip()
-            if not tid:
+            if caller.tenant_id is None:
                 raise AuthorizationError(
                     message="Your account has no tenant context; cannot list users.",
                     code="TENANT_CONTEXT_REQUIRED",
                 )
-            return await self._users.list_by_tenant(tid, offset, limit)
-        # Fail-closed defense-in-depth: never silently return all users for unknown/unauthorized roles.
+            return await self._users.list_by_tenant(caller.tenant_id, offset, limit)
         raise AuthorizationError(
             message="You are not authorized to list users.",
             code="INSUFFICIENT_ROLE",
         )
 
-    async def get_user_by_id(self, user_id: int) -> Optional[User]:
+    async def get_user_by_id(self, user_id: UUID) -> Optional[User]:
         return await self._users.get_by_id(user_id)
 
     async def get_user_by_id_for_caller(
         self,
         caller: User,
-        user_id: int,
+        user_id: UUID,
         *,
         role_set: set[str] | None = None,
     ) -> Optional[User]:
-        """ADMIN/MODERATOR: any user. TENANT ADMIN: same tenant only."""
+        """ADMIN/MODERATOR can fetch any user; TENANT ADMIN can only fetch users
+        in their own tenant (enforced both here and at the route layer via
+        `enforce_target_user_same_tenant`)."""
         user = await self._users.get_by_id(user_id)
         if not user:
             return None
 
-        if caller.is_superuser:
-            return user
-
         effective_role_set = role_set
         if effective_role_set is None:
-            roles = await self._roles.get_user_roles(caller.id)
+            roles = await self._roles.get_user_roles(caller.user_id)
             effective_role_set = set(roles)
 
         if "ADMIN" in effective_role_set or "MODERATOR" in effective_role_set:
             return user
         if "TENANT ADMIN" in effective_role_set:
-            tid = (caller.tenant_id_cached or "").strip()
-            if not tid:
+            if caller.tenant_id is None:
                 raise AuthorizationError(
                     message="Your account has no tenant context; cannot view users.",
                     code="TENANT_CONTEXT_REQUIRED",
                 )
-            # Tenant isolation for TENANT ADMIN is enforced in the route layer
-            # via `enforce_target_user_same_tenant`; here we only keep fail-closed role checks.
+            if user.tenant_id != caller.tenant_id:
+                raise AuthorizationError(
+                    message="Cannot view a user outside your tenant.",
+                    code="TENANT_FORBIDDEN",
+                )
             return user
-        # Fail-closed defense-in-depth: never silently return the target user for unknown/unauthorized roles.
         raise AuthorizationError(
             message="You are not authorized to view this user.",
             code="INSUFFICIENT_ROLE",
         )
-
-    async def get_user_permission_names(self, user_id: int) -> list[str]:
-        """Get permission names for a user (via roles)."""
-        return await self._roles.get_user_permission_names(user_id)
-
-    async def set_selected_api_key(self, user: User, api_key_id: Optional[int]) -> None:
-        """Set the user's selected API key."""
-        await self._users.update(user, {"selected_api_key_id": api_key_id})
-        await self._users.commit()

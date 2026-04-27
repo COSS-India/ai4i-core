@@ -6,8 +6,8 @@ from typing import Any, Dict, Optional
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_multi_tenant import get_tenant_db_session_factory
 from ai4icore_exceptions import ErrorDetail
+from ai4icore_bootstrap.database import get_db
 from ai4icore_constants.error_messages import (
     MODEL_UNAVAILABLE,
     MODEL_UNAVAILABLE_MESSAGE,
@@ -22,12 +22,11 @@ from app.services.audio_service import AudioService
 
 logger = logging.getLogger(__name__)
 
-get_tenant_db_session = get_tenant_db_session_factory()
 
 
 async def get_asr_service(
     request: Request,
-    db: AsyncSession = Depends(get_tenant_db_session),
+    db: AsyncSession = Depends(get_db),
 ) -> ASRService:
     """Construct ASRService with Triton client and repository from request state.
 
