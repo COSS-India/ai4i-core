@@ -4,7 +4,6 @@ Model management routes.
 Path layout (mounted under /api/v1):
   GET    /models                  — list models with optional filters
   GET    /models/{model_id}       — get a single model (optional ?version=)
-  POST   /models/{model_id}       — get a single model (body variant)
   POST   /models                  — create a new model
   PATCH  /models                  — update a model (modelId+version in body)
   DELETE /models/{model_id}       — delete a model by internal UUID
@@ -15,7 +14,7 @@ Authentication is handled at the gateway layer.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from app.core.responses import success_response
 from app.dependencies.auth import get_user_id
@@ -24,7 +23,6 @@ from app.schemas.enums import TaskTypeEnum
 from app.schemas.model import (
     ModelCreateRequest,
     ModelUpdateRequest,
-    ModelViewRequest,
 )
 from app.services.model_service import ModelService
 
@@ -77,7 +75,7 @@ async def list_models(
     return success_response(data=items, meta={"total": len(items)})
 
 
-@router.get("/{model_id:path}")
+@router.get("/{model_id:path}", summary="Retrieve Model")
 async def get_model_by_id(
     model_id: str,
     version: Optional[str] = Query(None, description="Optional specific version."),
@@ -87,17 +85,6 @@ async def get_model_by_id(
     data = await svc.get_model(model_id, version=version)
     return success_response(data=data)
 
-
-@router.post("/{model_id:path}")
-async def get_model_by_id_post(
-    model_id: str,
-    payload: Optional[ModelViewRequest] = Body(None),
-    svc: ModelService = Depends(get_model_service),
-):
-    """Body-variant of GET — used by clients that prefer POST for reads."""
-    version = payload.version if payload else None
-    data = await svc.get_model(model_id, version=version)
-    return success_response(data=data)
 
 
 @router.post("")

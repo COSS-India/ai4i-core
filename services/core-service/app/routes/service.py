@@ -47,7 +47,7 @@ def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
 
 @router.get(
     "/try-it-service-list",
-    summary="Public try-it service listing API",
+    summary="List Try-It Services",
 )
 async def list_try_it_services(
     task_type: str = Query(
@@ -91,7 +91,7 @@ async def list_services(
 
 
 
-@router.post("/{service_id:path}")
+@router.post("/{service_id:path}", summary="Retrieve Service")
 async def view_service(
     service_id: str,
     svc: ServiceService = Depends(get_service_service),

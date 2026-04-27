@@ -24,18 +24,18 @@ class CoreSettings(BaseSettings):
     )
 
     # ── Service identity ──
-    service_name: str = "core-service"
-    service_version: str = "1.0.0"
-    api_version: str = "v1"
+    service_name: str
+    service_version: str
+    api_version: str
     debug: bool = False
 
     # ── Database (single primary DB) ──
     database_url: Optional[str] = None
     postgres_user: Optional[str] = None
     postgres_password: Optional[str] = None
-    postgres_host: str = "localhost"
-    postgres_port: int = 5432
-    postgres_db: str = "ai4iplatform_core"
+    postgres_host: Optional[str] = None
+    postgres_port: Optional[int] = None
+    postgres_db: Optional[str] = None
 
     # Backwards-compatible aliases (model-management-service used APP_DB_*)
     app_db_user: Optional[str] = None
@@ -49,8 +49,8 @@ class CoreSettings(BaseSettings):
     db_max_overflow: int = 10
 
     # ── Redis ──
-    redis_host: str = "localhost"
-    redis_port: int = 6379
+    redis_host: str
+    redis_port: int
     redis_password: Optional[str] = None
     redis_db: int = 0
     redis_timeout: int = 10
@@ -80,8 +80,8 @@ class CoreSettings(BaseSettings):
         """Build a postgres+asyncpg URL from individual fields if no full URL provided."""
         if self.database_url:
             return self.database_url
-        user = self.app_db_user or self.postgres_user or "postgres"
-        password = self.app_db_password or self.postgres_password or ""
+        user = self.app_db_user or self.postgres_user
+        password = self.app_db_password or self.postgres_password
         host = self.app_db_host or self.postgres_host
         port = self.app_db_port or self.postgres_port
         db = self.core_db_name or self.app_db_name or self.postgres_db
