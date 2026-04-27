@@ -13,7 +13,7 @@ Owns the rules:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
@@ -108,16 +108,32 @@ class ModelService:
         *,
         task_type: Optional[str] = None,
         include_deprecated: bool = True,
+        version_status: Optional[str] = None,
         model_name: Optional[str] = None,
         created_by: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        offset: int = 0,
+        limit: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         rows = await self._models.list_models(
             task_type=task_type,
             include_deprecated=include_deprecated,
+            version_status=version_status,
             model_name=model_name,
             created_by=created_by,
+            offset=offset,
+            limit=limit,
         )
-        return [model_to_dict(m) for m in rows]
+        items = [model_to_dict(m) for m in rows]
+        if offset > 0 or limit is not None:
+            total = await self._models.count_models(
+                task_type=task_type,
+                version_status=version_status,
+                model_name=model_name,
+                created_by=created_by,
+            )
+        else:
+            total = len(items)
+        return items, total
 
     # ── Writes ──
 

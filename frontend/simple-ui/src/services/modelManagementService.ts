@@ -18,6 +18,21 @@ export interface ModelDetails {
   [key: string]: any;
 }
 
+export interface ModelListParams {
+  offset?: number;
+  limit?: number;
+  taskType?: string;
+  versionStatus?: string;
+  createdBy?: string;
+}
+
+export interface PaginatedModels {
+  items: ModelDetails[];
+  total: number;
+  offset: number;
+  limit: number | null;
+}
+
 export interface UnpublishModelResponse {
   message: string;
   modelId: string;
@@ -46,7 +61,7 @@ export const unpublishModel = async (
 };
 
 /**
- * Get all models
+ * Get all models (no pagination — returns everything, backward-compatible)
  * @returns Promise with list of models
  */
 export const getAllModels = async (): Promise<ModelDetails[]> => {
@@ -55,7 +70,38 @@ export const getAllModels = async (): Promise<ModelDetails[]> => {
     return response.data;
   } catch (error: any) {
     console.error('Get models error:', error);
-    // Don't transform the error - let extractErrorInfo handle it
+    throw error;
+  }
+};
+
+/**
+ * Get models with server-side pagination, filtering, and search.
+ * Reads the X-Total-Count response header for the accurate total count.
+ */
+export const getModelsPaginated = async (params: ModelListParams = {}): Promise<PaginatedModels> => {
+  try {
+    const queryParams: Record<string, any> = {};
+    if (params.offset !== undefined && params.offset > 0) queryParams.offset = params.offset;
+    if (params.limit !== undefined) queryParams.limit = params.limit;
+    if (params.taskType) queryParams.task_type = params.taskType;
+    if (params.versionStatus) queryParams.version_status = params.versionStatus;
+    if (params.createdBy) queryParams.created_by = params.createdBy;
+
+    const response = await apiClient.get<ModelDetails[]>('/api/v1/model-management/models', {
+      params: queryParams,
+    });
+
+    const total = parseInt(response.headers['x-total-count'] ?? '0', 10);
+    const items = Array.isArray(response.data) ? response.data : [];
+
+    return {
+      items,
+      total: Number.isNaN(total) ? items.length : total,
+      offset: params.offset ?? 0,
+      limit: params.limit ?? null,
+    };
+  } catch (error: any) {
+    console.error('Get models (paginated) error:', error);
     throw error;
   }
 };

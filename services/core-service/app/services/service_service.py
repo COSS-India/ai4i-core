@@ -15,7 +15,7 @@ Owns the rules:
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
@@ -159,14 +159,29 @@ class ServiceService:
         task_type: Optional[str] = None,
         is_published: Optional[bool] = None,
         created_by: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        offset: int = 0,
+        limit: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
         rows = await self._services.list_services(
-            task_type=task_type, is_published=is_published, created_by=created_by
+            task_type=task_type,
+            is_published=is_published,
+            created_by=created_by,
+            offset=offset,
+            limit=limit,
         )
-        return [
+        items = [
             service_to_dict(service, model=model, include_task_languages=True)
             for service, model in rows
         ]
+        if offset > 0 or limit is not None:
+            total = await self._services.count_services(
+                task_type=task_type,
+                is_published=is_published,
+                created_by=created_by,
+            )
+        else:
+            total = len(items)
+        return items, total
 
     # ── Writes ──
 

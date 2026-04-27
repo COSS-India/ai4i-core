@@ -15,7 +15,7 @@ Authentication is handled at the gateway layer.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.core.exceptions import ValidationError
 from app.core.responses import success_response
@@ -66,14 +66,15 @@ async def list_try_it_services(
             message="Try-it is not available for this task type.",
             code="TRY_IT_UNSUPPORTED",
         )
-    items = await svc.list_services(
+    items, total = await svc.list_services(
         task_type=TaskTypeEnum.nmt.value, is_published=True
     )
-    return success_response(data=items, meta={"total": len(items)})
+    return success_response(data=items, meta={"total": total})
 
 
 @router.get("")
 async def list_services(
+    response: Response,
     task_type: Optional[str] = Query(
         None, description="Filter by task type."
     ),
@@ -84,14 +85,32 @@ async def list_services(
     created_by: Optional[str] = Query(
         None, description="Filter by user ID who created the service."
     ),
+    offset: int = Query(
+        0,
+        ge=0,
+        description="Number of items to skip (for pagination).",
+    ),
+    limit: Optional[int] = Query(
+        None,
+        ge=1,
+        le=1000,
+        description="Maximum number of items to return. Omit to return all.",
+    ),
     svc: ServiceService = Depends(get_service_service),
 ):
-    items = await svc.list_services(
+    """List services with optional filters and offset/limit pagination."""
+    items, total = await svc.list_services(
         task_type=_resolve_task_type(task_type),
         is_published=is_published,
         created_by=created_by,
+        offset=offset,
+        limit=limit,
     )
-    return success_response(data=items, meta={"total": len(items)})
+    response.headers["X-Total-Count"] = str(total)
+    return success_response(
+        data=items,
+        meta={"total": total, "offset": offset, "limit": limit},
+    )
 
 
 

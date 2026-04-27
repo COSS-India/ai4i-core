@@ -5,7 +5,7 @@ Async repository for the Service entity.
 from typing import List, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import and_, delete, desc, select
+from sqlalchemy import and_, delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -38,12 +38,38 @@ class ServiceRepository:
         result = await self._db.execute(select(Service).where(Service.name == name))
         return result.scalar_one_or_none()
 
+    async def count_services(
+        self,
+        *,
+        task_type: Optional[str] = None,
+        is_published: Optional[bool] = None,
+        created_by: Optional[str] = None,
+    ) -> int:
+        """Return the total number of services matching the given filters (no pagination)."""
+        stmt = select(func.count(Service.id)).join(
+            Model,
+            and_(
+                Model.model_id == Service.model_id,
+                Model.version == Service.model_version,
+            ),
+        )
+        if task_type:
+            stmt = stmt.where(Model.task["type"].astext == task_type)
+        if is_published is not None:
+            stmt = stmt.where(Service.is_published == is_published)
+        if created_by is not None:
+            stmt = stmt.where(Service.created_by == created_by)
+        result = await self._db.execute(stmt)
+        return int(result.scalar() or 0)
+
     async def list_services(
         self,
         *,
         task_type: Optional[str] = None,
         is_published: Optional[bool] = None,
         created_by: Optional[str] = None,
+        offset: int = 0,
+        limit: Optional[int] = None,
     ) -> List[Tuple[Service, Model]]:
         """Return (service, model) tuples joined on (model_id, model_version)."""
         stmt = select(Service, Model).join(
@@ -60,6 +86,9 @@ class ServiceRepository:
         if created_by is not None:
             stmt = stmt.where(Service.created_by == created_by)
         stmt = stmt.order_by(desc(Service.is_published), desc(Service.created_at))
+        stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
         result = await self._db.execute(stmt)
         return [(svc, model) for svc, model in result.all()]
 

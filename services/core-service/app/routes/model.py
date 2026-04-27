@@ -14,7 +14,7 @@ Authentication is handled at the gateway layer.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.core.exceptions import ValidationError
 from app.core.responses import success_response
@@ -52,6 +52,7 @@ def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
 
 @router.get("")
 async def list_models(
+    response: Response,
     task_type: Optional[str] = Query(
         None,
         description="Filter by task type (asr, nmt, tts, etc.).",
@@ -59,6 +60,10 @@ async def list_models(
     include_deprecated: bool = Query(
         True,
         description="Include deprecated versions. Set false for ACTIVE only.",
+    ),
+    version_status: Optional[str] = Query(
+        None,
+        description="Filter by version status: 'active' or 'deprecated'. Overrides include_deprecated.",
     ),
     model_name: Optional[str] = Query(
         None,
@@ -68,16 +73,34 @@ async def list_models(
         None,
         description="Filter by user ID who created the model.",
     ),
+    offset: int = Query(
+        0,
+        ge=0,
+        description="Number of items to skip (for pagination).",
+    ),
+    limit: Optional[int] = Query(
+        None,
+        ge=1,
+        le=1000,
+        description="Maximum number of items to return. Omit to return all.",
+    ),
     svc: ModelService = Depends(get_model_service),
 ):
-    """List all models with optional filters."""
-    items = await svc.list_models(
+    """List models with optional filters and offset/limit pagination."""
+    items, total = await svc.list_models(
         task_type=_resolve_task_type(task_type),
         include_deprecated=include_deprecated,
+        version_status=version_status,
         model_name=model_name,
         created_by=created_by,
+        offset=offset,
+        limit=limit,
     )
-    return success_response(data=items, meta={"total": len(items)})
+    response.headers["X-Total-Count"] = str(total)
+    return success_response(
+        data=items,
+        meta={"total": total, "offset": offset, "limit": limit},
+    )
 
 
 @router.get("/{model_id:path}", summary="Retrieve Model")

@@ -2,6 +2,21 @@
 
 import { apiClient } from './api';
 
+export interface ServiceListParams {
+  offset?: number;
+  limit?: number;
+  taskType?: string;
+  isPublished?: boolean;
+  createdBy?: string;
+}
+
+export interface PaginatedServices {
+  items: Service[];
+  total: number;
+  offset: number;
+  limit: number | null;
+}
+
 export interface Service {
   uuid?: string;
   serviceId?: string;
@@ -48,22 +63,47 @@ export interface Service {
 }
 
 /**
- * List all services
+ * List all services (no pagination — returns everything, backward-compatible)
  * @returns Promise with list of services
  */
 export const listServices = async (): Promise<Service[]> => {
   try {
-    // The apiClient interceptor will automatically add:
-    // - Content-Type: application/json
-    // - Accept: application/json
-    // - Authorization: Bearer <token>
-    // - X-API-Key: <api_key> (if available)
-    // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
     const response = await apiClient.get<Service[]>('/api/v1/model-management/services');
     return response.data;
   } catch (error: any) {
     console.error('List services error:', error);
-    // Don't transform the error - let extractErrorInfo handle it
+    throw error;
+  }
+};
+
+/**
+ * List services with server-side pagination, filtering, and search.
+ * Reads the X-Total-Count response header for the accurate total count.
+ */
+export const listServicesPaginated = async (params: ServiceListParams = {}): Promise<PaginatedServices> => {
+  try {
+    const queryParams: Record<string, any> = {};
+    if (params.offset !== undefined && params.offset > 0) queryParams.offset = params.offset;
+    if (params.limit !== undefined) queryParams.limit = params.limit;
+    if (params.taskType) queryParams.task_type = params.taskType;
+    if (params.isPublished !== undefined) queryParams.is_published = params.isPublished;
+    if (params.createdBy) queryParams.created_by = params.createdBy;
+
+    const response = await apiClient.get<Service[]>('/api/v1/model-management/services', {
+      params: queryParams,
+    });
+
+    const total = parseInt(response.headers['x-total-count'] ?? '0', 10);
+    const items = Array.isArray(response.data) ? response.data : [];
+
+    return {
+      items,
+      total: Number.isNaN(total) ? items.length : total,
+      offset: params.offset ?? 0,
+      limit: params.limit ?? null,
+    };
+  } catch (error: any) {
+    console.error('List services (paginated) error:', error);
     throw error;
   }
 };

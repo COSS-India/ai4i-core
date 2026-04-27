@@ -46,10 +46,10 @@ import {
 import Head from "next/head";
 import { SearchIcon, ViewIcon } from "@chakra-ui/icons";
 import { useRouter } from "next/router";
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
-import { getAllModels, createModel, getModelById, updateModel } from "../services/modelManagementService";
+import { getModelsPaginated, createModel, getModelById, updateModel } from "../services/modelManagementService";
 import { listServices as listServicesForModels } from "../services/servicesManagementService";
 import { useAuth } from "../hooks/useAuth";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
@@ -123,6 +123,7 @@ interface Model {
 
 const ModelManagementPage: React.FC = () => {
   const [models, setModels] = useState<Model[]>([]);
+  const [serverTotal, setServerTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
   const [isViewingModel, setIsViewingModel] = useState(false);
@@ -190,35 +191,36 @@ const ModelManagementPage: React.FC = () => {
     else if (t !== "1" && t !== "2") setActiveTab(0);
   }, [router.query.tab]);
 
-  // Fetch models on component mount
-  useEffect(() => {
-    const fetchModels = async () => {
-      setIsLoading(true);
-      try {
-        const fetchedModels = await getAllModels();
-        setModels(fetchedModels as unknown as Model[]);
-      } catch (error: any) {
-        console.error("Failed to fetch models:", error);
-        
-        // Use centralized error handler
-        const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-        
-          toast({
-          title: showOnlyMessage ? undefined : errorTitle,
-          description: errorMessage,
-            status: "error",
-            duration: 5000,
-            isClosable: true,
-          });
-        // On error, set empty array
-          setModels([]);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  // Fetch models with server-side pagination + filters (task type, version status)
+  const fetchModels = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const result = await getModelsPaginated({
+        offset: (listPage - 1) * listPageSize,
+        limit: listPageSize,
+        taskType: filterTaskType || undefined,
+        versionStatus: filterVersionStatus || undefined,
+      });
+      setModels(result.items as unknown as Model[]);
+      setServerTotal(result.total);
+    } catch (error: any) {
+      console.error("Failed to fetch models:", error);
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
+      toast({
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMessage,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      setModels([]);
+      setServerTotal(0);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [listPage, listPageSize, filterTaskType, filterVersionStatus, toast]);
 
-    fetchModels();
-  }, [toast]);
+  useEffect(() => { fetchModels(); }, [fetchModels]);
 
   // Fetch services: deprecate is only disabled when the model has at least one published service
   useEffect(() => {
@@ -253,59 +255,25 @@ const ModelManagementPage: React.FC = () => {
     return Array.from(types).sort();
   }, [models]);
 
-  // Sort key: prefer versionStatusUpdatedAt (latest update), fallback to submittedOn/updatedOn (created/updated)
-  const getModelSortTime = (m: Model): number => {
-    if (m.versionStatusUpdatedAt) {
-      const t = new Date(m.versionStatusUpdatedAt).getTime();
-      if (!Number.isNaN(t)) return t;
-    }
-    const submitted = m.submittedOn != null ? (m.submittedOn > 1e12 ? m.submittedOn : m.submittedOn * 1000) : 0;
-    const updated = m.updatedOn != null ? (m.updatedOn > 1e12 ? m.updatedOn : m.updatedOn * 1000) : 0;
-    return updated || submitted;
-  };
-
-  // Apply search (model name only) and filters (version status, task type), then sort by selected mode.
-  const filteredModels = useMemo(() => {
+  // Client-side name filter + sort applied to the current server-fetched page.
+  const paginatedModels = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const filtered = models.filter((m) => {
-      if (q) {
-        if (!(m.name ?? "").toLowerCase().includes(q)) return false;
-      }
-      if (filterVersionStatus) {
-        const status = m.versionStatus?.toLowerCase() || "active";
-        if (filterVersionStatus === "active" && status !== "active") return false;
-        if (filterVersionStatus === "deprecated" && status === "active") return false;
-      }
-      if (filterTaskType && (m.task?.type ?? "").toUpperCase() !== filterTaskType) return false;
-      return true;
-    });
-    // Default mode is newest-first; users can switch to explicit name sorting.
+    const filtered = q
+      ? models.filter((m) => (m.name ?? "").toLowerCase().includes(q))
+      : models;
+    if (sortBy === "time") return filtered;
     return [...filtered].sort((a, b) => {
-      const timeA = getModelSortTime(a);
-      const timeB = getModelSortTime(b);
       const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
-
-      if (sortBy === "time") {
-        if (timeB !== timeA) return timeB - timeA;
-        return 0;
-      }
-
       if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
-      if (timeB !== timeA) return timeB - timeA;
       return 0;
     });
-  }, [models, searchQuery, filterVersionStatus, filterTaskType, nameSortDirection, sortBy]);
+  }, [models, searchQuery, sortBy, nameSortDirection]);
 
-  const totalModels = filteredModels.length;
+  // Server handles pagination; these values drive the pagination bar.
+  const totalModels = serverTotal;
   const totalPages = Math.max(1, Math.ceil(totalModels / listPageSize));
   const startRow = totalModels === 0 ? 0 : (listPage - 1) * listPageSize + 1;
   const endRow = Math.min(listPage * listPageSize, totalModels);
-  const paginatedModels = filteredModels.slice((listPage - 1) * listPageSize, listPage * listPageSize);
-
-  // Keep page in valid range when list length changes (e.g. after search/filter)
-  useEffect(() => {
-    if (listPage > totalPages && totalPages >= 1) setListPage(totalPages);
-  }, [totalModels, listPageSize, listPage, totalPages]);
 
   const hasActiveFilters = filterVersionStatus !== "" || filterTaskType !== "" || searchQuery.trim() !== "";
   const clearAllFilters = () => {
@@ -530,8 +498,7 @@ const ModelManagementPage: React.FC = () => {
       });
 
       // Refresh models list
-      const fetchedModels = await getAllModels();
-      setModels(fetchedModels as unknown as Model[]);
+      await fetchModels();
 
       // Reset file input
       if (fileInputRef.current) {
@@ -694,8 +661,7 @@ const ModelManagementPage: React.FC = () => {
       });
 
       // Refresh models list and selected model
-      const fetchedModels = await getAllModels();
-      setModels(fetchedModels as unknown as Model[]);
+      await fetchModels();
       const updatedModel = await getModelById(selectedModel.modelId);
       setSelectedModel(updatedModel as unknown as Model);
       setUpdateFormData(updatedModel as unknown as Partial<Model>);
@@ -746,8 +712,7 @@ const ModelManagementPage: React.FC = () => {
       });
       
       // Refresh models list and selected model
-      const fetchedModels = await getAllModels();
-      setModels(fetchedModels as unknown as Model[]);
+      await fetchModels();
       if (selectedModel && selectedModel.modelId === model.modelId) {
         const updatedModel = await getModelById(model.modelId);
         setSelectedModel(updatedModel as unknown as Model);
@@ -800,8 +765,7 @@ const ModelManagementPage: React.FC = () => {
       });
 
       // Refresh models list and selected model
-      const fetchedModels = await getAllModels();
-      setModels(fetchedModels as unknown as Model[]);
+      await fetchModels();
       if (selectedModel && selectedModel.modelId === model.modelId) {
         const updatedModel = await getModelById(model.modelId);
         setSelectedModel(updatedModel as unknown as Model);
@@ -939,7 +903,7 @@ const ModelManagementPage: React.FC = () => {
                                 value={filterVersionStatus}
                                 onChange={(e) => {
                                   setFilterVersionStatus(e.target.value);
-                                  setListPage(1);
+                                  setListPage(1); // reset to page 1 on filter change
                                 }}
                                 bg={cardBg}
                               >
@@ -1013,11 +977,11 @@ const ModelManagementPage: React.FC = () => {
                           )}
                         </VStack>
 
-                        {filteredModels.length === 0 ? (
+                        {paginatedModels.length === 0 ? (
                           <Box textAlign="center" py={8}>
                             <Text color="gray.500">
                               No results found.
-                              {models.length === 0
+                              {serverTotal === 0
                                 ? " No models in the registry yet."
                                 : " Try adjusting your search or filters."}
                             </Text>
@@ -1132,7 +1096,7 @@ const ModelManagementPage: React.FC = () => {
                           </Table>
                         </Box>
                         )}
-                      {!isLoading && filteredModels.length > 0 && (
+                      {!isLoading && totalModels > 0 && (
                         <TablePaginationBar
                           startRow={startRow}
                           endRow={endRow}

@@ -5,7 +5,7 @@ Pure data-access — no business rules, no HTTP concerns. Returns ORM
 instances or scalars; the caller decides how to surface them.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from uuid import UUID
 
 from sqlalchemy import case, delete, desc, func, select, update
@@ -72,13 +72,39 @@ class ModelRepository:
         result = await self._db.execute(stmt)
         return int(result.scalar() or 0)
 
+    async def count_models(
+        self,
+        *,
+        task_type: Optional[str] = None,
+        version_status: Optional[str] = None,
+        model_name: Optional[str] = None,
+        created_by: Optional[str] = None,
+    ) -> int:
+        """Return the total number of models matching the given filters (no pagination)."""
+        stmt = select(func.count(Model.id))
+        if task_type:
+            stmt = stmt.where(Model.task["type"].astext == task_type)
+        if model_name:
+            stmt = stmt.where(func.lower(Model.name) == func.lower(model_name))
+        if version_status == "active":
+            stmt = stmt.where(Model.version_status == VersionStatus.ACTIVE)
+        elif version_status == "deprecated":
+            stmt = stmt.where(Model.version_status == VersionStatus.DEPRECATED)
+        if created_by is not None:
+            stmt = stmt.where(Model.created_by == created_by)
+        result = await self._db.execute(stmt)
+        return int(result.scalar() or 0)
+
     async def list_models(
         self,
         *,
         task_type: Optional[str] = None,
         include_deprecated: bool = True,
+        version_status: Optional[str] = None,
         model_name: Optional[str] = None,
         created_by: Optional[str] = None,
+        offset: int = 0,
+        limit: Optional[int] = None,
     ) -> List[Model]:
         priority = case(
             (Model.version_status == VersionStatus.ACTIVE, 0),
@@ -89,11 +115,19 @@ class ModelRepository:
             stmt = stmt.where(Model.task["type"].astext == task_type)
         if model_name:
             stmt = stmt.where(func.lower(Model.name) == func.lower(model_name))
-        if not include_deprecated:
+        # version_status takes precedence over include_deprecated
+        if version_status == "active":
+            stmt = stmt.where(Model.version_status == VersionStatus.ACTIVE)
+        elif version_status == "deprecated":
+            stmt = stmt.where(Model.version_status == VersionStatus.DEPRECATED)
+        elif not include_deprecated:
             stmt = stmt.where(Model.version_status == VersionStatus.ACTIVE)
         if created_by is not None:
             stmt = stmt.where(Model.created_by == created_by)
         stmt = stmt.order_by(desc(Model.created_at), priority, Model.model_id)
+        stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
 
