@@ -9,16 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.credentials import UserCredentials
+from app.repositories.base import BaseRepository
 
 
-class CredentialsRepository:
+class CredentialsRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
-        self._db = db
-
-    async def create(self, creds: UserCredentials) -> UserCredentials:
-        self._db.add(creds)
-        await self._db.flush()
-        return creds
+        super().__init__(db)
 
     async def get_by_user_id(self, user_id: UUID) -> Optional[UserCredentials]:
         result = await self._db.execute(
@@ -32,6 +28,3 @@ class CredentialsRepository:
         creds.password_hash = password_hash
         creds.password_salt = password_salt
         await self._db.flush()
-
-    async def commit(self) -> None:
-        await self._db.commit()
