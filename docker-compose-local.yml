@@ -52,7 +52,7 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    entrypoint: ["sh", "-c", "cd /app/infrastructure/databases && pip install -q -r requirements.txt && cd /app && exec \"$@\"", "sh"]
+    entrypoint: ["sh", "-c", "cd /app/infrastructure/databases && pip install -q -r requirements.txt && cd /app && exec \"$$@\"", "sh"]
     command: ["python", "infrastructure/databases/cli.py"]
 
   redis:

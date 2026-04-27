@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class AuthClaims:
     """Verified JWT claims — the standard auth context for all services."""
 
-    user_id: int
+    user_id: Any  # str (UUID) or int depending on the service
     tenant_id: Optional[str] = None
     permission_ids: list[int] = field(default_factory=list)
     roles: list[str] = field(default_factory=list)
@@ -222,7 +222,7 @@ class JWTVerifier:
         try:
             user_id = int(sub)
         except (TypeError, ValueError):
-            raise JWTVerificationError("Invalid 'sub' claim.")
+            user_id = sub  # UUID string or other non-integer identifier
 
         return AuthClaims(
             user_id=user_id,

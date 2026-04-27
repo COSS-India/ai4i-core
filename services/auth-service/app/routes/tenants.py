@@ -100,6 +100,7 @@ async def create_tenant(
     )
     await repo.create(tenant)
     await repo.commit()
+    await db.refresh(tenant)
     return success_response(data=_tenant_response(tenant))
 
 
@@ -152,6 +153,7 @@ async def update_tenant(
     data["updated_by"] = str(current_user.user_id)
     await repo.update(tenant, data)
     await repo.commit()
+    await db.refresh(tenant)
     return success_response(data=_tenant_response(tenant))
 
 
@@ -171,6 +173,7 @@ async def update_tenant_status(
         {"status": body.status, "updated_by": str(current_user.user_id)},
     )
     await repo.commit()
+    await db.refresh(tenant)
     return success_response(data=_tenant_response(tenant))
 
 
@@ -234,6 +237,7 @@ async def update_tenant_user_status(
     user_repo = UserRepository(db)
     await user_repo.update(target, payload)
     await user_repo.commit()
+    await db.refresh(target)
     return success_response(data=_user_response(target))
 
 
@@ -258,6 +262,7 @@ async def update_tenant_user(
     user_repo = UserRepository(db)
     await user_repo.update(target, payload)
     await user_repo.commit()
+    await db.refresh(target)
     return success_response(data=_user_response(target))
 
 
