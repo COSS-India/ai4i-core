@@ -18,7 +18,7 @@ except ImportError:
     from starlette.responses import Response
 
     _logger = logging.getLogger("request")
-    _SKIP = {"/health", "/ready", "/docs", "/redoc", "/openapi.json", "/"}
+    _SKIP = {"/health", "/docs", "/redoc", "/openapi.json"}
 
     class RequestLoggingMiddleware(BaseHTTPMiddleware):  # type: ignore[no-redef]
         async def dispatch(

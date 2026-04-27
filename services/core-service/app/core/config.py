@@ -27,7 +27,6 @@ class CoreSettings(BaseSettings):
     service_name: str = "core-service"
     service_version: str = "1.0.0"
     api_version: str = "v1"
-    environment: str = "development"
     debug: bool = False
 
     # ── Database (single primary DB) ──
@@ -69,9 +68,6 @@ class CoreSettings(BaseSettings):
     # "lenient" = accept <500, "strict" = accept <400
     endpoint_validation_mode: str = "lenient"
     endpoint_validation_skip_tls_verify: bool = False
-
-    # ── CORS ──
-    cors_origins: str = "*"
 
     # ── Logging / Observability ──
     log_level: str = "INFO"

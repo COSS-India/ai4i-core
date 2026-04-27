@@ -1,13 +1,17 @@
 """
-Health & readiness endpoints — re-exported from shared ai4icore_bootstrap.
+Health endpoint for core-service.
+
+Only /health is exposed. Authentication and readiness probing are
+handled at the gateway / infrastructure layer.
 """
 
-from ai4icore_bootstrap.health import create_health_router
+from fastapi import APIRouter
 
 from app.core.config import settings
 
+router = APIRouter()
 
-router = create_health_router(
-    service_name=settings.service_name,
-    version=settings.service_version,
-)
+
+@router.get("/health")
+async def health():
+    return {"status": "healthy", "service": settings.service_name}

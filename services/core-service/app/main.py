@@ -4,25 +4,21 @@ Core Service — FastAPI application factory.
 Startup sequence:
   1. PostgreSQL connection (async SQLAlchemy)
   2. Redis connection (async)
-  3. ORM table creation (dev-only; production uses Alembic migrations)
 
-Middleware stack (outermost → innermost):
-  CORSMiddleware → RequestLoggingMiddleware
+Middleware stack: RequestLoggingMiddleware
+
+Authentication and CORS are handled exclusively at the gateway layer.
 """
 
 import logging
 from contextlib import asynccontextmanager
 
-# Silence uvicorn's built-in access logger before FastAPI imports so that
-# every request does not produce two log lines.
 _uvicorn_access = logging.getLogger("uvicorn.access")
 _uvicorn_access.handlers.clear()
 _uvicorn_access.propagate = False
 _uvicorn_access.disabled = True
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
 from app.core.config import settings
 from app.core.database import close_database, init_database
 from app.core.exceptions import register_exception_handlers
@@ -44,23 +40,7 @@ async def lifespan(app: FastAPI):
     _uv.propagate = False
     _uv.disabled = True
 
-    logger.info(
-        "Starting %s v%s [%s]",
-        settings.service_name,
-        settings.service_version,
-        settings.environment,
-    )
-
-    is_prod = settings.environment in ("production", "staging")
-
-    # ── Production safety guards ──
-    if is_prod and settings.cors_origins == "*":
-        raise RuntimeError(
-            "FATAL: CORS_ORIGINS='*' is not allowed in production/staging. "
-            "Set CORS_ORIGINS to a comma-separated list of allowed origins."
-        )
-    if is_prod and settings.debug:
-        raise RuntimeError("FATAL: DEBUG=true is not allowed in production/staging.")
+    logger.info("Starting %s v%s", settings.service_name, settings.service_version)
 
     # ── Infrastructure startup ──
     await init_database(
@@ -73,17 +53,6 @@ async def lifespan(app: FastAPI):
         url=settings.get_redis_url(),
         socket_timeout=settings.redis_timeout,
     )
-
-    # ── Optional: auto-create tables in development ──
-    # In production, Alembic migrations manage the schema.
-    if not is_prod:
-        from app.core.database import get_engine
-        from app.models import Base  # noqa: F401 — triggers model registration
-
-        engine = get_engine()
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        logger.info("Database tables checked/created (development mode).")
 
     # ── Telemetry (optional) ──
     try:
@@ -107,36 +76,19 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Build and return the configured FastAPI application."""
-    is_prod = settings.environment == "production"
-
     app = FastAPI(
         title="Core Service",
         version=settings.service_version,
         description=(
-            "Platform core service — consolidated model & service management. "
-            "Replaces the deprecated model-management-service."
+            "Platform core service — consolidated model & service management."
         ),
         lifespan=lifespan,
-        docs_url=None if is_prod else "/docs",
-        redoc_url=None if is_prod else "/redoc",
-        openapi_url=None if is_prod else "/openapi.json",
     )
 
     # ── Exception handlers ──
     register_exception_handlers(app)
 
-    # ── CORS ──
-    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
-    allow_all = origins == ["*"]
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=not allow_all,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    # ── Custom middleware (outermost first) ──
+    # ── Middleware ──
     app.add_middleware(RequestLoggingMiddleware)
 
     # ── API versioning headers ──
