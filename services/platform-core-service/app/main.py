@@ -65,22 +65,22 @@ async def lifespan(app: FastAPI):
     except ImportError:
         logger.debug("OpenTelemetry not available — skipping instrumentation.")
 
-    logger.info("Core-service started successfully.")
+    logger.info("Platform-core-service started successfully.")
     yield
 
     # ── Shutdown ──
     await close_redis()
     await close_database()
-    logger.info("Core-service shutdown complete.")
+    logger.info("Platform-core-service shutdown complete.")
 
 
 def create_app() -> FastAPI:
     """Build and return the configured FastAPI application."""
     app = FastAPI(
-        title="Core Service",
+        title="Platform Core Service",
         version=settings.service_version,
         description=(
-            "Platform core service — consolidated model & service management."
+            "Platform core service."
         ),
         lifespan=lifespan,
     )

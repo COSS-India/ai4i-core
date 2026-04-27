@@ -837,7 +837,7 @@ services:
 
   # ── DEPRECATED: model-management-service ──
   # Kept running during the migration window so existing consumers
-  # (gateway, frontends) are unaffected. Remove after cutover to core-service.
+  # (gateway, frontends) are unaffected. Remove after cutover to platform-core-service.
   model-management-service:
     build:
       context: .
@@ -890,18 +890,18 @@ services:
           - model-management-service
     restart: unless-stopped
 
-  core-service:
+  platform-core-service:
     build:
       context: .
-      dockerfile: ./services/core-service/Dockerfile
-    container_name: ai4v-core-service
+      dockerfile: ./services/platform-core-service/Dockerfile
+    container_name: ai4v-platform-core-service
     ports:
       - "8102:8095"
     env_file:
-      - ./services/core-service/.env
+      - ./services/platform-core-service/.env
     volumes:
       # Bind-mount app code for hot-reload without image rebuilds
-      - ./services/core-service:/app
+      - ./services/platform-core-service:/app
       # Shared platform libraries (editable installs via bind-mount)
       - ./libs/ai4icore_exceptions:/tmp/ai4icore_exceptions
       - ./libs/ai4icore_constants:/tmp/ai4icore_constants
@@ -925,7 +925,7 @@ services:
     networks:
       microservices-network:
         aliases:
-          - core-service
+          - platform-core-service
     healthcheck:
       test:
         [

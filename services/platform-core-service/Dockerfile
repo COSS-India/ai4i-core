@@ -25,11 +25,11 @@ RUN pip install --no-cache-dir \
     rm -rf /tmp/ai4icore_*
 
 # ── Install service dependencies ──
-COPY services/core-service/requirements.txt .
+COPY services/platform-core-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Copy application code ──
-COPY services/core-service/ .
+COPY services/platform-core-service/ .
 
 EXPOSE 8095
 

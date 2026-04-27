@@ -276,8 +276,8 @@ def _load_model_management_metadata():
 
 
 def _load_core_service_metadata():
-    """Load core-service ORM metadata (mm_models/mm_services in ai4iplatform_core schema)."""
-    core_root = PROJECT_ROOT / "services" / "core-service"
+    """Load platform-core-service ORM metadata (mm_models/mm_services in ai4iplatform_core schema)."""
+    core_root = PROJECT_ROOT / "services" / "platform-core-service"
     core_path = str(core_root)
     if core_path not in sys.path:
         sys.path.insert(0, core_path)

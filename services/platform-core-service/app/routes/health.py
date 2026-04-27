@@ -1,5 +1,5 @@
 """
-Health endpoint for core-service.
+Health endpoint for platform-core-service.
 
 Only /health is exposed. Authentication and readiness probing are
 handled at the gateway / infrastructure layer.

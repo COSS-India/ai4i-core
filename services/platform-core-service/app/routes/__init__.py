@@ -1,5 +1,5 @@
 """
-Versioned API router aggregation for core-service.
+Versioned API router aggregation for platform-core-service.
 
 Uses the shared APIVersioning from ai4icore_bootstrap.
 The /api/v1 prefix is managed here — route files contain domain prefixes only.

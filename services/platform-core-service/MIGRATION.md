@@ -1,9 +1,9 @@
-# Core-Service Migration Document
+# Platform-Core-Service Migration Document
 
 **Date:** 2026-04-27  
 **Author:** Platform Engineering  
 **Source Service:** `services/model-management-service`  
-**Target Service:** `services/core-service`  
+**Target Service:** `services/platform-core-service`  
 **Status:** Implementation complete — parallel operation during migration window
 
 ---
@@ -61,7 +61,7 @@
 
 ### 2.1 Architecture — Clean Layered Separation
 
-The old service mixed all database access, business logic, validation, and HTTP handling in two monolithic files (`db_operations.py` ~3 127 lines, `routers/router_models.py`, `routers/router_services.py`). Core-service enforces strict four-layer separation:
+The old service mixed all database access, business logic, validation, and HTTP handling in two monolithic files (`db_operations.py` ~3 127 lines, `routers/router_models.py`, `routers/router_services.py`). Platform-core-service enforces strict four-layer separation:
 
 ```
 Route layer   →  app/routes/          (HTTP only, no business logic)
@@ -72,7 +72,7 @@ ORM models    →  app/models/          (schema definition only)
 
 ### 2.2 Async-First Redis Caching
 
-The old service used **redis-om HashModel** (a sync Redis client wrapped in thread-pool calls) tied to a schema-specific cache format. Core-service uses the platform's shared **async Redis client** (`ai4icore_bootstrap.redis`) with plain JSON and explicit TTLs. This:
+The old service used **redis-om HashModel** (a sync Redis client wrapped in thread-pool calls) tied to a schema-specific cache format. Platform-core-service uses the platform's shared **async Redis client** (`ai4icore_bootstrap.redis`) with plain JSON and explicit TTLs. This:
 - Eliminates the sync/async impedance mismatch.
 - Decouples cache format from Pydantic schema changes.
 - Allows key-level TTL control per entity type.
@@ -80,23 +80,23 @@ The old service used **redis-om HashModel** (a sync Redis client wrapped in thre
 
 ### 2.3 DB Timestamps — DateTime Instead of BigInteger Epoch
 
-The legacy schema stored `submitted_on`, `updated_on`, and `published_on` as BigInteger UNIX epoch values (lossy, no timezone). Core-service uses `DateTime(timezone=True)` throughout with `server_default=func.now()` and `onupdate=func.now()`. API responses that previously exposed epoch integers now expose ISO-8601 strings — consumers should prefer the ISO form.
+The legacy schema stored `submitted_on`, `updated_on`, and `published_on` as BigInteger UNIX epoch values (lossy, no timezone). Platform-core-service uses `DateTime(timezone=True)` throughout with `server_default=func.now()` and `onupdate=func.now()`. API responses that previously exposed epoch integers now expose ISO-8601 strings — consumers should prefer the ISO form.
 
 ### 2.4 Consistent Exception Hierarchy
 
-The old service raised bare `HTTPException` throughout. Core-service raises typed exceptions from `ai4icore_exceptions` (e.g. `EntityNotFoundError`, `ValidationError`, `AppError` subclasses like `ImmutableModelVersionError`). A shared `register_exception_handlers` converts these to the platform's standard `{success, error: {code, message}}` envelope.
+The old service raised bare `HTTPException` throughout. Platform-core-service raises typed exceptions from `ai4icore_exceptions` (e.g. `EntityNotFoundError`, `ValidationError`, `AppError` subclasses like `ImmutableModelVersionError`). A shared `register_exception_handlers` converts these to the platform's standard `{success, error: {code, message}}` envelope.
 
 ### 2.5 Single-Responsibility Configuration
 
-All settings live in `app/core/config.py::CoreSettings` (pydantic-settings, env-file + OS env, case-insensitive). Backwards-compatible `APP_DB_*` env-var aliases ensure existing deployments need no changes to their `.env` files.
+All settings live in `app/core/config.py::CoreSettings` (pydantic-settings, env-file + OS env, case-insensitive). Backwards-compatible `PLATFORM_CORE_SERVICE_DB_*` or `APP_DB_*` env-var aliases ensure existing deployments need no changes to their `.env` files.
 
 ### 2.6 API Response Envelope Consistency
 
-Every successful response is wrapped by `success_response(data=..., meta=...)` from `ai4icore_exceptions`. Every error is a typed exception converted to `error_response`. The old service returned bare strings, bare dicts, and raw Pydantic models inconsistently.
+Every successful response is wrapped by `success_response(data=..., meta=...)` from `ai4icore_exceptions`. Every error is a typed exception converted to `error_response`. The old service returned bare strings, bare dicts, and raw Pydantic models inconsistently. Platform-core-service standardizes all responses.
 
 ### 2.7 DB Index Coverage
 
-Core-service ORM adds explicit named indexes missing from the legacy schema:
+Platform-core-service ORM adds explicit named indexes missing from the legacy schema:
 - `ix_models_name`, `ix_models_created_by`
 - `ix_services_is_published`, `ix_services_created_by`
 
@@ -126,18 +126,18 @@ In the old service, policy cross-field validation lived inside `db_operations.ad
 | `router_experiments.py` (both authenticated + public) | `routers/` | Not migrated |
 | `create_experiment`, `get_experiment`, `list_experiments`, `update_experiment`, `update_experiment_status`, `delete_experiment`, `select_experiment_variant`, `track_experiment_metric` | `db_operations.py` | Not migrated |
 | `_check_duplicate_running_experiment` | `db_operations.py` | Not migrated |
-| `experiments`, `experiment_variants`, `experiment_metrics` DB tables | Schema | Not created in core-service |
+| `experiments`, `experiment_variants`, `experiment_metrics` DB tables | Schema | Not created in platform-core-service |
 | Test files: `test_ab_testing_api.py`, `test_ab_testing_db_operations.py`, `test_ab_testing_models.py` | `tests/` | Not migrated |
 
-**Reason:** A/B testing is a self-contained feature domain that is either being deprecated, extracted to a dedicated experimentation service, or deferred to a later migration phase. Mixing it into the initial core-service migration would widen scope significantly and risk destabilising the core model/service CRUD path.
+**Reason:** A/B testing is a self-contained feature domain that is either being deprecated, extracted to a dedicated experimentation service, or deferred to a later migration phase. Mixing it into the initial platform-core-service migration would widen scope significantly and risk destabilising the core model/service CRUD path.
 
 ### 3.2 Auth DB Tables
 
-The old service connected to **two** PostgreSQL databases: `model_management_db` (models, services, experiments) and `auth_db` (users, api_keys, sessions, roles, permissions). Core-service connects to a **single** database (`core_db`) and delegates all auth concerns to `auth-service` via JWT. The auth DB tables are not replicated or accessed by core-service.
+The old service connected to **two** PostgreSQL databases: `model_management_db` (models, services, experiments) and `auth_db` (users, api_keys, sessions, roles, permissions). Platform-core-service connects to a **single** database (`core_db`) and delegates all auth concerns to `auth-service` via JWT. The auth DB tables are not replicated or accessed by platform-core-service.
 
 ### 3.3 Legacy Redis-Om Cache Models
 
-`models/cache_models_services.py` (`ModelCache`, `ServiceCache` HashModel classes) are replaced entirely by the new async `CacheService`. The redis-om library is not added as a dependency of core-service.
+`models/cache_models_services.py` (`ModelCache`, `ServiceCache` HashModel classes) are replaced entirely by the new async `CacheService`. The redis-om library is not added as a dependency of platform-core-service.
 
 ### 3.4 Sync Migration / Restore Scripts
 
@@ -153,7 +153,7 @@ The custom Redis sliding-window rate limiter from `middleware/rate_limit_middlew
 
 ### 4.1 Single Database
 
-Core-service uses one PostgreSQL database (`core_db`) instead of the legacy two-database setup. This simplifies connection management, eliminates cross-DB join complexity, and reduces operational surface area.
+Platform-core-service uses one PostgreSQL database (`core_db`) instead of the legacy two-database setup. This simplifies connection management, eliminates cross-DB join complexity, and reduces operational surface area.
 
 ### 4.2 Deterministic ID Contract Preserved
 
@@ -165,7 +165,7 @@ The response schemas intentionally preserve the camelCase key names used by the 
 
 ### 4.4 Auth via Shared Library
 
-Core-service does not implement its own JWT verification or permission store. It uses:
+Platform-core-service does not implement its own JWT verification or permission store. It uses:
 - `ai4icore_auth.AuthMiddleware` for JWT context extraction
 - `create_auth_providers()` for route-level permission enforcement (reads endpoint→permission map from Redis DB 0, populated by auth-service at startup)
 
@@ -186,7 +186,7 @@ Just register the new router in `app/routes/__init__.py` and add a DI factory in
 
 ### 4.6 DateTime Over Epoch for Timestamps
 
-Published/unpublished timestamps are now `DateTime(timezone=True)` columns rather than BigInteger epoch. The serializer (`app/services/serializers.py`) emits ISO-8601 strings in API responses for maximum interoperability. Backward-compat aliases (`submittedOn`, `publishedAt`) compute epoch/ISO from `created_at`/`published_at`.
+Published/unpublished timestamps are now `DateTime(timezone=True)` columns rather than BigInteger epoch. The serializer (`app/services/serializers.py`) emits ISO-8601 strings in API responses for maximum interoperability. Backward-compat aliases (`submittedOn`, `publishedAt`) compute epoch/ISO from `created_at`/`published_at` in platform-core-service.
 
 ### 4.7 Cache Invalidation Strategy
 
@@ -200,7 +200,7 @@ Published/unpublished timestamps are now `DateTime(timezone=True)` columns rathe
 
 ## 5. Deprecated Code / Endpoints in Model-Management-Service
 
-The following is now deprecated in `model-management-service` in favour of core-service equivalents:
+The following is now deprecated in `model-management-service` in favour of platform-core-service equivalents:
 
 | Deprecated endpoint | Replacement |
 |---|---|
@@ -220,16 +220,16 @@ The following is now deprecated in `model-management-service` in favour of core-
 | `PATCH /api/v1/model-management/services/{service_id}/health` | `PATCH /api/v1/services/{service_id}/health` |
 | `POST /api/v1/model-management/services/{service_id}/policy` | `POST /api/v1/services/{service_id}/policy` |
 
-**A/B testing endpoints** (`/experiments/*`) have no replacement in core-service and should remain in model-management-service until a dedicated experimentation service is built or the feature is removed.
+**A/B testing endpoints** (`/experiments/*`) have no replacement in platform-core-service and should remain in model-management-service until a dedicated experimentation service is built or the feature is removed.
 
 ---
 
 ## 6. Migration Cutover Plan
 
-1. **Phase 1 (current):** Deploy core-service alongside model-management-service. Both share the same Redis. core-service uses a new `core_db` PostgreSQL database. core-service is reachable at host port **8102** (container port 8095; 8095 is occupied by speaker-diarization-service).
+1. **Phase 1 (current):** Deploy platform-core-service alongside model-management-service. Both share the same Redis. platform-core-service uses a new `core_db` PostgreSQL database. platform-core-service is reachable at host port **8102** (container port 8095; 8095 is occupied by speaker-diarization-service).
 2. **Phase 2:** Run data migration script to copy existing models/services rows from `model_management_db.models` / `model_management_db.services` → `core_db.models` / `core_db.services`. IDs are preserved (deterministic hashes).
-3. **Phase 3:** Update API gateway routes to point `/models` and `/services` paths to `core-service:8095` instead of `model-management-service:8094`.
-4. **Phase 4:** Validate all consumers (frontends, other services) against core-service. Run traffic shadow comparison.
+3. **Phase 3:** Update API gateway routes to point `/models` and `/services` paths to `platform-core-service:8095` instead of `model-management-service:8094`.
+4. **Phase 4:** Validate all consumers (frontends, other services) against platform-core-service. Run traffic shadow comparison.
 5. **Phase 5:** Decommission model-management-service (remove from `docker-compose.yml`, archive the codebase).
 
 ---
@@ -237,7 +237,7 @@ The following is now deprecated in `model-management-service` in favour of core-
 ## 7. File Inventory
 
 ```
-services/core-service/
+services/platform-core-service/
 ├── app/
 │   ├── main.py                           FastAPI app factory + lifespan
 │   ├── core/

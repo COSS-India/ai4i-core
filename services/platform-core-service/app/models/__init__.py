@@ -1,5 +1,5 @@
 """
-SQLAlchemy ORM models for core-service.
+SQLAlchemy ORM models for platform-core-service.
 
 Tables are placed in the public schema (models, services).
 Import order: Model first (FK dependency for Service).
