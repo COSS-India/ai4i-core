@@ -2431,4 +2431,15 @@
       headers:
         X-Gateway: apisix
       use_real_request_uri_unsafe: false
+# ---------------------------------------------------------------------------
+# Global rules — plugins applied to every route automatically.
+# The prometheus plugin must be enabled globally so apisix_http_status metrics
+# are emitted for all routes (plugin_attr in config.yaml only sets the export
+# address; this entry actually activates the plugin on traffic).
+# ---------------------------------------------------------------------------
+global_rules:
+  -
+    id: 1
+    plugins:
+      prometheus: {}
 #END

@@ -579,6 +579,7 @@ def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], cat
 # If a receiver doesn't specify custom templates, we always use the new ones below.
 
 
+# NOTE: Duplicated in alert-management-service/alert_management.py — keep both in sync.
 def _format_environment_title(env: str) -> str:
     env_norm = (env or "").strip().lower()
     if env_norm in {"production", "prod", "live"}:
@@ -660,9 +661,6 @@ TENANT_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
 {{ else if index (index .Alerts 0).Labels "endpoint" }}<p><strong>Service Type</strong></p>
 <p>{{ index (index .Alerts 0).Labels "endpoint" }}</p>
 {{ end }}
-
-<p><strong>Tenant</strong></p>
-<p>__TENANT_NAME__</p>
 
 <p><strong>Environment</strong></p>
 <p>__ENVIRONMENT_TITLE__</p>

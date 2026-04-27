@@ -701,7 +701,7 @@ SIGNAL_METRICS_CONFIG: Dict[str, Dict[str, Any]] = {
     # Application
     "latency_p50": {"label": "Latency P50", "signal": "latency", "quantile": 0.5},
     "latency_p99": {"label": "Latency P99", "signal": "latency", "quantile": 0.99},
-    "error_rate_4xx": {"label": "4xx error rate", "signal": "error_rate", "status_regex": "[4].."},
+    "error_rate_4xx": {"label": "4xx error rate", "signal": "error_rate", "status_regex": "4.."},
     "error_rate_5xx": {"label": "5xx error rate", "signal": "error_rate", "status_regex": "5.."},
     "error_rate_timeout": {"label": "Timeout error rate", "signal": "error_rate", "status_regex": "408|504"},
     # Infrastructure (infra_type used to build same PromQL as legacy CPU/Memory/Disk)
@@ -732,8 +732,6 @@ SIGNAL_METRIC_LABEL_TO_KEY: Dict[str, str] = {
 # at the APISIX gateway and never reach backend services. Use apisix_http_status
 # metric instead of telemetry_obsv_requests_total for error rate alerts.
 # ---------------------------------------------------------------------------
-_ENVIRONMENT = (os.getenv("ENVIRONMENT") or "local").strip().lower()
-_USE_APISIX_METRICS = _ENVIRONMENT in ("dev", "development", "staging", "sandbox")
 
 # Maps service names to their APISIX route names and matched_uri patterns.
 SERVICE_TO_APISIX_ROUTE: Dict[str, Dict[str, str]] = {
@@ -752,6 +750,24 @@ SERVICE_TO_APISIX_ROUTE: Dict[str, Dict[str, str]] = {
 }
 
 ALL_APISIX_ROUTES = "|".join(r["route"] for r in SERVICE_TO_APISIX_ROUTE.values())
+ALL_APISIX_MATCHED_URIS = "|".join(r["matched_uri"] for r in SERVICE_TO_APISIX_ROUTE.values())
+
+
+def _use_apisix_metrics() -> bool:
+    """Check at call time whether APISIX metrics should be used (non-local environments)."""
+    env = (os.getenv("ENVIRONMENT") or "local").strip().lower()
+    return env in ("dev", "development", "staging", "sandbox")
+
+
+def _should_use_apisix_error_rate(category: str, signal: Optional[str] = None, alert_type: Optional[str] = None) -> bool:
+    """Return True when the error-rate PromQL should use apisix_http_status instead of backend metrics."""
+    if not _use_apisix_metrics():
+        return False
+    if (category or "").lower() != "application":
+        return False
+    sig = (signal or "").strip().lower().replace(" ", "_")
+    at = _normalize_alert_type(category or "application", alert_type or "")
+    return sig == "error_rate" or at == "error_rate"
 
 
 def _build_apisix_error_rate_expr(
@@ -766,22 +782,30 @@ def _build_apisix_error_rate_expr(
 
     apisix_http_status labels: route, code, matched_uri, node
     """
-    # Build route filter
     if services:
         svc_list = _normalize_services(services)
         routes = []
+        uris = []
+        unknown = []
         for svc in svc_list:
             info = SERVICE_TO_APISIX_ROUTE.get(svc)
             if info:
                 routes.append(info["route"])
+                uris.append(info["matched_uri"])
+            else:
+                unknown.append(svc)
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown service(s) for APISIX metrics: {unknown}. "
+                       f"Valid services: {list(SERVICE_TO_APISIX_ROUTE.keys())}",
+            )
         if len(routes) == 1:
-            route_filter = f'route="{routes[0]}"'
-        elif routes:
-            route_filter = f'route=~"{"|".join(routes)}"'
+            route_filter = f'route="{routes[0]}", matched_uri="{uris[0]}"'
         else:
-            route_filter = f'route=~"{ALL_APISIX_ROUTES}"'
+            route_filter = f'route=~"{"|".join(routes)}", matched_uri=~"{"|".join(uris)}"'
     else:
-        route_filter = f'route=~"{ALL_APISIX_ROUTES}"'
+        route_filter = f'route=~"{ALL_APISIX_ROUTES}", matched_uri=~"{ALL_APISIX_MATCHED_URIS}"'
 
     num = f'sum(rate(apisix_http_status{{code=~"{status_regex}", {route_filter}}}[5m]))'
     den = f'sum(rate(apisix_http_status{{{route_filter}}}[5m]))'
@@ -845,7 +869,7 @@ def build_promql_from_threshold(
         if at == "error_rate":
             # Error rate: ratio of 4xx/5xx to total
             thresh = (threshold_value / 100.0) if (threshold_unit or "").lower() == "percent" else threshold_value
-            if _USE_APISIX_METRICS:
+            if _use_apisix_metrics():
                 # Non-local env: use apisix_http_status (gateway captures 4xx/5xx)
                 return _build_apisix_error_rate_expr("[45]..", ">", thresh, services=services)
             # Local env: use backend telemetry_obsv_requests_total
@@ -963,7 +987,7 @@ def build_promql_from_signal_config(
             )
         thresh = (threshold_value / 100.0) if unit in THRESHOLD_UNIT_PERCENT else threshold_value
         status_regex = config["status_regex"]
-        if _USE_APISIX_METRICS:
+        if _use_apisix_metrics():
             # Non-local env: use apisix_http_status (gateway captures 4xx/5xx)
             return _build_apisix_error_rate_expr(status_regex, op, thresh, services=services)
         # Local env: use backend telemetry_obsv_requests_total
@@ -1146,12 +1170,7 @@ async def create_alert_definition(
     use_signal_config = all([data.sub_category, data.signal, data.signal_metric, data.condition_operator])
     services_list = _normalize_services(data.service)
 
-    # Determine if this is an error_rate alert (APISIX handles service filtering via route label)
-    _is_error_rate = (
-        (data.signal or "").strip().lower().replace(" ", "_") == "error_rate"
-        or _normalize_alert_type(data.category or "application", data.alert_type or "") == "error_rate"
-    )
-    _skip_service_inject = _USE_APISIX_METRICS and _is_error_rate
+    use_apisix = _should_use_apisix_error_rate(data.category, signal=data.signal, alert_type=data.alert_type)
 
     if use_signal_config:
         promql_expr_with_org = build_promql_from_signal_config(
@@ -1163,9 +1182,9 @@ async def create_alert_definition(
             threshold_value=data.threshold_value,
             threshold_unit=data.threshold_unit,
             organization=None,
-            services=services_list if _skip_service_inject else None,
+            services=services_list if use_apisix else None,
         )
-        if services_list and not _skip_service_inject:
+        if services_list and not use_apisix:
             promql_expr_with_org = inject_service_into_promql(promql_expr_with_org, services_list)
         # Display alert_type from signal for UI consistency (infrastructure: CPU, Memory, Disk)
         sig_key = (data.signal or "").strip().lower().replace(" ", "_")
@@ -1184,9 +1203,9 @@ async def create_alert_definition(
             threshold_value=data.threshold_value,
             threshold_unit=data.threshold_unit,
             organization=None,
-            services=services_list if _skip_service_inject else None,
+            services=services_list if use_apisix else None,
         )
-        if services_list and not _skip_service_inject:
+        if services_list and not use_apisix:
             promql_expr_with_org = inject_service_into_promql(promql_expr_with_org, services_list)
         alert_type_display = _alert_type_to_display(data.alert_type, data.category)
         sub_category_val = None
@@ -1443,12 +1462,8 @@ async def update_alert_definition(alert_id: int, organization: Optional[str], da
             thresh_val = data.threshold_value if data.threshold_value is not None else existing.get('threshold_value')
             thresh_unit = data.threshold_unit if data.threshold_unit is not None else existing.get('threshold_unit')
 
-            # Check if this is an error_rate alert to decide APISIX vs backend metrics
-            _upd_is_error_rate = (
-                (effective_signal or "").strip().lower().replace(" ", "_") == "error_rate"
-                or _normalize_alert_type(category_to_use or "application", (data.alert_type if data.alert_type is not None else existing.get('alert_type')) or "") == "error_rate"
-            )
-            _upd_skip_inject = _USE_APISIX_METRICS and _upd_is_error_rate
+            effective_alert_type = (data.alert_type if data.alert_type is not None else existing.get('alert_type')) or ""
+            use_apisix_upd = _should_use_apisix_error_rate(category_to_use, signal=effective_signal, alert_type=effective_alert_type)
 
             if use_signal_path and thresh_val is not None and thresh_unit is not None:
                 promql_expr_with_org = build_promql_from_signal_config(
@@ -1460,9 +1475,9 @@ async def update_alert_definition(alert_id: int, organization: Optional[str], da
                     threshold_value=float(thresh_val),
                     threshold_unit=thresh_unit,
                     organization=None,
-                    services=effective_services if _upd_skip_inject else None,
+                    services=effective_services if use_apisix_upd else None,
                 )
-                if effective_services and not _upd_skip_inject:
+                if effective_services and not use_apisix_upd:
                     promql_expr_with_org = inject_service_into_promql(promql_expr_with_org, effective_services)
                 updates.append(f"promql_expr = ${param_idx}")
                 params.append(promql_expr_with_org)
@@ -1486,9 +1501,9 @@ async def update_alert_definition(alert_id: int, organization: Optional[str], da
                         threshold_value=float(thresh_val),
                         threshold_unit=thresh_unit,
                         organization=None,
-                        services=effective_services if _upd_skip_inject else None,
+                        services=effective_services if use_apisix_upd else None,
                     )
-                    if effective_services and not _upd_skip_inject:
+                    if effective_services and not use_apisix_upd:
                         promql_expr_with_org = inject_service_into_promql(promql_expr_with_org, effective_services)
                     updates.append(f"promql_expr = ${param_idx}")
                     params.append(promql_expr_with_org)
@@ -1753,6 +1768,7 @@ async def toggle_alert_definition(alert_id: int, organization: Optional[str], en
 
 # -----------------------------------------------------------------------------
 # Default email templates for notification receivers (Alertmanager Go template syntax)
+# NOTE: Duplicated in alert-config-sync-service/main.py — keep both in sync.
 # -----------------------------------------------------------------------------
 def _format_environment_title(env: Optional[str]) -> str:
     env_norm = (env or "").strip().lower()
@@ -1832,9 +1848,6 @@ TENANT_EMAIL_BODY_TEMPLATE = """<p><strong>Alert Name</strong></p>
 {{ else if index (index .Alerts 0).Labels "endpoint" }}<p><strong>Service Type</strong></p>
 <p>{{ index (index .Alerts 0).Labels "endpoint" }}</p>
 {{ end }}
-
-<p><strong>Tenant</strong></p>
-<p>__TENANT_NAME__</p>
 
 <p><strong>Environment</strong></p>
 <p>__ENVIRONMENT_TITLE__</p>
