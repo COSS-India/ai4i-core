@@ -11,7 +11,7 @@ export interface UseRolesTabOptions {
 }
 
 export interface SelectedUserInfo {
-  id: number;
+  user_id: string;
   email: string;
   username: string;
 }
@@ -27,9 +27,9 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
   const [draftRole, setDraftRole] = useState<string>("");
   const [isSavingRoles, setIsSavingRoles] = useState(false);
 
-  const isAdmin = Boolean(user?.roles?.includes("ADMIN") || user?.is_superuser);
+  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
   const isModeratorOnly = Boolean(
-    user?.roles?.includes("MODERATOR") && !user?.roles?.includes("ADMIN") && !user?.is_superuser
+    user?.roles?.includes("MODERATOR") && !user?.roles?.includes("ADMIN")
   );
 
   const handleLoadRoles = async () => {
@@ -57,18 +57,18 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     }
   };
 
-  const handleUserSelect = async (userId: number | null, picked?: UserSearchablePick | null) => {
+  const handleUserSelect = async (userId: string | null, picked?: UserSearchablePick | null) => {
     if (userId == null) {
       setSelectedUser(null);
       setSelectedUserRoles([]);
       return;
     }
-    const u = users.find((x) => x.id === userId) ?? picked;
+    const u = users.find((x) => x.user_id === userId) ?? picked;
     if (!u) return;
-    setSelectedUser({ id: u.id, email: u.email, username: u.username || "" });
+    setSelectedUser({ user_id: u.user_id, email: u.email, username: u.username || "" });
     setIsLoadingUserRoles(true);
     try {
-      const userRolesData = await roleService.getUserRoles(u.id);
+      const userRolesData = await roleService.getUserRoles(u.user_id);
       setSelectedUserRoles(userRolesData.roles);
     } catch (error) {
       toast({
@@ -164,20 +164,20 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     try {
       for (const roleName of toRemove) {
         try {
-          await roleService.removeRole(selectedUser.id, roleName);
+          await roleService.removeRole(selectedUser.user_id, roleName);
         } catch {
           failedOps.push(`remove:${roleName}`);
         }
       }
       for (const roleName of toAdd) {
         try {
-          await roleService.assignRole(selectedUser.id, roleName);
+          await roleService.assignRole(selectedUser.user_id, roleName);
         } catch {
           failedOps.push(`assign:${roleName}`);
         }
       }
 
-      const refreshed = await roleService.getUserRoles(selectedUser.id);
+      const refreshed = await roleService.getUserRoles(selectedUser.user_id);
       setSelectedUserRoles(refreshed.roles);
 
       if (failedOps.length === 0) {

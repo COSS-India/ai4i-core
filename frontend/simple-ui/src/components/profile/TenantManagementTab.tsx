@@ -59,7 +59,6 @@ import {
   FiPause,
   FiPlus,
   FiPower,
-  FiRefreshCw,
   FiSettings,
   FiTrash2,
   FiUserPlus,
@@ -111,18 +110,18 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
   const { user } = useAuth();
   const tm = useTenantManagement({ user });
 
-  const isAdminOrSuperuser = Boolean(user?.is_superuser) || Boolean(user?.roles?.includes('ADMIN'));
+  const isAdmin = Boolean(user?.roles?.includes('ADMIN'));
 
   // Initial fetch when this tab becomes active.
   useEffect(() => {
-    if (!isActive || !user?.id) return;
-    if (isAdminOrSuperuser) {
+    if (!isActive || !user) return;
+    if (isAdmin) {
       void tm.handleFetchTenants();
     } else {
       void tm.handleFetchTenantUsers();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, user?.id, isAdminOrSuperuser, tm.tenantSubView]);
+  }, [isActive, user, isAdmin]);
 
   // Refresh users when tenant detail view changes.
   useEffect(() => {
@@ -130,11 +129,6 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
     void tm.handleFetchTenantUsers(tm.tenantDetailView.tenant_id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tm.tenantDetailView?.tenant_id]);
-
-  const isSuperuser = isAdminOrSuperuser;
-  const showAdopterView = isSuperuser && tm.tenantSubView === "adopter";
-  const showTenantView =
-    !isSuperuser || tm.tenantSubView === "tenant" || Boolean(tm.tenantDetailView);
 
   const allTenantStatuses = useMemo(
     () =>
@@ -144,26 +138,9 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
 
   return (
     <Box>
-      {isSuperuser && !tm.tenantDetailView && (
-        <Tabs
-          variant="soft-rounded"
-          colorScheme="blue"
-          index={tm.tenantSubView === "adopter" ? 0 : 1}
-          onChange={(idx) => tm.setTenantSubView(idx === 0 ? "adopter" : "tenant")}
-          mb={4}
-        >
-          <TabList>
-            <Tab>Adopter Admin</Tab>
-            <Tab>Tenant Admin</Tab>
-          </TabList>
-          <TabPanels>
-            <TabPanel px={0}>{showAdopterView && renderAdopterView()}</TabPanel>
-            <TabPanel px={0}>{tm.tenantSubView === "tenant" && renderTenantView()}</TabPanel>
-          </TabPanels>
-        </Tabs>
-      )}
+      {isAdmin && !tm.tenantDetailView && renderAdopterView()}
 
-      {!isSuperuser && renderTenantView()}
+      {!isAdmin && !tm.tenantDetailView && renderTenantView()}
 
       {tm.tenantDetailView && renderTenantDetail()}
 
@@ -172,7 +149,6 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
       {renderEditTenantModal()}
       {renderAddUserModal()}
       {renderEditUserModal()}
-      {renderViewTenantModal()}
       {renderViewUserModal()}
       {renderStatusConfirmDialog()}
       {renderDeleteUserDialog()}
@@ -187,15 +163,6 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           <HStack justify="space-between" align="center">
             <Heading size="md">Tenants</Heading>
             <HStack>
-              <Button
-                leftIcon={<FiRefreshCw />}
-                size="sm"
-                variant="ghost"
-                onClick={() => tm.handleFetchTenants()}
-                isLoading={tm.isLoadingTenants}
-              >
-                Refresh
-              </Button>
               <Button
                 leftIcon={<FiPlus />}
                 size="sm"
@@ -296,15 +263,6 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           <HStack justify="space-between" align="center">
             <Heading size="md">Tenant Users</Heading>
             <HStack>
-              <Button
-                leftIcon={<FiRefreshCw />}
-                size="sm"
-                variant="ghost"
-                onClick={() => tm.handleFetchTenantUsers()}
-                isLoading={tm.isLoadingTenantUsers}
-              >
-                Refresh
-              </Button>
               <Button
                 leftIcon={<FiUserPlus />}
                 size="sm"
@@ -719,7 +677,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           <ModalCloseButton />
           <ModalBody>
             <VStack spacing={3} align="stretch">
-              {isSuperuser && (
+              {isAdmin && (
                 <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.tenant_id)}>
                   <FormLabel>Tenant</FormLabel>
                   <Select
@@ -869,66 +827,6 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             >
               Save
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-    );
-  }
-
-  function renderViewTenantModal() {
-    const t = tm.viewTenantDetail;
-    return (
-      <Modal
-        isOpen={tm.isViewTenantModalOpen}
-        onClose={tm.closeViewTenantModal}
-        size="md"
-      >
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Tenant Details</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            {tm.isLoadingViewTenant ? (
-              <Center py={6}>
-                <Spinner />
-              </Center>
-            ) : t ? (
-              <VStack align="stretch" spacing={3}>
-                <Box>
-                  <Text fontWeight="semibold">Organisation</Text>
-                  <Text>{t.organisation}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold">Tenant ID</Text>
-                  <Text fontFamily="mono">{t.tenant_id}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold">Contact</Text>
-                  <Text>{dash(t.contact_name)}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold">Email</Text>
-                  <Text>{dash(t.email)}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold">Phone</Text>
-                  <Text>{dash(t.phone_number)}</Text>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold">Status</Text>
-                  <Badge colorScheme={statusColor(t.status)}>{t.status}</Badge>
-                </Box>
-                <Box>
-                  <Text fontWeight="semibold">Created</Text>
-                  <Text>{fmtDate(t.created_at)}</Text>
-                </Box>
-              </VStack>
-            ) : (
-              <Text>No tenant selected.</Text>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button onClick={tm.closeViewTenantModal}>Close</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

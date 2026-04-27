@@ -539,13 +539,12 @@ class AuthService {
     });
   }
 
-  async createApiKeyForUser(data: APIKeyCreate & { user_id: number }): Promise<APIKeyResponse> {
-    // Convert user_id to userId (camelCase) for the API payload
+  async createApiKeyForUser(data: APIKeyCreate & { user_id: string }): Promise<APIKeyResponse> {
     const payload = {
       key_name: data.key_name,
       permissions: data.permissions,
       expires_days: data.expires_days,
-      userId: data.user_id, // Send as userId (camelCase) in JSON payload
+      user_id: data.user_id,
     };
     return this.request<APIKeyResponse>('/api-keys', {
       method: 'POST',
@@ -555,15 +554,10 @@ class AuthService {
 
   async listApiKeys(): Promise<APIKeyListResponse> {
     const data = await this.request<APIKeyListResponse | APIKeyResponse[]>('/api-keys');
-    // Backend may return { api_keys, selected_api_key_id } or a plain array (legacy)
     if (Array.isArray(data)) {
-      return { api_keys: data, selected_api_key_id: null };
+      return { api_keys: data };
     }
-    const normalized = data as APIKeyListResponse;
-    return {
-      api_keys: Array.isArray(normalized.api_keys) ? normalized.api_keys : [],
-      selected_api_key_id: normalized.selected_api_key_id ?? null,
-    };
+    return { api_keys: Array.isArray(data?.api_keys) ? data.api_keys : [] };
   }
 
   async listAllApiKeys(): Promise<AdminAPIKeyWithUserResponse[]> {
@@ -605,7 +599,7 @@ class AuthService {
     return this.request<User[]>(`/users?limit=${limit}&offset=${offset}`);
   }
 
-  async getUserById(userId: number): Promise<User> {
+  async getUserById(userId: string): Promise<User> {
     return this.request<User>(`/users/${userId}`);
   }
 

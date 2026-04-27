@@ -1,13 +1,12 @@
 // Tenant Management state + handlers, backed by auth-service /api/v1/tenants/*.
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { forceFrontendSessionEnd } from "../../../hooks/useAuth";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import * as tenantService from "../../../services/tenantService";
 import { extractErrorInfo } from "../../../utils/errorHandler";
 import type { TenantStatus, TenantView, TenantUserView } from "../../../types/tenant";
 import type {
-  TenantSubView,
   TenantFormState,
   TenantUserFormState,
   EditTenantFormState,
@@ -30,9 +29,7 @@ function isTenantAdminRoleForSessionEnd(role?: string): boolean {
 
 export interface UseTenantManagementOptions {
   user: {
-    id?: number | string;
-    is_superuser?: boolean;
-    is_tenant?: boolean;
+    user_id?: string;
     tenant_id?: string | null;
     roles?: string[];
   } | null;
@@ -42,16 +39,15 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const { user } = options;
   const toast = useToastWithDeduplication();
   const isTenantAdmin = Boolean(user?.roles?.some((role) => isTenantAdminRoleForSessionEnd(role)));
-  const isTenantScopedUser = Boolean((user?.is_tenant || isTenantAdmin) && !user?.is_superuser);
-  const userIdStr = user?.id != null ? String(user.id) : null;
+  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
+  const isTenantScopedUser = isTenantAdmin && !isAdmin;
+  const userIdStr = user?.user_id ?? null;
 
   // ----- State -----
   const [tenants, setTenants] = useState<TenantView[]>([]);
   const [tenantUsers, setTenantUsers] = useState<TenantUserView[]>([]);
   const [isLoadingTenants, setIsLoadingTenants] = useState(false);
   const [isLoadingTenantUsers, setIsLoadingTenantUsers] = useState(false);
-  const [tenantSubView, setTenantSubView] = useState<TenantSubView>("adopter");
-  const hasSetInitialTenantView = useRef(false);
 
   const [tenantFilterStatus, setTenantFilterStatus] = useState<string>("all");
   const [tenantSearch, setTenantSearch] = useState("");
@@ -81,12 +77,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
   const [userFormErrors, setUserFormErrors] = useState<Record<string, string>>({});
 
-  // View modals
-  const [viewTenantDetail, setViewTenantDetail] = useState<TenantView | null>(null);
+  // View user modal (tenant detail uses inline panel via tenantDetailView, not a modal)
   const [viewUserDetail, setViewUserDetail] = useState<TenantUserView | null>(null);
-  const [isViewTenantModalOpen, setIsViewTenantModalOpen] = useState(false);
   const [isViewUserModalOpen, setIsViewUserModalOpen] = useState(false);
-  const [isLoadingViewTenant, setIsLoadingViewTenant] = useState(false);
   const [isLoadingViewUser, setIsLoadingViewUser] = useState(false);
 
   // Tenant detail sub-view
@@ -116,22 +109,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const [deleteUserTarget, setDeleteUserTarget] = useState<DeleteUserTarget | null>(null);
   const [isDeleteUserDialogOpen, setIsDeleteUserDialogOpen] = useState(false);
   const [isDeletingUser, setIsDeletingUser] = useState(false);
-
-  // ----- Effects -----
-  useEffect(() => {
-    if (!user?.id) {
-      hasSetInitialTenantView.current = false;
-      return;
-    }
-    if (hasSetInitialTenantView.current) return;
-    if (user.is_superuser) {
-      setTenantSubView("adopter");
-      hasSetInitialTenantView.current = true;
-    } else if (isTenantScopedUser) {
-      setTenantSubView("tenant");
-      hasSetInitialTenantView.current = true;
-    }
-  }, [isTenantScopedUser, user?.id, user?.is_superuser]);
 
   // ----- Derived (filtered lists) -----
   const filteredTenants = useMemo(
@@ -226,7 +203,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const refreshTenantAndUserLists = async (tenantIdOverride?: string) => {
-    if (user?.is_superuser) {
+    if (isAdmin) {
       await handleFetchTenants();
     }
     const tenantId = tenantIdOverride ?? tenantDetailView?.tenant_id ?? user?.tenant_id ?? null;
@@ -420,21 +397,13 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const handleViewTenant = async (t: TenantView) => {
     setTenantDetailView(t);
     setTenantDetailSubTab("overview");
-    setViewTenantDetail(null);
-    setIsLoadingViewTenant(true);
     try {
-      const [detail, usersRes] = await Promise.all([
-        tenantService.getViewTenant(t.tenant_id),
-        tenantService.listUsers(t.tenant_id),
-      ]);
-      setViewTenantDetail(detail);
+      const usersRes = await tenantService.listUsers(t.tenant_id);
       setTenantUsers(usersRes.users ?? []);
     } catch (err) {
-      console.error("Failed to fetch tenant details:", err);
+      console.error("Failed to fetch tenant users:", err);
       const { title, message } = extractErrorInfo(err);
       toast({ title, description: message, status: "error", isClosable: true, duration: 6000 });
-    } finally {
-      setIsLoadingViewTenant(false);
     }
   };
 
@@ -681,7 +650,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
-  const closeViewTenantModal = () => setIsViewTenantModalOpen(false);
   const closeViewUserModal = () => setIsViewUserModalOpen(false);
 
   return {
@@ -690,8 +658,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     tenantUsers,
     filteredTenants,
     filteredTenantUsers,
-    tenantSubView,
-    setTenantSubView,
     isLoadingTenants,
     isLoadingTenantUsers,
     // Filters
@@ -729,16 +695,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleRegisterUser,
     checkUserEmailUnique,
     openAddUserForTenant,
-    // View tenant/user
-    viewTenantDetail,
+    // View user modal (tenant detail uses inline panel)
     viewUserDetail,
-    isViewTenantModalOpen,
     isViewUserModalOpen,
-    isLoadingViewTenant,
     isLoadingViewUser,
     handleViewTenant,
     handleViewUser,
-    closeViewTenantModal,
     closeViewUserModal,
     // Tenant detail sub-view
     tenantDetailView,
