@@ -42,7 +42,7 @@ def _resolve_credentials(adapter, email: str, plain_password: str) -> tuple[str,
         """
         SELECT uc.password_hash, uc.password_salt
         FROM users u
-        JOIN user_credentials uc ON u.user_id = uc.user_id
+        JOIN user_credentials uc ON u.id = uc.user_id
         WHERE u.email = :email
         """,
         {"email": email},

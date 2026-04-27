@@ -27,7 +27,7 @@ def upgrade() -> None:
     sa.Column('details', sa.JSON(), nullable=True),
     sa.Column('subject', sa.String(length=255), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('created_by', sa.String(length=255), nullable=True),
+    sa.Column('created_by', sa.UUID(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_audit_entity_action'), 'audit', ['entity_action'], unique=False)
@@ -35,52 +35,50 @@ def upgrade() -> None:
     op.create_index(op.f('ix_audit_id'), 'audit', ['id'], unique=False)
     op.create_index(op.f('ix_audit_subject'), 'audit', ['subject'], unique=False)
     op.create_table('permissions',
-    sa.Column('permission_id', sa.Integer(), nullable=False),
-    sa.Column('name', sa.String(length=100), nullable=False),
-    sa.Column('resource', sa.String(length=100), nullable=False),
-    sa.Column('action', sa.String(length=50), nullable=False),
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('name', sa.Enum('users.create', 'users.read', 'users.update', 'users.delete', 'configs.create', 'configs.read', 'configs.update', 'configs.delete', 'metrics.read', 'metrics.export', 'alerts.create', 'alerts.read', 'alerts.update', 'alerts.delete', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'dashboards.delete', 'apiKey.create', 'apiKey.read', 'apiKey.delete', 'apiKey.update', 'service.create', 'service.delete', 'service.update', 'service.read', 'model.create', 'model.read', 'model.update', 'model.delete', 'model.publish', 'model.unpublish', 'roles.assign', 'roles.remove', 'roles.read', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read', 'audio-lang-detection.read', 'audio-lang-detection.inference', 'language-detection.read', 'language-detection.inference', 'language-diarization.read', 'language-diarization.inference', 'ner.inference', 'ocr.read', 'ocr.inference', 'speaker-diarization.read', 'speaker-diarization.inference', 'transliteration.read', 'transliteration.inference', 'pipeline.read', 'pipeline.inference', 'llm.read', 'llm.inference', 'model-management.read', 'model-management.inference', 'logs.read', 'traces.read', 'tenant.create', 'tenant.read', 'tenant.update', 'tenant.users.read', 'tenant.users.update', 'pii_guard.inference', 'pii_guard.admin', name='permission_name_enum'), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('created_by', sa.String(length=255), nullable=True),
+    sa.Column('created_by', sa.UUID(), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('updated_by', sa.String(length=255), nullable=True),
-    sa.PrimaryKeyConstraint('permission_id')
+    sa.Column('updated_by', sa.UUID(), nullable=True),
+    sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_permissions_name'), 'permissions', ['name'], unique=True)
-    op.create_index(op.f('ix_permissions_permission_id'), 'permissions', ['permission_id'], unique=False)
+    op.create_index(op.f('ix_permissions_id'), 'permissions', ['id'], unique=False)
     op.create_table('roles',
-    sa.Column('role_id', sa.Integer(), nullable=False),
+    sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('name', sa.String(length=100), nullable=False),
     sa.Column('description', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('created_by', sa.String(length=255), nullable=True),
+    sa.Column('created_by', sa.UUID(), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('updated_by', sa.String(length=255), nullable=True),
-    sa.PrimaryKeyConstraint('role_id')
+    sa.Column('updated_by', sa.UUID(), nullable=True),
+    sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_roles_name'), 'roles', ['name'], unique=True)
-    op.create_index(op.f('ix_roles_role_id'), 'roles', ['role_id'], unique=False)
+    op.create_index(op.f('ix_roles_id'), 'roles', ['id'], unique=False)
     op.create_table('tenants',
-    sa.Column('tenant_id', sa.UUID(), nullable=False),
-    sa.Column('contact_name', sa.String(length=255), nullable=False),
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('name', sa.String(length=255), nullable=False),
     sa.Column('organisation', sa.String(length=255), nullable=False),
     sa.Column('email', sa.String(length=255), nullable=False),
     sa.Column('phone_number', sa.String(length=20), nullable=True),
     sa.Column('status', sa.Enum('activated', 'deactivated', 'suspended', name='tenant_status_enum'), server_default='activated', nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('created_by', sa.String(length=255), nullable=True),
+    sa.Column('created_by', sa.UUID(), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('updated_by', sa.String(length=255), nullable=True),
-    sa.PrimaryKeyConstraint('tenant_id')
+    sa.Column('updated_by', sa.UUID(), nullable=True),
+    sa.PrimaryKeyConstraint('id')
     )
     op.create_table('token_verification',
     sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('token', sa.String(length=500), nullable=False),
+    sa.Column('token', sa.Text(), nullable=False),
     sa.Column('is_active', sa.Boolean(), nullable=False),
     sa.Column('expires_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('created_by', sa.String(length=255), nullable=True),
+    sa.Column('created_by', sa.UUID(), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('updated_by', sa.String(length=255), nullable=True),
+    sa.Column('updated_by', sa.UUID(), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_token_verification_id'), 'token_verification', ['id'], unique=False)
@@ -90,18 +88,18 @@ def upgrade() -> None:
     sa.Column('role_id', sa.Integer(), nullable=False),
     sa.Column('permission_id', sa.Integer(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('created_by', sa.String(length=255), nullable=True),
+    sa.Column('created_by', sa.UUID(), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('updated_by', sa.String(length=255), nullable=True),
-    sa.ForeignKeyConstraint(['permission_id'], ['permissions.permission_id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['role_id'], ['roles.role_id'], ondelete='CASCADE'),
+    sa.Column('updated_by', sa.UUID(), nullable=True),
+    sa.ForeignKeyConstraint(['permission_id'], ['permissions.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['role_id'], ['roles.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_role_permission_id'), 'role_permission', ['id'], unique=False)
     op.create_index(op.f('ix_role_permission_permission_id'), 'role_permission', ['permission_id'], unique=False)
     op.create_index(op.f('ix_role_permission_role_id'), 'role_permission', ['role_id'], unique=False)
     op.create_table('users',
-    sa.Column('user_id', sa.UUID(), nullable=False),
+    sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('email', sa.String(length=255), nullable=False),
     sa.Column('username', sa.String(length=100), nullable=False),
     sa.Column('full_name', sa.String(length=255), nullable=True),
@@ -113,66 +111,73 @@ def upgrade() -> None:
     sa.Column('timezone', sa.String(length=50), server_default='UTC', nullable=True),
     sa.Column('is_delete', sa.Boolean(), nullable=True),
     sa.Column('is_tenant_active', sa.Boolean(), nullable=True),
-    sa.Column('creation_type', sa.Enum('direct', 'google', 'tenant', name='creation_type_enum'), server_default='direct', nullable=True),
+    sa.Column('creation_type', sa.Enum('default', 'google', name='creation_type_enum'), server_default='default', nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('created_by', sa.String(length=255), nullable=True),
+    sa.Column('created_by', sa.UUID(), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('updated_by', sa.String(length=255), nullable=True),
-    sa.ForeignKeyConstraint(['tenant_id'], ['tenants.tenant_id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('user_id')
+    sa.Column('updated_by', sa.UUID(), nullable=True),
+    sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
     op.create_index(op.f('ix_users_tenant_id'), 'users', ['tenant_id'], unique=False)
     op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
     op.create_table('api_key',
-    sa.Column('key_id', sa.Integer(), nullable=False),
+    sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('user_id', sa.UUID(), nullable=False),
     sa.Column('key_name', sa.String(length=100), nullable=False),
     sa.Column('api_key', sa.String(length=500), nullable=False),
     sa.Column('permissions', sa.JSON(), nullable=True),
     sa.Column('is_active', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('created_by', sa.String(length=255), nullable=True),
+    sa.Column('created_by', sa.UUID(), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('updated_by', sa.String(length=255), nullable=True),
-    sa.ForeignKeyConstraint(['user_id'], ['users.user_id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('key_id')
+    sa.Column('updated_by', sa.UUID(), nullable=True),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_api_key_api_key'), 'api_key', ['api_key'], unique=True)
-    op.create_index(op.f('ix_api_key_key_id'), 'api_key', ['key_id'], unique=False)
+    op.create_index(op.f('ix_api_key_id'), 'api_key', ['id'], unique=False)
     op.create_index(op.f('ix_api_key_user_id'), 'api_key', ['user_id'], unique=False)
     op.create_table('refresh',
+    sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('user_id', sa.UUID(), nullable=False),
     sa.Column('refresh_token', sa.String(length=1000), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('created_by', sa.String(length=255), nullable=True),
+    sa.Column('created_by', sa.UUID(), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('updated_by', sa.String(length=255), nullable=True),
-    sa.ForeignKeyConstraint(['user_id'], ['users.user_id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('user_id')
+    sa.Column('updated_by', sa.UUID(), nullable=True),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('user_id')
     )
+    op.create_index(op.f('ix_refresh_id'), 'refresh', ['id'], unique=False)
+    op.create_index(op.f('ix_refresh_user_id'), 'refresh', ['user_id'], unique=False)
     op.create_index(op.f('ix_refresh_refresh_token'), 'refresh', ['refresh_token'], unique=True)
     op.create_table('user_credentials',
+    sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('user_id', sa.UUID(), nullable=False),
     sa.Column('password_hash', sa.String(length=255), nullable=False),
     sa.Column('password_salt', sa.String(length=255), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('created_by', sa.String(length=255), nullable=True),
+    sa.Column('created_by', sa.UUID(), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('updated_by', sa.String(length=255), nullable=True),
-    sa.ForeignKeyConstraint(['user_id'], ['users.user_id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('user_id')
+    sa.Column('updated_by', sa.UUID(), nullable=True),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('user_id')
     )
+    op.create_index(op.f('ix_user_credentials_id'), 'user_credentials', ['id'], unique=False)
+    op.create_index(op.f('ix_user_credentials_user_id'), 'user_credentials', ['user_id'], unique=True)
     op.create_table('user_role',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('user_id', sa.UUID(), nullable=False),
     sa.Column('role_id', sa.Integer(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('created_by', sa.String(length=255), nullable=True),
+    sa.Column('created_by', sa.UUID(), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('updated_by', sa.String(length=255), nullable=True),
-    sa.ForeignKeyConstraint(['role_id'], ['roles.role_id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['user_id'], ['users.user_id'], ondelete='CASCADE'),
+    sa.Column('updated_by', sa.UUID(), nullable=True),
+    sa.ForeignKeyConstraint(['role_id'], ['roles.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_user_role_id'), 'user_role', ['id'], unique=False)
@@ -187,11 +192,15 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_user_role_role_id'), table_name='user_role')
     op.drop_index(op.f('ix_user_role_id'), table_name='user_role')
     op.drop_table('user_role')
+    op.drop_index(op.f('ix_user_credentials_user_id'), table_name='user_credentials')
+    op.drop_index(op.f('ix_user_credentials_id'), table_name='user_credentials')
     op.drop_table('user_credentials')
+    op.drop_index(op.f('ix_refresh_user_id'), table_name='refresh')
+    op.drop_index(op.f('ix_refresh_id'), table_name='refresh')
     op.drop_index(op.f('ix_refresh_refresh_token'), table_name='refresh')
     op.drop_table('refresh')
     op.drop_index(op.f('ix_api_key_user_id'), table_name='api_key')
-    op.drop_index(op.f('ix_api_key_key_id'), table_name='api_key')
+    op.drop_index(op.f('ix_api_key_id'), table_name='api_key')
     op.drop_index(op.f('ix_api_key_api_key'), table_name='api_key')
     op.drop_table('api_key')
     op.drop_index(op.f('ix_users_username'), table_name='users')
@@ -206,10 +215,10 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_token_verification_id'), table_name='token_verification')
     op.drop_table('token_verification')
     op.drop_table('tenants')
-    op.drop_index(op.f('ix_roles_role_id'), table_name='roles')
+    op.drop_index(op.f('ix_roles_id'), table_name='roles')
     op.drop_index(op.f('ix_roles_name'), table_name='roles')
     op.drop_table('roles')
-    op.drop_index(op.f('ix_permissions_permission_id'), table_name='permissions')
+    op.drop_index(op.f('ix_permissions_id'), table_name='permissions')
     op.drop_index(op.f('ix_permissions_name'), table_name='permissions')
     op.drop_table('permissions')
     op.drop_index(op.f('ix_audit_subject'), table_name='audit')
