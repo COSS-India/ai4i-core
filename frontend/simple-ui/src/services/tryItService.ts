@@ -7,6 +7,12 @@ import { API_BASE_URL } from './api';
 import { NMTInferenceRequest, NMTInferenceResponse } from '../types/nmt';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
 
+type ApiEnvelope<T> = {
+  success?: boolean;
+  data?: T;
+  meta?: Record<string, any>;
+};
+
 // Create a dedicated axios instance for try-it (no auth required)
 const tryItClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
@@ -56,17 +62,19 @@ export interface TryItRequest {
 
 /**
  * Fetch NMT services for try-it (anonymous) users.
- * Uses GET /api/v1/model-management/services/try-it-service-list?task_type=nmt (no auth).
+ * Uses GET /api/v1/services/try-it-service-list?task_type=nmt (no auth).
  * @returns Promise with raw list of services from the API
  */
 export const listTryItNMTServices = async (): Promise<any[]> => {
-  const response = await tryItClient.get<any[]>(
-    '/api/v1/model-management/services/try-it-service-list',
+  const response = await tryItClient.get<any[] | ApiEnvelope<any[]>>(
+    '/api/v1/services/try-it-service-list',
     {
       params: { task_type: 'nmt' },
     }
   );
-  return Array.isArray(response.data) ? response.data : [];
+  const payload = response.data as any;
+  const data = payload && typeof payload === 'object' && 'data' in payload ? payload.data : payload;
+  return Array.isArray(data) ? data : [];
 };
 
 /**
@@ -235,4 +243,3 @@ export const getRemainingTryItRequests = (): number => {
     return limit;
   }
 };
-

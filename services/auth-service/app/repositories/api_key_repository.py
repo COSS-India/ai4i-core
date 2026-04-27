@@ -13,16 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.api_key import APIKey
 from app.models.role import Permission
 from app.models.user import User
+from app.repositories.base import BaseRepository
 
 
-class APIKeyRepository:
+class APIKeyRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
-        self._db = db
-
-    async def create(self, api_key: APIKey) -> APIKey:
-        self._db.add(api_key)
-        await self._db.flush()
-        return api_key
+        super().__init__(db)
 
     async def get_by_api_key(self, api_key_value: str) -> Optional[APIKey]:
         result = await self._db.execute(
@@ -68,6 +64,3 @@ class APIKeyRepository:
     async def revoke(self, api_key: APIKey) -> None:
         api_key.is_active = False
         await self._db.flush()
-
-    async def commit(self) -> None:
-        await self._db.commit()

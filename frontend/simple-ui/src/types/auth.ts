@@ -3,32 +3,27 @@
  */
 
 export interface User {
-  id: number;
+  user_id: string;
   email: string;
   username: string;
   full_name?: string;
   phone_number?: string;
   timezone: string;
-  language: string;
   is_active: boolean;
-  is_verified: boolean;
-  is_superuser: boolean;
-  is_tenant?: boolean;
   created_at: string;
   updated_at?: string;
   last_login?: string;
   avatar_url?: string;
   preferences?: Record<string, any>;
   roles?: string[];
-  /** Tenant identifier from /api/v1/auth/me when user is a tenant admin or tenant user */
   tenant_id?: string | null;
+  is_tenant_active?: boolean;
 }
 
 export interface UserUpdateRequest {
   full_name?: string;
   phone_number?: string;
   timezone?: string;
-  language?: string;
   preferences?: Record<string, any>;
 }
 
@@ -54,8 +49,6 @@ export interface RegisterRequest {
   full_name?: string;
   phone_number?: string;
   timezone?: string;
-  language?: string;
-  is_tenant?: boolean;
 }
 
 export interface TokenRefreshRequest {
@@ -70,7 +63,7 @@ export interface TokenRefreshResponse {
 
 export interface TokenValidationResponse {
   valid: boolean;
-  user_id?: number;
+  user_id?: string;
   username?: string;
   tenant_id?: string;
   permission_ids: number[];
@@ -108,7 +101,7 @@ export interface APIKeyCreate {
   key_name: string;
   permissions: number[]; // Permission IDs
   expires_days?: number;
-  user_id?: number; // Optional: for admin creating keys for other users
+  user_id?: string; // Optional: for admin creating keys for other users (UUID)
 }
 
 export interface APIKeyResponse {
@@ -125,7 +118,7 @@ export interface APIKeyResponse {
 }
 
 export interface AdminAPIKeyWithUserResponse extends APIKeyResponse {
-  user_id: number;
+  user_id: string;
   user_email: string;
   username: string;
 }
@@ -139,12 +132,6 @@ export interface APIKeyUpdate {
 /** Response from GET /api/v1/auth/api-keys */
 export interface APIKeyListResponse {
   api_keys: APIKeyResponse[];
-  selected_api_key_id: number | null;
-}
-
-/** Request body for POST /api/v1/auth/api-keys/select */
-export interface APIKeySelectRequest {
-  api_key_id: number;
 }
 
 export interface OAuth2Provider {

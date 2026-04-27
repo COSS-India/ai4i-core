@@ -80,7 +80,7 @@ export const useGuestServices = () => {
   // `user` may be null; ensure we always end up with an array type.
   const userRoles: unknown[] = Array.isArray(roles) ? roles : [];
   const isGuest = userRoles.some((role) => String(role).toUpperCase() === 'GUEST');
-  const userId = user?.id ?? null;
+  const userId = user?.user_id ?? null;
 
   const query = useQuery({
     queryKey: ['guest-enabled-services', userId],

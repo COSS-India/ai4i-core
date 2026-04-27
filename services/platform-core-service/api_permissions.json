@@ -1,0 +1,60 @@
+{
+  "description": "Endpoint to permission mappings for platform-core-service. Permissions are resolved to DB IDs by auth-service at startup and cached in Redis.",
+  "apiMappings": [
+    {
+      "endpoint": "GET:/api/v1/models",
+      "permissionRequired": "model.read",
+      "description": "List all models"
+    },
+    {
+      "endpoint": "GET:/api/v1/models/{model_id}",
+      "permissionRequired": "model.read",
+      "description": "Get model by ID"
+    },
+    {
+      "endpoint": "POST:/api/v1/models",
+      "permissionRequired": "model.create",
+      "description": "Create a new model"
+    },
+    {
+      "endpoint": "PATCH:/api/v1/models",
+      "permissionRequired": "model.update",
+      "description": "Update a model"
+    },
+    {
+      "endpoint": "DELETE:/api/v1/models/{model_id}",
+      "permissionRequired": "model.delete",
+      "description": "Delete a model by UUID"
+    },
+    {
+      "endpoint": "GET:/api/v1/services",
+      "permissionRequired": "service.read",
+      "description": "List all services"
+    },
+    {
+      "endpoint": "GET:/api/v1/services/try-it-service-list",
+      "permissionRequired": null,
+      "description": "Public try-it service list (NMT only, no auth)"
+    },
+    {
+      "endpoint": "POST:/api/v1/services/{service_id}",
+      "permissionRequired": "service.read",
+      "description": "Get service detail by ID"
+    },
+    {
+      "endpoint": "POST:/api/v1/services",
+      "permissionRequired": "service.create",
+      "description": "Create a new service"
+    },
+    {
+      "endpoint": "PATCH:/api/v1/services",
+      "permissionRequired": "service.update",
+      "description": "Update a service"
+    },
+    {
+      "endpoint": "DELETE:/api/v1/services/{service_id}",
+      "permissionRequired": "service.delete",
+      "description": "Delete a service by UUID"
+    }
+  ]
+}

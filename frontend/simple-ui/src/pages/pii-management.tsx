@@ -11,9 +11,7 @@ const PiiManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
-  const isAdmin = Boolean(
-    user?.roles?.includes("ADMIN") || user?.is_superuser
-  );
+  const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
 
   React.useEffect(() => {
     if (!authLoading && !isAuthenticated) {

@@ -35,8 +35,6 @@ export type {
   ListUsersResponse,
 } from "../../types/tenant";
 
-export type TenantSubView = "adopter" | "tenant";
-
 export interface TenantFormState {
   organisation: string;
   contact_name: string;
