@@ -16,6 +16,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.core.exceptions import ValidationError
 from app.core.responses import success_response
 from app.dependencies.auth import get_user_id
 from app.dependencies.services import get_model_service
@@ -42,7 +43,11 @@ def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
     """
     if not task_type or task_type.lower() == "none":
         return None
-    return TaskTypeEnum(task_type).value
+    try:
+        return TaskTypeEnum(task_type).value
+    except ValueError:
+        valid = [e.value for e in TaskTypeEnum]
+        raise ValidationError(f"Invalid task_type '{task_type}'. Must be one of: {valid}")
 
 
 @router.get("")

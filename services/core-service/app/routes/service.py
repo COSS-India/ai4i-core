@@ -39,7 +39,11 @@ router = APIRouter(
 def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
     if not task_type or task_type.lower() == "none":
         return None
-    return TaskTypeEnum(task_type).value
+    try:
+        return TaskTypeEnum(task_type).value
+    except ValueError:
+        valid = [e.value for e in TaskTypeEnum]
+        raise ValidationError(f"Invalid task_type '{task_type}'. Must be one of: {valid}")
 
 
 # ── Must be declared before /{service_id} to avoid path shadowing ──
