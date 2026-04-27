@@ -147,6 +147,11 @@ class ModelRepository:
         await self._db.flush()
         return instance
 
+    async def refresh(self, instance: Model) -> Model:
+        """Refresh an instance from DB to avoid expired-attribute lazy loads."""
+        await self._db.refresh(instance)
+        return instance
+
     async def delete_by_uuid(self, uuid: UUID) -> int:
         result = await self._db.execute(delete(Model).where(Model.id == uuid))
         return int(result.rowcount or 0)

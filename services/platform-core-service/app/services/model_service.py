@@ -188,6 +188,7 @@ class ModelService:
         try:
             await self._models.add(instance)
             await self._models.commit()
+            await self._models.refresh(instance)
         except Exception:
             await self._models.rollback()
             logger.exception("DB error creating model")
@@ -295,6 +296,7 @@ class ModelService:
         try:
             await self._models.apply_updates(instance, update_data)
             await self._models.commit()
+            await self._models.refresh(instance)
         except Exception:
             await self._models.rollback()
             logger.exception("DB error updating model")
