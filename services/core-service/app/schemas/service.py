@@ -1,77 +1,170 @@
 """
-Request/response schemas for services.
+Pydantic request/response schemas for the Service domain.
 """
 
-from datetime import datetime
-from typing import Any, Optional
-from uuid import UUID
+from typing import Any, Dict, List, Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.schemas.base import BaseSchema
+from app.schemas.common import BenchmarkEntry, validate_entity_name
+from app.schemas.enums import (
+    InferenceServerTypeEnum,
+    PolicyAccuracyEnum,
+    PolicyCostEnum,
+    PolicyLatencyEnum,
+)
+from app.schemas.model import ModelResponse
 
 
-class ServiceCreate(BaseSchema):
-    service_id: str = Field(..., max_length=255)
-    name: str = Field(..., max_length=255)
-    service_description: Optional[str] = None
-    hardware_description: Optional[str] = None
-    model_id: str = Field(..., max_length=255)
-    model_version: str = Field(..., max_length=100)
-    endpoint: str = Field(..., max_length=500)
-    api_key: Optional[str] = Field(None, max_length=255)
-    health_status: Optional[dict[str, Any]] = None
-    benchmarks: Optional[dict[str, Any]] = None
-    policy: Optional[dict[str, Any]] = None
-    is_published: bool
-    inference_server_type: str = Field("triton", max_length=32)
-    ssl_verify: bool = True
-    created_by: Optional[str] = Field(None, max_length=255)
+# ── Health & policy sub-schemas ──
 
 
-class ServiceUpdate(BaseSchema):
-    service_description: Optional[str] = None
-    hardware_description: Optional[str] = None
-    endpoint: Optional[str] = Field(None, max_length=500)
-    api_key: Optional[str] = Field(None, max_length=255)
-    health_status: Optional[dict[str, Any]] = None
-    benchmarks: Optional[dict[str, Any]] = None
-    policy: Optional[dict[str, Any]] = None
-    is_published: Optional[bool] = None
-    inference_server_type: Optional[str] = Field(None, max_length=32)
-    ssl_verify: Optional[bool] = None
-    updated_by: Optional[str] = Field(None, max_length=255)
+class ServiceStatus(BaseSchema):
+    status: Optional[str] = None
+    lastUpdated: Optional[str] = None
+
+
+class ServicePolicy(BaseSchema):
+    """Latency/cost/accuracy SLA tiers — used for smart routing decisions."""
+
+    latency: Optional[PolicyLatencyEnum] = None
+    cost: Optional[PolicyCostEnum] = None
+    accuracy: Optional[PolicyAccuracyEnum] = None
+
+
+# ── Create / Update ──
+
+
+class ServiceCreateRequest(BaseSchema):
+    """Request body for POST /services."""
+
+    name: str
+    serviceDescription: str
+    hardwareDescription: str
+    modelId: str
+    modelVersion: str
+    endpoint: str
+    api_key: Optional[str] = None
+    inferenceServerType: InferenceServerTypeEnum = InferenceServerTypeEnum.triton
+    sslVerify: bool = True
+    healthStatus: Optional[ServiceStatus] = None
+    benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
+    isPublished: Optional[bool] = False
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        return validate_entity_name(v, field="Service name")
+
+    @field_validator("inferenceServerType", mode="before")
+    @classmethod
+    def _normalize_server_type(cls, v: Any) -> Any:
+        if v is None:
+            return InferenceServerTypeEnum.triton.value
+        if isinstance(v, InferenceServerTypeEnum):
+            return v.value
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
+
+class ServiceUpdateRequest(BaseSchema):
+    """Request body for PATCH /services. serviceId identifies the target.
+
+    Note: name, modelId, modelVersion are NOT updatable; service_id is derived
+    from service name only and is immutable.
+    """
+
+    serviceId: str
+    serviceDescription: Optional[str] = None
+    hardwareDescription: Optional[str] = None
+    endpoint: Optional[str] = None
+    api_key: Optional[str] = None
+    inferenceServerType: Optional[InferenceServerTypeEnum] = None
+    sslVerify: Optional[bool] = None
+    healthStatus: Optional[ServiceStatus] = None
+    benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
+    isPublished: Optional[bool] = None
+
+    @field_validator("inferenceServerType", mode="before")
+    @classmethod
+    def _normalize_server_type(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, InferenceServerTypeEnum):
+            return v.value
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
+
+class ServiceHealthUpdateRequest(BaseSchema):
+    """Request body for PATCH /services/{service_id}/health."""
+
+    status: str
+
+
+class ServicePolicyUpdateRequest(BaseSchema):
+    """Request body for POST /services/{service_id}/policy."""
+
+    policy: ServicePolicy
+
+
+# ── Response ──
 
 
 class ServiceResponse(BaseSchema):
-    id: UUID
-    service_id: str
+    """Single service response (lightweight — no embedded model)."""
+
+    serviceId: str
+    uuid: str
     name: str
-    service_description: Optional[str] = None
-    hardware_description: Optional[str] = None
-    model_id: str
-    model_version: str
-    endpoint: str
-    health_status: Optional[dict[str, Any]] = None
-    benchmarks: Optional[dict[str, Any]] = None
-    policy: Optional[dict[str, Any]] = None
-    is_published: bool
-    published_at: Optional[datetime] = None
-    unpublished_at: Optional[datetime] = None
-    inference_server_type: str
-    ssl_verify: bool
-    created_by: Optional[str] = None
-    updated_by: Optional[str] = None
-    created_at: datetime
-    updated_at: Optional[datetime] = None
+    serviceDescription: Optional[str] = None
+    hardwareDescription: Optional[str] = None
+    modelId: str
+    modelVersion: str
+    endpoint: Optional[str] = None
+    inferenceServerType: str = InferenceServerTypeEnum.triton.value
+    sslVerify: bool = True
+    api_key: Optional[str] = None
+    healthStatus: Optional[ServiceStatus] = None
+    benchmarks: Optional[Dict[str, Any]] = None
+    policy: Optional[Dict[str, Any]] = None
+    isPublished: bool = False
+    publishedAt: Optional[str] = None
+    unpublishedAt: Optional[str] = None
+    createdBy: Optional[str] = None
+    updatedBy: Optional[str] = None
+
+
+class ServiceListItem(ServiceResponse):
+    """List response item — augmented with the inline model snippet."""
+
+    task: Optional[Dict[str, Any]] = None
+    languages: List[Dict[str, Any]] = Field(default_factory=list)
+    versionStatus: Optional[str] = None
 
 
 class ServiceListResponse(BaseSchema):
-    id: UUID
-    service_id: str
-    name: str
-    model_id: str
-    model_version: str
-    is_published: bool
-    inference_server_type: str
-    created_at: datetime
+    """Wrapped list with count and filter context."""
+
+    items: List[ServiceListItem]
+    total: int
+
+
+class ServiceDetailResponse(ServiceResponse):
+    """Full service view — includes embedded model card."""
+
+    model: Optional[ModelResponse] = None
+
+
+class ServicePolicyResponse(BaseSchema):
+    """Response shape for /services/{service_id}/policy."""
+
+    serviceId: str
+    policy: Optional[Dict[str, Any]] = None
+
+
+class ServicePolicyListResponse(BaseSchema):
+    services: List[ServicePolicyResponse]

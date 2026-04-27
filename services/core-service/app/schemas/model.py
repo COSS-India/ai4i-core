@@ -1,80 +1,121 @@
 """
-Request/response schemas for models.
+Pydantic request/response schemas for the Model domain.
+
+API contract preserves the existing camelCase keys used by the deprecated
+model-management-service so that consumers (gateway, frontends) do not break
+during migration.
 """
 
-from datetime import datetime
-from enum import Enum
-from typing import Any, Optional
-from uuid import UUID
+from typing import Any, Dict, List, Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.schemas.base import BaseSchema
+from app.schemas.common import (
+    Benchmark,
+    InferenceEndPoint,
+    Submitter,
+    TaskSpec,
+    TaskSpecLenient,
+    validate_entity_name,
+    validate_license,
+)
+from app.schemas.enums import VersionStatusEnum
 
 
-class VersionStatus(str, Enum):
-    ACTIVE = "ACTIVE"
-    DEPRECATED = "DEPRECATED"
+# ── Create / Update ──
 
 
-class ModelCreate(BaseSchema):
-    model_id: str = Field(..., max_length=255)
-    version: str = Field(..., max_length=100)
-    version_status: VersionStatus
-    name: str = Field(..., max_length=255)
+class ModelCreateRequest(BaseSchema):
+    """Request body for POST /models."""
+
+    version: str
+    versionStatus: Optional[VersionStatusEnum] = VersionStatusEnum.ACTIVE
+    submittedOn: Optional[int] = None  # Auto-generated server-side
+    updatedOn: Optional[int] = None
+    name: str
+    description: str
+    refUrl: str
+    task: TaskSpec
+    languages: List[Dict[str, Any]]
+    license: str
+    domain: List[str]
+    inferenceEndPoint: InferenceEndPoint
+    benchmarks: List[Benchmark] = Field(default_factory=list)
+    submitter: Submitter
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        return validate_entity_name(v, field="Model name")
+
+    @field_validator("license", mode="before")
+    @classmethod
+    def _validate_license(cls, v: Any) -> Any:
+        if v is None or v == "":
+            raise ValueError("License field is required")
+        return validate_license(v)
+
+
+class ModelUpdateRequest(BaseSchema):
+    """Request body for PATCH /models. modelId + version identify the target."""
+
+    modelId: str
+    version: Optional[str] = None
+    versionStatus: Optional[VersionStatusEnum] = None
     description: Optional[str] = None
-    ref_url: Optional[str] = Field(None, max_length=500)
-    task: dict[str, Any]
-    languages: list[Any]
-    license: Optional[str] = Field(None, max_length=255)
-    domain: dict[str, Any]
-    inference_endpoint: dict[str, Any]
-    benchmarks: Optional[dict[str, Any]] = None
-    submitter: dict[str, Any]
-    created_by: Optional[str] = Field(None, max_length=255)
+    refUrl: Optional[str] = None
+    task: Optional[TaskSpec] = None
+    languages: Optional[List[Dict[str, Any]]] = None
+    license: Optional[str] = None
+    domain: Optional[List[str]] = None
+    inferenceEndPoint: Optional[InferenceEndPoint] = None
+    benchmarks: Optional[List[Benchmark]] = None
+    submitter: Optional[Submitter] = None
+
+    @field_validator("license", mode="before")
+    @classmethod
+    def _validate_license(cls, v: Any) -> Any:
+        return validate_license(v)
 
 
-class ModelUpdate(BaseSchema):
-    version_status: Optional[VersionStatus] = None
-    description: Optional[str] = None
-    ref_url: Optional[str] = Field(None, max_length=500)
-    task: Optional[dict[str, Any]] = None
-    languages: Optional[list[Any]] = None
-    license: Optional[str] = Field(None, max_length=255)
-    domain: Optional[dict[str, Any]] = None
-    inference_endpoint: Optional[dict[str, Any]] = None
-    benchmarks: Optional[dict[str, Any]] = None
-    submitter: Optional[dict[str, Any]] = None
-    updated_by: Optional[str] = Field(None, max_length=255)
+# ── View / Response ──
+
+
+class ModelViewRequest(BaseSchema):
+    """Optional body for POST /models/{model_id} — pinning a specific version."""
+
+    version: Optional[str] = None
 
 
 class ModelResponse(BaseSchema):
-    id: UUID
-    model_id: str
-    version: str
-    version_status: VersionStatus
-    version_status_updated_at: Optional[datetime] = None
+    """Single-model response shape (preserves model-management camelCase)."""
+
+    modelId: str
+    uuid: str
     name: str
+    version: str
+    submittedOn: Optional[int] = None
+    versionStatus: Optional[str] = None
+    versionStatusUpdatedAt: Optional[str] = None
     description: Optional[str] = None
-    ref_url: Optional[str] = None
-    task: dict[str, Any]
-    languages: list[Any]
+    languages: List[Dict[str, Any]] = Field(default_factory=list)
+    domain: List[str] = Field(default_factory=list)
+    submitter: Optional[Submitter] = None
     license: Optional[str] = None
-    domain: dict[str, Any]
-    inference_endpoint: dict[str, Any]
-    benchmarks: Optional[dict[str, Any]] = None
-    submitter: dict[str, Any]
-    created_by: Optional[str] = None
-    updated_by: Optional[str] = None
-    created_at: datetime
-    updated_at: Optional[datetime] = None
+    inferenceEndPoint: Optional[InferenceEndPoint] = None
+    source: Optional[str] = None  # alias for refUrl
+    task: TaskSpecLenient
+    createdBy: Optional[str] = None
+    updatedBy: Optional[str] = None
+
+
+class ModelListItem(ModelResponse):
+    """One row in a list response — same shape as ModelResponse for now."""
 
 
 class ModelListResponse(BaseSchema):
-    id: UUID
-    model_id: str
-    version: str
-    version_status: VersionStatus
-    name: str
-    license: Optional[str] = None
-    created_at: datetime
+    """Wrapped list response so we can attach metadata (count, filters)."""
+
+    items: List[ModelListItem]
+    total: int

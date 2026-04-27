@@ -1,11 +1,16 @@
 """
 ORM model for public.models table.
+
+Models represent ML models registered in the platform, identified by a
+deterministic `model_id` hash derived from (name, version). Multiple
+versions of the same model can coexist; one or more may be ACTIVE,
+others DEPRECATED.
 """
 
 import enum
 import uuid
 
-from sqlalchemy import Column, DateTime, Enum, String, Text, UniqueConstraint
+from sqlalchemy import Column, DateTime, Enum, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -14,15 +19,19 @@ from app.models import Base
 
 
 class VersionStatus(str, enum.Enum):
+    """Lifecycle state of a model version."""
+
     ACTIVE = "ACTIVE"
     DEPRECATED = "DEPRECATED"
 
 
 class Model(Base):
-    __tablename__ = "models"
+    __tablename__ = "mm_models"
     __table_args__ = (
-        UniqueConstraint("model_id", name="uq_models_model_id"),
-        UniqueConstraint("name", "version", name="uq_name_version"),
+        UniqueConstraint("model_id", name="uq_mm_models_model_id"),
+        UniqueConstraint("name", "version", name="uq_mm_models_name_version"),
+        Index("ix_mm_models_name", "name"),
+        Index("ix_mm_models_created_by", "created_by"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -31,21 +40,35 @@ class Model(Base):
     version_status = Column(
         Enum(VersionStatus, name="version_status", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
+        default=VersionStatus.ACTIVE,
     )
-    version_status_updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    version_status_updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     ref_url = Column(String(500), nullable=True)
     task = Column(JSONB, nullable=False)
-    languages = Column(JSONB, nullable=False)
+    languages = Column(JSONB, nullable=False, default=list)
     license = Column(String(255), nullable=True)
-    domain = Column(JSONB, nullable=False)
+    domain = Column(JSONB, nullable=False, default=list)
     inference_endpoint = Column(JSONB, nullable=False)
     benchmarks = Column(JSONB, nullable=True)
     submitter = Column(JSONB, nullable=False)
     created_by = Column(String(255), nullable=True)
     updated_by = Column(String(255), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
 
-    services = relationship("Service", back_populates="model", foreign_keys="Service.model_id")
+    services = relationship(
+        "Service",
+        back_populates="model",
+        foreign_keys="Service.model_id",
+    )
