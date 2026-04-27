@@ -2,15 +2,13 @@
 Service management routes.
 
 Path layout (mounted under /api/v1):
-  GET    /services                              — list services with filters
+  GET    /services                              — list services with filters (includes policy)
   GET    /services/try-it-service-list          — public NMT-only listing
-  GET    /services/policies                     — list services + policies
   POST   /services/{service_id}                 — get service detail (body variant)
   POST   /services                              — create a new service
-  PATCH  /services                              — update a service
+  PATCH  /services                              — update a service (supports policy update)
   DELETE /services/{service_id}                 — delete a service
   PATCH  /services/{service_id}/health          — update service health
-  POST   /services/{service_id}/policy          — set service policy
 
 Authentication is handled at the gateway layer.
 """
@@ -28,7 +26,6 @@ from app.schemas.enums import TaskTypeEnum
 from app.schemas.service import (
     ServiceCreateRequest,
     ServiceHealthUpdateRequest,
-    ServicePolicyUpdateRequest,
     ServiceUpdateRequest,
 )
 from app.services.service_service import ServiceService
@@ -93,27 +90,6 @@ async def list_services(
         created_by=created_by,
     )
     return success_response(data=items, meta={"total": len(items)})
-
-
-@router.get("/policies")
-async def list_service_policies(
-    task_type: Optional[str] = Query(None, description="Filter by task type."),
-    svc: ServiceService = Depends(get_service_service),
-):
-    items = await svc.list_policies(task_type=_resolve_task_type(task_type))
-    return success_response(data={"services": items}, meta={"total": len(items)})
-
-
-@router.post("/{service_id:path}/policy")
-async def upsert_service_policy(
-    service_id: str,
-    payload: ServicePolicyUpdateRequest,
-    request: Request,
-    svc: ServiceService = Depends(get_service_service),
-):
-    user_id = get_user_id(request)
-    result = await svc.upsert_policy(service_id, payload.policy, updated_by=user_id)
-    return success_response(data=result)
 
 
 @router.patch("/{service_id:path}/health")

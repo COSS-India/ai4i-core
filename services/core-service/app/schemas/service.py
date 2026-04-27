@@ -86,6 +86,7 @@ class ServiceUpdateRequest(BaseSchema):
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
+    policy: Optional[ServicePolicy] = None
 
     @field_validator("inferenceServerType", mode="before")
     @classmethod
@@ -103,12 +104,6 @@ class ServiceHealthUpdateRequest(BaseSchema):
     """Request body for PATCH /services/{service_id}/health."""
 
     status: str
-
-
-class ServicePolicyUpdateRequest(BaseSchema):
-    """Request body for POST /services/{service_id}/policy."""
-
-    policy: ServicePolicy
 
 
 # ── Response ──
@@ -159,12 +154,3 @@ class ServiceDetailResponse(ServiceResponse):
     model: Optional[ModelResponse] = None
 
 
-class ServicePolicyResponse(BaseSchema):
-    """Response shape for /services/{service_id}/policy."""
-
-    serviceId: str
-    policy: Optional[Dict[str, Any]] = None
-
-
-class ServicePolicyListResponse(BaseSchema):
-    services: List[ServicePolicyResponse]

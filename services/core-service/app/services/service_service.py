@@ -169,18 +169,6 @@ class ServiceService:
             for service, model in rows
         ]
 
-    async def list_policies(
-        self, *, task_type: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        rows = await self._services.list_services(task_type=task_type)
-        return [
-            {
-                "serviceId": service.service_id,
-                "policy": dict(service.policy) if service.policy else None,
-            }
-            for service, _model in rows
-        ]
-
     # ── Writes ──
 
     async def create_service(
@@ -303,6 +291,18 @@ class ServiceService:
         if "benchmarks" in request_dict:
             update_data["benchmarks"] = jsonable_encoder(request_dict["benchmarks"])
 
+        if "policy" in request_dict:
+            policy_obj = payload.policy
+            if policy_obj is not None:
+                _validate_policy(policy_obj)
+                policy_dict: Optional[Dict[str, Any]] = {
+                    k: (v.value if hasattr(v, "value") else v)
+                    for k, v in policy_obj.model_dump(exclude_none=True).items()
+                }
+            else:
+                policy_dict = None
+            update_data["policy"] = policy_dict
+
         if "isPublished" in request_dict:
             now = datetime.now(timezone.utc)
             is_pub = bool(request_dict["isPublished"])
@@ -322,7 +322,7 @@ class ServiceService:
                     "No valid update fields provided. Updatable fields: "
                     "serviceDescription, hardwareDescription, endpoint, "
                     "inferenceServerType, sslVerify, api_key, healthStatus, "
-                    "benchmarks, isPublished. Note: name, modelId, "
+                    "benchmarks, isPublished, policy. Note: name, modelId, "
                     "modelVersion are not updatable."
                 ),
                 code="NO_UPDATABLE_FIELDS",
@@ -389,41 +389,6 @@ class ServiceService:
             raise
 
         await self._cache.invalidate_service(instance.service_id)
-
-    async def upsert_policy(
-        self,
-        service_id: str,
-        policy: ServicePolicy,
-        *,
-        updated_by: Optional[str],
-    ) -> Dict[str, Any]:
-        _validate_policy(policy)
-
-        instance = await self._services.get_by_service_id(service_id)
-        if instance is None:
-            raise EntityNotFoundError(f"Service '{service_id}'")
-
-        policy_dict = policy.model_dump(exclude_none=True)
-        # Coerce enums to strings for JSON storage
-        policy_dict = {
-            k: (v.value if hasattr(v, "value") else v) for k, v in policy_dict.items()
-        }
-
-        update_data: Dict[str, Any] = {"policy": policy_dict}
-        if updated_by is not None:
-            update_data["updated_by"] = updated_by
-
-        try:
-            await self._services.apply_updates(instance, update_data)
-            await self._services.commit()
-        except Exception:
-            await self._services.rollback()
-            logger.exception("DB error updating policy")
-            raise
-
-        await self._cache.invalidate_service(instance.service_id)
-        logger.info("Policy updated for service %s by user %s", service_id, updated_by)
-        return {"serviceId": service_id, "policy": policy_dict}
 
     # ── Internals ──
 
