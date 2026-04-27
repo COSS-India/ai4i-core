@@ -55,6 +55,7 @@ export interface Service {
   publishedAt?: string | null;
   /** ISO timestamp when service was unpublished; used for list ordering */
   unpublishedAt?: string | null;
+  createdAt?: string;
   created_at?: string;
   updated_at?: string;
   /** ISO timestamp when status was last updated; used for list ordering */

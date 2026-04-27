@@ -1047,6 +1047,7 @@ const ServicesManagementPage: React.FC = () => {
                                   </Th>
                                   <Th>Model Task Type</Th>
                                   <Th>Status</Th>
+                                  <Th>Created At</Th>
                                   <Th>Actions</Th>
                                 </Tr>
                               </Thead>
@@ -1077,6 +1078,11 @@ const ServicesManagementPage: React.FC = () => {
                                       >
                                         {service.isPublished === true ? "Published" : "Unpublished"}
                                       </Badge>
+                                    </Td>
+                                    <Td>
+                                      <Text fontSize="sm" color="gray.600">
+                                        {service.createdAt ? new Date(service.createdAt).toLocaleDateString() : "N/A"}
+                                      </Text>
                                     </Td>
                                     <Td onClick={(e) => e.stopPropagation()}>
                                       <HStack spacing={1}>

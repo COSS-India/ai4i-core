@@ -115,6 +115,7 @@ interface Model {
   refUrl?: string;
   /** ISO timestamp when version status was last updated; used for list ordering */
   versionStatusUpdatedAt?: string;
+  createdAt?: string;
   /** Epoch (seconds or ms) when model was created; fallback for ordering */
   submittedOn?: number;
   /** Epoch (seconds or ms) when model was last updated; fallback for ordering */
@@ -1012,6 +1013,7 @@ const ModelManagementPage: React.FC = () => {
                                 <Th>Version</Th>
                                 <Th> Status</Th>
                                 <Th>Task Type</Th>
+                                <Th>Created At</Th>
                                 <Th>Actions</Th>
                               </Tr>
                             </Thead>
@@ -1047,6 +1049,11 @@ const ModelManagementPage: React.FC = () => {
                                   >
                                     {model.task.type.toUpperCase()}
                                   </Badge>
+                                </Td>
+                                <Td>
+                                  <Text fontSize="sm" color="gray.600">
+                                    {model.createdAt ? new Date(model.createdAt).toLocaleDateString() : "N/A"}
+                                  </Text>
                                 </Td>
                                 <Td onClick={(e) => e.stopPropagation()}>
                                   <HStack spacing={3} align="center">
