@@ -267,7 +267,10 @@ apiClient.interceptors.request.use(
     
     // Check endpoint type to determine authentication method (case-insensitive)
     const url = (config.url || '').toLowerCase();
-    const isModelManagementEndpoint = url.includes('/model-management');
+    const isModelManagementEndpoint =
+      url.includes('/model-management') ||
+      url.includes('/api/v1/models') ||
+      url.includes('/api/v1/services');
     const isASREndpoint = url.includes('/api/v1/asr');
     const isNMSEndpoint = url.includes('/api/v1/nmt');
     const isTTSEndpoint = url.includes('/api/v1/tts');
@@ -371,7 +374,10 @@ apiClient.interceptors.response.use(
           // Unauthorized - handle based on endpoint type
           if (typeof window !== 'undefined') {
             const url = (error.config?.url || '').toLowerCase();
-            const isModelManagementEndpoint = url.includes('/model-management');
+            const isModelManagementEndpoint =
+              url.includes('/model-management') ||
+              url.includes('/api/v1/models') ||
+              url.includes('/api/v1/services');
             const isTenantsEndpoint = url.includes('/api/v1/tenants');
             
             // Check if it's a service endpoint or model-management endpoint
