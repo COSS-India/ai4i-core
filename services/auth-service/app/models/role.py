@@ -2,12 +2,13 @@
 Role, Permission, UserRole, and RolePermission ORM models.
 """
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.models import Base
+from app.models.permission_enums import PermissionName
 
 
 class Role(Base):
@@ -29,9 +30,12 @@ class Permission(Base):
     __tablename__ = "permissions"
 
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
-    name = Column(String(100), unique=True, index=True, nullable=False)
-    resource = Column(String(100), nullable=False)
-    action = Column(String(50), nullable=False)
+    name = Column(
+        Enum(PermissionName, name="permission_name_enum", values_callable=lambda x: [e.value for e in x]),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
