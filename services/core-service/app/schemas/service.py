@@ -83,7 +83,7 @@ class ServiceUpdateRequest(BaseSchema):
     api_key: Optional[str] = None
     inferenceServerType: Optional[InferenceServerTypeEnum] = None
     sslVerify: Optional[bool] = None
-    healthStatus: Optional[ServiceStatus] = None
+    healthStatus: Optional[str] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
     policy: Optional[ServicePolicy] = None
@@ -98,12 +98,6 @@ class ServiceUpdateRequest(BaseSchema):
         if isinstance(v, str):
             return v.strip().lower()
         return v
-
-
-class ServiceHealthUpdateRequest(BaseSchema):
-    """Request body for PATCH /services/{service_id}/health."""
-
-    status: str
 
 
 # ── Response ──

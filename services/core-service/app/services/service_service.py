@@ -31,7 +31,6 @@ from app.repositories.model_repository import ModelRepository
 from app.repositories.service_repository import ServiceRepository
 from app.schemas.service import (
     ServiceCreateRequest,
-    ServiceHealthUpdateRequest,
     ServicePolicy,
     ServiceUpdateRequest,
 )
@@ -287,7 +286,7 @@ class ServiceService:
         if "api_key" in request_dict:
             update_data["api_key"] = request_dict["api_key"]
         if "healthStatus" in request_dict:
-            update_data["health_status"] = jsonable_encoder(request_dict["healthStatus"])
+            update_data["health_status"] = request_dict["healthStatus"]
         if "benchmarks" in request_dict:
             update_data["benchmarks"] = jsonable_encoder(request_dict["benchmarks"])
 
@@ -368,27 +367,6 @@ class ServiceService:
 
         await self._cache.invalidate_service(instance.service_id)
         logger.info("Deleted service %s", instance.service_id)
-
-    async def update_service_health(
-        self, service_id: str, payload: ServiceHealthUpdateRequest
-    ) -> None:
-        instance = await self._services.get_by_service_id(service_id)
-        if instance is None:
-            raise EntityNotFoundError(f"Service '{service_id}'")
-
-        existing = dict(instance.health_status or {})
-        existing["status"] = payload.status
-        existing["lastUpdated"] = datetime.now(timezone.utc).isoformat()
-
-        try:
-            await self._services.apply_updates(instance, {"health_status": existing})
-            await self._services.commit()
-        except Exception:
-            await self._services.rollback()
-            logger.exception("DB error updating service health")
-            raise
-
-        await self._cache.invalidate_service(instance.service_id)
 
     # ── Internals ──
 

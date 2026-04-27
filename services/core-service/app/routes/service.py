@@ -8,7 +8,6 @@ Path layout (mounted under /api/v1):
   POST   /services                              — create a new service
   PATCH  /services                              — update a service (supports policy update)
   DELETE /services/{service_id}                 — delete a service
-  PATCH  /services/{service_id}/health          — update service health
 
 Authentication is handled at the gateway layer.
 """
@@ -25,7 +24,6 @@ from app.dependencies.services import get_service_service
 from app.schemas.enums import TaskTypeEnum
 from app.schemas.service import (
     ServiceCreateRequest,
-    ServiceHealthUpdateRequest,
     ServiceUpdateRequest,
 )
 from app.services.service_service import ServiceService
@@ -91,18 +89,6 @@ async def list_services(
     )
     return success_response(data=items, meta={"total": len(items)})
 
-
-@router.patch("/{service_id:path}/health")
-async def update_service_health(
-    service_id: str,
-    payload: ServiceHealthUpdateRequest,
-    svc: ServiceService = Depends(get_service_service),
-):
-    await svc.update_service_health(service_id, payload)
-    return success_response(
-        data={"serviceId": service_id, "status": payload.status},
-        meta={"message": f"Service '{service_id}' health status updated."},
-    )
 
 
 @router.post("/{service_id:path}")
