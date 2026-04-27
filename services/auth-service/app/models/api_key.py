@@ -13,7 +13,7 @@ from app.models import Base
 class APIKey(Base):
     __tablename__ = "api_key"
 
-    key_id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     user_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.user_id", ondelete="CASCADE"),
@@ -27,8 +27,8 @@ class APIKey(Base):
     permissions = Column(JSON, default=dict, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    created_by = Column(String(255), nullable=True)
+    created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    updated_by = Column(String(255), nullable=True)
+    updated_by = Column(UUID(as_uuid=True), nullable=True)
 
     user = relationship("User", back_populates="api_keys")

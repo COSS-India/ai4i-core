@@ -3,9 +3,8 @@ ORM model for mm_models table (ai4iplatform_core schema).
 """
 
 import enum
-import uuid
 
-from sqlalchemy import Column, DateTime, Enum, String, Text, UniqueConstraint
+from sqlalchemy import Column, DateTime, Enum, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -26,7 +25,7 @@ class Model(Base):
         UniqueConstraint("name", "version", name="uq_mm_models_name_version"),
     )
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     model_id = Column(String(255), nullable=False, unique=True, index=True)
     version = Column(String(100), nullable=False)
     version_status = Column(
@@ -44,8 +43,8 @@ class Model(Base):
     inference_endpoint = Column(JSONB, nullable=False)
     benchmarks = Column(JSONB, nullable=True)
     submitter = Column(JSONB, nullable=False)
-    created_by = Column(String(255), nullable=True)
-    updated_by = Column(String(255), nullable=True)
+    created_by = Column(UUID(as_uuid=True), nullable=True)
+    updated_by = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

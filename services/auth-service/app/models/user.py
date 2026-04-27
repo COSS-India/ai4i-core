@@ -14,15 +14,13 @@ from app.models import Base
 
 
 class CreationType(str, enum.Enum):
-    DIRECT = "direct"
-    GOOGLE = "google"
-    TENANT = "tenant"
-
+    DEFAULT = "default"
+    OTHER = "google"
 
 class User(Base):
     __tablename__ = "users"
 
-    user_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, index=True, nullable=False)
     username = Column(String(100), unique=True, index=True, nullable=False)
     full_name = Column(String(255), nullable=True)
@@ -45,9 +43,9 @@ class User(Base):
         server_default=CreationType.DIRECT.value,
     )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    created_by = Column(String(255), nullable=True)
+    created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    updated_by = Column(String(255), nullable=True)
+    updated_by = Column(UUID(as_uuid=True), nullable=True)
 
     # Relationships
     tenant = relationship("Tenant", back_populates="users")

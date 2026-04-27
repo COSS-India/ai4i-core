@@ -3,9 +3,7 @@ Tenant ORM model.
 """
 
 import enum
-import uuid
-
-from sqlalchemy import Column, DateTime, Enum, String
+from sqlalchemy import Column, DateTime, Enum, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -22,8 +20,8 @@ class TenantStatus(str, enum.Enum):
 class Tenant(Base):
     __tablename__ = "tenants"
 
-    tenant_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    contact_name = Column(String(255), nullable=False)
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
+    name = Column(String(255), nullable=False)
     organisation = Column(String(255), nullable=False)
     email = Column(String(255), nullable=False)
     phone_number = Column(String(20), nullable=True)
@@ -33,9 +31,9 @@ class Tenant(Base):
         server_default=TenantStatus.ACTIVATED.value,
     )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    created_by = Column(String(255), nullable=True)
+    created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    updated_by = Column(String(255), nullable=True)
+    updated_by = Column(UUID(as_uuid=True), nullable=True)
 
     # Relationships
     users = relationship("User", back_populates="tenant")

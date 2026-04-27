@@ -2,9 +2,7 @@
 ORM model for mm_services table (ai4iplatform_core schema).
 """
 
-import uuid
-
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -15,7 +13,7 @@ from app.models import Base
 class Service(Base):
     __tablename__ = "mm_services"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     service_id = Column(String(255), nullable=False, unique=True, index=True)
     name = Column(String(255), nullable=False, unique=True)
     service_description = Column(Text, nullable=True)
@@ -35,8 +33,8 @@ class Service(Base):
     is_published = Column(Boolean, nullable=False)
     published_at = Column(DateTime(timezone=True), server_default=func.now())
     unpublished_at = Column(DateTime(timezone=True), server_default=func.now())
-    created_by = Column(String(255), nullable=True)
-    updated_by = Column(String(255), nullable=True)
+    created_by = Column(UUID(as_uuid=True), nullable=True)
+    updated_by = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     inference_server_type = Column(String(32), nullable=False, server_default="triton")
