@@ -39,6 +39,19 @@ export interface UnpublishModelResponse {
   success: boolean;
 }
 
+type ApiEnvelope<T> = {
+  success?: boolean;
+  data?: T;
+  meta?: Record<string, any>;
+};
+
+const unwrapData = <T>(payload: T | ApiEnvelope<T>): T => {
+  if (payload && typeof payload === 'object' && 'data' in (payload as any)) {
+    return ((payload as ApiEnvelope<T>).data ?? null) as T;
+  }
+  return payload as T;
+};
+
 /**
  * Unpublish a model
  * @param modelId - The ID of the model to unpublish
@@ -48,11 +61,12 @@ export const unpublishModel = async (
   modelId: string
 ): Promise<UnpublishModelResponse> => {
   try {
-    // The API expects model_id as a query parameter
-    const response = await apiClient.post<UnpublishModelResponse>(
-      `/api/v1/model-management/models/unpublish?model_id=${encodeURIComponent(modelId)}`
+    // Platform-core toggles status through PATCH /api/v1/models.
+    const response = await apiClient.patch<ApiEnvelope<UnpublishModelResponse>>(
+      '/api/v1/models',
+      { modelId, versionStatus: 'DEPRECATED' }
     );
-    return response.data;
+    return unwrapData(response.data);
   } catch (error: any) {
     console.error('Unpublish model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -66,8 +80,8 @@ export const unpublishModel = async (
  */
 export const getAllModels = async (): Promise<ModelDetails[]> => {
   try {
-    const response = await apiClient.get<ModelDetails[]>('/api/v1/model-management/models');
-    return response.data;
+    const response = await apiClient.get<ModelDetails[] | ApiEnvelope<ModelDetails[]>>('/api/v1/models');
+    return unwrapData(response.data) || [];
   } catch (error: any) {
     console.error('Get models error:', error);
     throw error;
@@ -87,12 +101,13 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
     if (params.versionStatus) queryParams.version_status = params.versionStatus;
     if (params.createdBy) queryParams.created_by = params.createdBy;
 
-    const response = await apiClient.get<ModelDetails[]>('/api/v1/model-management/models', {
+    const response = await apiClient.get<ModelDetails[] | ApiEnvelope<ModelDetails[]>>('/api/v1/models', {
       params: queryParams,
     });
 
     const total = parseInt(response.headers['x-total-count'] ?? '0', 10);
-    const items = Array.isArray(response.data) ? response.data : [];
+    const payload = unwrapData(response.data);
+    const items = Array.isArray(payload) ? payload : [];
 
     return {
       items,
@@ -113,8 +128,8 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
  */
 export const createModel = async (modelData: any): Promise<any> => {
   try {
-    const response = await apiClient.post<any>('/api/v1/model-management/models', modelData);
-    return response.data;
+    const response = await apiClient.post<any | ApiEnvelope<any>>('/api/v1/models', modelData);
+    return unwrapData(response.data);
   } catch (error: any) {
     console.error('Register model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -129,11 +144,10 @@ export const createModel = async (modelData: any): Promise<any> => {
  */
 export const getModelById = async (modelId: string): Promise<ModelDetails> => {
   try {
-    const response = await apiClient.post<ModelDetails>(
-      `/api/v1/model-management/models/${encodeURIComponent(modelId)}`,
-      { modelId }
+    const response = await apiClient.get<ModelDetails | ApiEnvelope<ModelDetails>>(
+      `/api/v1/models/${encodeURIComponent(modelId)}`
     );
-    return response.data;
+    return unwrapData(response.data);
   } catch (error: any) {
     console.error('Get model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -148,8 +162,8 @@ export const getModelById = async (modelId: string): Promise<ModelDetails> => {
  */
 export const updateModel = async (modelData: any): Promise<any> => {
   try {
-    const response = await apiClient.patch<any>('/api/v1/model-management/models', modelData);
-    return response.data;
+    const response = await apiClient.patch<any | ApiEnvelope<any>>('/api/v1/models', modelData);
+    return unwrapData(response.data);
   } catch (error: any) {
     console.error('Update model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -164,10 +178,12 @@ export const updateModel = async (modelData: any): Promise<any> => {
  */
 export const publishModel = async (modelId: string): Promise<any> => {
   try {
-    const response = await apiClient.post<any>(
-      `/api/v1/model-management/models/publish?model_id=${encodeURIComponent(modelId)}`
+    // Platform-core toggles status through PATCH /api/v1/models.
+    const response = await apiClient.patch<any | ApiEnvelope<any>>(
+      '/api/v1/models',
+      { modelId, versionStatus: 'ACTIVE' }
     );
-    return response.data;
+    return unwrapData(response.data);
   } catch (error: any) {
     console.error('Publish model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -186,12 +202,12 @@ export const listServices = async (
   publishedOnly?: boolean
 ): Promise<any[]> => {
   try {
-    const url = '/api/v1/model-management/services';
+    const url = '/api/v1/services';
     const params: Record<string, string> = {};
     if (taskType) params.task_type = taskType;
     if (publishedOnly === true) params.is_published = 'true';
-    const response = await apiClient.get<any[]>(url, { params });
-    return response.data;
+    const response = await apiClient.get<any[] | ApiEnvelope<any[]>>(url, { params });
+    return unwrapData(response.data) || [];
   } catch (error: any) {
     console.error('List services error:', error);
     const errorMessage =
@@ -202,4 +218,3 @@ export const listServices = async (
     throw new Error(errorMessage);
   }
 };
-

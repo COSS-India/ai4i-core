@@ -5,9 +5,9 @@ Startup sequence:
   1. PostgreSQL connection (async SQLAlchemy)
   2. Redis connection (async)
 
-Middleware stack: RequestLoggingMiddleware
+Middleware stack: RequestLoggingMiddleware, CORSMiddleware
 
-Authentication and CORS are handled exclusively at the gateway layer.
+Authentication is handled at the gateway layer.
 """
 
 import logging
@@ -19,6 +19,7 @@ _uvicorn_access.propagate = False
 _uvicorn_access.disabled = True
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import close_database, init_database
 from app.core.exceptions import register_exception_handlers
@@ -87,6 +88,19 @@ def create_app() -> FastAPI:
 
     # ── Exception handlers ──
     register_exception_handlers(app)
+
+    # ── CORS (env-driven) ──
+    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    if not origins:
+        origins = ["*"]
+    allow_all = origins == ["*"]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=not allow_all,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # ── Middleware ──
     app.add_middleware(RequestLoggingMiddleware)

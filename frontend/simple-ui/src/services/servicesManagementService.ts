@@ -2,6 +2,19 @@
 
 import { apiClient } from './api';
 
+type ApiEnvelope<T> = {
+  success?: boolean;
+  data?: T;
+  meta?: Record<string, any>;
+};
+
+const unwrapData = <T>(payload: T | ApiEnvelope<T>): T => {
+  if (payload && typeof payload === 'object' && 'data' in (payload as any)) {
+    return ((payload as ApiEnvelope<T>).data ?? null) as T;
+  }
+  return payload as T;
+};
+
 export interface ServiceListParams {
   offset?: number;
   limit?: number;
@@ -69,8 +82,8 @@ export interface Service {
  */
 export const listServices = async (): Promise<Service[]> => {
   try {
-    const response = await apiClient.get<Service[]>('/api/v1/model-management/services');
-    return response.data;
+    const response = await apiClient.get<Service[] | ApiEnvelope<Service[]>>('/api/v1/services');
+    return unwrapData(response.data) || [];
   } catch (error: any) {
     console.error('List services error:', error);
     throw error;
@@ -90,12 +103,13 @@ export const listServicesPaginated = async (params: ServiceListParams = {}): Pro
     if (params.isPublished !== undefined) queryParams.is_published = params.isPublished;
     if (params.createdBy) queryParams.created_by = params.createdBy;
 
-    const response = await apiClient.get<Service[]>('/api/v1/model-management/services', {
+    const response = await apiClient.get<Service[] | ApiEnvelope<Service[]>>('/api/v1/services', {
       params: queryParams,
     });
 
     const total = parseInt(response.headers['x-total-count'] ?? '0', 10);
-    const items = Array.isArray(response.data) ? response.data : [];
+    const payload = unwrapData(response.data);
+    const items = Array.isArray(payload) ? payload : [];
 
     return {
       items,
@@ -117,11 +131,11 @@ export const listServicesPaginated = async (params: ServiceListParams = {}): Pro
 export const getServiceById = async (serviceId: string): Promise<Service> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
-    const response = await apiClient.post<Service>(
-      `/api/v1/model-management/services/${serviceId}`,
+    const response = await apiClient.post<Service | ApiEnvelope<Service>>(
+      `/api/v1/services/${serviceId}`,
       { service_id: serviceId }
     );
-    return response.data;
+    return unwrapData(response.data);
   } catch (error: any) {
     console.error('Get service error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -165,10 +179,10 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
     // - X-API-Key: <api_key> (if available)
     // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
     const response = await apiClient.post<Service>(
-      '/api/v1/model-management/services',
+      '/api/v1/services',
       apiPayload
     );
-    return response.data;
+    return unwrapData(response.data as any);
   } catch (error: any) {
     console.error('Create service error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -225,10 +239,10 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
     }
     
     const response = await apiClient.patch<Service>(
-      '/api/v1/model-management/services',
+      '/api/v1/services',
       apiPayload
     );
-    return response.data;
+    return unwrapData(response.data as any);
   } catch (error: any) {
     console.error('Update service error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -245,14 +259,13 @@ export const deleteService = async (uuid: string): Promise<any> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
     const response = await apiClient.delete<any>(
-      `/api/v1/model-management/services/${uuid}`
+      `/api/v1/services/${uuid}`
     );
-    return response.data;
+    return unwrapData(response.data as any);
   } catch (error: any) {
     console.error('Delete service error:', error);
     // Don't transform the error - let extractErrorInfo handle it
     throw error;
   }
 };
-
 
