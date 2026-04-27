@@ -12,11 +12,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.refresh import RefreshToken
+from app.repositories.base import BaseRepository
 
 
-class RefreshTokenRepository:
+class RefreshTokenRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
-        self._db = db
+        super().__init__(db)
 
     async def upsert(self, user_id: UUID, token: str) -> RefreshToken:
         """Insert or overwrite the refresh token for this user."""
@@ -47,6 +48,3 @@ class RefreshTokenRepository:
         if existing:
             await self._db.delete(existing)
             await self._db.flush()
-
-    async def commit(self) -> None:
-        await self._db.commit()
