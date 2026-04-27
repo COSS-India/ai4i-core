@@ -21,7 +21,7 @@ sys.path.insert(0, str(project_root))
 
 from dotenv import load_dotenv
 load_dotenv(project_root / ".env")
-load_dotenv(project_root / "infrastructure" / "databases" / "migrations" / "postgres" / "alembic" / ".env", override=True)
+load_dotenv(project_root / "infrastructure" / "databases" / "migrations" / "postgres" / "alembic" / ".env")
 
 from infrastructure.databases.core.migration_manager import MigrationManager
 from infrastructure.databases.config import MigrationConfig
