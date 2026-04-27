@@ -21,10 +21,11 @@ class APIKey(Base):
         index=True,
     )
     key_name = Column(String(100), nullable=False)
-    # Stores the token_id UUID used as the JWT token_id claim for revocation lookups.
-    api_key = Column(String(500), unique=True, index=True, nullable=False)
-    # JSON: {"permission": [1, 2, 3]} — permission IDs from the permissions table.
-    permissions = Column(JSON, default=dict, nullable=True)
+    # 32-char hex string — unique identifier returned to the caller.
+    api_key = Column(String(32), unique=True, index=True, nullable=False)
+    # Flat list of permission IDs: [1, 2, 3]
+    permissions = Column(JSON, default=list, nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     created_by = Column(String(255), nullable=True)
