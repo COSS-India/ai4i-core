@@ -15,7 +15,6 @@ Model/service definitions are shared with model_management_default_seeder to kee
 a single source of truth.
 """
 import json
-import time
 
 from infrastructure.databases.core.base_seeder import BaseSeeder
 from infrastructure.databases.seeders.postgres.model_management_default_seeder import (
@@ -23,7 +22,6 @@ from infrastructure.databases.seeders.postgres.model_management_default_seeder i
     _sql_lit,
     generate_model_id,
     generate_service_id,
-    generate_uuid,
 )
 
 try:
@@ -63,7 +61,6 @@ class CoreModelsServicesSeeder(BaseSeeder):
             }
 
             ep_lit = _sql_lit(endpoint_url)
-            tn_lit = _sql_lit(triton_model_name)
             inference_endpoint_lit = _sql_lit(
                 json.dumps(inference_endpoint, ensure_ascii=False, separators=(",", ":"))
             )
@@ -71,12 +68,11 @@ class CoreModelsServicesSeeder(BaseSeeder):
             # ── mm_models ───────────────────────────────────────────────────
             adapter.execute(f"""
                 INSERT INTO mm_models (
-                    id, model_id, version, name, description,
+                    model_id, version, name, description,
                     task, languages, domain, license,
                     inference_endpoint, submitter, version_status, created_by
                 )
                 VALUES (
-                    '{generate_uuid("model", name, version)}',
                     '{model_id}',
                     '{_sql_lit(version)}',
                     '{_sql_lit(name)}',
@@ -104,14 +100,13 @@ class CoreModelsServicesSeeder(BaseSeeder):
 
                 adapter.execute(f"""
                     INSERT INTO mm_services (
-                        id, service_id, name,
+                        service_id, name,
                         model_id, model_version,
                         endpoint, inference_server_type, ssl_verify,
                         service_description, hardware_description,
                         is_published, created_by
                     )
                     VALUES (
-                        '{generate_uuid("service", name, version, svc_name)}',
                         '{service_id}',
                         '{sn}',
                         '{model_id}',

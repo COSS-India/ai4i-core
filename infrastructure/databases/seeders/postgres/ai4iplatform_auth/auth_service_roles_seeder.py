@@ -5,8 +5,6 @@ Mirrors auth_roles_permissions_seeder.py for the auth-service database.
 Seeds roles, permissions, and role-permission mappings idempotently.
 
 Schema differences vs auth_db:
-  - roles PK column is `role_id` (not `id`)
-  - permissions PK column is `permission_id` (not `id`)
   - join table is `role_permission` (not `role_permissions`) with no unique
     constraint on (role_id, permission_id) → uses DELETE + INSERT pattern
 
@@ -43,7 +41,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
             f"""
             DELETE FROM role_permission
             WHERE role_id NOT IN (
-                SELECT role_id FROM roles WHERE name IN ('{role_names_quoted}')
+                SELECT id FROM roles WHERE name IN ('{role_names_quoted}')
             )
             """
         )
@@ -159,7 +157,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
             f"""
             DELETE FROM role_permission
             WHERE permission_id NOT IN (
-                SELECT permission_id FROM permissions WHERE name IN ('{permission_names_quoted}')
+                SELECT id FROM permissions WHERE name IN ('{permission_names_quoted}')
             )
             """
         )
@@ -170,16 +168,15 @@ class AuthServiceRolesSeeder(BaseSeeder):
             """
         )
 
-        for name, resource, action in permissions:
+        for name, _, _ in permissions:
             adapter.execute(
                 """
-                INSERT INTO permissions (name, resource, action, created_by)
-                VALUES (:name, :resource, :action, :created_by)
+                INSERT INTO permissions (name, created_by)
+                VALUES (:name, :created_by)
                 ON CONFLICT (name) DO UPDATE
-                  SET resource = EXCLUDED.resource,
-                      action   = EXCLUDED.action
+                  SET name = EXCLUDED.name
                 """,
-                {"name": name, "resource": resource, "action": action, "created_by": SEEDER_ID},
+                {"name": name, "created_by": SEEDER_ID},
             )
         print(f"    ✓ Seeded {len(permissions)} permissions in ai4iplatform_auth")
 
@@ -190,7 +187,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
             f"""
             DELETE FROM role_permission
             WHERE role_id IN (
-                SELECT role_id FROM roles WHERE name IN ('{role_names_quoted}')
+                SELECT id FROM roles WHERE name IN ('{role_names_quoted}')
             )
             """
         )
@@ -199,7 +196,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
         adapter.execute(
             f"""
             INSERT INTO role_permission (role_id, permission_id, created_by)
-            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
+            SELECT r.id, p.id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.create','users.read','users.update','users.delete',
@@ -225,7 +222,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
         adapter.execute(
             f"""
             INSERT INTO role_permission (role_id, permission_id, created_by)
-            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
+            SELECT r.id, p.id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.read','users.update',
@@ -246,7 +243,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
         adapter.execute(
             f"""
             INSERT INTO role_permission (role_id, permission_id, created_by)
-            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
+            SELECT r.id, p.id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.read','roles.read','service.read',
@@ -261,7 +258,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
         adapter.execute(
             f"""
             INSERT INTO role_permission (role_id, permission_id, created_by)
-            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
+            SELECT r.id, p.id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.create','users.read','users.update','users.delete',
@@ -291,7 +288,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
         adapter.execute(
             f"""
             INSERT INTO role_permission (role_id, permission_id, created_by)
-            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
+            SELECT r.id, p.id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.create','users.read','users.update',
