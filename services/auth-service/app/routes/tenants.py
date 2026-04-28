@@ -1,6 +1,7 @@
 """Tenant + tenant-user CRUD routes."""
 
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession

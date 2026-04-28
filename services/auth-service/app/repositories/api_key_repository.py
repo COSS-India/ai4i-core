@@ -30,9 +30,7 @@ class APIKeyRepository(BaseRepository):
         if not permission_ids:
             return {}
         result = await self._db.execute(
-            select(Permission.permission_id, Permission.name).where(
-                Permission.permission_id.in_(permission_ids)
-            )
+            select(Permission.id, Permission.name).where(Permission.id.in_(permission_ids))
         )
         return {pid: name for pid, name in result.all()}
 
