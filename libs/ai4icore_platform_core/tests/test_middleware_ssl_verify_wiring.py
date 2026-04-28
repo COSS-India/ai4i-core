@@ -34,7 +34,6 @@ def _make_request(method: str, path: str, body: bytes):
 async def test_dispatch_wires_ssl_verify_into_request_state_and_triton_client(monkeypatch):
     # Ensure the B1 fix is exercised end-to-end through dispatch(), not just in resolver helpers.
     mock_client = MagicMock(spec=ModelManagementClient)
-    mock_client.select_experiment_variant = AsyncMock(return_value=None)
 
     app = MagicMock()
     middleware = ModelResolutionMiddleware(

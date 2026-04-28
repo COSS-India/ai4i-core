@@ -1,7 +1,6 @@
 """
 Auth context middleware: sets request.state.user_id from JWT (sub) before Model Resolution runs.
 
-Enables A/B experiment variant selection to use a consistent user_id for inference calls. 
 User ID is read from the JWT payload (sub or user_id claim); AuthProvider at route level performs full validation.
 """
 
@@ -37,7 +36,7 @@ def _extract_user_id_from_jwt(request: Request) -> None:
     """
     If Authorization: Bearer <token> is present, read payload (no signature verify) and set
     request.state.user_id from payload['sub'] or payload['user_id']. AuthProvider validates
-    the token later; spoofed tokens only affect A/B bucket for a request that gets rejected.
+    the token later.
     """
     auth = request.headers.get("Authorization") or request.headers.get("authorization")
     if not auth or not auth.startswith("Bearer "):
@@ -59,8 +58,7 @@ def _extract_user_id_from_jwt(request: Request) -> None:
 
 class AuthContextMiddleware(BaseHTTPMiddleware):
     """
-    Sets request.state.user_id from JWT (sub) on configured paths so Model Resolution
-    middleware can use it for A/B variant hashing (same user -> same variant).
+    Sets request.state.user_id from JWT (sub) on configured paths.
     Runs only on path_prefixes; does not reject requests (route auth does that).
     """
 

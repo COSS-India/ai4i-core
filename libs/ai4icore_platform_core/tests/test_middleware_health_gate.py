@@ -43,8 +43,6 @@ def mock_client():
 @pytest.fixture
 def middleware(mock_client):
     app = MagicMock()
-    # Avoid entering the A/B selection branch in dispatch() (not under test here).
-    mock_client.select_experiment_variant = AsyncMock(return_value=None)
     mw = ModelResolutionMiddleware(
         app,
         model_management_client=mock_client,

@@ -9,13 +9,12 @@ import logging
 import math
 import re
 import time
-import uuid
 from typing import Optional, Dict, Tuple, Any
 
 import httpx
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response, JSONResponse
+from starlette.responses import JSONResponse
 
 from .client import ModelManagementClient, ServiceInfo
 from .triton_client import TritonClient
@@ -98,25 +97,6 @@ def extract_task_type_from_path(path: str) -> Optional[str]:
         ):
             return p
     return None
-
-
-def extract_language_from_body(body: bytes) -> Optional[str]:
-    """Extract primary language from request body (config.language.sourceLanguage or similar)."""
-    try:
-        data = json.loads(body.decode('utf-8'))
-        if not isinstance(data, dict):
-            return None
-        config = data.get("config") or {}
-        if not isinstance(config, dict):
-            return None
-        lang = config.get("language")
-        if isinstance(lang, dict):
-            return lang.get("sourceLanguage") or lang.get("targetLanguage") or lang.get("language")
-        if isinstance(lang, str):
-            return lang
-        return None
-    except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
-        return None
 
 
 class ModelResolutionMiddleware(BaseHTTPMiddleware):
@@ -598,7 +578,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         return None, None, None, service_info
         
     async def dispatch(self, request: Request, call_next):
-        """Process request and resolve service if needed. Supports A/B testing via select-variant."""
+        """Process request and resolve service if needed."""
         start_time = time.time()
         try:
             # Only process enabled paths
@@ -642,120 +622,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 else:
                     logger.warning(f"No serviceId found in request body for {request.url.path}")
             
-            # A/B testing: check for experiment variant and optionally override service_id
-            if service_id and body is not None:
-                task_type = extract_task_type_from_path(request.url.path)
-                language = extract_language_from_body(body)
-                # request_id and user_id for variant hashing (when user_id present, same user => same variant)
-                request_id = (
-                    request.headers.get("X-Request-ID") or request.headers.get("x-request-id")
-                    or request.headers.get("X-Correlation-ID") or request.headers.get("x-correlation-id")
-                ) or str(uuid.uuid4())
-                # User ID for consistent variant per user (from auth middleware or gateway header)
-                user_id = (
-                    getattr(request.state, "user_id", None)
-                    or request.headers.get("X-User-Id") or request.headers.get("x-user-id")
-                )
-                if user_id is not None:
-                    user_id = str(user_id)
-                if task_type:
-                    try:
-                        variant = await self.model_management_client.select_experiment_variant(
-                            task_type=task_type,
-                            language=language,
-                            request_id=request_id,
-                            user_id=user_id,
-                            service_id=service_id,
-                            auth_headers=extract_auth_headers(request)
-                        )
-                        if variant and variant.get("service_id"):
-                            logger.info(
-                                f"A/B experiment active: using variant {variant.get('variant_name')} "
-                                f"(service_id={variant.get('service_id')})"
-                            )
-                            variant_service_id = variant["service_id"]
-                            # Ensure variant service is published before allowing inference
-                            variant_info = await self._get_service_info(
-                                variant_service_id, extract_auth_headers(request)
-                            )
-                            if variant_info is not None and variant_info.is_published is not True:
-                                raise UnpublishedServiceError(variant_service_id)
-                            request.state.service_id = variant_service_id
-                            request.state.experiment_info = variant
-                            if variant.get("endpoint") and (variant.get("model_id") or variant.get("model_name")):
-                                request.state.triton_endpoint = variant["endpoint"]
-                                request.state.triton_model_name = (
-                                    variant.get("model_id") or variant.get("model_name") or "unknown"
-                                )
-                                request.state.ssl_verify = (
-                                    variant_info.ssl_verify if variant_info else None
-                                )
-                                if variant.get("api_key") is not None:
-                                    request.state.triton_api_key = variant.get("api_key")
-                                variant_endpoint = variant["endpoint"]
-                                variant_api_key = (
-                                    variant.get("api_key")
-                                    if variant.get("api_key") is not None
-                                    else self.default_triton_api_key
-                                )
-                                variant_ssl_verify = (variant_info.ssl_verify if variant_info else None)
-
-                                # Run health gate BEFORE allocating/caching a TritonClient.
-                                variant_health_service_id = self._health_service_id_for_request(
-                                    request_path=request.url.path,
-                                    model_service_id=variant_service_id,
-                                )
-                                if self._should_apply_health_gate(request.url.path):
-                                    gate_resp = await self._preflight_health_gate(variant_health_service_id)
-                                    if gate_resp is not None:
-                                        return self._rewrite_health_gate_response(
-                                            gate_resp,
-                                            service_id=variant_service_id,
-                                            health_service_id=variant_health_service_id,
-                                        )
-                                # Variant can specify per-variant api_key and ssl_verify; cache by full client config.
-                                client_cache_key = "|".join(
-                                    [
-                                        str(variant_service_id),
-                                        str(variant_endpoint),
-                                        str(variant_ssl_verify),
-                                        str(variant_api_key),
-                                    ]
-                                )
-                                cached_client = self._triton_clients.get(client_cache_key)
-                                if cached_client:
-                                    client, cached_endpoint, cached_ssl_verify, expires_at = cached_client
-                                    if (
-                                        expires_at > time.time()
-                                        and cached_endpoint == variant_endpoint
-                                        and cached_ssl_verify == variant_ssl_verify
-                                    ):
-                                        request.state.triton_client = client
-                                    else:
-                                        self._triton_clients.pop(client_cache_key, None)
-                                if getattr(request.state, "triton_client", None) is None:
-                                    client = TritonClient(
-                                        triton_url=variant_endpoint,
-                                        api_key=variant_api_key,
-                                        ssl_verify=variant_ssl_verify,
-                                    )
-                                    expires_at = time.time() + self.cache_ttl_seconds
-                                    self._triton_clients[client_cache_key] = (
-                                        client,
-                                        variant_endpoint,
-                                        variant_ssl_verify,
-                                        expires_at,
-                                    )
-                                    request.state.triton_client = client
-
-                                response = await call_next(request)
-                                await self._track_experiment_metric(request, response, start_time)
-                                return response
-                            service_id = variant["service_id"]
-                    except Exception as e:
-                        logger.debug("A/B select-variant failed, using default service: %s", e)
-            
-            # If we found a serviceId, resolve it (normal path or variant service_id)
+            # If we found a serviceId, resolve it
             if service_id:
                 health_service_id = self._health_service_id_for_request(
                     request_path=request.url.path,
@@ -798,8 +665,6 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 logger.debug("No serviceId found, skipping Platform Core resolution")
             
             response = await call_next(request)
-            if getattr(request.state, "experiment_info", None):
-                await self._track_experiment_metric(request, response, start_time)
             return response
             
         except UnpublishedServiceError as e:
@@ -835,21 +700,3 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             logger.error(f"Critical error in Model Resolution Middleware: {e}", exc_info=True)
             raise
     
-    async def _track_experiment_metric(self, request: Request, response: Response, start_time: float) -> None:
-        """Track experiment metric after response (best-effort)."""
-        info = getattr(request.state, "experiment_info", None)
-        if not info or not info.get("experiment_id") or not info.get("variant_id"):
-            return
-        try:
-            status = getattr(response, "status_code", 500)
-            success = 200 <= status < 400
-            latency_ms = int((time.time() - start_time) * 1000)
-            await self.model_management_client.track_experiment_metric(
-                experiment_id=info["experiment_id"],
-                variant_id=info["variant_id"],
-                success=success,
-                latency_ms=latency_ms,
-                auth_headers=extract_auth_headers(request)
-            )
-        except Exception as e:
-            logger.debug("Experiment metric tracking failed: %s", e)
