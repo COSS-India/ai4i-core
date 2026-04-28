@@ -4,6 +4,7 @@ Database connection configurations for all databases
 """
 from typing import Dict, Any
 from pathlib import Path
+import os
 import sys
 
 try:
@@ -27,10 +28,17 @@ class MigrationConfig:
 
     @staticmethod
     def get_postgres_config(database: str = 'auth_db') -> Dict[str, Any]:
-        """Get PostgreSQL configuration"""
+        """Get PostgreSQL configuration.
+
+        When running migrations/seeds from the host machine (outside Docker),
+        set ALEMBIC_DB_HOST and ALEMBIC_DB_PORT in your .env to override the
+        Docker-internal POSTGRES_HOST/POSTGRES_PORT values.
+        """
+        host = os.environ.get('ALEMBIC_DB_HOST') or app_env.postgres_host
+        port = int(os.environ.get('ALEMBIC_DB_PORT') or app_env.postgres_port)
         return {
-            'host': app_env.postgres_host,
-            'port': app_env.postgres_port,
+            'host': host,
+            'port': port,
             'user': app_env.postgres_user,
             'password': app_env.postgres_password,
             'database': database,
