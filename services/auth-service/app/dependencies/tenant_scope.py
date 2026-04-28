@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai4icore_auth.permission_checker import PermissionChecker
 
 from app.core.exceptions import EntityNotFoundError
+from app.models.role_name import RoleName, role_name_to_str
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
@@ -17,7 +18,7 @@ async def enforce_target_user_same_tenant(
     target_user_id,
     db: AsyncSession,
     *,
-    bypass_roles: tuple[str, ...],
+    bypass_roles: tuple[RoleName | str, ...],
 ) -> None:
     """Load target user and ensure tenant admin may only act on users in their tenant.
 
@@ -25,7 +26,7 @@ async def enforce_target_user_same_tenant(
     """
     role_repo = RoleRepository(db)
     user_roles = await role_repo.get_user_roles(current_user.id)
-    if PermissionChecker.has_any_role(list(bypass_roles), user_roles):
+    if PermissionChecker.has_any_role([role_name_to_str(r) for r in bypass_roles], user_roles):
         return
 
     user_repo = UserRepository(db)

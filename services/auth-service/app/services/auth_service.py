@@ -20,6 +20,7 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.models.credentials import UserCredentials
+from app.models.role_name import RoleName
 from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
 from app.repositories.credentials_repository import CredentialsRepository
@@ -131,7 +132,7 @@ class AuthService:
         await self._credentials.create(creds)
 
         try:
-            await self._roles.assign_role(user.id, "USER")
+            await self._roles.assign_role(user.id, RoleName.USER)
         except EntityNotFoundError:
             logger.warning("Default USER role not found, skipping role assignment.")
 
@@ -281,7 +282,7 @@ class AuthService:
         await self._users.create(user)
 
         try:
-            await self._roles.assign_role(user.id, "USER")
+            await self._roles.assign_role(user.id, RoleName.USER)
         except EntityNotFoundError:
             logger.warning("Default USER role not found, skipping role assignment.")
 

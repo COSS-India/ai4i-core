@@ -14,6 +14,7 @@ from app.dependencies.permissions import require_any_role
 from app.dependencies.tenant_scope import enforce_target_user_same_tenant
 from app.core.database import get_db
 from app.dependencies.services import get_user_service
+from app.models.role_name import RoleName
 from app.models.user import User
 from app.schemas.user import UserListResponse, UserUpdate
 from app.services.user_service import UserService
@@ -52,7 +53,7 @@ async def list_users(
     request: Request,
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    caller: User = Depends(require_any_role("ADMIN", "MODERATOR", "TENANT ADMIN")),
+    caller: User = Depends(require_any_role(RoleName.ADMIN, RoleName.MODERATOR, RoleName.TENANT_ADMIN)),
     svc: UserService = Depends(get_user_service),
 ):
     role_set = set(getattr(request.state, "user_roles", []) or [])
@@ -68,7 +69,7 @@ async def list_users(
 async def get_user(
     request: Request,
     user_id: UUID,
-    caller: User = Depends(require_any_role("ADMIN", "MODERATOR", "TENANT ADMIN")),
+    caller: User = Depends(require_any_role(RoleName.ADMIN, RoleName.MODERATOR, RoleName.TENANT_ADMIN)),
     svc: UserService = Depends(get_user_service),
     db: AsyncSession = Depends(get_db),
 ):
@@ -78,7 +79,7 @@ async def get_user(
         caller,
         user_id,
         db,
-        bypass_roles=("ADMIN", "MODERATOR"),
+        bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR),
     )
     role_set = set(getattr(request.state, "user_roles", []) or [])
     user = await svc.get_user_by_id_for_caller(caller, user_id, role_set=role_set)

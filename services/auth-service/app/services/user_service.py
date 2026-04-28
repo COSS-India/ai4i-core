@@ -4,6 +4,7 @@ from typing import Optional
 from uuid import UUID
 
 from app.core.exceptions import AuthorizationError
+from app.models.role_name import RoleName
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
@@ -67,9 +68,9 @@ class UserService:
         """ADMIN/MODERATOR see all users; TENANT ADMIN sees only their own tenant."""
         effective_role_set = await self._resolve_caller_role_set(caller, role_set)
 
-        if "ADMIN" in effective_role_set or "MODERATOR" in effective_role_set:
+        if RoleName.ADMIN.value in effective_role_set or RoleName.MODERATOR.value in effective_role_set:
             return await self._users.list_all(offset, limit)
-        if "TENANT ADMIN" in effective_role_set:
+        if RoleName.TENANT_ADMIN.value in effective_role_set:
             self._assert_tenant_context(caller, "list users")
             return await self._users.list_by_tenant(caller.tenant_id, offset, limit)
         raise AuthorizationError(
@@ -96,9 +97,9 @@ class UserService:
 
         effective_role_set = await self._resolve_caller_role_set(caller, role_set)
 
-        if "ADMIN" in effective_role_set or "MODERATOR" in effective_role_set:
+        if RoleName.ADMIN.value in effective_role_set or RoleName.MODERATOR.value in effective_role_set:
             return user
-        if "TENANT ADMIN" in effective_role_set:
+        if RoleName.TENANT_ADMIN.value in effective_role_set:
             self._assert_tenant_context(caller, "view users")
             if user.tenant_id != caller.tenant_id:
                 raise AuthorizationError(

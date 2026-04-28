@@ -8,6 +8,7 @@ from uuid import UUID
 
 from pydantic import AliasChoices, Field
 
+from app.models.role_name import RoleName
 from app.schemas.base import BaseSchema
 
 
@@ -23,7 +24,7 @@ class RoleUpdate(BaseSchema):
 
 class RoleResponse(BaseSchema):
     role_id: int = Field(validation_alias=AliasChoices("role_id", "id"))
-    name: str
+    name: RoleName
     description: Optional[str] = None
     created_at: datetime
     created_by: Optional[UUID] = None
@@ -64,12 +65,12 @@ class RolePermissionResponse(BaseSchema):
 
 class RoleAssignRequest(BaseSchema):
     user_id: UUID
-    role_name: str = Field(..., min_length=1, max_length=100)
+    role_name: RoleName
 
 
 class RoleRemoveRequest(BaseSchema):
     user_id: UUID
-    role_name: str
+    role_name: RoleName
 
 
 class RolePermissionAssignRequest(BaseSchema):

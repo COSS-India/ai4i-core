@@ -9,6 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.role import Permission, Role, RolePermission, UserRole
+from app.models.role_name import RoleName, role_name_to_str
 from app.repositories.base import BaseRepository
 
 
@@ -18,8 +19,9 @@ class RoleRepository(BaseRepository):
 
     # ── Roles ──
 
-    async def get_role_by_name(self, name: str) -> Optional[Role]:
-        result = await self._db.execute(select(Role).where(Role.name == name))
+    async def get_role_by_name(self, name: str | RoleName) -> Optional[Role]:
+        normalized = role_name_to_str(name)
+        result = await self._db.execute(select(Role).where(Role.name == normalized))
         return result.scalar_one_or_none()
 
     async def get_role_by_id(self, role_id: int) -> Optional[Role]:
@@ -39,7 +41,7 @@ class RoleRepository(BaseRepository):
             .where(UserRole.user_id == user_id)
             .order_by(UserRole.created_at.desc())
         )
-        return list(result.scalars().all())
+        return [role_name_to_str(n) for n in result.scalars().all()]
 
     async def get_user_role_records(self, user_id: UUID) -> list[UserRole]:
         result = await self._db.execute(

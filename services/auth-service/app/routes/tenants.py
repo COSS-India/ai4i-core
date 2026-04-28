@@ -13,6 +13,7 @@ from app.dependencies.auth import get_current_active_user
 from app.dependencies.services import get_auth_service
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User
+from app.models.role_name import RoleName
 from app.repositories.role_repository import RoleRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
@@ -35,7 +36,7 @@ router = APIRouter(prefix="/tenants", tags=["Tenants"])
 async def _is_system_admin(current_user: User, db: AsyncSession) -> bool:
     role_repo = RoleRepository(db)
     roles = await role_repo.get_user_roles(current_user.id)
-    return "ADMIN" in roles or "MODERATOR" in roles
+    return RoleName.ADMIN.value in roles or RoleName.MODERATOR.value in roles
 
 
 async def _enforce_tenant_scope(

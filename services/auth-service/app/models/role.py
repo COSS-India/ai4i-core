@@ -2,19 +2,30 @@
 Role, Permission, UserRole, and RolePermission ORM models.
 """
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.models import Base
+from app.models.role_name import RoleName
 
 
 class Role(Base):
     __tablename__ = "roles"
 
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
-    name = Column(String(100), unique=True, index=True, nullable=False)
+    name = Column(
+        Enum(
+            RoleName,
+            values_callable=lambda obj: [m.value for m in obj],
+            native_enum=False,
+            length=100,
+        ),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     created_by = Column(UUID(as_uuid=True), nullable=True)

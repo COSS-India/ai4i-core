@@ -11,6 +11,7 @@ from app.core.responses import success_response
 from app.dependencies.auth import get_current_active_user
 from app.dependencies.permissions import require_any_role
 from app.dependencies.services import get_api_key_service, get_role_service
+from app.models.role_name import RoleName
 from app.models.user import User
 from app.schemas.api_key import (
     CreateAPIKeyRequest,
@@ -95,7 +96,7 @@ async def revoke_api_key(
 ):
     owner_scoped_user_id = current_user.id
     roles = await role_svc.get_user_roles(current_user.id)
-    if "ADMIN" in roles:
+    if RoleName.ADMIN.value in roles:
         owner_scoped_user_id = None
 
     await svc.revoke_api_key(api_key, user_id=owner_scoped_user_id)
@@ -106,7 +107,7 @@ async def revoke_api_key(
 async def list_all_api_keys(
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    _admin: User = Depends(require_any_role("ADMIN", "MODERATOR")),
+    _admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.MODERATOR)),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     results = await svc.list_all_with_users(offset, limit)

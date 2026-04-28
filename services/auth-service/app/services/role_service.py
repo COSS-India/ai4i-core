@@ -8,12 +8,11 @@ from uuid import UUID
 
 from app.core.exceptions import EntityNotFoundError, ValidationError
 from app.models.role import Permission, Role
+from app.models.role_name import RoleName, role_name_to_str
 from app.repositories.role_repository import RoleRepository
 from app.services.cache_service import CacheService
 
 logger = logging.getLogger(__name__)
-
-_GUEST_ROLE_NAME = "GUEST"
 
 
 def _normalize_service_slug(value: str) -> str:
@@ -74,14 +73,15 @@ class RoleService:
 
     # ── Role management ──
 
-    async def assign_role(self, user_id: UUID, role_name: str) -> None:
+    async def assign_role(self, user_id: UUID, role_name: str | RoleName) -> None:
         """
         Assign a role to a user. Permissions are additive — existing roles are
         kept. Silently skips if the user already has this role.
         """
-        role = await self._roles.get_role_by_name(role_name)
+        key = role_name_to_str(role_name)
+        role = await self._roles.get_role_by_name(key)
         if not role:
-            raise EntityNotFoundError(f"Role '{role_name}'")
+            raise EntityNotFoundError(f"Role '{key}'")
 
         existing = await self._roles.get_user_role_record(user_id, role.id)
         if existing:
@@ -89,12 +89,13 @@ class RoleService:
 
         await self._roles.assign_role(user_id, role.id)
         await self._roles.commit()
-        logger.info("Role '%s' assigned to user %s", role_name, user_id)
+        logger.info("Role '%s' assigned to user %s", key, user_id)
 
-    async def remove_role(self, user_id: UUID, role_name: str) -> None:
-        role = await self._roles.get_role_by_name(role_name)
+    async def remove_role(self, user_id: UUID, role_name: str | RoleName) -> None:
+        key = role_name_to_str(role_name)
+        role = await self._roles.get_role_by_name(key)
         if not role:
-            raise EntityNotFoundError(f"Role '{role_name}'")
+            raise EntityNotFoundError(f"Role '{key}'")
         removed = await self._roles.remove_role(user_id, role.id)
         if not removed:
             raise EntityNotFoundError("UserRole")
@@ -164,9 +165,9 @@ class RoleService:
                 errors=errors,
             )
 
-        guest = await self._roles.get_role_by_name(_GUEST_ROLE_NAME)
+        guest = await self._roles.get_role_by_name(RoleName.GUEST)
         if not guest:
-            raise EntityNotFoundError(f"Role '{_GUEST_ROLE_NAME}'")
+            raise EntityNotFoundError(f"Role '{RoleName.GUEST.value}'")
 
         await self._roles.delete_role_permissions_for_permission_ids(guest.id, managed_ids)
         await self._roles.insert_role_permissions(guest.id, [p.id for p in resolved])
@@ -178,9 +179,9 @@ class RoleService:
         return resources
 
     async def list_guest_inference_services(self) -> list[str]:
-        guest = await self._roles.get_role_by_name(_GUEST_ROLE_NAME)
+        guest = await self._roles.get_role_by_name(RoleName.GUEST)
         if not guest:
-            raise EntityNotFoundError(f"Role '{_GUEST_ROLE_NAME}'")
+            raise EntityNotFoundError(f"Role '{RoleName.GUEST.value}'")
 
         managed = await self._managed_guest_inference_permissions()
         managed_id_set = {p.id for p in managed}
