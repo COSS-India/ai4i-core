@@ -157,6 +157,7 @@ async def delete_service(
     service_id: str,
     svc: ServiceService = Depends(get_service_service),
 ):
+    """Delete a service by its hash-generated service ID."""
     await svc.delete_service(service_id)
     return success_response(
         data={"serviceId": service_id},

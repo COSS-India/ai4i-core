@@ -6,7 +6,7 @@ Path layout (mounted under /api/v1):
   GET    /models/{model_id}       — get a single model (optional ?version=)
   POST   /models                  — create a new model
   PATCH  /models                  — update a model (modelId+version in body)
-  DELETE /models/{model_id}       — delete a model by internal UUID
+  DELETE /models/{model_id}       — delete a model by its hash-generated model ID
 
 Authentication is handled at the gateway layer.
 """
@@ -154,7 +154,7 @@ async def delete_model(
     model_id: str,
     svc: ModelService = Depends(get_model_service),
 ):
-    """Delete a model by its internal UUID."""
+    """Delete a model by its hash-generated model ID."""
     await svc.delete_model(model_id)
     return success_response(
         data={"modelId": model_id},
