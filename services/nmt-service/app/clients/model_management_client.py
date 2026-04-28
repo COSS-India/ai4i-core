@@ -204,7 +204,7 @@ class ModelManagementClient:
             encoded_service_id = quote(service_id, safe="")
             url = f"{self.base_url}/api/v1/model-management/services/{encoded_service_id}"
             headers = self._get_headers(auth_headers)
-            response = await client.post(url, headers=headers, json={"serviceId": service_id})
+            response = await client.get(url, headers=headers)
 
             if response.status_code == 404:
                 return None

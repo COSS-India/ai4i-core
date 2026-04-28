@@ -325,7 +325,7 @@ class ModelManagementClient:
             headers = self._get_headers(auth_headers)
             
             logger.debug(f"Fetching service {service_id} from {url}")
-            response = await client.post(url, headers=headers)
+            response = await client.get(url, headers=headers)
             
             if response.status_code == 404:
                 logger.warning(

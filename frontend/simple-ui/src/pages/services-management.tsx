@@ -593,10 +593,10 @@ const ServicesManagementPage: React.FC = () => {
     // Check session expiry before updating
     if (!checkSessionExpiry()) return;
     
-    if (!selectedService?.uuid) {
+    if (!selectedService?.serviceId) {
       toast({
         title: "Update Failed",
-        description: "Service UUID is required for update",
+        description: "Service ID is required for update",
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -609,7 +609,7 @@ const ServicesManagementPage: React.FC = () => {
     try {
       const updatedService = await updateService({
         ...updateFormData,
-        uuid: selectedService.uuid,
+        serviceId: selectedService.serviceId,
       });
 
       // Invalidate all service-related queries to refresh service lists across all pages
@@ -709,7 +709,7 @@ const ServicesManagementPage: React.FC = () => {
       return;
     }
 
-    setPublishingServiceUuid(service.uuid || service.serviceId);
+    setPublishingServiceUuid(service.serviceId);
 
     try {
       // Update service to set isPublished = true using PATCH with only serviceId and isPublished
@@ -743,7 +743,7 @@ const ServicesManagementPage: React.FC = () => {
       await fetchServices();
 
       // Update selected service if it's the one being published
-      if (selectedService?.uuid === service.uuid) {
+      if (selectedService?.serviceId === service.serviceId) {
         setSelectedService(updatedService);
       }
     } catch (error: any) {
@@ -773,7 +773,7 @@ const ServicesManagementPage: React.FC = () => {
       return;
     }
 
-    setUnpublishingServiceUuid(service.uuid || service.serviceId);
+    setUnpublishingServiceUuid(service.serviceId);
 
     try {
       // Update service to set isPublished = false using PATCH with only serviceId and isPublished
@@ -807,7 +807,7 @@ const ServicesManagementPage: React.FC = () => {
       await fetchServices();
 
       // Update selected service if it's the one being unpublished
-      if (selectedService?.uuid === service.uuid) {
+      if (selectedService?.serviceId === service.serviceId) {
         setSelectedService(updatedService);
       }
     } catch (error: any) {
@@ -832,10 +832,10 @@ const ServicesManagementPage: React.FC = () => {
 
   const handleDeleteConfirm = async () => {
     if (!checkSessionExpiry()) return;
-    if (!serviceToDelete?.uuid) {
+    if (!serviceToDelete?.serviceId) {
       toast({
         title: "Delete Failed",
-        description: "Service UUID is required for deletion",
+        description: "Service ID is required for deletion",
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -843,9 +843,9 @@ const ServicesManagementPage: React.FC = () => {
       onClose();
       return;
     }
-    setDeletingServiceUuid(serviceToDelete.uuid);
+    setDeletingServiceUuid(serviceToDelete.serviceId);
     try {
-      await deleteService(serviceToDelete.uuid);
+      await deleteService(serviceToDelete.serviceId);
       toast({
         title: "Service deleted",
         description: `${serviceToDelete.name || serviceToDelete.service_id} has been deleted successfully.`,
@@ -865,7 +865,7 @@ const ServicesManagementPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
       queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
       await fetchServices();
-      if (selectedService?.uuid === serviceToDelete.uuid) {
+      if (selectedService?.serviceId === serviceToDelete.serviceId) {
         setIsViewingService(false);
         setSelectedService(null);
         setSelectedServiceModelDeprecated(null);
@@ -1054,7 +1054,7 @@ const ServicesManagementPage: React.FC = () => {
                               <Tbody>
                                 {paginatedServices.map((service) => (
                                   <Tr
-                                    key={service.uuid || service.service_id}
+                                    key={service.serviceId || service.service_id}
                                     _hover={{ bg: tableRowHoverBg, cursor: "pointer" }}
                                     onClick={() => handleViewService(service.serviceId || service.service_id || "")}
                                   >
@@ -1107,7 +1107,7 @@ const ServicesManagementPage: React.FC = () => {
                                               colorScheme="red"
                                               _hover={{ bg: "red.50" }}
                                               onClick={() => { setConfirmUnpublishService(service); onUnpublishConfirmOpen(); }}
-                                              isLoading={unpublishingServiceUuid === service.uuid}
+                                              isLoading={unpublishingServiceUuid === service.serviceId}
                                               isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
                                             />
                                           </Tooltip>
@@ -1126,7 +1126,7 @@ const ServicesManagementPage: React.FC = () => {
                                                 colorScheme="green"
                                                 _hover={{ bg: "green.50" }}
                                                 onClick={() => { setConfirmPublishService(service); onPublishConfirmOpen(); }}
-                                                isLoading={publishingServiceUuid === service.uuid}
+                                                isLoading={publishingServiceUuid === service.serviceId}
                                                 isDisabled={
                                                   unpublishingServiceUuid !== null ||
                                                   publishingServiceUuid !== null ||
@@ -1145,7 +1145,7 @@ const ServicesManagementPage: React.FC = () => {
                                             colorScheme="red"
                                             _hover={{ bg: "red.50" }}
                                             onClick={() => handleDeleteClick(service)}
-                                            isLoading={deletingServiceUuid === service.uuid}
+                                            isLoading={deletingServiceUuid === service.serviceId}
                                             isDisabled={deletingServiceUuid !== null}
                                           />
                                         </Tooltip>
@@ -1397,7 +1397,7 @@ const ServicesManagementPage: React.FC = () => {
                                           colorScheme="red"
                                           variant="outline"
                                           onClick={() => { setConfirmUnpublishService(selectedService); onUnpublishConfirmOpen(); }}
-                                          isLoading={unpublishingServiceUuid === selectedService.uuid}
+                                          isLoading={unpublishingServiceUuid === selectedService.serviceId}
                                           isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
                                         />
                                       </Tooltip>
@@ -1415,7 +1415,7 @@ const ServicesManagementPage: React.FC = () => {
                                             colorScheme="green"
                                             variant="outline"
                                             onClick={() => { setConfirmPublishService(selectedService); onPublishConfirmOpen(); }}
-                                            isLoading={publishingServiceUuid === selectedService.uuid}
+                                            isLoading={publishingServiceUuid === selectedService.serviceId}
                                             isDisabled={
                                               unpublishingServiceUuid !== null ||
                                               publishingServiceUuid !== null ||
@@ -1465,17 +1465,6 @@ const ServicesManagementPage: React.FC = () => {
                                   </Text>
                                 </Box>
                               </SimpleGrid>
-
-                              {selectedService.uuid && (
-                                <Box>
-                                  <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                                    UUID
-                                  </Text>
-                                  <Text fontSize="sm" fontFamily="mono" color="gray.500">
-                                    {selectedService.uuid}
-                                  </Text>
-                                </Box>
-                              )}
 
                               {selectedService.created_at && (
                                 <Box>
@@ -1527,7 +1516,7 @@ const ServicesManagementPage: React.FC = () => {
         confirmLabel="Confirm"
         cancelLabel="Cancel"
         confirmColorScheme="red"
-        isConfirmLoading={deletingServiceUuid === serviceToDelete?.uuid}
+        isConfirmLoading={deletingServiceUuid === serviceToDelete?.serviceId}
         confirmLoadingText="Deleting..."
         leastDestructiveRef={cancelRef}
       />
@@ -1550,7 +1539,7 @@ const ServicesManagementPage: React.FC = () => {
         confirmLabel="Confirm"
         cancelLabel="Cancel"
         confirmColorScheme="green"
-        isConfirmLoading={publishingServiceUuid === confirmPublishService?.uuid}
+        isConfirmLoading={publishingServiceUuid === confirmPublishService?.serviceId}
         confirmLoadingText="Publishing..."
         leastDestructiveRef={cancelPublishRef}
       />
@@ -1573,7 +1562,7 @@ const ServicesManagementPage: React.FC = () => {
         confirmLabel="Confirm"
         cancelLabel="Cancel"
         confirmColorScheme="red"
-        isConfirmLoading={unpublishingServiceUuid === confirmUnpublishService?.uuid}
+        isConfirmLoading={unpublishingServiceUuid === confirmUnpublishService?.serviceId}
         confirmLoadingText="Unpublishing..."
         leastDestructiveRef={cancelUnpublishRef}
       />

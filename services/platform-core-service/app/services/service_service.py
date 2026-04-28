@@ -361,19 +361,14 @@ class ServiceService:
             )
 
     async def delete_service(self, id_str: str) -> None:
-        try:
-            uuid = UUID(id_str)
-        except ValueError:
-            raise EntityNotFoundError(f"Service '{id_str}'")
-
-        instance = await self._services.get_by_uuid(uuid)
+        instance = await self._services.get_by_service_id(id_str)
         if instance is None:
             raise EntityNotFoundError(f"Service '{id_str}'")
         if instance.is_published:
             raise PublishedServiceImmutableError(instance.service_id)
 
         try:
-            await self._services.delete_by_uuid(uuid)
+            await self._services.delete_by_service_id(instance.service_id)
             await self._services.commit()
         except Exception:
             await self._services.rollback()

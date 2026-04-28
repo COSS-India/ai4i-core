@@ -134,6 +134,12 @@ class ServiceRepository:
         result = await self._db.execute(delete(Service).where(Service.id == uuid))
         return int(result.rowcount or 0)
 
+    async def delete_by_service_id(self, service_id: str) -> int:
+        result = await self._db.execute(
+            delete(Service).where(Service.service_id == service_id)
+        )
+        return int(result.rowcount or 0)
+
     async def delete_unpublished_for_model_version(
         self, model_id: str, model_version: str
     ) -> int:

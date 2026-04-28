@@ -152,8 +152,20 @@ class ModelRepository:
         await self._db.refresh(instance)
         return instance
 
+    async def get_by_model_id(self, model_id: str) -> Optional[Model]:
+        result = await self._db.execute(
+            select(Model).where(Model.model_id == model_id)
+        )
+        return result.scalar_one_or_none()
+
     async def delete_by_uuid(self, uuid: UUID) -> int:
         result = await self._db.execute(delete(Model).where(Model.id == uuid))
+        return int(result.rowcount or 0)
+
+    async def delete_by_model_id(self, model_id: str) -> int:
+        result = await self._db.execute(
+            delete(Model).where(Model.model_id == model_id)
+        )
         return int(result.rowcount or 0)
 
     async def commit(self) -> None:

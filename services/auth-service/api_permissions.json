@@ -212,20 +212,6 @@
       "description": "Delete models"
     },
     {
-      "code": "P_31",
-      "name": "model.publish",
-      "resource": "model",
-      "action": "publish",
-      "description": "Publish models"
-    },
-    {
-      "code": "P_32",
-      "name": "model.unpublish",
-      "resource": "model",
-      "action": "unpublish",
-      "description": "Unpublish models"
-    },
-    {
       "code": "P_33",
       "name": "roles.assign",
       "resource": "roles",
@@ -520,8 +506,6 @@
         "P_28",
         "P_29",
         "P_30",
-        "P_31",
-        "P_32",
         "P_33",
         "P_34",
         "P_35",
@@ -557,8 +541,6 @@
         "P_60",
         "P_61",
         "P_62",
-        "P_63",
-        "P_64",
         "P_65",
         "P_66"
       ]
@@ -593,8 +575,6 @@
         "P_28",
         "P_29",
         "P_30",
-        "P_31",
-        "P_32",
         "P_65"
       ]
     },
@@ -832,21 +812,6 @@
       "description": "Speaker diarization inference"
     },
     {
-      "endpoint": "GET:/api/v1/models",
-      "permissionRequired": "model.read",
-      "description": "List models"
-    },
-    {
-      "endpoint": "POST:/api/v1/models",
-      "permissionRequired": "model.create",
-      "description": "Create model"
-    },
-    {
-      "endpoint": "GET:/api/v1/services",
-      "permissionRequired": "service.read",
-      "description": "List services"
-    },
-    {
       "endpoint": "POST:/redact",
       "permissionRequired": "pii_guard.inference",
       "description": "PII redaction inference"
@@ -940,6 +905,61 @@
       "endpoint": "DELETE:/api/v1/tenants/{tenant_id}/users/{user_id}",
       "permissionRequired": "tenant.users.update",
       "description": "Soft-delete a tenant user"
+    },
+    {
+      "endpoint": "GET:/api/v1/models",
+      "permissionRequired": "model.read",
+      "description": "List all models"
+    },
+    {
+      "endpoint": "GET:/api/v1/models/{model_id}",
+      "permissionRequired": "model.read",
+      "description": "Get model by ID"
+    },
+    {
+      "endpoint": "POST:/api/v1/models",
+      "permissionRequired": "model.create",
+      "description": "Create a new model"
+    },
+    {
+      "endpoint": "PATCH:/api/v1/models",
+      "permissionRequired": "model.update",
+      "description": "Update a model"
+    },
+    {
+      "endpoint": "DELETE:/api/v1/models/{model_id}",
+      "permissionRequired": "model.delete",
+      "description": "Delete a model by ID"
+    },
+    {
+      "endpoint": "GET:/api/v1/services",
+      "permissionRequired": "service.read",
+      "description": "List all services"
+    },
+    {
+      "endpoint": "GET:/api/v1/services/try-it-service-list",
+      "permissionRequired": null,
+      "description": "Public try-it service list"
+    },
+    {
+      "endpoint": "GET:/api/v1/services/{service_id}",
+      "permissionRequired": "service.read",
+      "description": "Get service detail by ID"
+    },
+    {
+      "endpoint": "POST:/api/v1/services",
+      "permissionRequired": "service.create",
+      "description": "Create a new service"
+    },
+    {
+      "endpoint": "PATCH:/api/v1/services",
+      "permissionRequired": "service.update",
+      "description": "Update a service"
+    },
+    {
+      "endpoint": "DELETE:/api/v1/services/{service_id}",
+      "permissionRequired": "service.delete",
+      "description": "Delete a service by ID"
     }
   ]
 }
