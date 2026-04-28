@@ -137,9 +137,9 @@ async def create_tenant(
     await auth_svc.provision_user(
         email=body.email,
         username=derived_username,
-        full_name=body.contact_name,
+        full_name=body.name,
         phone_number=body.phone_number,
-        tenant_id=str(tenant.tenant_id),
+        tenant_id=str(tenant.id),
         creation_type="tenant",
         role_name=Roles.TENANT_ADMIN,
         background_tasks=background_tasks,

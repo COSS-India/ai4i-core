@@ -346,7 +346,7 @@ class AuthService:
             token=setup_token,
             is_active=True,
             expires_at=self._setup_token_expires_at(),
-            created_by=user_uuid_str,
+            created_by=user.id,
         )
         await self._verifications.create(token_obj)
         await self._users.commit()
@@ -442,7 +442,7 @@ class AuthService:
             token=setup_token,
             is_active=True,
             expires_at=self._setup_token_expires_at(),
-            created_by=user_uuid_str,
+            created_by=user.id,
         )
         await self._verifications.create(token_obj)
         await self._users.commit()
