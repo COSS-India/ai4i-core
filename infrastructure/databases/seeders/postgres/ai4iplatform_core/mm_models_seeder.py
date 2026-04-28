@@ -12,7 +12,6 @@ from infrastructure.databases.core.base_seeder import BaseSeeder
 from infrastructure.databases.seeders.postgres.ai4iplatform_core._models_data import (
     MODELS,
     SEEDER_ID,
-    _sql_lit,
     generate_model_id,
     generate_uuid,
 )
@@ -21,6 +20,12 @@ try:
     from ai4icore_env import app_env
 except ImportError:
     app_env = None  # type: ignore[assignment]
+
+_SUBMITTER = json.dumps({
+    "name": "AI4Bharat",
+    "aboutMe": "AI research organization",
+    "team": [{"name": "Admin", "aboutMe": None}],
+})
 
 
 class MmModelsSeeder(BaseSeeder):
@@ -50,11 +55,9 @@ class MmModelsSeeder(BaseSeeder):
                 },
                 "callbackUrl": endpoint_url,
             }
-            inference_endpoint_lit = _sql_lit(
-                json.dumps(inference_endpoint, ensure_ascii=False, separators=(",", ":"))
-            )
 
-            adapter.execute(f"""
+            adapter.execute(
+                """
                 INSERT INTO mm_models (
                     id,
                     model_id,
@@ -71,24 +74,39 @@ class MmModelsSeeder(BaseSeeder):
                     created_by
                 )
                 VALUES (
-                    '{generate_uuid("model", name, version)}',
-                    '{model_id}',
-                    '{_sql_lit(version)}',
+                    :id,
+                    :model_id,
+                    :version,
                     'ACTIVE',
-                    '{_sql_lit(name)}',
-                    '{_sql_lit(m["description"])}',
-                    '{{"type": "{task_type}"}}'::jsonb,
-                    '{_sql_lit(m["languages"])}'::jsonb,
-                    '{_sql_lit(m["domain"])}'::jsonb,
-                    '{_sql_lit(m["license"])}',
-                    '{inference_endpoint_lit}'::jsonb,
-                    '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
-                    '{SEEDER_ID}'
+                    :name,
+                    :description,
+                    CAST(:task AS jsonb),
+                    CAST(:languages AS jsonb),
+                    CAST(:domain AS jsonb),
+                    :license,
+                    CAST(:inference_endpoint AS jsonb),
+                    CAST(:submitter AS jsonb),
+                    :created_by
                 )
                 ON CONFLICT (name, version) DO UPDATE SET
-                    inference_endpoint       = '{inference_endpoint_lit}'::jsonb,
-                    updated_at               = CURRENT_TIMESTAMP;
-            """)
+                    inference_endpoint = CAST(:inference_endpoint AS jsonb),
+                    updated_at         = CURRENT_TIMESTAMP
+                """,
+                {
+                    "id": generate_uuid("model", name, version),
+                    "model_id": model_id,
+                    "version": version,
+                    "name": name,
+                    "description": m["description"],
+                    "task": json.dumps({"type": task_type}),
+                    "languages": m["languages"],
+                    "domain": m["domain"],
+                    "license": m["license"],
+                    "inference_endpoint": json.dumps(inference_endpoint, ensure_ascii=False),
+                    "submitter": _SUBMITTER,
+                    "created_by": SEEDER_ID,
+                },
+            )
 
             print(f"    ✓ {name} v{version} ({task_type})")
 

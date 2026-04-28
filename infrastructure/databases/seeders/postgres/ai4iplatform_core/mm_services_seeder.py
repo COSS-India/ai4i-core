@@ -10,7 +10,6 @@ from infrastructure.databases.core.base_seeder import BaseSeeder
 from infrastructure.databases.seeders.postgres.ai4iplatform_core._models_data import (
     MODELS,
     SEEDER_ID,
-    _sql_lit,
     generate_model_id,
     generate_service_id,
     generate_uuid,
@@ -37,16 +36,15 @@ class MmServicesSeeder(BaseSeeder):
             task_type = m["task_type"]
             endpoint_url = (getattr(app_env, m["endpoint_attr"], "") or "") if app_env else ""
             model_id = generate_model_id(name, version)
-            ep_lit = _sql_lit(endpoint_url)
             ist = "http" if task_type == "llm" else "triton"
 
             for svc in m["services"]:
                 svc_name = svc["name"]
                 service_id = generate_service_id(svc_name)
-                sn = _sql_lit(svc_name)
-                is_published = str(svc.get("is_published", True)).lower()
+                is_published = svc.get("is_published", True)
 
-                adapter.execute(f"""
+                adapter.execute(
+                    """
                     INSERT INTO mm_services (
                         id,
                         service_id,
@@ -62,31 +60,45 @@ class MmServicesSeeder(BaseSeeder):
                         created_by
                     )
                     VALUES (
-                        '{generate_uuid("service", name, version, svc_name)}',
-                        '{service_id}',
-                        '{sn}',
-                        '{_sql_lit(svc["description"])}',
-                        '{_sql_lit(svc["hardware"])}',
-                        '{model_id}',
-                        '{_sql_lit(version)}',
-                        '{ep_lit}',
-                        '{ist}',
+                        :id,
+                        :service_id,
+                        :name,
+                        :service_description,
+                        :hardware_description,
+                        :model_id,
+                        :model_version,
+                        :endpoint,
+                        :inference_server_type,
                         true,
-                        {is_published},
-                        '{SEEDER_ID}'
+                        :is_published,
+                        :created_by
                     )
                     ON CONFLICT (name) DO UPDATE SET
-                        service_id            = '{service_id}',
-                        service_description   = '{_sql_lit(svc["description"])}',
-                        hardware_description  = '{_sql_lit(svc["hardware"])}',
-                        model_id              = '{model_id}',
-                        model_version         = '{_sql_lit(version)}',
-                        endpoint              = '{ep_lit}',
-                        inference_server_type = '{ist}',
+                        service_id            = :service_id,
+                        service_description   = :service_description,
+                        hardware_description  = :hardware_description,
+                        model_id              = :model_id,
+                        model_version         = :model_version,
+                        endpoint              = :endpoint,
+                        inference_server_type = :inference_server_type,
                         ssl_verify            = true,
-                        is_published          = {is_published},
-                        updated_at            = CURRENT_TIMESTAMP;
-                """)
+                        is_published          = :is_published,
+                        updated_at            = CURRENT_TIMESTAMP
+                    """,
+                    {
+                        "id": generate_uuid("service", name, version, svc_name),
+                        "service_id": service_id,
+                        "name": svc_name,
+                        "service_description": svc["description"],
+                        "hardware_description": svc["hardware"],
+                        "model_id": model_id,
+                        "model_version": version,
+                        "endpoint": endpoint_url,
+                        "inference_server_type": ist,
+                        "is_published": is_published,
+                        "created_by": SEEDER_ID,
+                    },
+                )
 
                 print(f"    ✓ {svc_name} → {name} ({task_type}, published={is_published})")
                 total += 1
