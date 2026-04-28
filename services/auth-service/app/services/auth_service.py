@@ -253,7 +253,7 @@ class AuthService:
         full_name: Optional[str] = None,
         phone_number: Optional[str] = None,
         tenant_id: Optional[str] = None,
-        creation_type: str = "tenant",
+        creation_type: str = "default",
     ) -> tuple[str, str]:
         """
         Create an inactive user without credentials and generate a setup token.

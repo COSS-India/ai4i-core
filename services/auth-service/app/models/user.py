@@ -14,8 +14,10 @@ from app.models import Base
 
 
 class CreationType(str, enum.Enum):
+    """Persisted labels: `creation_type_enum` allows only ``default`` and ``google``."""
+
     DEFAULT = "default"
-    OTHER = "google"
+    GOOGLE = "google"
 
 class User(Base):
     __tablename__ = "users"

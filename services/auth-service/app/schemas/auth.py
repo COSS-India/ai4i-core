@@ -51,7 +51,10 @@ class ProvisionUserRequest(BaseSchema):
     full_name: Optional[str] = Field(None, max_length=255)
     phone_number: Optional[str] = Field(None, max_length=20)
     tenant_id: Optional[str] = Field(None, max_length=100)
-    creation_type: str = Field(default="tenant")
+    creation_type: str = Field(
+        default="default",
+        description="Legacy values 'tenant'/'direct' normalize to 'default'; only 'default' and 'google' persist.",
+    )
 
 
 class SetPasswordRequest(BaseSchema):

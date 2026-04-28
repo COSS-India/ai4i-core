@@ -13,13 +13,10 @@ from app.schemas.base import BaseSchema
 
 
 class CreationType(str, Enum):
-    DIRECT = "direct"
-    GOOGLE = "google"
-    TENANT = "tenant"
-    # Backward-compatible value still present in some DBs/data.
+    """Must match Postgres `creation_type_enum` and ORM `app.models.user.CreationType`."""
+
     DEFAULT = "default"
-    # Backward-compatible alias used in older code.
-    OTHER = "google"
+    GOOGLE = "google"
 
 
 class UserUpdate(BaseSchema):
