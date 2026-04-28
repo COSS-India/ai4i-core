@@ -1,5 +1,7 @@
 """
 APIKey table queries.
+
+No business logic, no Redis calls — Postgres only.
 """
 
 from typing import Optional
@@ -18,12 +20,7 @@ class APIKeyRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
         super().__init__(db)
 
-    async def get_by_id(self, key_id: int) -> Optional[APIKey]:
-        result = await self._db.execute(select(APIKey).where(APIKey.key_id == key_id))
-        return result.scalar_one_or_none()
-
     async def get_by_api_key(self, api_key_value: str) -> Optional[APIKey]:
-        """Look up a key by the token_id stored in the api_key column."""
         result = await self._db.execute(
             select(APIKey).where(APIKey.api_key == api_key_value)
         )
@@ -39,11 +36,12 @@ class APIKeyRepository(BaseRepository):
         )
         return {pid: name for pid, name in result.all()}
 
-    async def list_by_user(self, user_id: UUID, active_only: bool = False) -> list[APIKey]:
-        query = select(APIKey).where(APIKey.user_id == user_id)
-        if active_only:
-            query = query.where(APIKey.is_active == True)  # noqa: E712
-        result = await self._db.execute(query.order_by(APIKey.created_at.desc()))
+    async def list_by_user(self, user_id: UUID) -> list[APIKey]:
+        result = await self._db.execute(
+            select(APIKey)
+            .where(APIKey.user_id == user_id)
+            .order_by(APIKey.created_at.desc())
+        )
         return list(result.scalars().all())
 
     async def list_all_with_users(self, offset: int = 0, limit: int = 100) -> list[tuple[APIKey, User]]:
@@ -56,6 +54,16 @@ class APIKeyRepository(BaseRepository):
         )
         return list(result.all())
 
-    async def deactivate(self, api_key: APIKey) -> None:
+    async def update(self, api_key: APIKey, data: dict) -> APIKey:
+        for field, value in data.items():
+            if hasattr(api_key, field) and value is not None:
+                setattr(api_key, field, value)
+        await self._db.flush()
+        return api_key
+
+    async def refresh(self, api_key: APIKey) -> None:
+        await self._db.refresh(api_key)
+
+    async def revoke(self, api_key: APIKey) -> None:
         api_key.is_active = False
         await self._db.flush()

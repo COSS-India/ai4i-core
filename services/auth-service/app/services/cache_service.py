@@ -14,7 +14,10 @@ import redis.asyncio as aioredis
 from ai4icore_bootstrap.cache import CacheService as _BaseCacheService
 from app.core.config import settings
 
-_API_KEY_PREFIX = "auth:apikey:"
+# Redis key pattern: auth:apikey:{api_key}
+# Defined once here — no other file should construct this key manually.
+REDIS_API_KEY_PREFIX = "auth:apikey:"
+
 _ROLE_PERMS_PREFIX = "auth:role:"
 _API_PERMS_KEY = "auth:api_perms"
 _TENANT_STATUS_PREFIX = "auth:tenant_status:"
@@ -61,17 +64,37 @@ class CacheService(_BaseCacheService):
         data = await self._redis_api_permissions.get(_API_PERMS_KEY)
         return json.loads(data) if data else None
 
-    # ── API Key token_id ──
+    # ── API Key cache (canonical methods) ──
+
+    async def set_api_key_cache(self, api_key: str, ttl_seconds: int, data: dict) -> None:
+        """Store api_key metadata in Redis. TTL matches key expiry."""
+        await self._redis_api_keys.setex(
+            f"{REDIS_API_KEY_PREFIX}{api_key}",
+            ttl_seconds,
+            json.dumps(data),
+        )
+
+    async def get_api_key_cache(self, api_key: str) -> Optional[dict]:
+        """Return cached metadata dict, or None on miss/expiry."""
+        raw = await self._redis_api_keys.get(f"{REDIS_API_KEY_PREFIX}{api_key}")
+        if raw is None:
+            return None
+        return json.loads(raw)
+
+    async def delete_api_key_cache(self, api_key: str) -> None:
+        """Immediately invalidate an API key — used on revocation."""
+        await self._redis_api_keys.delete(f"{REDIS_API_KEY_PREFIX}{api_key}")
+
+    # ── Backward-compat aliases (used by dependencies/auth.py) ──
 
     async def store_api_key_token(self, token_id: str, ttl_seconds: int, metadata: dict | None = None) -> None:
-        value = json.dumps(metadata) if metadata else "1"
-        await self._redis_api_keys.setex(f"{_API_KEY_PREFIX}{token_id}", ttl_seconds, value)
+        await self.set_api_key_cache(token_id, ttl_seconds, metadata or {})
 
     async def is_api_key_valid(self, token_id: str) -> bool:
-        return await self._redis_api_keys.exists(f"{_API_KEY_PREFIX}{token_id}") > 0
+        return await self.get_api_key_cache(token_id) is not None
 
     async def revoke_api_key_token(self, token_id: str) -> None:
-        await self._redis_api_keys.delete(f"{_API_KEY_PREFIX}{token_id}")
+        await self.delete_api_key_cache(token_id)
 
     # ── Tenant status caches (short TTL for validate path) ──
 

@@ -1,21 +1,21 @@
 """
 API key CRUD routes.
+
+Route definitions only — no business logic, no DB/Redis calls.
+All operations are delegated to APIKeyService.
 """
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core.exceptions import EntityNotFoundError
 from app.core.responses import success_response
 from app.dependencies.auth import get_current_active_user
 from app.dependencies.permissions import require_any_role
 from app.dependencies.services import get_api_key_service, get_role_service
 from app.models.user import User
 from app.schemas.api_key import (
-    APIKeyCreateRequest,
-    APIKeyResponse,
-    APIKeyUpdateRequest,
-    APIKeyValidationRequest,
-    APIKeyValidationResponse,
+    CreateAPIKeyRequest,
+    CreateAPIKeyResponse,
+    UpdateAPIKeyRequest,
 )
 from app.services.api_key_service import APIKeyService
 from app.services.role_service import RoleService
@@ -23,29 +23,37 @@ from app.services.role_service import RoleService
 router = APIRouter(prefix="/auth", tags=["API Keys"])
 
 
+def _key_dict(k) -> dict:
+    return {
+        "api_key": k.api_key,
+        "key_name": k.key_name,
+        "user_id": str(k.user_id),
+        "permissions": k.permissions or [],
+        "expires_at": k.expires_at.isoformat() if k.expires_at else None,
+        "is_active": k.is_active,
+        "created_at": k.created_at.isoformat() if k.created_at else None,
+        "updated_at": k.updated_at.isoformat() if k.updated_at else None,
+    }
+
+
 @router.post("/api-keys")
 async def create_api_key(
-    body: APIKeyCreateRequest,
+    body: CreateAPIKeyRequest,
     current_user: User = Depends(get_current_active_user),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
-    tenant_id = str(current_user.tenant_id) if current_user.tenant_id else None
-    jwt_token, api_key = await svc.create_api_key(
+    raw_key, api_key = await svc.create_api_key(
         user_id=current_user.user_id,
         key_name=body.key_name,
         permissions=body.permissions,
-        tenant_id=tenant_id,
         expires_days=body.expires_days,
     )
-    return success_response(data={
-        "key_id": api_key.key_id,
-        "key_name": api_key.key_name,
-        "api_key": jwt_token,
-        "permissions": api_key.permissions,
-        "is_active": api_key.is_active,
-        "created_at": api_key.created_at.isoformat() if api_key.created_at else None,
-        "message": "API key created. Store it securely — it will not be shown again.",
-    })
+    return success_response(data=CreateAPIKeyResponse(
+        api_key=raw_key,
+        key_name=api_key.key_name,
+        permissions=api_key.permissions or [],
+        expires_at=api_key.expires_at,
+    ).model_dump())
 
 
 @router.get("/api-keys")
@@ -54,25 +62,33 @@ async def list_api_keys(
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     keys = await svc.list_by_user(current_user.user_id)
-    items = [APIKeyResponse.model_validate(k, from_attributes=True).model_dump() for k in keys]
-    return success_response(data={"api_keys": items})
+    return success_response(data={"api_keys": [_key_dict(k) for k in keys]})
 
 
-@router.patch("/api-keys/{key_id}")
+@router.patch("/api-keys")
 async def update_api_key(
-    key_id: int,
-    body: APIKeyUpdateRequest,
+    body: UpdateAPIKeyRequest,
     current_user: User = Depends(get_current_active_user),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
-    data = body.model_dump(exclude_unset=True)
-    api_key = await svc.update_key(key_id, data, user_id=current_user.user_id)
-    return success_response(data=APIKeyResponse.model_validate(api_key, from_attributes=True).model_dump())
+    update_data = body.model_dump(exclude={"api_key"}, exclude_unset=True)
+    api_key = await svc.update_key(
+        api_key_value=body.api_key,
+        data=update_data,
+        user_id=current_user.user_id,
+    )
+    return success_response(data={
+        "key_name": api_key.key_name,
+        "user_id": str(api_key.user_id),
+        "permissions": api_key.permissions or [],
+        "expires_at": api_key.expires_at.isoformat() if api_key.expires_at else None,
+        "is_active": api_key.is_active,
+    })
 
 
-@router.delete("/api-keys/{key_id}")
+@router.delete("/api-keys/{api_key}")
 async def revoke_api_key(
-    key_id: int,
+    api_key: str,
     current_user: User = Depends(get_current_active_user),
     svc: APIKeyService = Depends(get_api_key_service),
     role_svc: RoleService = Depends(get_role_service),
@@ -82,7 +98,7 @@ async def revoke_api_key(
     if "ADMIN" in roles:
         owner_scoped_user_id = None
 
-    await svc.revoke_api_key(key_id, user_id=owner_scoped_user_id)
+    await svc.revoke_api_key(api_key, user_id=owner_scoped_user_id)
     return success_response(data={"message": "API key revoked."})
 
 
@@ -94,25 +110,12 @@ async def list_all_api_keys(
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     results = await svc.list_all_with_users(offset, limit)
-    items = []
-    for api_key, user in results:
-        item = APIKeyResponse.model_validate(api_key, from_attributes=True).model_dump()
-        item["user_id"] = str(user.user_id)
-        item["user_email"] = user.email
-        item["username"] = user.username
-        items.append(item)
+    items = [
+        {
+            **_key_dict(api_key),
+            "user_email": user.email,
+            "username": user.username,
+        }
+        for api_key, user in results
+    ]
     return success_response(data=items)
-
-
-@router.post("/validate-api-key")
-async def validate_api_key(
-    body: APIKeyValidationRequest,
-    svc: APIKeyService = Depends(get_api_key_service),
-):
-    result = await svc.validate_api_key_jwt(
-        jwt_token=body.api_key,
-        required_service=body.service,
-        required_action=body.action,
-        expected_user_id=body.user_id,
-    )
-    return APIKeyValidationResponse(**result)
