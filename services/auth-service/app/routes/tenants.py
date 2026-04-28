@@ -1,15 +1,18 @@
 """Tenant + tenant-user CRUD routes."""
 
+import logging
+import re
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.exceptions import EntityNotFoundError
 from app.core.responses import success_response
 from app.dependencies.auth import get_current_active_user
+from app.core.roles import Roles
 from app.dependencies.services import get_auth_service
 from app.models.tenant import Tenant, TenantStatus
 from app.models.role_name import RoleName
@@ -29,6 +32,22 @@ from app.schemas.tenant import (
 )
 from app.schemas.user import UserListResponse
 from app.services.auth_service import AuthService
+
+logger = logging.getLogger(__name__)
+
+
+def _derive_username_from_email(email: str) -> str:
+    """Build a default username from the email's local part.
+
+    Used when auto-provisioning a tenant admin from the contact email — the
+    admin doesn't pick a username, the system derives one. Replaces non
+    [a-zA-Z0-9_] chars with underscores; falls back to "user" if empty.
+    """
+    local = email.split("@", 1)[0]
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", local).strip("_") or "user"
+    if len(sanitized) < 3:
+        sanitized = (sanitized + "_user")[:100]
+    return sanitized[:100]
 
 router = APIRouter(prefix="/tenants", tags=["Tenants"])
 
@@ -79,9 +98,21 @@ def _user_response(user: User) -> dict:
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_tenant(
     body: TenantCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
+    auth_svc: AuthService = Depends(get_auth_service),
 ):
+    """Create a tenant and auto-provision its first admin user.
+
+    Atomic: tenant + user + verification token share the same DB session, so
+    if user provisioning fails (duplicate email/username on the users table)
+    the tenant insert is also rolled back.
+
+    Side effect: a setup-link email is enqueued to the contact email so the
+    contact can activate the admin account and log in. No separate
+    informational email is sent &mdash; the setup-link is the entry point.
+    """
     repo = TenantRepository(db)
     if await repo.get_by_email(body.email):
         raise HTTPException(
@@ -97,8 +128,27 @@ async def create_tenant(
         status=TenantStatus.ACTIVATED,
         created_by=current_user.id,
     )
-    await repo.create(tenant)
-    await repo.save_and_refresh(tenant)
+    await repo.create(tenant)  # flush only — tenant_id now populated
+
+    # Auto-provision the first admin user for this tenant. The username is
+    # derived from the email local part; if it collides, provision_user
+    # raises DuplicateEntityError and the whole transaction rolls back.
+    derived_username = _derive_username_from_email(body.email)
+    await auth_svc.provision_user(
+        email=body.email,
+        username=derived_username,
+        full_name=body.contact_name,
+        phone_number=body.phone_number,
+        tenant_id=str(tenant.tenant_id),
+        creation_type="tenant",
+        role_name=Roles.TENANT_ADMIN,
+        background_tasks=background_tasks,
+    )
+
+    # provision_user committed; refresh tenant to surface server-side defaults
+    # (created_at, etc.) without re-querying.
+    await db.refresh(tenant)
+
     return success_response(data=_tenant_response(tenant))
 
 
@@ -190,6 +240,7 @@ async def list_tenant_users(
 async def create_tenant_user(
     tenant_id: int,
     body: TenantUserCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
     auth_svc: AuthService = Depends(get_auth_service),
@@ -224,11 +275,6 @@ async def update_tenant_user_status(
     target = await _load_tenant_user(tenant_id, user_id, db)
 
     payload = body.model_dump(exclude_unset=True)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "EMPTY_UPDATE", "message": "Provide at least one of is_active or is_tenant_active."},
-        )
     payload["updated_by"] = current_user.id
     user_repo = UserRepository(db)
     await user_repo.update(target, payload)
@@ -248,11 +294,6 @@ async def update_tenant_user(
     target = await _load_tenant_user(tenant_id, user_id, db)
 
     payload = body.model_dump(exclude_unset=True)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "EMPTY_UPDATE", "message": "No fields to update."},
-        )
     payload["updated_by"] = current_user.id
     user_repo = UserRepository(db)
     await user_repo.update(target, payload)

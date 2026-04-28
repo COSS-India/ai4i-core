@@ -178,7 +178,20 @@ class AuthServiceRolesSeeder(BaseSeeder):
               'roles.assign','roles.remove','roles.read',
               'pii_guard.admin','pii_guard.inference',
               'tenant.create','tenant.read','tenant.update',
-              'tenant.users.read','tenant.users.update'
+              'tenant.users.read','tenant.users.update',
+              'asr.inference','asr.read',
+              'tts.inference','tts.read',
+              'nmt.inference','nmt.read',
+              'audio-lang-detection.inference',
+              'language-detection.inference',
+              'language-diarization.inference',
+              'ner.inference',
+              'ocr.inference','ocr.read',
+              'speaker-diarization.inference',
+              'transliteration.inference',
+              'pipeline.inference',
+              'llm.inference',
+              'model-management.inference'
             )
             WHERE r.name = 'ADMIN'
             """

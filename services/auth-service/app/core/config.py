@@ -54,13 +54,7 @@ class AuthSettings(BaseSettings):
     redis_port: int = 6379
     redis_password: Optional[str] = None
     redis_db: int = 0
-    redis_db_api_permissions: int = 0
-    redis_db_role_permissions: int = 1
-    redis_db_api_keys: int = 2
-    redis_db_refresh_tokens: int = 3
     redis_timeout: int = 10
-    role_cache_ttl_seconds: int = 3600
-    api_perms_cache_ttl_seconds: int = 3600
     revocation_endpoint_cooldown_seconds: int = 30
 
     # ── RS256 JWT ──
@@ -118,6 +112,22 @@ class AuthSettings(BaseSettings):
     # ── Guest login (POST /auth/guest/login) — must match guest user email seeded in auth_db ──
     guest_email: Optional[str] = None
     guest_password: Optional[str] = None
+
+    # ── Email (Amazon SES via SMTP today, swappable to any provider) ──
+    # Lib reads these via its own EmailSettings; mirrored here so AuthSettings
+    # stays the single source of truth for which env vars this service expects.
+    email_provider: str = "smtp"
+    email_from: Optional[str] = None
+    email_from_name: str = "AI4I Platform"
+    email_reply_to: Optional[str] = None
+    email_extra_headers: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: int = 587
+    smtp_username: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_use_tls: bool = True
+    smtp_timeout: int = 30
+    setup_link_base_url: Optional[str] = None
 
     # ── Derived helpers ──
 

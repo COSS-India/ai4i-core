@@ -1,0 +1,19 @@
+AI4I Platform
+================================
+
+Activate your account
+---------------------
+
+Hi {{ display_name }}, an AI4I Platform account has been created for you.
+Set a password to activate it:
+
+  {{ setup_url }}
+
+Heads up: this link expires in {{ expires_hours }} hours and can be used
+only once.
+
+If you didn't expect this email, you can safely ignore it -- the link
+will expire on its own.
+
+--
+This is an automated message from AI4I Platform.
