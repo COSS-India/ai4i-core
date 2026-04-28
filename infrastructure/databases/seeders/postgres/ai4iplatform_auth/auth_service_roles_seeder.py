@@ -1,14 +1,14 @@
 """
 Auth Service Roles, Permissions, and Role-Permissions Seeder (ai4iplatform_auth)
 
-Mirrors auth_roles_permissions_seeder.py for the auth-service database.
 Seeds roles, permissions, and role-permission mappings idempotently.
 
-Schema differences vs auth_db:
-  - roles PK column is `role_id` (not `id`)
-  - permissions PK column is `permission_id` (not `id`)
-  - join table is `role_permission` (not `role_permissions`) with no unique
-    constraint on (role_id, permission_id) → uses DELETE + INSERT pattern
+Schema notes:
+  - roles PK column is `id`
+  - permissions PK column is `id`; no resource/action columns
+  - permissions.name is a DB enum (permission_name_enum)
+  - join table is `role_permission` with no unique constraint on
+    (role_id, permission_id) → uses DELETE + INSERT pattern
 
 Rows created by this seeder carry created_by = SEEDER_ID so they can be
 distinguished from user-created records.
@@ -38,12 +38,12 @@ class AuthServiceRolesSeeder(BaseSeeder):
         role_names = [r[0] for r in roles]
         role_names_quoted = "', '".join(role_names)
 
-        # Remove roles that are no longer in the seed list
+        # Remove roles (and their mappings) that are no longer in the seed list
         adapter.execute(
             f"""
             DELETE FROM role_permission
             WHERE role_id NOT IN (
-                SELECT role_id FROM roles WHERE name IN ('{role_names_quoted}')
+                SELECT id FROM roles WHERE name IN ('{role_names_quoted}')
             )
             """
         )
@@ -67,91 +67,49 @@ class AuthServiceRolesSeeder(BaseSeeder):
         print(f"    ✓ Seeded {len(roles)} roles in ai4iplatform_auth")
 
         # ── 2. Permissions ────────────────────────────────────────────────────
-        permissions = [
+        # Only name is stored; resource and action columns have been removed.
+        permission_names = [
             # User management
-            ("users.create", "users", "create"),
-            ("users.read",   "users", "read"),
-            ("users.update", "users", "update"),
-            ("users.delete", "users", "delete"),
+            "users.create", "users.read", "users.update", "users.delete",
             # Configuration
-            ("configs.create", "configs", "create"),
-            ("configs.read",   "configs", "read"),
-            ("configs.update", "configs", "update"),
-            ("configs.delete", "configs", "delete"),
+            "configs.create", "configs.read", "configs.update", "configs.delete",
             # Metrics
-            ("metrics.read",   "metrics", "read"),
-            ("metrics.export", "metrics", "export"),
+            "metrics.read", "metrics.export",
             # Alerts
-            ("alerts.create", "alerts", "create"),
-            ("alerts.read",   "alerts", "read"),
-            ("alerts.update", "alerts", "update"),
-            ("alerts.delete", "alerts", "delete"),
+            "alerts.create", "alerts.read", "alerts.update", "alerts.delete",
             # Dashboards
-            ("dashboards.create", "dashboards", "create"),
-            ("dashboards.read",   "dashboards", "read"),
-            ("dashboards.update", "dashboards", "update"),
-            ("dashboards.delete", "dashboards", "delete"),
+            "dashboards.create", "dashboards.read", "dashboards.update", "dashboards.delete",
             # API Key Management
-            ("apiKey.create", "apiKey", "create"),
-            ("apiKey.read",   "apiKey", "read"),
-            ("apiKey.delete", "apiKey", "delete"),
-            ("apiKey.update", "apiKey", "update"),
+            "apiKey.create", "apiKey.read", "apiKey.delete", "apiKey.update",
             # Service Management
-            ("service.create", "service", "create"),
-            ("service.delete", "service", "delete"),
-            ("service.update", "service", "update"),
-            ("service.read",   "service", "read"),
+            "service.create", "service.delete", "service.update", "service.read",
             # Model Management
-            ("model.create",    "model", "create"),
-            ("model.read",      "model", "read"),
-            ("model.update",    "model", "update"),
-            ("model.delete",    "model", "delete"),
-            ("model.publish",   "model", "publish"),
-            ("model.unpublish", "model", "unpublish"),
+            "model.create", "model.read", "model.update", "model.delete",
+            "model.publish", "model.unpublish",
             # Role Management
-            ("roles.assign", "roles", "assign"),
-            ("roles.remove", "roles", "remove"),
-            ("roles.read",   "roles", "read"),
+            "roles.assign", "roles.remove", "roles.read",
             # AI Services
-            ("asr.inference", "asr", "inference"),
-            ("asr.read",      "asr", "read"),
-            ("tts.inference", "tts", "inference"),
-            ("tts.read",      "tts", "read"),
-            ("nmt.inference", "nmt", "inference"),
-            ("nmt.read",      "nmt", "read"),
-            ("audio-lang-detection.read",       "audio-lang-detection", "read"),
-            ("audio-lang-detection.inference",  "audio-lang-detection", "inference"),
-            ("language-detection.read",         "language-detection",   "read"),
-            ("language-detection.inference",    "language-detection",   "inference"),
-            ("language-diarization.read",       "language-diarization", "read"),
-            ("language-diarization.inference",  "language-diarization", "inference"),
-            ("ner.inference",                   "ner",                  "inference"),
-            ("ocr.read",                        "ocr",                  "read"),
-            ("ocr.inference",                   "ocr",                  "inference"),
-            ("speaker-diarization.read",        "speaker-diarization",  "read"),
-            ("speaker-diarization.inference",   "speaker-diarization",  "inference"),
-            ("transliteration.read",            "transliteration",      "read"),
-            ("transliteration.inference",       "transliteration",      "inference"),
-            ("pipeline.read",                   "pipeline",             "read"),
-            ("pipeline.inference",              "pipeline",             "inference"),
-            ("llm.read",                        "llm",                  "read"),
-            ("llm.inference",                   "llm",                  "inference"),
-            ("model-management.read",           "model-management",     "read"),
-            ("model-management.inference",      "model-management",     "inference"),
+            "asr.inference", "asr.read",
+            "tts.inference", "tts.read",
+            "nmt.inference", "nmt.read",
+            "audio-lang-detection.read", "audio-lang-detection.inference",
+            "language-detection.read", "language-detection.inference",
+            "language-diarization.read", "language-diarization.inference",
+            "ner.inference",
+            "ocr.read", "ocr.inference",
+            "speaker-diarization.read", "speaker-diarization.inference",
+            "transliteration.read", "transliteration.inference",
+            "pipeline.read", "pipeline.inference",
+            "llm.read", "llm.inference",
+            "model-management.read", "model-management.inference",
             # Observability
-            ("logs.read",   "logs",   "read"),
-            ("traces.read", "traces", "read"),
-            # Tenant management (consolidated into auth-service)
-            ("tenant.create",       "tenant",       "create"),
-            ("tenant.read",         "tenant",       "read"),
-            ("tenant.update",       "tenant",       "update"),
-            ("tenant.users.read",   "tenant.users", "read"),
-            ("tenant.users.update", "tenant.users", "update"),
+            "logs.read", "traces.read",
+            # Tenant management
+            "tenant.create", "tenant.read", "tenant.update",
+            "tenant.users.read", "tenant.users.update",
             # PII Guard
-            ("pii_guard.inference", "pii_guard", "inference"),
-            ("pii_guard.admin",     "pii_guard", "admin"),
+            "pii_guard.inference", "pii_guard.admin",
         ]
-        permission_names = [p[0] for p in permissions]
         permission_names_quoted = "', '".join(permission_names)
 
         # Remove permissions (and their role_permission rows) not in seed list
@@ -159,7 +117,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
             f"""
             DELETE FROM role_permission
             WHERE permission_id NOT IN (
-                SELECT permission_id FROM permissions WHERE name IN ('{permission_names_quoted}')
+                SELECT id FROM permissions WHERE name IN ('{permission_names_quoted}')
             )
             """
         )
@@ -170,18 +128,16 @@ class AuthServiceRolesSeeder(BaseSeeder):
             """
         )
 
-        for name, resource, action in permissions:
+        for name in permission_names:
             adapter.execute(
                 """
-                INSERT INTO permissions (name, resource, action, created_by)
-                VALUES (:name, :resource, :action, :created_by)
-                ON CONFLICT (name) DO UPDATE
-                  SET resource = EXCLUDED.resource,
-                      action   = EXCLUDED.action
+                INSERT INTO permissions (name, created_by)
+                VALUES (:name, :created_by)
+                ON CONFLICT (name) DO NOTHING
                 """,
-                {"name": name, "resource": resource, "action": action, "created_by": SEEDER_ID},
+                {"name": name, "created_by": SEEDER_ID},
             )
-        print(f"    ✓ Seeded {len(permissions)} permissions in ai4iplatform_auth")
+        print(f"    ✓ Seeded {len(permission_names)} permissions in ai4iplatform_auth")
 
         # ── 3. Role-Permissions (clean slate for seeded roles) ─────────────────
         # No unique constraint on role_permission(role_id, permission_id) so we
@@ -190,7 +146,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
             f"""
             DELETE FROM role_permission
             WHERE role_id IN (
-                SELECT role_id FROM roles WHERE name IN ('{role_names_quoted}')
+                SELECT id FROM roles WHERE name IN ('{role_names_quoted}')
             )
             """
         )
@@ -199,7 +155,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
         adapter.execute(
             f"""
             INSERT INTO role_permission (role_id, permission_id, created_by)
-            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
+            SELECT r.id, p.id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.create','users.read','users.update','users.delete',
@@ -225,7 +181,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
         adapter.execute(
             f"""
             INSERT INTO role_permission (role_id, permission_id, created_by)
-            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
+            SELECT r.id, p.id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.read','users.update',
@@ -246,7 +202,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
         adapter.execute(
             f"""
             INSERT INTO role_permission (role_id, permission_id, created_by)
-            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
+            SELECT r.id, p.id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.read','roles.read','service.read',
@@ -261,7 +217,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
         adapter.execute(
             f"""
             INSERT INTO role_permission (role_id, permission_id, created_by)
-            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
+            SELECT r.id, p.id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.create','users.read','users.update','users.delete',
@@ -287,11 +243,10 @@ class AuthServiceRolesSeeder(BaseSeeder):
         print("    ✓ Assigned permissions to MODERATOR role")
 
         # TENANT ADMIN — tenant-scoped management of their own tenant's users.
-        # Cannot create or modify peer tenants (tenant.create / tenant.update bound to ADMIN/MODERATOR only).
         adapter.execute(
             f"""
             INSERT INTO role_permission (role_id, permission_id, created_by)
-            SELECT r.role_id, p.permission_id, '{SEEDER_ID}'
+            SELECT r.id, p.id, '{SEEDER_ID}'
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.create','users.read','users.update',
