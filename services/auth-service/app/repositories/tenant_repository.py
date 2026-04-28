@@ -5,11 +5,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.tenant import Tenant, TenantStatus
+from app.repositories.base import BaseRepository
 
 
-class TenantRepository:
+class TenantRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
-        self._db = db
+        super().__init__(db)
 
     async def get_by_id(self, tenant_id: UUID) -> Optional[Tenant]:
         result = await self._db.execute(
@@ -29,18 +30,6 @@ class TenantRepository:
         )
         return result.scalar_one_or_none()
 
-    async def create(self, tenant: Tenant) -> Tenant:
-        self._db.add(tenant)
-        await self._db.flush()
-        return tenant
-
-    async def update(self, tenant: Tenant, data: dict) -> Tenant:
-        for key, value in data.items():
-            if hasattr(tenant, key) and value is not None:
-                setattr(tenant, key, value)
-        await self._db.flush()
-        return tenant
-
     async def list_all(
         self,
         offset: int = 0,
@@ -57,6 +46,3 @@ class TenantRepository:
         )
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
-
-    async def commit(self) -> None:
-        await self._db.commit()

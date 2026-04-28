@@ -773,6 +773,11 @@ services:
       # start_period: 30s
     restart: unless-stopped
 
+  # ── DEPRECATED: model-management-service ──
+  # This service is being replaced by platform-core-service.
+  # It is kept running during the migration period so existing consumers
+  # (gateway routes, frontends) are not broken. Once all consumers have
+  # been pointed to platform-core-service, this block can be removed.
   model-management-service:
     build:
       context: ./services/model-management-service
@@ -815,6 +820,35 @@ services:
       microservices-network:
         aliases:
           - model-management-service
+    restart: unless-stopped
+
+  # ── platform-core-service (replaces model-management-service) ──
+  platform-core-service:
+    build:
+      context: .
+      dockerfile: ./services/platform-core-service/Dockerfile
+    container_name: ai4v-platform-core-service
+    ports:
+      - "8102:8095"
+    env_file:
+      - ./services/platform-core-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    networks:
+      microservices-network:
+        aliases:
+          - platform-core-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   

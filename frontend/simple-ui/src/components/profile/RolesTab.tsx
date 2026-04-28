@@ -77,7 +77,7 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
               <FormLabel fontWeight="semibold">User</FormLabel>
               <UserSearchableSelect
                 variant="pick"
-                value={rt.selectedUser?.id ?? null}
+                value={rt.selectedUser?.user_id ?? null}
                 onChange={(id, picked) => rt.handleUserSelect(id, picked)}
                 seedUsers={users}
                 isLoading={isLoadingUsers}

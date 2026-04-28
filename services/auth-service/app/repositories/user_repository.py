@@ -10,11 +10,12 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
+from app.repositories.base import BaseRepository
 
 
-class UserRepository:
+class UserRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
-        self._db = db
+        super().__init__(db)
 
     async def get_by_id(self, user_id: UUID) -> Optional[User]:
         result = await self._db.execute(
@@ -33,18 +34,6 @@ class UserRepository:
             select(User).where(User.username == username, User.is_delete.isnot(True))
         )
         return result.scalar_one_or_none()
-
-    async def create(self, user: User) -> User:
-        self._db.add(user)
-        await self._db.flush()
-        return user
-
-    async def update(self, user: User, data: dict) -> User:
-        for key, value in data.items():
-            if hasattr(user, key) and value is not None:
-                setattr(user, key, value)
-        await self._db.flush()
-        return user
 
     async def update_last_login(self, user: User) -> None:
         user.last_login = datetime.now(timezone.utc)
@@ -75,6 +64,3 @@ class UserRepository:
             select(func.count(User.id)).where(User.is_delete.isnot(True))
         )
         return result.scalar_one()
-
-    async def commit(self) -> None:
-        await self._db.commit()

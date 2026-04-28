@@ -9,11 +9,12 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.role import Permission, Role, RolePermission, UserRole
+from app.repositories.base import BaseRepository
 
 
-class RoleRepository:
+class RoleRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
-        self._db = db
+        super().__init__(db)
 
     # ── Roles ──
 
@@ -153,6 +154,3 @@ class RoleRepository:
         for pid in permission_ids:
             self._db.add(RolePermission(role_id=role_id, permission_id=pid))
         await self._db.flush()
-
-    async def commit(self) -> None:
-        await self._db.commit()

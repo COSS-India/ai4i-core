@@ -8,11 +8,10 @@ export interface UseCreateApiKeyTabOptions {
   users: User[];
   isLoadingUsers: boolean;
   setApiKeys: (keys: import("../../../types/auth").APIKeyResponse[]) => void;
-  setSelectedApiKeyId: (id: number | null) => void;
 }
 
 export interface SelectedUserForPermissions {
-  id: number;
+  user_id: string;
   email: string;
   username: string;
 }
@@ -20,7 +19,6 @@ export interface SelectedUserForPermissions {
 export function useCreateApiKeyTab({
   users,
   setApiKeys,
-  setSelectedApiKeyId,
 }: UseCreateApiKeyTabOptions) {
   const toast = useToastWithDeduplication();
   const [permissions, setPermissions] = useState<Permission[]>([]);
@@ -67,16 +65,16 @@ export function useCreateApiKeyTab({
     }
   };
 
-  const handleUserSelect = (userId: number | null, picked?: UserSearchablePick | null) => {
+  const handleUserSelect = (userId: string | null, picked?: UserSearchablePick | null) => {
     if (userId == null) {
       setSelectedUserForPermissions(null);
       setSelectedUserPermissions([]);
       return;
     }
-    const u = users.find((x) => x.id === userId) ?? picked;
+    const u = users.find((x) => x.user_id === userId) ?? picked;
     if (!u) return;
     setSelectedUserForPermissions({
-      id: u.id,
+      user_id: u.user_id,
       email: u.email,
       username: u.username || "",
     });
@@ -125,7 +123,7 @@ export function useCreateApiKeyTab({
         key_name: apiKeyForUser.key_name,
         permissions: permissionIds,
         expires_days: Number(apiKeyForUser.expires_days) || 30,
-        user_id: selectedUserForPermissions.id,
+        user_id: selectedUserForPermissions.user_id,
       });
       try {
         const listResponse = await authService.listApiKeys();

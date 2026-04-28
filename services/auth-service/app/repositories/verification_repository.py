@@ -12,16 +12,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.verification import TokenVerification
+from app.repositories.base import BaseRepository
 
 
-class VerificationRepository:
+class VerificationRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
-        self._db = db
-
-    async def create(self, token_obj: TokenVerification) -> TokenVerification:
-        self._db.add(token_obj)
-        await self._db.flush()
-        return token_obj
+        super().__init__(db)
 
     async def get_by_token(self, token: str) -> Optional[TokenVerification]:
         result = await self._db.execute(
@@ -44,6 +40,3 @@ class VerificationRepository:
         for token_obj in result.scalars().all():
             token_obj.is_active = False
         await self._db.flush()
-
-    async def commit(self) -> None:
-        await self._db.commit()

@@ -52,7 +52,7 @@ export const useFeatureFlag = (options: UseFeatureFlagOptions): UseFeatureFlagRe
 
   const { user } = useAuth();
   // Convert user ID to string if it exists, otherwise use username or undefined
-  const userId = user?.id ? String(user.id) : user?.username || undefined;
+  const userId = user?.user_id ?? user?.username ?? undefined;
 
   // Stable queryKey: serialize context so same flag+user+env dedupes (avoid new {} breaking cache)
   const contextKey = typeof context === 'object' && context !== null
@@ -149,7 +149,7 @@ export const useFeatureFlagsBulk = (options: UseFeatureFlagsBulkOptions): {
   } = options;
 
   const { user, isAuthenticated } = useAuth();
-  const userId = user?.id ? String(user.id) : user?.username || undefined;
+  const userId = user?.user_id ?? user?.username ?? undefined;
 
   const queryKey = ['feature-flags-bulk', flagNames.slice().sort().join(','), environment, userId];
 
@@ -242,7 +242,7 @@ export const useFeatureFlagValue = <T extends boolean | string | number | object
 
   const { user } = useAuth();
   // Convert user ID to string if it exists, otherwise use username or undefined
-  const userId = user?.id ? String(user.id) : user?.username || undefined;
+  const userId = user?.user_id ?? user?.username ?? undefined;
 
   // Stable queryKey so same flag+user+env dedupes (context serialized like useFeatureFlag)
   const contextKey = typeof context === 'object' && context !== null
