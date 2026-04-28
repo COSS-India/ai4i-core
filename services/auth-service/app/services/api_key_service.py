@@ -42,6 +42,17 @@ class APIKeyService:
     def _is_api_key(token: str) -> bool:
         return bool(_HEX_KEY_RE.fullmatch(token))
 
+    async def _validate_permission_ids(self, permission_ids: list[int]) -> None:
+        """Raise ValidationError if any permission IDs do not exist in the DB."""
+        id_to_name = await self._repo.get_permission_names_by_ids(permission_ids)
+        missing_ids = [pid for pid in permission_ids if pid not in id_to_name]
+        if missing_ids:
+            raise ValidationError(
+                message="Invalid permission IDs in request.",
+                code="INVALID_PERMISSION_IDS",
+                errors=[f"Unknown permission_id={pid}" for pid in missing_ids],
+            )
+
     async def create_api_key(
         self,
         user_id: UUID,
@@ -55,14 +66,7 @@ class APIKeyService:
         """
         permission_ids = list(dict.fromkeys(permissions or []))
 
-        id_to_name = await self._repo.get_permission_names_by_ids(permission_ids)
-        missing_ids = [pid for pid in permission_ids if pid not in id_to_name]
-        if missing_ids:
-            raise ValidationError(
-                message="Invalid permission IDs in request.",
-                code="INVALID_PERMISSION_IDS",
-                errors=[f"Unknown permission_id={pid}" for pid in missing_ids],
-            )
+        await self._validate_permission_ids(permission_ids)
 
         raw_key = self.generate_api_key()
         days = expires_days or settings.api_key_expire_days

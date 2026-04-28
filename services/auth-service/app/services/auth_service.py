@@ -56,6 +56,16 @@ class AuthService:
         self._verifications = verification_repo
         self._tenants = tenant_repo
 
+    def _setup_token_expires_at(self) -> datetime:
+        return datetime.now(timezone.utc) + timedelta(hours=settings.setup_token_expire_hours)
+
+    def _validate_token_of_type(self, token: str, expected_type: str):
+        """Validate a JWT and assert its type. Raises TokenExpiredError / TokenInvalidError on failure."""
+        payload = self._tokens.validate_token(token)
+        if payload.token_type != expected_type:
+            raise TokenInvalidError(f"Expected a '{expected_type}' token.")
+        return payload
+
     async def _resolve_tenant_id(self, explicit: Optional[str]) -> Optional[UUID]:
         """Honor an explicit tenant_id, otherwise fall back to the default tenant."""
         if explicit:
@@ -169,15 +179,7 @@ class AuthService:
 
     async def refresh_token(self, refresh_token_str: str) -> TokenRefreshResponse:
         """Validate a refresh token via DB and issue a new access token."""
-        try:
-            payload = self._tokens.validate_token(refresh_token_str)
-        except TokenExpiredError:
-            raise
-        except TokenInvalidError:
-            raise
-
-        if payload.token_type != "refresh":
-            raise TokenInvalidError("Not a refresh token.")
+        payload = self._validate_token_of_type(refresh_token_str, "refresh")
 
         db_token = await self._refresh_tokens.get_by_token(refresh_token_str)
         if not db_token:
@@ -283,7 +285,7 @@ class AuthService:
         token_obj = TokenVerification(
             token=setup_token,
             is_active=True,
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=settings.setup_token_expire_hours),
+            expires_at=self._setup_token_expires_at(),
             created_by=user_uuid_str,
         )
         await self._verifications.create(token_obj)
@@ -300,15 +302,7 @@ class AuthService:
         """Consume a setup token and create credentials, activating the user."""
         self._passwords.validate_and_confirm(new_password, confirm_password)
 
-        try:
-            payload = self._tokens.validate_token(token)
-        except TokenExpiredError:
-            raise
-        except TokenInvalidError:
-            raise
-
-        if payload.token_type != "setup":
-            raise TokenInvalidError("Invalid setup link.")
+        payload = self._validate_token_of_type(token, "setup")
 
         token_obj = await self._verifications.get_by_token(token)
         if not token_obj:
@@ -382,7 +376,7 @@ class AuthService:
         token_obj = TokenVerification(
             token=setup_token,
             is_active=True,
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=settings.setup_token_expire_hours),
+            expires_at=self._setup_token_expires_at(),
             created_by=user_uuid_str,
         )
         await self._verifications.create(token_obj)
