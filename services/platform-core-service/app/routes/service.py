@@ -1,15 +1,5 @@
 """
-Service management routes.
-
-Path layout (mounted under /api/v1):
-  GET    /services                              — list services with filters (includes policy)
-  GET    /services/try-it-service-list          — public NMT-only listing
-  POST   /services/{service_id}                 — get service detail (body variant)
-  POST   /services                              — create a new service
-  PATCH  /services                              — update a service (supports policy update)
-  DELETE /services/{service_id}                 — delete a service
-
-Authentication is handled at the gateway layer.
+Service management API endpoints.
 """
 
 import logging
@@ -46,9 +36,6 @@ def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
         raise ValidationError(f"Invalid task_type '{task_type}'. Must be one of: {valid}")
 
 
-# ── Must be declared before /{service_id} to avoid path shadowing ──
-
-
 @router.get(
     "/try-it-service-list",
     summary="List Try-It Services",
@@ -56,11 +43,11 @@ def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
 async def list_try_it_services(
     task_type: str = Query(
         ...,
-        description="Task type (currently only 'nmt' is supported).",
+        description="Task type. Currently supports 'nmt'.",
     ),
     svc: ServiceService = Depends(get_service_service),
 ):
-    """List published services available for public trial — currently NMT only."""
+    """List published services available for public trial."""
     if not task_type or task_type.lower() != TaskTypeEnum.nmt.value:
         raise ValidationError(
             message="Try-it is not available for this task type.",
@@ -80,7 +67,7 @@ async def list_services(
     ),
     is_published: Optional[bool] = Query(
         None,
-        description="True = published only, False = unpublished only, omit for all.",
+        description="Filter by publication status: true for published only, false for unpublished only.",
     ),
     created_by: Optional[str] = Query(
         None, description="Filter by user ID who created the service."
@@ -113,13 +100,12 @@ async def list_services(
     )
 
 
-
 @router.post("/{service_id:path}", summary="Retrieve Service")
 async def view_service(
     service_id: str,
     svc: ServiceService = Depends(get_service_service),
 ):
-    """Get full service detail — embedded model card included."""
+    """Retrieve full service details."""
     data = await svc.get_service_detail(service_id)
     return success_response(data=data)
 
@@ -130,6 +116,7 @@ async def create_service(
     payload: ServiceCreateRequest,
     svc: ServiceService = Depends(get_service_service),
 ):
+    """Create a new service."""
     user_id = get_user_id(request)
     service_id = await svc.create_service(payload, created_by=user_id)
     return success_response(
@@ -144,6 +131,7 @@ async def update_service(
     payload: ServiceUpdateRequest,
     svc: ServiceService = Depends(get_service_service),
 ):
+    """Update an existing service."""
     user_id = get_user_id(request)
     await svc.update_service(payload, updated_by=user_id)
     return success_response(
