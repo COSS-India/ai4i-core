@@ -255,7 +255,9 @@ class AuthService:
             raise DuplicateEntityError("User", "username")
 
         parsed_tenant_id = await self._resolve_tenant_id(tenant_id)
-        creation = CreationType(creation_type) if creation_type in CreationType._value2member_map_ else CreationType.TENANT
+        # `CreationType` in the ORM currently supports only "default" and "google".
+        # Treat any unknown creation_type input as DEFAULT.
+        creation = CreationType(creation_type) if creation_type in CreationType._value2member_map_ else CreationType.DEFAULT
 
         user = User(
             email=email,

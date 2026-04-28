@@ -21,9 +21,8 @@ def _normalize_service_slug(value: str) -> str:
 
 
 def _resource_from_permission(perm) -> str:
-    """Derive the resource part from a permission name enum value (e.g. 'asr.inference' → 'asr')."""
-    name_val = perm.name.value if hasattr(perm.name, "value") else str(perm.name)
-    return name_val.split(".")[0]
+    """Return resource for a Permission ORM row."""
+    return perm.resource
 
 
 class RoleService:

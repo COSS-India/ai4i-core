@@ -88,12 +88,12 @@ class RoleRepository(BaseRepository):
     ) -> list[Permission]:
         stmt = (
             select(Permission)
-            .where(Permission.name.like("%.inference"))
-            .order_by(Permission.name)
+            .where(Permission.action == "inference")
+            .order_by(Permission.resource)
         )
         if excluded_resources:
             for resource in excluded_resources:
-                stmt = stmt.where(~Permission.name.like(f"{resource}.%"))
+                stmt = stmt.where(Permission.resource != resource)
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
 

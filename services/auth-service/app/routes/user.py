@@ -58,7 +58,7 @@ async def list_users(
     role_set = set(getattr(request.state, "user_roles", []) or [])
     users = await svc.list_users_for_caller(caller, offset, limit, role_set=role_set)
     items = [
-        UserListResponse.model_validate(u, from_attributes=True).model_dump(by_alias=True)
+        UserListResponse.model_validate(u, from_attributes=True).model_dump(mode="json")
         for u in users
     ]
     return success_response(data=items)

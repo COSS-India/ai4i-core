@@ -72,9 +72,7 @@ def _tenant_response(tenant: Tenant) -> dict:
 
 
 def _user_response(user: User) -> dict:
-    return UserListResponse.model_validate(user, from_attributes=True).model_dump(
-        mode="json", by_alias=True
-    )
+    return UserListResponse.model_validate(user, from_attributes=True).model_dump(mode="json")
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
