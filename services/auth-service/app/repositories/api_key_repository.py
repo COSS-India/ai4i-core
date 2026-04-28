@@ -61,6 +61,9 @@ class APIKeyRepository(BaseRepository):
         await self._db.flush()
         return api_key
 
+    async def refresh(self, api_key: APIKey) -> None:
+        await self._db.refresh(api_key)
+
     async def revoke(self, api_key: APIKey) -> None:
         api_key.is_active = False
         await self._db.flush()

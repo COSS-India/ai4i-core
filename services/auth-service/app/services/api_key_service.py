@@ -167,6 +167,7 @@ class APIKeyService:
             data["updated_by"] = str(user_id)
 
         await self._repo.update(db_key, data)
+        await self._repo.refresh(db_key)
 
         # Refresh Redis with updated data
         updated_permissions = data.get("permissions") or db_key.permissions or []
