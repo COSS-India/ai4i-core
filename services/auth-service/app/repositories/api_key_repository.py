@@ -45,7 +45,7 @@ class APIKeyRepository(BaseRepository):
     async def list_all_with_users(self, offset: int = 0, limit: int = 100) -> list[tuple[APIKey, User]]:
         result = await self._db.execute(
             select(APIKey, User)
-            .join(User, APIKey.user_id == User.user_id)
+            .join(User, APIKey.user_id == User.id)
             .order_by(APIKey.created_at.desc())
             .offset(offset)
             .limit(limit)

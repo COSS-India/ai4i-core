@@ -43,7 +43,7 @@ async def create_api_key(
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     raw_key, api_key = await svc.create_api_key(
-        user_id=current_user.user_id,
+        user_id=current_user.id,
         key_name=body.key_name,
         permissions=body.permissions,
         expires_days=body.expires_days,
@@ -61,7 +61,7 @@ async def list_api_keys(
     current_user: User = Depends(get_current_active_user),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
-    keys = await svc.list_by_user(current_user.user_id)
+    keys = await svc.list_by_user(current_user.id)
     return success_response(data={"api_keys": [_key_dict(k) for k in keys]})
 
 
@@ -75,7 +75,7 @@ async def update_api_key(
     api_key = await svc.update_key(
         api_key_value=body.api_key,
         data=update_data,
-        user_id=current_user.user_id,
+        user_id=current_user.id,
     )
     return success_response(data={
         "key_name": api_key.key_name,
@@ -93,8 +93,8 @@ async def revoke_api_key(
     svc: APIKeyService = Depends(get_api_key_service),
     role_svc: RoleService = Depends(get_role_service),
 ):
-    owner_scoped_user_id = current_user.user_id
-    roles = await role_svc.get_user_roles(current_user.user_id)
+    owner_scoped_user_id = current_user.id
+    roles = await role_svc.get_user_roles(current_user.id)
     if "ADMIN" in roles:
         owner_scoped_user_id = None
 
