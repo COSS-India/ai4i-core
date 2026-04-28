@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from starlette.responses import Response
 
-from ai4icore_model_management.client import ModelManagementClient
-from ai4icore_model_management.middleware import ModelResolutionMiddleware
+from ai4icore_platform_core.client import ModelManagementClient
+from ai4icore_platform_core.middleware import ModelResolutionMiddleware
 
 
 def _make_request(method: str, path: str, body: bytes):
@@ -124,7 +124,7 @@ async def test_health_gate_fail_closed_on_error(middleware):
 
 @pytest.mark.asyncio
 async def test_health_gate_maps_model_service_id_to_task_microservice_name(middleware):
-    # Incoming requests may carry a model-management service id (not the config-service service_name).
+    # Incoming requests may carry a platform-core service id (not the config-service service_name).
     expected_health_service_id = "ocr-service"
 
     middleware._fetch_health_status = AsyncMock(

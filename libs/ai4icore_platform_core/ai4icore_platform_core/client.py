@@ -1,6 +1,6 @@
 """
-Model Management Service Client
-Client for interacting with the model management service API
+Platform Core Service Client
+Client for interacting with the platform-core service API
 with caching support for efficient and scalable operations
 """
 
@@ -40,8 +40,8 @@ class ServiceInfo(BaseModel):
 
 
 class ModelManagementClient:
-    """Client for model management service with caching"""
-    
+    """Client for platform-core service with caching"""
+
     def __init__(
         self,
         base_url: Optional[str] = None,
@@ -50,10 +50,10 @@ class ModelManagementClient:
         timeout: float = 10.0
     ):
         """
-        Initialize model management service client
-        
+        Initialize platform-core service client
+
         Args:
-            base_url: Base URL of model management service
+            base_url: Base URL of platform-core service
             api_key: API key for authentication (if required)
             cache_ttl_seconds: Cache TTL in seconds
             timeout: Request timeout in seconds
@@ -88,7 +88,7 @@ class ModelManagementClient:
     
     def _get_cache_key(self, key: str) -> str:
         """Generate cache key"""
-        return f"model_mgmt:{key}"
+        return f"platform_core:{key}"
     
     def _get_from_cache(self, cache_key: str) -> Optional[Any]:
         """Get value from in-memory cache (synchronous method)"""
@@ -169,7 +169,7 @@ class ModelManagementClient:
         task_type: Optional[str] = None
     ) -> List[ServiceInfo]:
         """
-        List all services from model management service
+        List all services from platform-core service
         
         Args:
             use_cache: Whether to use cache
@@ -207,7 +207,7 @@ class ModelManagementClient:
         # Fetch from API
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/api/v1/model-management/services"
+            url = f"{self.base_url}/api/v1/services"
             headers = self._get_headers(auth_headers)
             
             # Add task_type as query parameter if provided
@@ -260,13 +260,13 @@ class ModelManagementClient:
                 # Cache in memory
                 self._set_cache(cache_key, services)
             
-            logger.info(f"Fetched {len(services)} services from model management service")
+            logger.info(f"Fetched {len(services)} services from platform-core service")
             return services
             
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 logger.error(
-                    f"Authentication failed (401) when fetching services from model management service. "
+                    f"Authentication failed (401) when fetching services from platform-core service. "
                     f"Please ensure the request includes valid Authorization or X-API-Key headers."
                 )
             else:
@@ -321,7 +321,7 @@ class ModelManagementClient:
             client = await self._get_client()
             # Encode service_id so IDs containing '/' (e.g. "ai4bharat/surya-ocr-v1--gpu--t4") are one path segment
             encoded_service_id = quote(service_id, safe="")
-            url = f"{self.base_url}/api/v1/model-management/services/{encoded_service_id}"
+            url = f"{self.base_url}/api/v1/services/{encoded_service_id}"
             headers = self._get_headers(auth_headers)
             
             logger.debug(f"Fetching service {service_id} from {url}")
@@ -329,8 +329,8 @@ class ModelManagementClient:
             
             if response.status_code == 404:
                 logger.warning(
-                    f"Service not found (404) for service_id={service_id!r} from model management at {url}. "
-                    "Ensure the service_id exists in the model_management_db services table (or use a valid service_id)."
+                    f"Service not found (404) for service_id={service_id!r} from platform-core at {url}. "
+                    "Ensure the service_id exists in the core_db services table (or use a valid service_id)."
                 )
                 return None
             
@@ -350,7 +350,7 @@ class ModelManagementClient:
 
             if not endpoint or not str(endpoint).strip():
                 logger.warning(
-                    f"Model management returned service for service_id={service_id!r} but endpoint is missing or empty. "
+                    f"Platform-core returned service for service_id={service_id!r} but endpoint is missing or empty. "
                     f"Response keys: {list(data.keys())}. NMT/inference requires a non-empty endpoint."
                 )
             service_info = ServiceInfo(
@@ -396,7 +396,7 @@ class ModelManagementClient:
                 return None
             elif e.response.status_code == 401:
                 logger.error(
-                    f"Authentication failed (401) when fetching service {service_id} from model management service. "
+                    f"Authentication failed (401) when fetching service {service_id} from platform-core service. "
                     f"Please ensure the request includes valid Authorization or X-API-Key headers."
                 )
             else:
@@ -433,7 +433,7 @@ class ModelManagementClient:
         """
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/api/v1/model-management/experiments/select-variant"
+            url = f"{self.base_url}/api/v1/experiments/select-variant"
             headers = self._get_headers(auth_headers)
             payload = {
                 "task_type": task_type,
@@ -475,7 +475,7 @@ class ModelManagementClient:
         """
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/api/v1/model-management/experiments/track-metric"
+            url = f"{self.base_url}/api/v1/experiments/track-metric"
             headers = self._get_headers(auth_headers)
             payload = {
                 "experiment_id": experiment_id,

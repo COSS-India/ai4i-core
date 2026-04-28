@@ -1,6 +1,6 @@
 """
-Model Management Configuration
-Configuration class for Model Management plugin
+Platform Core Configuration
+Configuration class for the platform-core service plugin
 """
 
 from typing import Optional
@@ -10,17 +10,17 @@ from ai4icore_env import app_env
 
 
 class ModelManagementConfig(BaseModel):
-    """Configuration for Model Management plugin"""
+    """Configuration for platform-core service plugin"""
 
-    # Model Management Service settings
+    # Platform Core Service settings
     model_management_service_url: str = Field(
         default_factory=lambda: app_env.model_management_service_url,
-        description="Base URL of Model Management Service"
+        description="Base URL of platform-core Service"
     )
 
     model_management_api_key: Optional[str] = Field(
         default_factory=lambda: app_env.model_management_service_api_key,
-        description="API key for Model Management Service (optional, fallback)"
+        description="API key for platform-core Service (optional, fallback)"
     )
 
     # Cache settings
@@ -37,7 +37,7 @@ class ModelManagementConfig(BaseModel):
     # Default Triton settings (fallback)
     default_triton_endpoint: Optional[str] = Field(
         default_factory=lambda: app_env.triton_endpoint,
-        description="Default Triton endpoint (fallback if Model Management unavailable)"
+        description="Default Triton endpoint (fallback if platform-core unavailable)"
     )
 
     default_triton_api_key: Optional[str] = Field(

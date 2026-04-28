@@ -11,7 +11,7 @@ from .service_registry import ServiceRegistryClient
 from .rate_limit import RateLimitMiddleware
 from .health import create_health_router
 
-# Lazy import: create_inference_app depends on ai4icore_model_management
+# Lazy import: create_inference_app depends on ai4icore_platform_core
 # which is not installed in non-inference services (e.g. pipeline-service).
 def __getattr__(name):
     if name == "create_inference_app":

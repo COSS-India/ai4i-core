@@ -1,6 +1,6 @@
 """
 Model Resolution Middleware
-FastAPI middleware for automatic serviceId → endpoint + model_name resolution
+FastAPI middleware for automatic serviceId → endpoint + model_name resolution via platform-core service
 """
 
 import asyncio
@@ -142,7 +142,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         
         Args:
             app: FastAPI application
-            model_management_client: Model Management client instance
+            model_management_client: Platform Core Service client instance
             redis_client: Optional Redis client for shared caching
             cache_ttl_seconds: Cache TTL in seconds
             default_triton_endpoint: Default Triton endpoint (fallback)
@@ -172,7 +172,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         self._service_info_cache: Dict[str, Tuple[ServiceInfo, float]] = {}
         self._service_registry_cache: Dict[str, Tuple[str, str, float]] = {}  # serviceId -> (endpoint, model_name, expires_at)
         self._triton_clients: Dict[str, Tuple[TritonClient, str, Optional[bool], float]] = {}  # serviceId -> (client, endpoint, ssl_verify, expires_at)
-        self.cache_prefix = "model_mgmt:triton"
+        self.cache_prefix = "platform_core:triton"
 
     def _health_service_id_for_request(self, *, request_path: str, model_service_id: str) -> str:
         """
@@ -389,7 +389,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 pass
     
     async def _get_service_info(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> Optional[ServiceInfo]:
-        """Get service info from model management service with caching"""
+        """Get service info from platform-core service with caching"""
         # Check cache first
         cached = self._service_info_cache.get(service_id)
         if cached:
@@ -397,8 +397,8 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             if expires_at > time.time():
                 return service_info
             self._service_info_cache.pop(service_id, None)
-        
-        # Fetch from model management service
+
+        # Fetch from platform-core service
         try:
             service_info = await self.model_management_client.get_service(
                 service_id,
@@ -415,19 +415,19 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                     self._service_registry_cache[service_id] = (endpoint, model_name, expires_at)
                 else:
                     logger.warning(
-                        f"Model management returned service for service_id={service_id!r} but endpoint is empty; "
+                        f"Platform-core returned service for service_id={service_id!r} but endpoint is empty; "
                         "inference will fail until the service row has a non-empty endpoint."
                     )
             else:
                 logger.warning(
-                    f"Model management returned no service for service_id={service_id!r} (404 or no data). "
-                    "Check that the id exists in model_management_db.services.service_id or that model-management-service is reachable."
+                    f"Platform-core returned no service for service_id={service_id!r} (404 or no data). "
+                    "Check that the id exists in core_db.services.service_id or that platform-core-service is reachable."
                 )
             return service_info
         except Exception as e:
             logger.error(
-                f"Failed to fetch service info for {service_id} from model management service: {e}. "
-                "Service resolution failed - some services require Model Management database entries.",
+                f"Failed to fetch service info for {service_id} from platform-core service: {e}. "
+                "Service resolution failed - some services require platform-core database entries.",
                 exc_info=True,
             )
             return None
@@ -501,7 +501,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             self._service_registry_cache[service_id] = (endpoint, model_name, expires_at)
             return endpoint, model_name
         
-        # Fetch from model management service
+        # Fetch from platform-core service
         service_info = await self._get_service_info(service_id, auth_headers)
         if service_info and service_info.endpoint:
             endpoint, model_name = self._extract_triton_metadata(service_info, service_id)
@@ -583,16 +583,16 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             )
             return endpoint, model_name, client, service_info
 
-        # No fallback: if Model Management cannot resolve the serviceId, return no endpoint/model/client.
+        # No fallback: if Platform Core cannot resolve the serviceId, return no endpoint/model/client.
         # Routers are responsible for returning clear HTTP 4xx/5xx errors in this case.
         if service_info is None:
             logger.error(
-                f"Model Management did not resolve serviceId: {service_id!r} (no service returned - check 404/connectivity and that service_id exists in model_management_db.services). "
+                f"Platform Core did not resolve serviceId: {service_id!r} (no service returned - check 404/connectivity and that service_id exists in core_db.services). "
                 "No default endpoint is allowed."
             )
         else:
             logger.error(
-                f"Model Management did not resolve serviceId: {service_id!r} (service found but endpoint is missing or empty in DB). "
+                f"Platform Core did not resolve serviceId: {service_id!r} (service found but endpoint is missing or empty in DB). "
                 "No default endpoint is allowed."
             )
         return None, None, None, service_info
@@ -770,7 +770,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                             health_service_id=health_service_id,
                         )
                 # Log removed - middleware handles request/response logging
-                logger.debug(f"Resolving serviceId: {service_id} via Model Management")
+                logger.debug(f"Resolving serviceId: {service_id} via Platform Core")
                 auth_headers = extract_auth_headers(request)
                 endpoint, model_name, triton_client, service_info = await self._resolve_service(
                     service_id, auth_headers
@@ -783,19 +783,19 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                     logger.debug(f"Resolved endpoint: {endpoint} for serviceId: {service_id}")
                 else:
                     logger.error(f"Failed to resolve endpoint for serviceId: {service_id}")
-                    request.state.model_management_error = "Endpoint not found"
+                    request.state.platform_core_error = "Endpoint not found"
                 if model_name:
                     request.state.triton_model_name = model_name
                     # Log removed - middleware handles request/response logging
                     logger.debug(f"Resolved model_name: {model_name} for serviceId: {service_id}")
                 else:
                     logger.error(f"Failed to resolve model_name for serviceId: {service_id}")
-                    request.state.model_management_error = "Model name not found"
+                    request.state.platform_core_error = "Model name not found"
                 if triton_client:
                     request.state.triton_client = triton_client
                 request.state.ssl_verify = service_info.ssl_verify if service_info else None
             else:
-                logger.debug("No serviceId found, skipping Model Management resolution")
+                logger.debug("No serviceId found, skipping Platform Core resolution")
             
             response = await call_next(request)
             if getattr(request.state, "experiment_info", None):

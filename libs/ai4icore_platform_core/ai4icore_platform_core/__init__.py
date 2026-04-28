@@ -1,12 +1,12 @@
 """
-AI4ICore Model Management Plugin
+AI4ICore Platform Core Plugin
 
-This package provides reusable model management integration for AI4ICore services,
-including Model Management Service client, Triton client, caching, and middleware
+This package provides reusable platform-core service integration for AI4ICore services,
+including Platform Core Service client, Triton client, caching, and middleware
 for automatic service resolution.
 
 Features:
-- Model Management Service client with Redis + in-memory caching
+- Platform Core Service client with Redis + in-memory caching
 - Generic Triton Inference Server client wrapper
 - Model Resolution Middleware for FastAPI
 - Automatic serviceId → endpoint + model_name resolution

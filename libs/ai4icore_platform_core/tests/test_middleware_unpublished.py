@@ -6,8 +6,8 @@ Verifies that inference is rejected with 403 when service is unpublished.
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from ai4icore_model_management.client import ModelManagementClient, ServiceInfo
-from ai4icore_model_management.middleware import (
+from ai4icore_platform_core.client import ModelManagementClient, ServiceInfo
+from ai4icore_platform_core.middleware import (
     ModelResolutionMiddleware,
     UnpublishedServiceError,
     SERVICE_UNPUBLISHED_CODE,

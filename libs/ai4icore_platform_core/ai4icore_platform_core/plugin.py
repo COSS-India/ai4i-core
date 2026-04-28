@@ -1,5 +1,5 @@
 """
-Model Management Plugin
+Platform Core Plugin
 Easy integration plugin for FastAPI applications
 """
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class ModelManagementPlugin:
-    """Plugin for easy Model Management integration in FastAPI apps"""
+    """Plugin for easy platform-core service integration in FastAPI apps"""
     
     def __init__(self, config: Optional[ModelManagementConfig] = None):
         """
@@ -37,7 +37,7 @@ class ModelManagementPlugin:
             app: FastAPI application instance
             redis_client: Optional Redis client for shared caching
         """
-        # Initialize Model Management client
+        # Initialize platform-core service client
         self.model_management_client = ModelManagementClient(
             base_url=self.config.model_management_service_url,
             api_key=self.config.model_management_api_key,
@@ -87,7 +87,7 @@ class ModelManagementPlugin:
                         setattr(app.state, "_health_gate_client", None)
         
         logger.info(
-            f"✅ Model Management Plugin initialized: {self.config.model_management_service_url}"
+            f"✅ Platform Core Plugin initialized: {self.config.model_management_service_url}"
         )
     
     async def close(self):

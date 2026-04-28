@@ -490,7 +490,7 @@ services:
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_platform_core:/app/libs/ai4icore_platform_core
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
@@ -534,7 +534,7 @@ services:
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_platform_core:/app/libs/ai4icore_platform_core
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
@@ -571,7 +571,7 @@ services:
     environment:
       - ENV_FILE=.env
       - API_GATEWAY_URL=http://api-gateway-service:8080
-      - PYTHONPATH=/app:/app/libs/ai4icore_observability:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry:/app/libs/ai4icore_model_management:/home/app/.local/lib/python3.11/site-packages
+      - PYTHONPATH=/app:/app/libs/ai4icore_observability:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry:/app/libs/ai4icore_platform_core:/home/app/.local/lib/python3.11/site-packages
     env_file:
       - ./services/nmt-service/.env
     volumes:
@@ -579,7 +579,7 @@ services:
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_platform_core:/app/libs/ai4icore_platform_core
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
@@ -624,7 +624,7 @@ services:
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_platform_core:/app/libs/ai4icore_platform_core
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
@@ -670,7 +670,7 @@ services:
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_platform_core:/app/libs/ai4icore_platform_core
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
@@ -754,7 +754,7 @@ services:
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_platform_core:/app/libs/ai4icore_platform_core
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
@@ -971,7 +971,7 @@ services:
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_platform_core:/app/libs/ai4icore_platform_core
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
@@ -1012,7 +1012,7 @@ services:
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_platform_core:/app/libs/ai4icore_platform_core
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
@@ -1089,7 +1089,7 @@ services:
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_platform_core:/app/libs/ai4icore_platform_core
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
@@ -1131,7 +1131,7 @@ services:
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_platform_core:/app/libs/ai4icore_platform_core
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
@@ -1173,7 +1173,7 @@ services:
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_platform_core:/app/libs/ai4icore_platform_core
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
@@ -1344,7 +1344,7 @@ services:
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
-      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./libs/ai4icore_platform_core:/app/libs/ai4icore_platform_core
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared

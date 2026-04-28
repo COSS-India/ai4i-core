@@ -1,10 +1,10 @@
-# AI4ICore Model Management Plugin
+# AI4ICore Platform Core Plugin
 
-Reusable Model Management integration module for AI4ICore microservices. Provides Model Management Service client, Triton client, caching, and middleware for automatic service resolution.
+Reusable platform-core service integration module for AI4ICore microservices. Provides Platform Core Service client, Triton client, caching, and middleware for automatic service resolution.
 
 ## Features
 
-- ✅ **Model Management Service Client** - HTTP client with Redis + in-memory caching
+- ✅ **Platform Core Service Client** - HTTP client with Redis + in-memory caching
 - ✅ **Triton Client Wrapper** - Generic Triton Inference Server client
 - ✅ **Model Resolution Middleware** - Automatic `serviceId` → `endpoint` + `model_name` resolution
 - ✅ **Multi-layer Caching** - In-memory + Redis for shared caching across instances
@@ -14,17 +14,17 @@ Reusable Model Management integration module for AI4ICore microservices. Provide
 
 ### Option 1: Copy-paste at build time (Recommended)
 
-Copy the entire `libs/ai4icore_model_management/` directory to your service during Docker build:
+Copy the entire `libs/ai4icore_platform_core/` directory to your service during Docker build:
 
 ```dockerfile
 # In your service Dockerfile
-COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+COPY libs/ai4icore_platform_core /app/libs/ai4icore_platform_core
 ```
 
 ### Option 2: Install as package
 
 ```bash
-cd libs/ai4icore_model_management
+cd libs/ai4icore_platform_core
 pip install -e .
 ```
 
@@ -34,7 +34,7 @@ pip install -e .
 
 ```python
 from fastapi import FastAPI
-from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
+from ai4icore_platform_core import ModelManagementPlugin, ModelManagementConfig
 import redis.asyncio as redis
 
 app = FastAPI()
@@ -63,7 +63,7 @@ async def inference(request: Request, body: NMTRequest):
 ### 2. Manual Usage (without Middleware)
 
 ```python
-from ai4icore_model_management import ModelManagementClient, TritonClient
+from ai4icore_platform_core import ModelManagementClient, TritonClient
 from fastapi import Request
 
 # In your dependency or route
@@ -99,9 +99,9 @@ async def get_model_info(request: Request):
 ### Environment Variables
 
 ```bash
-# Model Management Service
-MODEL_MANAGEMENT_SERVICE_URL=http://model-management-service:8091
-MODEL_MANAGEMENT_SERVICE_API_KEY=your-api-key  # Optional, fallback
+# Platform Core Service
+PLATFORM_CORE_SERVICE_URL=http://platform-core-service:8095
+PLATFORM_CORE_SERVICE_API_KEY=your-api-key  # Optional, fallback
 
 # Cache settings
 MODEL_MANAGEMENT_CACHE_TTL=300  # 5 minutes
@@ -115,10 +115,10 @@ TRITON_API_KEY=default-api-key
 ### Programmatic Configuration
 
 ```python
-from ai4icore_model_management import ModelManagementConfig
+from ai4icore_platform_core import ModelManagementConfig
 
 config = ModelManagementConfig(
-    model_management_service_url="http://model-management-service:8091",
+    model_management_service_url="http://platform-core-service:8095",
     cache_ttl_seconds=300,
     middleware_enabled=True,
     middleware_paths=["/api/v1/nmt", "/api/v1/transliteration"]
@@ -148,7 +148,7 @@ class NMTService:
 **After (Using Module):**
 ```python
 # services/nmt-service/main.py
-from ai4icore_model_management import ModelManagementPlugin
+from ai4icore_platform_core import ModelManagementPlugin
 
 plugin = ModelManagementPlugin()
 plugin.register_plugin(app, redis_client=redis_client)
@@ -167,7 +167,7 @@ async def run_inference(self, request, http_request: Request):
 
 ```python
 client = ModelManagementClient(
-    base_url="http://model-management-service:8091",
+    base_url="http://platform-core-service:8095",
     api_key="optional-api-key",
     cache_ttl_seconds=300,
     timeout=10.0
@@ -216,7 +216,7 @@ models = client.list_models()
 
 The middleware automatically:
 1. Extracts `serviceId` from request body (`config.serviceId`)
-2. Resolves to `endpoint` and `model_name` via Model Management Service
+2. Resolves to `endpoint` and `model_name` via platform-core service
 3. Creates and caches `TritonClient` instance
 4. Attaches to `request.state`:
    - `request.state.service_id`
@@ -226,7 +226,7 @@ The middleware automatically:
 
 #### Optional health pre-flight gate (coarse)
 
-When enabled (via `MODEL_MANAGEMENT_HEALTH_GATE_*`), the middleware performs a fast pre-flight check against config-service’s cached health snapshot and **fails closed** with `503` when the backend health is `unhealthy` or `unknown/unavailable`.
+When enabled (via `MODEL_MANAGEMENT_HEALTH_GATE_*`), the middleware performs a fast pre-flight check against config-service's cached health snapshot and **fails closed** with `503` when the backend health is `unhealthy` or `unknown/unavailable`.
 
 This gate is intentionally **microservice-level and permissive**:
 - **`degraded` is allowed** (at least one instance is healthy)
@@ -238,11 +238,11 @@ The module uses a 3-layer caching strategy:
 
 1. **In-memory cache** (per instance) - Fastest, but not shared
 2. **Redis cache** (shared) - Fast, shared across all instances
-3. **Model Management API** (source of truth) - Only called on cache miss
+3. **Platform Core API** (source of truth) - Only called on cache miss
 
 Cache keys:
-- `model_mgmt:service:{serviceId}` - Service info
-- `model_mgmt:triton:registry:{serviceId}` - Endpoint + model_name mapping
+- `platform_core:service:{serviceId}` - Service info
+- `platform_core:triton:registry:{serviceId}` - Endpoint + model_name mapping
 
 ## Examples
 
@@ -250,7 +250,7 @@ Cache keys:
 
 ```python
 # main.py
-from ai4icore_model_management import ModelManagementPlugin
+from ai4icore_platform_core import ModelManagementPlugin
 import redis.asyncio as redis
 
 app = FastAPI()
@@ -301,11 +301,11 @@ async def transliterate(request: Request, body: TransliterationRequest):
 - Check cache TTL settings
 - Clear cache: `await model_mgmt_client.clear_cache(redis_client)`
 
-### Model Management API errors
+### Platform Core API errors
 
-- Verify `MODEL_MANAGEMENT_SERVICE_URL` is correct
+- Verify `PLATFORM_CORE_SERVICE_URL` is correct
 - Check authentication headers are forwarded correctly
-- Verify service exists in Model Management Service
+- Verify service exists in platform-core service (`core_db.services`)
 
 ## License
 
@@ -314,4 +314,3 @@ MIT
 ## Support
 
 For issues and questions, contact the AI4X Team.
-

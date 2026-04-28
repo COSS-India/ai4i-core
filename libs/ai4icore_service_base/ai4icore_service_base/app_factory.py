@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from ai4icore_env import app_env
 from ai4icore_exceptions import register_exception_handlers
-from ai4icore_model_management import (
+from ai4icore_platform_core import (
     AuthContextMiddleware,
     ModelManagementConfig,
     ModelManagementPlugin,

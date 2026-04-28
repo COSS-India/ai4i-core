@@ -27,7 +27,7 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
-COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+COPY libs/ai4icore_platform_core /app/libs/ai4icore_platform_core
 # Copy shared constants lib
 COPY libs/ai4icore_constants /app/libs/ai4icore_constants
 COPY libs/ai4icore_env /app/libs/ai4icore_env
@@ -41,7 +41,7 @@ RUN pip install --no-cache-dir --user 'grpcio>=1.63.2,<2.0.0'
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_platform_core
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_constants
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_exceptions
@@ -85,7 +85,7 @@ RUN pip install --no-cache-dir packaging>=21.0 && \
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
-COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
+COPY --from=builder /app/libs/ai4icore_platform_core /app/libs/ai4icore_platform_core
 
 # Copy shared constants lib
 COPY --from=builder /app/libs/ai4icore_constants /app/libs/ai4icore_constants

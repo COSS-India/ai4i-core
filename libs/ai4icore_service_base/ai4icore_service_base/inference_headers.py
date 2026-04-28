@@ -15,7 +15,7 @@ Flow:
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from ai4icore_model_management.triton_client import _current_scope, SCOPE_KEY
+from ai4icore_platform_core.triton_client import _current_scope, SCOPE_KEY
 
 # Optional OpenTelemetry for real trace ID
 try:
