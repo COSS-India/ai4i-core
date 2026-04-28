@@ -88,6 +88,18 @@ export interface PasswordResetConfirm {
   confirm_password: string;
 }
 
+export interface SetPasswordRequest {
+  token: string;
+  new_password: string;
+  confirm_password: string;
+}
+
+export interface SetPasswordStatusResponse {
+  valid: boolean;
+  status: "valid" | "expired" | "invalid" | "used";
+  message: string;
+}
+
 export interface LogoutRequest {
   refresh_token?: string;
 }

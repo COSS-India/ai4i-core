@@ -119,6 +119,22 @@ class AuthSettings(BaseSettings):
     guest_email: Optional[str] = None
     guest_password: Optional[str] = None
 
+    # ── Email (Amazon SES via SMTP today, swappable to any provider) ──
+    # Lib reads these via its own EmailSettings; mirrored here so AuthSettings
+    # stays the single source of truth for which env vars this service expects.
+    email_provider: str = "smtp"
+    email_from: Optional[str] = None
+    email_from_name: str = "AI4I Platform"
+    email_reply_to: Optional[str] = None
+    email_extra_headers: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: int = 587
+    smtp_username: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_use_tls: bool = True
+    smtp_timeout: int = 30
+    setup_link_base_url: Optional[str] = None
+
     # ── Derived helpers ──
 
     def get_database_url(self) -> str:

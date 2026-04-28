@@ -5,10 +5,15 @@ change-password, and email-activation (provision + set-password).
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Callable, Optional
 from uuid import UUID
 
+from ai4icore_email import EmailClient, EmailMessage
+from fastapi import BackgroundTasks
+
 from app.core.config import settings
+from app.core.constants import TokenType
+from app.core.roles import Roles
 from app.core.exceptions import (
     DuplicateEntityError,
     EntityNotFoundError,
@@ -28,6 +33,11 @@ from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
 from app.schemas.auth import LoginResponse, TokenRefreshResponse
+from app.services.auth_email_templates import (
+    render_password_changed,
+    render_setup_link,
+    render_welcome,
+)
 from app.services.password_service import PasswordService
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
@@ -46,6 +56,7 @@ class AuthService:
         refresh_token_repo: RefreshTokenRepository,
         verification_repo: VerificationRepository,
         tenant_repo: TenantRepository,
+        email_client: EmailClient,
     ) -> None:
         self._users = user_repo
         self._roles = role_service
@@ -55,6 +66,44 @@ class AuthService:
         self._refresh_tokens = refresh_token_repo
         self._verifications = verification_repo
         self._tenants = tenant_repo
+        self._email = email_client
+
+    def _enqueue_email(
+        self,
+        background_tasks: Optional[BackgroundTasks],
+        factory: Callable[[], EmailMessage],
+    ) -> None:
+        """Render and enqueue a send_safe call.
+
+        ``factory`` is a zero-arg callable that returns an EmailMessage. Render
+        is wrapped in try/except so a template/URL bug never 5xx's a request
+        whose DB commit already succeeded — orphan-row prevention. Render
+        failures are logged at ERROR for ops to catch via metrics.
+
+        Silent no-op when no BackgroundTasks available (e.g. tests calling the
+        service directly without a request).
+        """
+        if background_tasks is None:
+            return
+        try:
+            message = factory()
+        except Exception as exc:
+            logger.error(
+                "email render failed: error=%s",
+                exc.__class__.__name__,
+            )
+            return
+        background_tasks.add_task(self._email.send_safe, message)
+
+    def _setup_token_expires_at(self) -> datetime:
+        return datetime.now(timezone.utc) + timedelta(hours=settings.setup_token_expire_hours)
+
+    def _validate_token_of_type(self, token: str, expected_type: str):
+        """Validate a JWT and assert its type. Raises TokenExpiredError / TokenInvalidError on failure."""
+        payload = self._tokens.validate_token(token)
+        if payload.token_type != expected_type:
+            raise TokenInvalidError(f"Expected a '{expected_type}' token.")
+        return payload
 
     async def _resolve_tenant_id(self, explicit: Optional[str]) -> Optional[UUID]:
         """Honor an explicit tenant_id, otherwise fall back to the default tenant."""
@@ -81,6 +130,7 @@ class AuthService:
         phone_number: Optional[str] = None,
         tz: str = "UTC",
         tenant_id: Optional[str] = None,
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> User:
         """Create a user with credentials in one transaction. Used for direct portal sign-up."""
         self._passwords.validate_and_confirm(password, confirm_password)
@@ -113,12 +163,13 @@ class AuthService:
         await self._credentials.create(creds)
 
         try:
-            await self._roles.assign_role(user.user_id, "USER")
+            await self._roles.assign_role(user.user_id, Roles.USER)
         except EntityNotFoundError:
             logger.warning("Default USER role not found, skipping role assignment.")
 
         await self._users.commit()
         logger.info("User registered: %s (id=%s)", email, user.user_id)
+        self._enqueue_email(background_tasks, lambda: render_welcome(user))
         return user
 
     # ── Login ──
@@ -169,15 +220,7 @@ class AuthService:
 
     async def refresh_token(self, refresh_token_str: str) -> TokenRefreshResponse:
         """Validate a refresh token via DB and issue a new access token."""
-        try:
-            payload = self._tokens.validate_token(refresh_token_str)
-        except TokenExpiredError:
-            raise
-        except TokenInvalidError:
-            raise
-
-        if payload.token_type != "refresh":
-            raise TokenInvalidError("Not a refresh token.")
+        payload = self._validate_token_of_type(refresh_token_str, TokenType.REFRESH)
 
         db_token = await self._refresh_tokens.get_by_token(refresh_token_str)
         if not db_token:
@@ -218,6 +261,7 @@ class AuthService:
         current_password: str,
         new_password: str,
         confirm_password: str,
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> None:
         self._passwords.validate_and_confirm(new_password, confirm_password)
 
@@ -232,6 +276,7 @@ class AuthService:
         await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
         await self._credentials.commit()
         logger.info("Password changed for user id=%s", user.user_id)
+        self._enqueue_email(background_tasks, lambda: render_password_changed(user))
 
     # ── Email Activation: Provision User ──
 
@@ -243,11 +288,17 @@ class AuthService:
         phone_number: Optional[str] = None,
         tenant_id: Optional[str] = None,
         creation_type: str = "tenant",
+        role_name: str = Roles.USER,
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> tuple[str, str]:
         """
         Create an inactive user without credentials and generate a setup token.
         Used by the tenant-user provisioning route during tenant user onboarding.
         Returns (user_id_str, setup_token).
+
+        ``role_name`` decides which role is assigned. Default ``Roles.USER``
+        for regular tenant members; pass ``Roles.TENANT_ADMIN`` when
+        provisioning the first admin user of a new tenant.
         """
         if await self._users.get_by_email(email):
             raise DuplicateEntityError("User", "email")
@@ -269,9 +320,9 @@ class AuthService:
         await self._users.create(user)
 
         try:
-            await self._roles.assign_role(user.user_id, "USER")
+            await self._roles.assign_role(user.user_id, role_name)
         except EntityNotFoundError:
-            logger.warning("Default USER role not found, skipping role assignment.")
+            logger.warning("Role %r not found, skipping role assignment.", role_name)
 
         user_uuid_str = str(user.user_id)
         setup_token = self._tokens.create_setup_token(
@@ -283,13 +334,14 @@ class AuthService:
         token_obj = TokenVerification(
             token=setup_token,
             is_active=True,
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=settings.setup_token_expire_hours),
+            expires_at=self._setup_token_expires_at(),
             created_by=user_uuid_str,
         )
         await self._verifications.create(token_obj)
         await self._users.commit()
 
         logger.info("User provisioned (no credentials): %s (id=%s)", email, user.user_id)
+        self._enqueue_email(background_tasks, lambda: render_setup_link(user, setup_token))
         return user_uuid_str, setup_token
 
     # ── Email Activation: Set Password ──
@@ -300,15 +352,7 @@ class AuthService:
         """Consume a setup token and create credentials, activating the user."""
         self._passwords.validate_and_confirm(new_password, confirm_password)
 
-        try:
-            payload = self._tokens.validate_token(token)
-        except TokenExpiredError:
-            raise
-        except TokenInvalidError:
-            raise
-
-        if payload.token_type != "setup":
-            raise TokenInvalidError("Invalid setup link.")
+        payload = self._validate_token_of_type(token, TokenType.SETUP)
 
         token_obj = await self._verifications.get_by_token(token)
         if not token_obj:
@@ -344,7 +388,7 @@ class AuthService:
         except (TokenInvalidError, Exception):
             return {"valid": False, "status": "invalid", "message": "Setup link is invalid."}
 
-        if payload.token_type != "setup":
+        if payload.token_type != TokenType.SETUP:
             return {"valid": False, "status": "invalid", "message": "Setup link is invalid."}
 
         token_obj = await self._verifications.get_by_token(token)
@@ -357,7 +401,11 @@ class AuthService:
 
     # ── Email Activation: Resend ──
 
-    async def resend_setup_link(self, email: str) -> str:
+    async def resend_setup_link(
+        self,
+        email: str,
+        background_tasks: Optional[BackgroundTasks] = None,
+    ) -> str:
         """Invalidate old setup tokens and issue a new one."""
         user = await self._users.get_by_email(email)
         if not user:
@@ -382,11 +430,12 @@ class AuthService:
         token_obj = TokenVerification(
             token=setup_token,
             is_active=True,
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=settings.setup_token_expire_hours),
+            expires_at=self._setup_token_expires_at(),
             created_by=user_uuid_str,
         )
         await self._verifications.create(token_obj)
         await self._users.commit()
 
         logger.info("Setup link resent for user id=%s", user.user_id)
+        self._enqueue_email(background_tasks, lambda: render_setup_link(user, setup_token))
         return setup_token

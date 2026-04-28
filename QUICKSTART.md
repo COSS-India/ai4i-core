@@ -20,7 +20,7 @@ cp env.template .env
 
 Copy environment files for all services:
 ```bash
-for service in api-gateway-service auth-service config-service model-management-service asr-service tts-service nmt-service llm-service transliteration-service ocr-service ner-service language-detection-service language-diarization-service audio-lang-detection-service speaker-diarization-service pipeline-service alerting-service dashboard-service metrics-service telemetry-service; do
+for service in api-gateway-service auth-service config-service asr-service tts-service nmt-service llm-service transliteration-service ocr-service ner-service language-detection-service language-diarization-service audio-lang-detection-service speaker-diarization-service pipeline-service alerting-service dashboard-service metrics-service telemetry-service; do
   cp services/$service/env.template services/$service/.env 2>/dev/null || true
 done
 cp frontend/simple-ui/env.template frontend/simple-ui/.env

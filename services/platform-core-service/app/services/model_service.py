@@ -311,20 +311,15 @@ class ModelService:
         logger.info("Updated model %s v%s", instance.model_id, instance.version)
 
     async def delete_model(self, id_str: str) -> None:
-        """Delete a model version by its internal UUID.
+        """Delete a model version by its model_id.
 
         Hard rules:
-        - 404 if no row matches the UUID.
+        - 404 if no row matches the model_id.
         - 409 if any *published* service references this (model_id, version).
         - Cascading delete of unpublished services associated with the
           version (their cache entries are wiped too).
         """
-        try:
-            uuid = UUID(id_str)
-        except ValueError:
-            raise EntityNotFoundError(f"Model '{id_str}'")
-
-        instance = await self._models.get_by_uuid(uuid)
+        instance = await self._models.get_by_model_id(id_str)
         if instance is None:
             raise EntityNotFoundError(f"Model '{id_str}'")
 
@@ -351,7 +346,7 @@ class ModelService:
             )
 
         try:
-            await self._models.delete_by_uuid(uuid)
+            await self._models.delete_by_model_id(instance.model_id)
             await self._models.commit()
         except Exception:
             await self._models.rollback()

@@ -41,6 +41,21 @@ class UserService:
         await self._users.commit()
         return user
 
+    async def _resolve_caller_role_set(
+        self, caller: User, role_set: set[str] | None
+    ) -> set[str]:
+        if role_set is not None:
+            return role_set
+        roles = await self._roles.get_user_roles(caller.user_id)
+        return set(roles)
+
+    def _assert_tenant_context(self, caller: User, action: str) -> None:
+        if caller.tenant_id is None:
+            raise AuthorizationError(
+                message=f"Your account has no tenant context; cannot {action}.",
+                code="TENANT_CONTEXT_REQUIRED",
+            )
+
     async def list_users_for_caller(
         self,
         caller: User,
@@ -50,19 +65,12 @@ class UserService:
         role_set: set[str] | None = None,
     ) -> list[User]:
         """ADMIN/MODERATOR see all users; TENANT ADMIN sees only their own tenant."""
-        effective_role_set = role_set
-        if effective_role_set is None:
-            roles = await self._roles.get_user_roles(caller.user_id)
-            effective_role_set = set(roles)
+        effective_role_set = await self._resolve_caller_role_set(caller, role_set)
 
         if "ADMIN" in effective_role_set or "MODERATOR" in effective_role_set:
             return await self._users.list_all(offset, limit)
         if "TENANT ADMIN" in effective_role_set:
-            if caller.tenant_id is None:
-                raise AuthorizationError(
-                    message="Your account has no tenant context; cannot list users.",
-                    code="TENANT_CONTEXT_REQUIRED",
-                )
+            self._assert_tenant_context(caller, "list users")
             return await self._users.list_by_tenant(caller.tenant_id, offset, limit)
         raise AuthorizationError(
             message="You are not authorized to list users.",
@@ -86,19 +94,12 @@ class UserService:
         if not user:
             return None
 
-        effective_role_set = role_set
-        if effective_role_set is None:
-            roles = await self._roles.get_user_roles(caller.user_id)
-            effective_role_set = set(roles)
+        effective_role_set = await self._resolve_caller_role_set(caller, role_set)
 
         if "ADMIN" in effective_role_set or "MODERATOR" in effective_role_set:
             return user
         if "TENANT ADMIN" in effective_role_set:
-            if caller.tenant_id is None:
-                raise AuthorizationError(
-                    message="Your account has no tenant context; cannot view users.",
-                    code="TENANT_CONTEXT_REQUIRED",
-                )
+            self._assert_tenant_context(caller, "view users")
             if user.tenant_id != caller.tenant_id:
                 raise AuthorizationError(
                     message="Cannot view a user outside your tenant.",

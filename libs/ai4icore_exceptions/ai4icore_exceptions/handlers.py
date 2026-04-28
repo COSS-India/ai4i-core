@@ -296,10 +296,21 @@ def register_exception_handlers(app: FastAPI) -> None:
             extra_attrs={"validation.error_count": len(errors)},
         )
 
-        # Return raw Pydantic errors (consistent with existing service behavior)
+        # Pydantic v2 puts the raw ValueError instance in ctx['error'], which
+        # is not JSON-serializable.  Convert any Exception in ctx to its string.
+        sanitized: list[dict] = []
+        for err in errors:
+            entry = dict(err)
+            if isinstance(entry.get("ctx"), dict):
+                entry["ctx"] = {
+                    k: str(v) if isinstance(v, Exception) else v
+                    for k, v in entry["ctx"].items()
+                }
+            sanitized.append(entry)
+
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content={"detail": errors},
+            content={"detail": sanitized},
         )
 
     # ------------------------------------------------------------------

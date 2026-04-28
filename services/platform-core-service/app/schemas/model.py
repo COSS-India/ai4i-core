@@ -92,7 +92,6 @@ class ModelResponse(BaseSchema):
     """Single-model response shape (preserves model-management camelCase)."""
 
     modelId: str
-    uuid: str
     name: str
     version: str
     submittedOn: Optional[int] = None

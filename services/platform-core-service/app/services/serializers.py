@@ -29,7 +29,6 @@ def model_to_dict(model: Model) -> Dict[str, Any]:
     """Serialize a Model ORM row to the API response shape."""
     return {
         "modelId": model.model_id,
-        "uuid": str(model.id),
         "name": model.name,
         "version": model.version,
         "submittedOn": _epoch(model.created_at),
@@ -59,7 +58,6 @@ def service_to_dict(
     from the joined Model (used by list endpoints)."""
     out: Dict[str, Any] = {
         "serviceId": service.service_id,
-        "uuid": str(service.id),
         "name": service.name,
         "serviceDescription": service.service_description,
         "hardwareDescription": service.hardware_description,

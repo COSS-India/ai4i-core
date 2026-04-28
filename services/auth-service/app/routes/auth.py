@@ -3,7 +3,7 @@ Authentication routes: register, login, logout, refresh, password management,
 and email activation (provision + set-password).
 """
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
 from app.core.config import settings
 from app.core.responses import success_response
@@ -33,6 +33,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @router.post("/register")
 async def register(
     body: RegisterRequest,
+    background_tasks: BackgroundTasks,
     svc: AuthService = Depends(get_auth_service),
 ):
     user = await svc.register(
@@ -44,6 +45,7 @@ async def register(
         phone_number=body.phone_number,
         tz=body.timezone,
         tenant_id=body.tenant_id,
+        background_tasks=background_tasks,
     )
     return success_response(data={
         "user_id": str(user.user_id),
@@ -93,6 +95,7 @@ async def logout(
 @router.post("/change-password")
 async def change_password(
     body: PasswordChangeRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_active_user),
     svc: AuthService = Depends(get_auth_service),
 ):
@@ -101,6 +104,7 @@ async def change_password(
         current_password=body.current_password,
         new_password=body.new_password,
         confirm_password=body.confirm_password,
+        background_tasks=background_tasks,
     )
     return success_response(data={"message": "Password changed successfully."})
 
@@ -110,6 +114,7 @@ async def change_password(
 @router.post("/internal/provision-user", response_model=ProvisionUserResponse)
 async def provision_user(
     body: ProvisionUserRequest,
+    background_tasks: BackgroundTasks,
     svc: AuthService = Depends(get_auth_service),
 ):
     """
@@ -123,6 +128,7 @@ async def provision_user(
         phone_number=body.phone_number,
         tenant_id=body.tenant_id,
         creation_type=body.creation_type,
+        background_tasks=background_tasks,
     )
     return ProvisionUserResponse(
         user_id=user_id,
@@ -158,10 +164,14 @@ async def set_password(
 @router.post("/resend-setup-link")
 async def resend_setup_link(
     body: ResendSetupLinkRequest,
+    background_tasks: BackgroundTasks,
     svc: AuthService = Depends(get_auth_service),
 ):
     """Invalidate existing setup tokens and issue a new one for the given email."""
-    setup_token = await svc.resend_setup_link(email=body.email)
+    setup_token = await svc.resend_setup_link(
+        email=body.email,
+        background_tasks=background_tasks,
+    )
     return success_response(data={
         "message": "New setup link issued.",
         "setup_token": setup_token,

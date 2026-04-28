@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4icore_core.auth.jwt_verifier import AuthClaims, JWTExpiredError, JWTVerificationError
 
+from app.core.constants import TokenType
 from app.core.database import get_db
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError
 from app.core.security import key_manager
@@ -119,7 +120,7 @@ async def validate_token(
         if not user:
             # Backward compatibility: API key validation should still succeed
             # even if the owning user record was deleted.
-            if claims.token_type != "api_key":
+            if claims.token_type != TokenType.API_KEY:
                 return JSONResponse(status_code=401, content={"valid": False, "error": "USER_NOT_FOUND"})
             logger.warning(
                 "API key token validated with missing user record: user_id=%s token_id=%s",

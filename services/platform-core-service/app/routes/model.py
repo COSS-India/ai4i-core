@@ -1,14 +1,5 @@
 """
-Model management routes.
-
-Path layout (mounted under /api/v1):
-  GET    /models                  — list models with optional filters
-  GET    /models/{model_id}       — get a single model (optional ?version=)
-  POST   /models                  — create a new model
-  PATCH  /models                  — update a model (modelId+version in body)
-  DELETE /models/{model_id}       — delete a model by internal UUID
-
-Authentication is handled at the gateway layer.
+Model management API endpoints.
 """
 
 import logging
@@ -59,7 +50,7 @@ async def list_models(
     ),
     include_deprecated: bool = Query(
         True,
-        description="Include deprecated versions. Set false for ACTIVE only.",
+        description="Include deprecated versions.",
     ),
     version_status: Optional[str] = Query(
         None,
@@ -106,13 +97,12 @@ async def list_models(
 @router.get("/{model_id:path}", summary="Retrieve Model")
 async def get_model_by_id(
     model_id: str,
-    version: Optional[str] = Query(None, description="Optional specific version."),
+    version: Optional[str] = Query(None, description="Specific model version. If omitted, returns the latest active version."),
     svc: ModelService = Depends(get_model_service),
 ):
-    """Get a model by ID. Without ?version, returns latest ACTIVE version."""
+    """Retrieve a model by ID."""
     data = await svc.get_model(model_id, version=version)
     return success_response(data=data)
-
 
 
 @router.post("")
@@ -140,7 +130,7 @@ async def update_model(
     payload: ModelUpdateRequest,
     svc: ModelService = Depends(get_model_service),
 ):
-    """Update an existing model version (PATCH semantics)."""
+    """Update an existing model version."""
     user_id = get_user_id(request)
     await svc.update_model(payload, updated_by=user_id)
     return success_response(
@@ -154,7 +144,7 @@ async def delete_model(
     model_id: str,
     svc: ModelService = Depends(get_model_service),
 ):
-    """Delete a model by its internal UUID."""
+    """Delete a model by its hash-generated model ID."""
     await svc.delete_model(model_id)
     return success_response(
         data={"modelId": model_id},
