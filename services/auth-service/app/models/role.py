@@ -2,24 +2,25 @@
 Role, Permission, UserRole, and RolePermission ORM models.
 """
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.models import Base
+from app.models.permission_enums import PermissionName
 
 
 class Role(Base):
     __tablename__ = "roles"
 
-    role_id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     name = Column(String(100), unique=True, index=True, nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    created_by = Column(String(255), nullable=True)
+    created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    updated_by = Column(String(255), nullable=True)
+    updated_by = Column(UUID(as_uuid=True), nullable=True)
 
     user_roles = relationship("UserRole", back_populates="role", cascade="all, delete-orphan")
     role_permissions = relationship("RolePermission", back_populates="role", cascade="all, delete-orphan")
@@ -28,14 +29,17 @@ class Role(Base):
 class Permission(Base):
     __tablename__ = "permissions"
 
-    permission_id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), unique=True, index=True, nullable=False)
-    resource = Column(String(100), nullable=False)
-    action = Column(String(50), nullable=False)
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
+    name = Column(
+        Enum(PermissionName, name="permission_name_enum", values_callable=lambda x: [e.value for e in x]),
+        unique=True,
+        index=True,
+        nullable=False,
+    )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    created_by = Column(String(255), nullable=True)
+    created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    updated_by = Column(String(255), nullable=True)
+    updated_by = Column(UUID(as_uuid=True), nullable=True)
 
     role_permissions = relationship("RolePermission", back_populates="permission", cascade="all, delete-orphan")
 
@@ -43,23 +47,23 @@ class Permission(Base):
 class UserRole(Base):
     __tablename__ = "user_role"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     user_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("users.user_id", ondelete="CASCADE"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     role_id = Column(
         Integer,
-        ForeignKey("roles.role_id", ondelete="CASCADE"),
+        ForeignKey("roles.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    created_by = Column(String(255), nullable=True)
+    created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    updated_by = Column(String(255), nullable=True)
+    updated_by = Column(UUID(as_uuid=True), nullable=True)
 
     user = relationship("User", back_populates="user_roles")
     role = relationship("Role", back_populates="user_roles")
@@ -68,23 +72,23 @@ class UserRole(Base):
 class RolePermission(Base):
     __tablename__ = "role_permission"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     role_id = Column(
         Integer,
-        ForeignKey("roles.role_id", ondelete="CASCADE"),
+        ForeignKey("roles.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     permission_id = Column(
         Integer,
-        ForeignKey("permissions.permission_id", ondelete="CASCADE"),
+        ForeignKey("permissions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    created_by = Column(String(255), nullable=True)
+    created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    updated_by = Column(String(255), nullable=True)
+    updated_by = Column(UUID(as_uuid=True), nullable=True)
 
     role = relationship("Role", back_populates="role_permissions")
     permission = relationship("Permission", back_populates="role_permissions")

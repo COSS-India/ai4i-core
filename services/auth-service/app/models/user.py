@@ -5,7 +5,7 @@ User ORM model.
 import enum
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, String
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -14,22 +14,20 @@ from app.models import Base
 
 
 class CreationType(str, enum.Enum):
-    DIRECT = "direct"
-    GOOGLE = "google"
-    TENANT = "tenant"
-
+    DEFAULT = "default"
+    OTHER = "google"
 
 class User(Base):
     __tablename__ = "users"
 
-    user_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, index=True, nullable=False)
     username = Column(String(100), unique=True, index=True, nullable=False)
     full_name = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     tenant_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("tenants.tenant_id", ondelete="SET NULL"),
+        Integer,
+        ForeignKey("tenants.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -42,12 +40,12 @@ class User(Base):
     creation_type = Column(
         Enum(CreationType, name="creation_type_enum", values_callable=lambda x: [e.value for e in x]),
         nullable=True,
-        server_default=CreationType.DIRECT.value,
+        server_default=CreationType.DEFAULT.value,
     )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    created_by = Column(String(255), nullable=True)
+    created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    updated_by = Column(String(255), nullable=True)
+    updated_by = Column(UUID(as_uuid=True), nullable=True)
 
     # Relationships
     tenant = relationship("Tenant", back_populates="users")
