@@ -277,11 +277,6 @@ async def update_tenant_user_status(
     target = await _load_tenant_user(tenant_id, user_id, db)
 
     payload = body.model_dump(exclude_unset=True)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "EMPTY_UPDATE", "message": "Provide at least one of is_active or is_tenant_active."},
-        )
     payload["updated_by"] = str(current_user.user_id)
     user_repo = UserRepository(db)
     await user_repo.update(target, payload)
@@ -301,11 +296,6 @@ async def update_tenant_user(
     target = await _load_tenant_user(tenant_id, user_id, db)
 
     payload = body.model_dump(exclude_unset=True)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "EMPTY_UPDATE", "message": "No fields to update."},
-        )
     payload["updated_by"] = str(current_user.user_id)
     user_repo = UserRepository(db)
     await user_repo.update(target, payload)
