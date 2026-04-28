@@ -34,7 +34,7 @@ class UserResponse(BaseSchema):
     is_delete: Optional[bool] = None
     is_tenant_active: Optional[bool] = None
     creation_type: Optional[CreationType] = None
-    tenant_id: Optional[UUID] = Field(None, description="Tenant identifier")
+    tenant_id: Optional[int] = Field(None, description="Tenant identifier")
     last_login: Optional[datetime] = None
     avatar_url: Optional[str] = None
     phone_number: Optional[str] = None
@@ -57,7 +57,7 @@ class UserDetailResponse(BaseSchema):
     is_delete: Optional[bool] = None
     is_tenant_active: Optional[bool] = None
     creation_type: Optional[CreationType] = None
-    tenant_id: Optional[UUID] = None
+    tenant_id: Optional[int] = None
     created_at: datetime
     last_login: Optional[datetime] = None
 

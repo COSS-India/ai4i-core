@@ -32,16 +32,16 @@ class TenantStatusUpdate(BaseSchema):
 
 
 class TenantResponse(BaseSchema):
-    tenant_id: UUID
+    tenant_id: int
     contact_name: str
     organisation: str
     email: str
     phone_number: Optional[str] = None
     status: TenantStatus
     created_at: datetime
-    created_by: Optional[str] = None
+    created_by: Optional[UUID] = None
     updated_at: Optional[datetime] = None
-    updated_by: Optional[str] = None
+    updated_by: Optional[UUID] = None
 
 
 class TenantUserCreate(BaseSchema):
