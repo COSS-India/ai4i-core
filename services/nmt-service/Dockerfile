@@ -18,6 +18,7 @@ COPY libs/ai4icore_platform_core /app/libs/ai4icore_platform_core
 # Copy shared constants lib
 COPY libs/ai4icore_constants /app/libs/ai4icore_constants
 COPY libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
+COPY libs/ai4icore_bootstrap /app/libs/ai4icore_bootstrap
 
 # Copy service requirements
 COPY services/nmt-service/requirements.txt .
@@ -42,6 +43,7 @@ RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_platform_core
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_constants
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_bootstrap
 
 # Verify packaging is installed (for debugging)
 RUN python -c "import packaging; print(f'packaging version: {packaging.__version__}')" || (echo "ERROR: packaging not found!" && exit 1)
@@ -84,6 +86,7 @@ COPY --from=builder /app/libs/ai4icore_platform_core /app/libs/ai4icore_platform
 # Copy shared constants lib
 COPY --from=builder /app/libs/ai4icore_constants /app/libs/ai4icore_constants
 COPY --from=builder /app/libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
+COPY --from=builder /app/libs/ai4icore_bootstrap /app/libs/ai4icore_bootstrap
 
 # App code (repo-root path)
 COPY services/nmt-service .

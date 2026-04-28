@@ -23,6 +23,7 @@ COPY libs/ai4icore_env /app/libs/ai4icore_env
 COPY libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
 COPY libs/ai4icore_auth /app/libs/ai4icore_auth
 COPY libs/ai4icore_service_base /app/libs/ai4icore_service_base
+COPY libs/ai4icore_bootstrap /app/libs/ai4icore_bootstrap
 # Copy service requirements
 COPY services/ner-service/requirements.txt .
 
@@ -42,6 +43,7 @@ RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_exceptions
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_service_base
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_bootstrap
 
 # -----------------------------
 # STAGE 2 — RUNTIME
@@ -74,6 +76,7 @@ COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
 COPY --from=builder /app/libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
 COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
 COPY --from=builder /app/libs/ai4icore_service_base /app/libs/ai4icore_service_base
+COPY --from=builder /app/libs/ai4icore_bootstrap /app/libs/ai4icore_bootstrap
 # Copy service code and shared constants
 COPY services/ner-service /app
 COPY --from=builder /app/libs/ai4icore_constants /app/libs/ai4icore_constants
