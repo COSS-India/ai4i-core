@@ -56,6 +56,9 @@ class AuthService:
         self._verifications = verification_repo
         self._tenants = tenant_repo
 
+    def _setup_token_expires_at(self) -> datetime:
+        return datetime.now(timezone.utc) + timedelta(hours=settings.setup_token_expire_hours)
+
     def _validate_token_of_type(self, token: str, expected_type: str):
         """Validate a JWT and assert its type. Raises TokenExpiredError / TokenInvalidError on failure."""
         payload = self._tokens.validate_token(token)
@@ -282,7 +285,7 @@ class AuthService:
         token_obj = TokenVerification(
             token=setup_token,
             is_active=True,
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=settings.setup_token_expire_hours),
+            expires_at=self._setup_token_expires_at(),
             created_by=user_uuid_str,
         )
         await self._verifications.create(token_obj)
@@ -373,7 +376,7 @@ class AuthService:
         token_obj = TokenVerification(
             token=setup_token,
             is_active=True,
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=settings.setup_token_expire_hours),
+            expires_at=self._setup_token_expires_at(),
             created_by=user_uuid_str,
         )
         await self._verifications.create(token_obj)
