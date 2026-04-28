@@ -64,6 +64,8 @@ class AppEnv(BaseSettings):
     redis_password: Optional[str] = None         # credential
     redis_db: int = 0
     redis_timeout: int = 10
+    # Optional path to api_permissions.json for inference services (name→id resolved via auth DB).
+    api_permissions_json_path: Optional[str] = None
 
     # ── JWT Authentication ──
     jwt_secret_key: Optional[str] = None         # credential

@@ -54,13 +54,7 @@ class AuthSettings(BaseSettings):
     redis_port: int = 6379
     redis_password: Optional[str] = None
     redis_db: int = 0
-    redis_db_api_permissions: int = 0
-    redis_db_role_permissions: int = 1
-    redis_db_api_keys: int = 2
-    redis_db_refresh_tokens: int = 3
     redis_timeout: int = 10
-    role_cache_ttl_seconds: int = 3600
-    api_perms_cache_ttl_seconds: int = 3600
     revocation_endpoint_cooldown_seconds: int = 30
 
     # ── RS256 JWT ──
