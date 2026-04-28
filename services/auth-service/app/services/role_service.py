@@ -1,6 +1,6 @@
 """
 Role assignment and permission checking.
-Uses Redis cache for permission lookups (cache-aside pattern).
+Permission IDs for roles are resolved from the database (no Redis role cache).
 """
 
 import logging
@@ -42,28 +42,16 @@ class RoleService:
 
     async def get_user_permission_ids_cached(self, user_id: UUID) -> list[int]:
         """
-        Get permission IDs for a user (union of all assigned roles).
-        Redis first, DB fallback, cache on miss.
+        Get permission IDs for a user (union of all assigned roles) from the database.
         """
         role_records = await self._roles.get_user_role_records(user_id)
         if not role_records:
             return []
 
         all_perm_ids: set[int] = set()
-        uncached_role_ids: list[int] = []
-
         for ur in role_records:
-            cached = await self._cache.get_role_permissions(ur.role_id)
-            if cached is not None:
-                all_perm_ids.update(cached)
-            else:
-                uncached_role_ids.append(ur.role_id)
-
-        if uncached_role_ids:
-            for role_id in uncached_role_ids:
-                perm_ids = await self._roles.get_role_permission_ids(role_id)
-                all_perm_ids.update(perm_ids)
-                await self._cache.cache_role_permissions(role_id, perm_ids)
+            perm_ids = await self._roles.get_role_permission_ids(ur.role_id)
+            all_perm_ids.update(perm_ids)
 
         return sorted(all_perm_ids)
 
@@ -93,7 +81,6 @@ class RoleService:
         removed = await self._roles.remove_role(user_id, role.role_id)
         if not removed:
             raise EntityNotFoundError("UserRole")
-        await self._cache.invalidate_role_cache(role.role_id)
         await self._roles.commit()
 
     async def get_user_roles(self, user_id: UUID) -> list[str]:
@@ -166,8 +153,6 @@ class RoleService:
         await self._roles.delete_role_permissions_for_permission_ids(guest.role_id, managed_ids)
         await self._roles.insert_role_permissions(guest.role_id, [p.permission_id for p in resolved])
         await self._roles.commit()
-        fresh_perm_ids = await self._roles.get_role_permission_ids(guest.role_id)
-        await self._cache.cache_role_permissions(guest.role_id, fresh_perm_ids)
         logger.info("GUEST inference services set to: %s", [p.resource for p in resolved])
         return [p.resource for p in resolved]
 
