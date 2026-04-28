@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Optional
 from uuid import UUID
 
-from pydantic import EmailStr, Field
+from pydantic import AliasChoices, EmailStr, Field
 
 from app.schemas.base import BaseSchema
 
@@ -27,7 +27,7 @@ class UserUpdate(BaseSchema):
 
 
 class UserResponse(BaseSchema):
-    id: UUID
+    user_id: UUID = Field(validation_alias=AliasChoices("user_id", "id"))
     email: EmailStr
     username: str
     full_name: Optional[str] = None
@@ -49,7 +49,7 @@ class UserResponse(BaseSchema):
 
 class UserDetailResponse(BaseSchema):
     """Admin view of user details."""
-    id: UUID
+    user_id: UUID = Field(validation_alias=AliasChoices("user_id", "id"))
     username: str
     email: EmailStr
     phone_number: Optional[str] = None
@@ -65,7 +65,7 @@ class UserDetailResponse(BaseSchema):
 
 class UserListResponse(BaseSchema):
     """Compact user list item."""
-    id: UUID
+    user_id: UUID = Field(validation_alias=AliasChoices("user_id", "id"))
     username: str
     email: EmailStr
     phone_number: Optional[str] = None

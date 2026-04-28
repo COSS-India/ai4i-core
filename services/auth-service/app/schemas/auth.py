@@ -19,10 +19,9 @@ class RegisterRequest(BaseSchema):
     full_name: Optional[str] = Field(None, max_length=255)
     phone_number: Optional[str] = Field(None, max_length=20)
     timezone: str = Field(default="UTC", max_length=50)
-    tenant_id: Optional[str] = Field(
+    tenant_id: Optional[int] = Field(
         None,
-        description="Tenant UUID to associate with the user.",
-        max_length=100,
+        description="Tenant integer ID to associate with the user.",
     )
 
 
@@ -50,7 +49,7 @@ class ProvisionUserRequest(BaseSchema):
     username: str = Field(..., min_length=3, max_length=100)
     full_name: Optional[str] = Field(None, max_length=255)
     phone_number: Optional[str] = Field(None, max_length=20)
-    tenant_id: Optional[str] = Field(None, max_length=100)
+    tenant_id: Optional[int] = Field(None, description="Tenant integer ID.")
     creation_type: str = Field(
         default="default",
         description="Legacy values 'tenant'/'direct' normalize to 'default'; only 'default' and 'google' persist.",

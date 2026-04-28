@@ -67,12 +67,12 @@ class AuthService:
             raise TokenInvalidError(f"Expected a '{expected_type}' token.")
         return payload
 
-    async def _resolve_tenant_id(self, explicit: Optional[str]) -> Optional[int]:
+    async def _resolve_tenant_id(self, explicit: Optional[int | str]) -> Optional[int]:
         """Honor an explicit tenant_id, otherwise fall back to the default tenant."""
-        if explicit:
+        if explicit is not None:
             try:
                 return int(explicit)
-            except ValueError as exc:
+            except (TypeError, ValueError) as exc:
                 raise ValidationError(
                     message="Invalid tenant_id.",
                     code="INVALID_TENANT_ID",
@@ -98,7 +98,7 @@ class AuthService:
         full_name: Optional[str] = None,
         phone_number: Optional[str] = None,
         tz: str = "UTC",
-        tenant_id: Optional[str] = None,
+        tenant_id: Optional[int | str] = None,
     ) -> User:
         """Create a user with credentials in one transaction. Used for direct portal sign-up."""
         self._passwords.validate_and_confirm(password, confirm_password)
@@ -252,7 +252,7 @@ class AuthService:
         username: str,
         full_name: Optional[str] = None,
         phone_number: Optional[str] = None,
-        tenant_id: Optional[str] = None,
+        tenant_id: Optional[int | str] = None,
         creation_type: str = "default",
     ) -> tuple[str, str]:
         """
