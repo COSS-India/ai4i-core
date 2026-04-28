@@ -63,10 +63,17 @@ class AuthService:
             raise TokenInvalidError(f"Expected a '{expected_type}' token.")
         return payload
 
-    async def _resolve_tenant_id(self, explicit: Optional[str]) -> Optional[UUID]:
+    async def _resolve_tenant_id(self, explicit: Optional[str]) -> Optional[int]:
         """Honor an explicit tenant_id, otherwise fall back to the default tenant."""
         if explicit:
-            return int(explicit)
+            try:
+                return int(explicit)
+            except ValueError as exc:
+                raise ValidationError(
+                    message="Invalid tenant_id.",
+                    code="INVALID_TENANT_ID",
+                    errors=[f"tenant_id must be an integer, got: {explicit!r}"],
+                ) from exc
         default = await self._tenants.get_by_organisation(settings.default_tenant_org)
         if default is None:
             logger.warning(
