@@ -107,7 +107,6 @@ class ServiceResponse(BaseSchema):
     """Single service response (lightweight — no embedded model)."""
 
     serviceId: str
-    uuid: str
     name: str
     serviceDescription: Optional[str] = None
     hardwareDescription: Optional[str] = None

@@ -31,7 +31,6 @@ export interface PaginatedServices {
 }
 
 export interface Service {
-  uuid?: string;
   serviceId?: string;
   service_id?: string; // For backward compatibility
   name?: string;
@@ -192,7 +191,7 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
 
 /**
  * Update a service
- * @param serviceData - The service data to update (must include uuid)
+ * @param serviceData - The service data to update (must include serviceId)
  * @returns Promise with updated service
  */
 export const updateService = async (serviceData: Partial<Service>): Promise<Service> => {
@@ -212,7 +211,6 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
     } else {
       // Full update: send all fields
       apiPayload = {
-        uuid: serviceData.uuid,
         serviceId: serviceData.serviceId || serviceData.service_id,
         name: serviceData.name,
         serviceDescription: serviceData.serviceDescription || serviceData.description,
@@ -252,14 +250,14 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
 
 /**
  * Delete a service
- * @param uuid - The UUID of the service to delete
+ * @param serviceId - The service_id of the service to delete
  * @returns Promise with deletion response
  */
-export const deleteService = async (uuid: string): Promise<any> => {
+export const deleteService = async (serviceId: string): Promise<any> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
     const response = await apiClient.delete<any>(
-      `/api/v1/services/${uuid}`
+      `/api/v1/services/${serviceId}`
     );
     return unwrapData(response.data as any);
   } catch (error: any) {
