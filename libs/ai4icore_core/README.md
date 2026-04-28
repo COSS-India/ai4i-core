@@ -1,6 +1,6 @@
 # ai4icore_core
 
-The consolidated core library for AI4I-Core microservices. Replaces the individual `ai4icore_exceptions`, `ai4icore_env`, `ai4icore_constants`, `ai4icore_logging`, `ai4icore_auth`, `ai4icore_bootstrap`, `ai4icore_observability`, `ai4icore_telemetry`, `ai4icore_platform_core`, and `ai4icore_service_base` packages.
+The consolidated core library for AI4I-Core microservices. Replaces the individual `ai4icore_exceptions`, `ai4icore_env`, `ai4icore_constants`, `ai4icore_logging`, `ai4icore_auth`, `ai4icore_bootstrap`, `ai4icore_observability`, `ai4icore_telemetry`, `ai4icore_platform_core`, `ai4icore_service_base`, and `ai4icore_email` packages.
 
 ## Subpackages
 
@@ -16,6 +16,7 @@ The consolidated core library for AI4I-Core microservices. Replaces the individu
 | `ai4icore_core.telemetry` | OpenTelemetry tracing, Jaeger/OpenSearch query clients, span helpers |
 | `ai4icore_core.platform_core` | Model management client, Triton inference client, resolution middleware |
 | `ai4icore_core.service_base` | Inference service factory (`create_inference_app`), service registry, rate limiting |
+| `ai4icore_core.email` | Provider-agnostic transactional email client (SMTP today, pluggable for SES/SendGrid/etc.) |
 
 ## Installation
 
@@ -39,6 +40,7 @@ from ai4icore_core.observability import ObservabilityPlugin, MetricsCollector
 from ai4icore_core.telemetry import setup_tracing, TelemetryPlugin
 from ai4icore_core.platform_core import ModelManagementPlugin, TritonClient
 from ai4icore_core.service_base import create_inference_app
+from ai4icore_core.email import EmailClient, EmailMessage, get_email_client
 ```
 
 ## Publishing to PyPI

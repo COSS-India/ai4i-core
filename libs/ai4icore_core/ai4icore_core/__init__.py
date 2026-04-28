@@ -12,6 +12,7 @@ Replaces the previously separate packages:
   - ai4icore_telemetry        → ai4icore_core.telemetry
   - ai4icore_model_management → ai4icore_core.platform_core (renamed)
   - ai4icore_service_base     → ai4icore_core.service_base
+  - ai4icore_email            → ai4icore_core.email
 
 Subpackages are imported on demand. Use:
 
@@ -24,6 +25,7 @@ Subpackages are imported on demand. Use:
     from ai4icore_core.telemetry import setup_tracing, TelemetryPlugin
     from ai4icore_core.platform_core import ModelManagementPlugin, TritonClient
     from ai4icore_core.service_base import create_inference_app
+    from ai4icore_core.email import EmailClient, EmailMessage, get_email_client
 """
 
 __version__ = "1.0.0"
@@ -40,4 +42,5 @@ __all__ = [
     "telemetry",
     "platform_core",
     "service_base",
+    "email",
 ]
