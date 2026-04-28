@@ -118,8 +118,6 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             ('model.read', 'model', 'read'),
             ('model.update', 'model', 'update'),
             ('model.delete', 'model', 'delete'),
-            ('model.publish', 'model', 'publish'),
-            ('model.unpublish', 'model', 'unpublish'),
 
             # Role Management
             ('roles.assign', 'roles', 'assign'),
@@ -270,8 +268,6 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'model.read',
               'model.update',
               'model.delete',
-              'model.publish',
-              'model.unpublish',
               'roles.assign',
               'roles.remove',
               'roles.read',
@@ -394,8 +390,6 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'model.read',
               'model.update',
               'model.delete',
-              'model.publish',
-              'model.unpublish',
               'asr.inference',
               'audio-lang-detection.inference',
               'language-detection.inference',

@@ -83,8 +83,10 @@ class AuthServiceRolesSeeder(BaseSeeder):
             # Service Management
             "service.create", "service.delete", "service.update", "service.read",
             # Model Management
-            "model.create", "model.read", "model.update", "model.delete",
-            "model.publish", "model.unpublish",
+            ("model.create",    "model", "create"),
+            ("model.read",      "model", "read"),
+            ("model.update",    "model", "update"),
+            ("model.delete",    "model", "delete"),
             # Role Management
             "roles.assign", "roles.remove", "roles.read",
             # AI Services
@@ -175,7 +177,6 @@ class AuthServiceRolesSeeder(BaseSeeder):
               'apiKey.create','apiKey.read','apiKey.delete','apiKey.update',
               'service.create','service.delete','service.update','service.read',
               'model.create','model.read','model.update','model.delete',
-              'model.publish','model.unpublish',
               'roles.assign','roles.remove','roles.read',
               'pii_guard.admin','pii_guard.inference',
               'tenant.create','tenant.read','tenant.update',
@@ -237,7 +238,6 @@ class AuthServiceRolesSeeder(BaseSeeder):
               'apiKey.delete',
               'service.create','service.delete','service.update','service.read',
               'model.create','model.read','model.update','model.delete',
-              'model.publish','model.unpublish',
               'asr.inference','audio-lang-detection.inference',
               'language-detection.inference','language-diarization.inference',
               'llm.inference','model-management.inference',

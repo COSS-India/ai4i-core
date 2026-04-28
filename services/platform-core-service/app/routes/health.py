@@ -1,8 +1,5 @@
 """
-Health endpoint for platform-core-service.
-
-Only /health is exposed. Authentication and readiness probing are
-handled at the gateway / infrastructure layer.
+Health check endpoint.
 """
 
 from fastapi import APIRouter
@@ -14,4 +11,5 @@ router = APIRouter()
 
 @router.get("/health")
 async def health():
+    """Health check for the platform core service."""
     return {"status": "healthy", "service": settings.service_name}
