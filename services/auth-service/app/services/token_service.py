@@ -18,6 +18,7 @@ from jose import jwt, JWTError, ExpiredSignatureError
 from cryptography.hazmat.primitives import serialization
 
 from app.core.config import settings
+from app.core.constants import TokenType
 from app.core.security import key_manager
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ class TokenService:
             "sub": str(user_id),
             "tenant_id": tenant_id,
             "permission_ids": permission_ids or [],
-            "type": "access_token",
+            "type": TokenType.ACCESS,
             "exp": expire,
         }
         return self._sign(payload)
@@ -93,7 +94,7 @@ class TokenService:
             **self._base_claims(),
             "sub": str(user_id),
             "tenant_id": tenant_id,
-            "type": "refresh",
+            "type": TokenType.REFRESH,
             "exp": expire,
         }
         return self._sign(payload)
@@ -115,7 +116,7 @@ class TokenService:
             "sub": str(user_id),
             "tenant_id": tenant_id,
             "permission_ids": permission_ids or [],
-            "type": "api_key",
+            "type": TokenType.API_KEY,
             "token_id": token_id,
             "exp": expire,
         }
@@ -135,7 +136,7 @@ class TokenService:
             **self._base_claims(),
             "sub": str(user_id),
             "email": email,
-            "type": "setup",
+            "type": TokenType.SETUP,
             "exp": expire,
         }
         return self._sign(payload)
