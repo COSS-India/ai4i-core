@@ -23,7 +23,7 @@ class RoleRepository(BaseRepository):
         return result.scalar_one_or_none()
 
     async def get_role_by_id(self, role_id: int) -> Optional[Role]:
-        result = await self._db.execute(select(Role).where(Role.role_id == role_id))
+        result = await self._db.execute(select(Role).where(Role.id == role_id))
         return result.scalar_one_or_none()
 
     async def list_roles(self) -> list[Role]:
@@ -35,7 +35,7 @@ class RoleRepository(BaseRepository):
     async def get_user_roles(self, user_id: UUID) -> list[str]:
         result = await self._db.execute(
             select(Role.name)
-            .join(UserRole, Role.role_id == UserRole.role_id)
+            .join(UserRole, Role.id == UserRole.role_id)
             .where(UserRole.user_id == user_id)
             .order_by(UserRole.created_at.desc())
         )
@@ -88,23 +88,21 @@ class RoleRepository(BaseRepository):
     ) -> list[Permission]:
         stmt = (
             select(Permission)
-            .where(
-                Permission.action == "inference",
-                Permission.name.like("%.inference"),
-            )
+            .where(Permission.name.like("%.inference"))
             .order_by(Permission.name)
         )
         if excluded_resources:
-            stmt = stmt.where(Permission.resource.notin_(excluded_resources))
+            for resource in excluded_resources:
+                stmt = stmt.where(~Permission.name.like(f"{resource}.%"))
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
 
     async def get_user_permission_ids(self, user_id: UUID) -> list[int]:
         result = await self._db.execute(
-            select(Permission.permission_id)
-            .join(RolePermission, Permission.permission_id == RolePermission.permission_id)
-            .join(Role, RolePermission.role_id == Role.role_id)
-            .join(UserRole, Role.role_id == UserRole.role_id)
+            select(Permission.id)
+            .join(RolePermission, Permission.id == RolePermission.permission_id)
+            .join(Role, RolePermission.role_id == Role.id)
+            .join(UserRole, Role.id == UserRole.role_id)
             .where(UserRole.user_id == user_id)
             .distinct()
         )
@@ -113,9 +111,9 @@ class RoleRepository(BaseRepository):
     async def get_user_permission_names(self, user_id: UUID) -> list[str]:
         result = await self._db.execute(
             select(Permission.name)
-            .join(RolePermission, Permission.permission_id == RolePermission.permission_id)
-            .join(Role, RolePermission.role_id == Role.role_id)
-            .join(UserRole, Role.role_id == UserRole.role_id)
+            .join(RolePermission, Permission.id == RolePermission.permission_id)
+            .join(Role, RolePermission.role_id == Role.id)
+            .join(UserRole, Role.id == UserRole.role_id)
             .where(UserRole.user_id == user_id)
             .distinct()
         )
@@ -131,8 +129,8 @@ class RoleRepository(BaseRepository):
         if not permission_ids:
             return {}
         result = await self._db.execute(
-            select(Permission.permission_id, Permission.name).where(
-                Permission.permission_id.in_(permission_ids)
+            select(Permission.id, Permission.name).where(
+                Permission.id.in_(permission_ids)
             )
         )
         return {pid: name for pid, name in result.all()}

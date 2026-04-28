@@ -20,6 +20,12 @@ def _normalize_service_slug(value: str) -> str:
     return value.strip().lower().replace("_", "-")
 
 
+def _resource_from_permission(perm) -> str:
+    """Derive the resource part from a permission name enum value (e.g. 'asr.inference' → 'asr')."""
+    name_val = perm.name.value if hasattr(perm.name, "value") else str(perm.name)
+    return name_val.split(".")[0]
+
+
 class RoleService:
     def __init__(self, role_repo: RoleRepository, cache_service: CacheService) -> None:
         self._roles = role_repo
@@ -78,11 +84,11 @@ class RoleService:
         if not role:
             raise EntityNotFoundError(f"Role '{role_name}'")
 
-        existing = await self._roles.get_user_role_record(user_id, role.role_id)
+        existing = await self._roles.get_user_role_record(user_id, role.id)
         if existing:
             return
 
-        await self._roles.assign_role(user_id, role.role_id)
+        await self._roles.assign_role(user_id, role.id)
         await self._roles.commit()
         logger.info("Role '%s' assigned to user %s", role_name, user_id)
 
@@ -90,10 +96,10 @@ class RoleService:
         role = await self._roles.get_role_by_name(role_name)
         if not role:
             raise EntityNotFoundError(f"Role '{role_name}'")
-        removed = await self._roles.remove_role(user_id, role.role_id)
+        removed = await self._roles.remove_role(user_id, role.id)
         if not removed:
             raise EntityNotFoundError("UserRole")
-        await self._cache.invalidate_role_cache(role.role_id)
+        await self._cache.invalidate_role_cache(role.id)
         await self._roles.commit()
 
     async def get_user_roles(self, user_id: UUID) -> list[str]:
@@ -124,10 +130,10 @@ class RoleService:
         managed = await self._managed_guest_inference_permissions()
         by_norm_resource: dict[str, Permission] = {}
         for perm in managed:
-            key = _normalize_service_slug(perm.resource)
+            key = _normalize_service_slug(_resource_from_permission(perm))
             by_norm_resource[key] = perm
 
-        managed_ids = [p.permission_id for p in managed]
+        managed_ids = [p.id for p in managed]
         ordered_unique: list[str] = []
         seen: set[str] = set()
         for raw in services:
@@ -163,13 +169,14 @@ class RoleService:
         if not guest:
             raise EntityNotFoundError(f"Role '{_GUEST_ROLE_NAME}'")
 
-        await self._roles.delete_role_permissions_for_permission_ids(guest.role_id, managed_ids)
-        await self._roles.insert_role_permissions(guest.role_id, [p.permission_id for p in resolved])
+        await self._roles.delete_role_permissions_for_permission_ids(guest.id, managed_ids)
+        await self._roles.insert_role_permissions(guest.id, [p.id for p in resolved])
         await self._roles.commit()
-        fresh_perm_ids = await self._roles.get_role_permission_ids(guest.role_id)
-        await self._cache.cache_role_permissions(guest.role_id, fresh_perm_ids)
-        logger.info("GUEST inference services set to: %s", [p.resource for p in resolved])
-        return [p.resource for p in resolved]
+        fresh_perm_ids = await self._roles.get_role_permission_ids(guest.id)
+        await self._cache.cache_role_permissions(guest.id, fresh_perm_ids)
+        resources = [_resource_from_permission(p) for p in resolved]
+        logger.info("GUEST inference services set to: %s", resources)
+        return resources
 
     async def list_guest_inference_services(self) -> list[str]:
         guest = await self._roles.get_role_by_name(_GUEST_ROLE_NAME)
@@ -177,10 +184,10 @@ class RoleService:
             raise EntityNotFoundError(f"Role '{_GUEST_ROLE_NAME}'")
 
         managed = await self._managed_guest_inference_permissions()
-        managed_id_set = {p.permission_id for p in managed}
-        id_to_resource = {p.permission_id: p.resource for p in managed}
+        managed_id_set = {p.id for p in managed}
+        id_to_resource = {p.id: _resource_from_permission(p) for p in managed}
 
-        role_perm_ids = await self._roles.get_role_permission_ids(guest.role_id)
+        role_perm_ids = await self._roles.get_role_permission_ids(guest.id)
         active = sorted(
             id_to_resource[pid]
             for pid in role_perm_ids
