@@ -83,10 +83,8 @@ class AuthServiceRolesSeeder(BaseSeeder):
             # Service Management
             "service.create", "service.delete", "service.update", "service.read",
             # Model Management
-            ("model.create",    "model", "create"),
-            ("model.read",      "model", "read"),
-            ("model.update",    "model", "update"),
-            ("model.delete",    "model", "delete"),
+            "model.create", "model.read", "model.update", "model.delete",
+            "model.publish", "model.unpublish",
             # Role Management
             "roles.assign", "roles.remove", "roles.read",
             # AI Services
