@@ -9,6 +9,7 @@ from typing import Optional
 from uuid import UUID
 
 from app.core.config import settings
+from app.core.constants import TokenType
 from app.core.exceptions import (
     DuplicateEntityError,
     EntityNotFoundError,
@@ -179,7 +180,7 @@ class AuthService:
 
     async def refresh_token(self, refresh_token_str: str) -> TokenRefreshResponse:
         """Validate a refresh token via DB and issue a new access token."""
-        payload = self._validate_token_of_type(refresh_token_str, "refresh")
+        payload = self._validate_token_of_type(refresh_token_str, TokenType.REFRESH)
 
         db_token = await self._refresh_tokens.get_by_token(refresh_token_str)
         if not db_token:
@@ -302,7 +303,7 @@ class AuthService:
         """Consume a setup token and create credentials, activating the user."""
         self._passwords.validate_and_confirm(new_password, confirm_password)
 
-        payload = self._validate_token_of_type(token, "setup")
+        payload = self._validate_token_of_type(token, TokenType.SETUP)
 
         token_obj = await self._verifications.get_by_token(token)
         if not token_obj:
@@ -338,7 +339,7 @@ class AuthService:
         except (TokenInvalidError, Exception):
             return {"valid": False, "status": "invalid", "message": "Setup link is invalid."}
 
-        if payload.token_type != "setup":
+        if payload.token_type != TokenType.SETUP:
             return {"valid": False, "status": "invalid", "message": "Setup link is invalid."}
 
         token_obj = await self._verifications.get_by_token(token)
