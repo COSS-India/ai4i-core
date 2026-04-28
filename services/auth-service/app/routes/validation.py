@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_auth.jwt_verifier import AuthClaims, JWTExpiredError, JWTVerificationError
+from ai4icore_core.auth.jwt_verifier import AuthClaims, JWTExpiredError, JWTVerificationError
 
 from app.core.database import get_db
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError

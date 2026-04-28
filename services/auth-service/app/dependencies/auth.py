@@ -13,7 +13,7 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_auth.jwt_verifier import (
+from ai4icore_core.auth.jwt_verifier import (
     AuthClaims,
     JWTExpiredError,
     JWTVerificationError,
@@ -56,7 +56,7 @@ async def init_jwt_verifier() -> None:
     Called during app lifespan startup.
     """
     global _jwt_verifier
-    from ai4icore_auth.jwt_verifier import JWTVerifier
+    from ai4icore_core.auth.jwt_verifier import JWTVerifier
     from cryptography.hazmat.primitives import serialization
     from app.core.config import settings
     from app.core.security import key_manager

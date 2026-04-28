@@ -1,7 +1,7 @@
 import pytest
 
 from ai4icore_env import app_env
-from ai4icore_model_management.triton_client import resolve_inference_ssl_verify
+from ai4icore_platform_core.triton_client import resolve_inference_ssl_verify
 
 
 def test_resolve_inference_ssl_verify_prefers_per_service_override(monkeypatch):

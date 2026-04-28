@@ -23,7 +23,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from ai4icore_auth.middleware import AuthMiddleware
+from ai4icore_core.auth.middleware import AuthMiddleware
 
 from app.core.config import settings
 from app.core.database import close_database, init_database
@@ -120,7 +120,7 @@ async def _load_api_permissions() -> None:
     global _permission_checker
     import json
     import pathlib
-    from ai4icore_auth.permission_checker import PermissionChecker
+    from ai4icore_core.auth.permission_checker import PermissionChecker
     from app.core.redis import (
         get_redis_client_api_keys,
         get_redis_client_api_permissions,

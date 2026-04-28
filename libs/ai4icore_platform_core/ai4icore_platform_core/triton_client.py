@@ -2,7 +2,7 @@
 Triton Client -- Generic inference client using httpx.
 
 Usage:
-    from ai4icore_model_management import TritonClient
+    from ai4icore_platform_core import TritonClient
 
     client = TritonClient(triton_url="<endpoint from services table>", api_key="...")
     result = client.send_triton_request("my_model", inputs, outputs)
@@ -233,7 +233,7 @@ class TritonClient:
         model_version,
         trace_attributes: Optional[Dict[str, Union[str, int, float, bool]]] = None,
     ):
-        tracer = trace.get_tracer("ai4icore_model_management")
+        tracer = trace.get_tracer("ai4icore_platform_core")
         with tracer.start_as_current_span("triton.inference") as span:
             span.set_attribute("triton.model_name", model_name)
             span.set_attribute("triton.endpoint", self.triton_url)

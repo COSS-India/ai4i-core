@@ -3,7 +3,7 @@
 from fastapi import HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_auth.permission_checker import PermissionChecker
+from ai4icore_core.auth.permission_checker import PermissionChecker
 
 from app.core.exceptions import EntityNotFoundError
 from app.models.user import User

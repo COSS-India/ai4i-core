@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from starlette.responses import Response
 
-from ai4icore_model_management.client import ModelManagementClient
-from ai4icore_model_management.middleware import ModelResolutionMiddleware
+from ai4icore_platform_core.client import ModelManagementClient
+from ai4icore_platform_core.middleware import ModelResolutionMiddleware
 
 
 def _make_request(method: str, path: str, body: bytes):

@@ -265,7 +265,7 @@ class TestSharedLibVerification:
     async def test_shared_verifier_validates_auth_service_token(self, setup_keys):
         from app.services.token_service import TokenService
         from app.core.security import key_manager
-        from ai4icore_auth.jwt_verifier import JWTVerifier
+        from ai4icore_core.auth.jwt_verifier import JWTVerifier
         from cryptography.hazmat.primitives import serialization
 
         # Create token with auth-service
@@ -293,7 +293,7 @@ class TestSharedLibVerification:
     async def test_shared_verifier_rejects_expired(self, setup_keys):
         from app.services.token_service import TokenService
         from app.core.security import key_manager
-        from ai4icore_auth.jwt_verifier import JWTVerifier, JWTExpiredError
+        from ai4icore_core.auth.jwt_verifier import JWTVerifier, JWTExpiredError
         from cryptography.hazmat.primitives import serialization
 
         svc = TokenService()

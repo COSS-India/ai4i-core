@@ -10,7 +10,7 @@ from collections.abc import Callable
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_auth.permission_checker import PermissionChecker
+from ai4icore_core.auth.permission_checker import PermissionChecker
 
 from app.core.database import get_db
 from app.core.exceptions import InsufficientPermissionsError

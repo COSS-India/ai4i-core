@@ -11,7 +11,7 @@ from typing import Optional
 
 import redis.asyncio as aioredis
 
-from ai4icore_bootstrap.cache import CacheService as _BaseCacheService
+from ai4icore_core.bootstrap.cache import CacheService as _BaseCacheService
 from app.core.config import settings
 
 # Redis key pattern: auth:apikey:{api_key}

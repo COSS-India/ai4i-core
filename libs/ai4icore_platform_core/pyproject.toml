@@ -1,7 +1,7 @@
 [project]
-name = "ai4icore-model-management"
+name = "ai4icore-platform-core"
 version = "1.0.0"
-description = "AI4ICore Model Management Plugin - reusable model management integration with caching for AI4ICore services"
+description = "AI4ICore Platform Core Plugin - reusable model management, Triton client, and resolution middleware for AI4ICore services (formerly ai4icore-model-management)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -9,7 +9,7 @@ authors = [
     {name = "AI4X Team"},
     {email = "team@ai4x.com"}
 ]
-keywords = ["model-management", "triton", "caching", "fastapi", "enterprise", "ai4icore"]
+keywords = ["platform-core", "model-management", "triton", "caching", "fastapi", "enterprise", "ai4icore"]
 dependencies = [
     "fastapi>=0.104.0",
     "starlette>=0.27.0",
@@ -34,7 +34,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["ai4icore_model_management"]
+packages = ["ai4icore_platform_core"]
 
 [tool.black]
 line-length = 100

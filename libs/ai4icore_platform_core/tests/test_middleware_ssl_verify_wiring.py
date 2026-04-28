@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from starlette.responses import Response
 
-from ai4icore_model_management.client import ModelManagementClient, ServiceInfo
-from ai4icore_model_management.middleware import ModelResolutionMiddleware
+from ai4icore_platform_core.client import ModelManagementClient, ServiceInfo
+from ai4icore_platform_core.middleware import ModelResolutionMiddleware
 
 
 def _make_request(method: str, path: str, body: bytes):
@@ -69,7 +69,7 @@ async def test_dispatch_wires_ssl_verify_into_request_state_and_triton_client(mo
             captured["ssl_verify"] = ssl_verify
 
     monkeypatch.setattr(
-        "ai4icore_model_management.middleware.TritonClient",
+        "ai4icore_platform_core.middleware.TritonClient",
         _FakeTritonClient,
         raising=True,
     )

@@ -14,17 +14,17 @@ Reusable Model Management integration module for AI4ICore microservices. Provide
 
 ### Option 1: Copy-paste at build time (Recommended)
 
-Copy the entire `libs/ai4icore_model_management/` directory to your service during Docker build:
+Copy the entire `libs/ai4icore_platform_core/` directory to your service during Docker build:
 
 ```dockerfile
 # In your service Dockerfile
-COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+COPY libs/ai4icore_platform_core /app/libs/ai4icore_platform_core
 ```
 
 ### Option 2: Install as package
 
 ```bash
-cd libs/ai4icore_model_management
+cd libs/ai4icore_platform_core
 pip install -e .
 ```
 
@@ -34,7 +34,7 @@ pip install -e .
 
 ```python
 from fastapi import FastAPI
-from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
+from ai4icore_platform_core import ModelManagementPlugin, ModelManagementConfig
 import redis.asyncio as redis
 
 app = FastAPI()
@@ -63,7 +63,7 @@ async def inference(request: Request, body: NMTRequest):
 ### 2. Manual Usage (without Middleware)
 
 ```python
-from ai4icore_model_management import ModelManagementClient, TritonClient
+from ai4icore_platform_core import ModelManagementClient, TritonClient
 from fastapi import Request
 
 # In your dependency or route
@@ -115,7 +115,7 @@ TRITON_API_KEY=default-api-key
 ### Programmatic Configuration
 
 ```python
-from ai4icore_model_management import ModelManagementConfig
+from ai4icore_platform_core import ModelManagementConfig
 
 config = ModelManagementConfig(
     model_management_service_url="http://model-management-service:8091",
@@ -148,7 +148,7 @@ class NMTService:
 **After (Using Module):**
 ```python
 # services/nmt-service/main.py
-from ai4icore_model_management import ModelManagementPlugin
+from ai4icore_platform_core import ModelManagementPlugin
 
 plugin = ModelManagementPlugin()
 plugin.register_plugin(app, redis_client=redis_client)
@@ -250,7 +250,7 @@ Cache keys:
 
 ```python
 # main.py
-from ai4icore_model_management import ModelManagementPlugin
+from ai4icore_platform_core import ModelManagementPlugin
 import redis.asyncio as redis
 
 app = FastAPI()
