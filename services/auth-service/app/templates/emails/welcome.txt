@@ -1,0 +1,16 @@
+AI4I Platform
+================================
+
+Welcome, {{ display_name }}.
+
+Your AI4I Platform account has been created. You can sign in any time
+using the credentials below.
+
+  Username: {{ username }}
+  Email:    {{ email }}
+
+Didn't register? Contact your administrator to remove this account.
+
+--
+This is an automated message from AI4I Platform.
+If you weren't expecting it, you can safely ignore it.

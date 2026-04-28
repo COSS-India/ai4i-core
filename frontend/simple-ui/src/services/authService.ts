@@ -12,6 +12,8 @@ import {
   PasswordChangeRequest,
   PasswordResetRequest,
   PasswordResetConfirm,
+  SetPasswordRequest,
+  SetPasswordStatusResponse,
   LogoutRequest,
   LogoutResponse,
   APIKeyCreate,
@@ -526,6 +528,28 @@ class AuthService {
 
   async resetPassword(data: PasswordResetConfirm): Promise<{ message: string }> {
     return this.request<{ message: string }>('/reset-password', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // ── Email-activation set-password (one-time setup token) ──
+
+  async getSetPasswordStatus(token: string): Promise<SetPasswordStatusResponse> {
+    // Bypasses the requestWithoutAuth helper on purpose: this endpoint does NOT
+    // return the v2 {success, data} envelope (route uses response_model=
+    // SetPasswordStatusResponse), so the helper's auto-unwrap would mangle it.
+    const url = `${this.baseUrl}/set-password/status?token=${encodeURIComponent(token)}`;
+    const res = await fetch(url, { method: 'GET' });
+    if (!res.ok) {
+      // Backend always returns 200 for valid/expired/used; HTTP error == network/CORS.
+      return { valid: false, status: 'invalid', message: `HTTP ${res.status}` };
+    }
+    return res.json();
+  }
+
+  async setPasswordWithToken(data: SetPasswordRequest): Promise<{ message: string }> {
+    return this.requestWithoutAuth<{ message: string }>('/set-password', {
       method: 'POST',
       body: JSON.stringify(data),
     });
