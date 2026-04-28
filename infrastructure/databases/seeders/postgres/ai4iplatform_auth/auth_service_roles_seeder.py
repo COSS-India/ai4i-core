@@ -5,8 +5,8 @@ Seeds roles, permissions, and role-permission mappings idempotently.
 
 Schema notes:
   - roles PK column is `id`
-  - permissions PK column is `id`; no resource/action columns
-  - permissions.name is a DB enum (permission_name_enum)
+  - permissions PK column is `id`; includes `resource` and `action` columns
+  - permissions.name is VARCHAR(100)
   - join table is `role_permission` with no unique constraint on
     (role_id, permission_id) → uses DELETE + INSERT pattern
 
@@ -67,7 +67,6 @@ class AuthServiceRolesSeeder(BaseSeeder):
         print(f"    ✓ Seeded {len(roles)} roles in ai4iplatform_auth")
 
         # ── 2. Permissions ────────────────────────────────────────────────────
-        # Only name is stored; resource and action columns have been removed.
         permission_names = [
             # User management
             "users.create", "users.read", "users.update", "users.delete",
@@ -128,14 +127,24 @@ class AuthServiceRolesSeeder(BaseSeeder):
             """
         )
 
+        def _split_permission_name(name: str) -> tuple[str, str]:
+            # Keep support for dotted resources like "tenant.users.read".
+            if "." not in name:
+                return name, ""
+            resource, action = name.rsplit(".", 1)
+            return resource, action
+
         for name in permission_names:
+            resource, action = _split_permission_name(name)
             adapter.execute(
                 """
-                INSERT INTO permissions (name, created_by)
-                VALUES (:name, :created_by)
-                ON CONFLICT (name) DO NOTHING
+                INSERT INTO permissions (name, resource, action, created_by)
+                VALUES (:name, :resource, :action, :created_by)
+                ON CONFLICT (name) DO UPDATE
+                  SET resource = EXCLUDED.resource,
+                      action = EXCLUDED.action
                 """,
-                {"name": name, "created_by": SEEDER_ID},
+                {"name": name, "resource": resource, "action": action, "created_by": SEEDER_ID},
             )
         print(f"    ✓ Seeded {len(permission_names)} permissions in ai4iplatform_auth")
 

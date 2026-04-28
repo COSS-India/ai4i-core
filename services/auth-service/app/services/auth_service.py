@@ -100,7 +100,8 @@ class AuthService:
             timezone=tz,
             tenant_id=parsed_tenant_id,
             is_active=True,
-            creation_type=CreationType.DIRECT,
+            # ORM enum currently supports only "default" and "google".
+            creation_type=CreationType.DEFAULT,
         )
         await self._users.create(user)
 
