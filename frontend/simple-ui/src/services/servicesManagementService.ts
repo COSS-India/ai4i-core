@@ -130,9 +130,8 @@ export const listServicesPaginated = async (params: ServiceListParams = {}): Pro
 export const getServiceById = async (serviceId: string): Promise<Service> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
-    const response = await apiClient.post<Service | ApiEnvelope<Service>>(
-      `/api/v1/services/${serviceId}`,
-      { service_id: serviceId }
+    const response = await apiClient.get<Service | ApiEnvelope<Service>>(
+      `/api/v1/services/${serviceId}`
     );
     return unwrapData(response.data);
   } catch (error: any) {

@@ -100,7 +100,7 @@ async def list_services(
     )
 
 
-@router.post("/{service_id:path}", summary="Retrieve Service")
+@router.get("/{service_id:path}", summary="Retrieve Service")
 async def view_service(
     service_id: str,
     svc: ServiceService = Depends(get_service_service),

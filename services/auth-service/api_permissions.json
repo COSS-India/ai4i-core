@@ -212,20 +212,6 @@
       "description": "Delete models"
     },
     {
-      "code": "P_31",
-      "name": "model.publish",
-      "resource": "model",
-      "action": "publish",
-      "description": "Publish models"
-    },
-    {
-      "code": "P_32",
-      "name": "model.unpublish",
-      "resource": "model",
-      "action": "unpublish",
-      "description": "Unpublish models"
-    },
-    {
       "code": "P_33",
       "name": "roles.assign",
       "resource": "roles",
@@ -520,8 +506,6 @@
         "P_28",
         "P_29",
         "P_30",
-        "P_31",
-        "P_32",
         "P_33",
         "P_34",
         "P_35",
@@ -557,8 +541,6 @@
         "P_60",
         "P_61",
         "P_62",
-        "P_63",
-        "P_64",
         "P_65",
         "P_66"
       ]
@@ -593,8 +575,6 @@
         "P_28",
         "P_29",
         "P_30",
-        "P_31",
-        "P_32",
         "P_65"
       ]
     },
@@ -962,7 +942,7 @@
       "description": "Public try-it service list"
     },
     {
-      "endpoint": "POST:/api/v1/services/{service_id}",
+      "endpoint": "GET:/api/v1/services/{service_id}",
       "permissionRequired": "service.read",
       "description": "Get service detail by ID"
     },
