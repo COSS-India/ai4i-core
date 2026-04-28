@@ -35,7 +35,7 @@ class RoleRepository(BaseRepository):
     async def get_user_roles(self, user_id: UUID) -> list[str]:
         result = await self._db.execute(
             select(Role.name)
-            .join(UserRole, Role.id == UserRole.id)
+            .join(UserRole, Role.id == UserRole.role_id)
             .where(UserRole.user_id == user_id)
             .order_by(UserRole.created_at.desc())
         )
@@ -52,7 +52,7 @@ class RoleRepository(BaseRepository):
     async def get_user_role_record(self, user_id: UUID, role_id: int) -> Optional[UserRole]:
         result = await self._db.execute(
             select(UserRole).where(
-                UserRole.user_id == user_id, UserRole.id == role_id
+                UserRole.user_id == user_id, UserRole.role_id == role_id
             )
         )
         return result.scalar_one_or_none()
@@ -66,7 +66,7 @@ class RoleRepository(BaseRepository):
     async def remove_role(self, user_id: UUID, role_id: int) -> bool:
         result = await self._db.execute(
             select(UserRole).where(
-                UserRole.user_id == user_id, UserRole.id == role_id
+                UserRole.user_id == user_id, UserRole.role_id == role_id
             )
         )
         user_role = result.scalar_one_or_none()
@@ -86,25 +86,29 @@ class RoleRepository(BaseRepository):
         self,
         excluded_resources: tuple[str, ...] = (),
     ) -> list[Permission]:
+        """Return all permissions whose name ends with '.inference'.
+
+        Since Permission has only a ``name`` column (no separate resource/action),
+        resources are derived by splitting on the first '.' at the service layer.
+        Exclusion is applied by filtering out '<resource>.inference' name patterns.
+        """
         stmt = (
             select(Permission)
-            .where(
-                Permission.action == "inference",
-                Permission.name.like("%.inference"),
-            )
+            .where(Permission.name.like("%.inference"))
             .order_by(Permission.name)
         )
         if excluded_resources:
-            stmt = stmt.where(Permission.resource.notin_(excluded_resources))
+            excluded_names = [f"{r}.inference" for r in excluded_resources]
+            stmt = stmt.where(Permission.name.notin_(excluded_names))
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
 
     async def get_user_permission_ids(self, user_id: UUID) -> list[int]:
         result = await self._db.execute(
             select(Permission.id)
-            .join(RolePermission, Permission.id == RolePermission.id)
+            .join(RolePermission, Permission.id == RolePermission.permission_id)
             .join(Role, RolePermission.role_id == Role.id)
-            .join(UserRole, Role.id == UserRole.id)
+            .join(UserRole, Role.id == UserRole.role_id)
             .where(UserRole.user_id == user_id)
             .distinct()
         )
@@ -113,9 +117,9 @@ class RoleRepository(BaseRepository):
     async def get_user_permission_names(self, user_id: UUID) -> list[str]:
         result = await self._db.execute(
             select(Permission.name)
-            .join(RolePermission, Permission.id == RolePermission.id)
+            .join(RolePermission, Permission.id == RolePermission.permission_id)
             .join(Role, RolePermission.role_id == Role.id)
-            .join(UserRole, Role.id == UserRole.id)
+            .join(UserRole, Role.id == UserRole.role_id)
             .where(UserRole.user_id == user_id)
             .distinct()
         )
@@ -123,7 +127,7 @@ class RoleRepository(BaseRepository):
 
     async def get_role_permission_ids(self, role_id: int) -> list[int]:
         result = await self._db.execute(
-            select(RolePermission.id).where(RolePermission.role_id == role_id)
+            select(RolePermission.permission_id).where(RolePermission.role_id == role_id)
         )
         return list(result.scalars().all())
 
@@ -145,7 +149,7 @@ class RoleRepository(BaseRepository):
         await self._db.execute(
             delete(RolePermission).where(
                 RolePermission.role_id == role_id,
-                RolePermission.id.in_(permission_ids),
+                RolePermission.permission_id.in_(permission_ids),
             )
         )
         await self._db.flush()

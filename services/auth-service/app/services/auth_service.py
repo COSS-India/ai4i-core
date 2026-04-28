@@ -56,10 +56,20 @@ class AuthService:
         self._verifications = verification_repo
         self._tenants = tenant_repo
 
-    async def _resolve_tenant_id(self, explicit: Optional[str]) -> Optional[UUID]:
-        """Honor an explicit tenant_id, otherwise fall back to the default tenant."""
+    async def _resolve_tenant_id(self, explicit: Optional[str]) -> Optional[int]:
+        """Honor an explicit tenant_id, otherwise fall back to the default tenant.
+
+        Returns the Tenant integer PK that maps to User.tenant_id.
+        """
         if explicit:
-            return UUID(explicit)
+            try:
+                return int(explicit)
+            except (ValueError, TypeError):
+                logger.warning(
+                    "Could not parse tenant_id '%s' as integer; proceeding without tenant.",
+                    explicit,
+                )
+                return None
         default = await self._tenants.get_by_organisation(settings.default_tenant_org)
         if default is None:
             logger.warning(

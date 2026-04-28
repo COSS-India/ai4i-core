@@ -1,5 +1,4 @@
 from typing import Optional
-from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +11,7 @@ class TenantRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
         super().__init__(db)
 
-    async def get_by_id(self, tenant_id: UUID) -> Optional[Tenant]:
+    async def get_by_id(self, tenant_id: int) -> Optional[Tenant]:
         result = await self._db.execute(
             select(Tenant).where(Tenant.id == tenant_id)
         )

@@ -22,7 +22,7 @@ class RoleUpdate(BaseSchema):
 
 
 class RoleResponse(BaseSchema):
-    role_id: int
+    role_id: int = Field(validation_alias="id")
     name: str
     description: Optional[str] = None
     created_at: datetime
@@ -32,10 +32,8 @@ class RoleResponse(BaseSchema):
 
 
 class PermissionResponse(BaseSchema):
-    permission_id: int
+    permission_id: int = Field(validation_alias="id")
     name: str
-    resource: str
-    action: str
     created_at: datetime
     created_by: Optional[str] = None
     updated_at: Optional[datetime] = None

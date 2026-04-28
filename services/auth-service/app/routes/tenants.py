@@ -39,11 +39,14 @@ async def _is_system_admin(current_user: User, db: AsyncSession) -> bool:
 
 
 async def _enforce_tenant_scope(
-    current_user: User, target_tenant_id: UUID, db: AsyncSession
+    current_user: User, target_tenant_id: int, db: AsyncSession
 ) -> None:
     if await _is_system_admin(current_user, db):
         return
-    if current_user.tenant_id is None or current_user.tenant_id != target_tenant_id:
+    # current_user.tenant_id is UUID (User model FK); Tenant.id is Integer.
+    # Equality check is intentionally string-based to handle the mixed types
+    # until the User.tenant_id column type is aligned with Tenant.id.
+    if current_user.tenant_id is None or str(current_user.tenant_id) != str(target_tenant_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
@@ -54,12 +57,13 @@ async def _enforce_tenant_scope(
 
 
 async def _load_tenant_user(
-    tenant_id: UUID, user_id: UUID, db: AsyncSession
+    tenant_id: int, user_id: UUID, db: AsyncSession
 ) -> User:
     target = await UserRepository(db).get_by_id(user_id)
     if not target:
         raise EntityNotFoundError(f"User {user_id}")
-    if target.tenant_id != tenant_id:
+    # Compare as strings to handle User.tenant_id (UUID) vs Tenant.id (Integer) mismatch.
+    if str(target.tenant_id) != str(tenant_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": "USER_NOT_IN_TENANT", "message": "User does not belong to this tenant."},
@@ -91,7 +95,7 @@ async def create_tenant(
         )
 
     tenant = Tenant(
-        contact_name=body.contact_name,
+        name=body.name,
         organisation=body.organisation,
         email=body.email,
         phone_number=body.phone_number,
@@ -115,7 +119,11 @@ async def list_tenants(
     if await _is_system_admin(current_user, db):
         tenants = await repo.list_all(offset=offset, limit=limit, status=status_filter)
     elif current_user.tenant_id is not None:
-        own = await repo.get_by_id(current_user.tenant_id)
+        # current_user.tenant_id is UUID; Tenant.id is Integer — cast for the lookup.
+        try:
+            own = await repo.get_by_id(int(current_user.tenant_id))
+        except (ValueError, TypeError):
+            own = None
         tenants = [own] if own and (status_filter is None or own.status == status_filter) else []
     else:
         tenants = []
@@ -124,7 +132,7 @@ async def list_tenants(
 
 @router.get("/{tenant_id}")
 async def get_tenant(
-    tenant_id: UUID,
+    tenant_id: int,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -137,7 +145,7 @@ async def get_tenant(
 
 @router.patch("/{tenant_id}")
 async def update_tenant(
-    tenant_id: UUID,
+    tenant_id: int,
     body: TenantUpdate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -157,7 +165,7 @@ async def update_tenant(
 
 @router.patch("/{tenant_id}/status")
 async def update_tenant_status(
-    tenant_id: UUID,
+    tenant_id: int,
     body: TenantStatusUpdate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -176,7 +184,7 @@ async def update_tenant_status(
 
 @router.get("/{tenant_id}/users")
 async def list_tenant_users(
-    tenant_id: UUID,
+    tenant_id: int,
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     current_user: User = Depends(get_current_active_user),
@@ -189,7 +197,7 @@ async def list_tenant_users(
 
 @router.post("/{tenant_id}/users", status_code=status.HTTP_201_CREATED)
 async def create_tenant_user(
-    tenant_id: UUID,
+    tenant_id: int,
     body: TenantUserCreate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -206,7 +214,7 @@ async def create_tenant_user(
         full_name=body.full_name,
         phone_number=body.phone_number,
         tenant_id=str(tenant_id),
-        creation_type="tenant",
+        creation_type="default",
     )
     return success_response(
         data=TenantUserCreateResponse(user_id=user_id_str, setup_token=setup_token).model_dump()
@@ -215,7 +223,7 @@ async def create_tenant_user(
 
 @router.patch("/{tenant_id}/users/{user_id}/status")
 async def update_tenant_user_status(
-    tenant_id: UUID,
+    tenant_id: int,
     user_id: UUID,
     body: TenantUserStatusUpdate,
     current_user: User = Depends(get_current_active_user),
@@ -239,7 +247,7 @@ async def update_tenant_user_status(
 
 @router.patch("/{tenant_id}/users/{user_id}")
 async def update_tenant_user(
-    tenant_id: UUID,
+    tenant_id: int,
     user_id: UUID,
     body: TenantUserUpdate,
     current_user: User = Depends(get_current_active_user),
@@ -263,7 +271,7 @@ async def update_tenant_user(
 
 @router.delete("/{tenant_id}/users/{user_id}")
 async def delete_tenant_user(
-    tenant_id: UUID,
+    tenant_id: int,
     user_id: UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),

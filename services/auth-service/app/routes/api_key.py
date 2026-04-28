@@ -37,11 +37,13 @@ async def create_api_key(
         tenant_id=tenant_id,
         expires_days=body.expires_days,
     )
+    stored = api_key.permissions or {}
+    permission_ids = stored.get("permission", []) if isinstance(stored, dict) else stored
     return success_response(data={
         "key_id": api_key.id,
         "key_name": api_key.key_name,
         "api_key": jwt_token,
-        "permissions": api_key.permissions,
+        "permissions": permission_ids,
         "is_active": api_key.is_active,
         "created_at": api_key.created_at.isoformat() if api_key.created_at else None,
         "message": "API key created. Store it securely — it will not be shown again.",

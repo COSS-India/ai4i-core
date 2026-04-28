@@ -4,7 +4,6 @@ Tenant request/response schemas.
 
 from datetime import datetime
 from typing import Optional
-from uuid import UUID
 
 from pydantic import EmailStr, Field
 
@@ -13,14 +12,14 @@ from app.models.tenant import TenantStatus
 
 
 class TenantCreate(BaseSchema):
-    contact_name: str = Field(..., min_length=1, max_length=255)
+    name: str = Field(..., min_length=1, max_length=255)
     organisation: str = Field(..., min_length=1, max_length=255)
     email: EmailStr
     phone_number: Optional[str] = Field(None, max_length=20)
 
 
 class TenantUpdate(BaseSchema):
-    contact_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
     organisation: Optional[str] = Field(None, min_length=1, max_length=255)
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = Field(None, max_length=20)
@@ -32,8 +31,8 @@ class TenantStatusUpdate(BaseSchema):
 
 
 class TenantResponse(BaseSchema):
-    tenant_id: UUID
-    contact_name: str
+    tenant_id: int = Field(validation_alias="id")
+    name: str
     organisation: str
     email: str
     phone_number: Optional[str] = None

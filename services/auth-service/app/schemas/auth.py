@@ -21,7 +21,7 @@ class RegisterRequest(BaseSchema):
     timezone: str = Field(default="UTC", max_length=50)
     tenant_id: Optional[str] = Field(
         None,
-        description="Tenant UUID to associate with the user.",
+        description="Tenant ID (integer) to associate with the user.",
         max_length=100,
     )
 
@@ -51,7 +51,7 @@ class ProvisionUserRequest(BaseSchema):
     full_name: Optional[str] = Field(None, max_length=255)
     phone_number: Optional[str] = Field(None, max_length=20)
     tenant_id: Optional[str] = Field(None, max_length=100)
-    creation_type: str = Field(default="tenant")
+    creation_type: str = Field(default="default")
 
 
 class SetPasswordRequest(BaseSchema):

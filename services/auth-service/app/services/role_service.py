@@ -20,6 +20,11 @@ def _normalize_service_slug(value: str) -> str:
     return value.strip().lower().replace("_", "-")
 
 
+def _resource_from_name(perm_name: str) -> str:
+    """Extract resource from a permission name like 'asr.inference' -> 'asr'."""
+    return perm_name.split(".", 1)[0] if "." in perm_name else perm_name
+
+
 class RoleService:
     def __init__(self, role_repo: RoleRepository, cache_service: CacheService) -> None:
         self._roles = role_repo
@@ -124,7 +129,7 @@ class RoleService:
         managed = await self._managed_guest_inference_permissions()
         by_norm_resource: dict[str, Permission] = {}
         for perm in managed:
-            key = _normalize_service_slug(perm.resource)
+            key = _normalize_service_slug(_resource_from_name(perm.name))
             by_norm_resource[key] = perm
 
         managed_ids = [p.id for p in managed]
@@ -168,7 +173,7 @@ class RoleService:
         await self._roles.commit()
         fresh_perm_ids = await self._roles.get_role_permission_ids(guest.id)
         await self._cache.cache_role_permissions(guest.id, fresh_perm_ids)
-        logger.info("GUEST inference services set to: %s", [p.resource for p in resolved])
+        logger.info("GUEST inference services set to: %s", [_resource_from_name(p.name) for p in resolved])
         return [p.resource for p in resolved]
 
     async def list_guest_inference_services(self) -> list[str]:
@@ -178,7 +183,7 @@ class RoleService:
 
         managed = await self._managed_guest_inference_permissions()
         managed_id_set = {p.id for p in managed}
-        id_to_resource = {p.id: p.resource for p in managed}
+        id_to_resource = {p.id: _resource_from_name(p.name) for p in managed}
 
         role_perm_ids = await self._roles.get_role_permission_ids(guest.id)
         active = sorted(

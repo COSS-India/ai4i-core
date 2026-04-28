@@ -49,7 +49,7 @@ class UserRepository(BaseRepository):
         )
         return list(result.scalars().all())
 
-    async def list_by_tenant(self, tenant_id: UUID, offset: int = 0, limit: int = 100) -> list[User]:
+    async def list_by_tenant(self, tenant_id: int, offset: int = 0, limit: int = 100) -> list[User]:
         result = await self._db.execute(
             select(User)
             .where(User.tenant_id == tenant_id, User.is_delete.isnot(True))
