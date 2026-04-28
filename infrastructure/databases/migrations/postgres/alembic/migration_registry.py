@@ -72,7 +72,6 @@ DATABASE_ORDER = [
     "dashboard_db",
     "ai4i_platform_db",
     "metrics_db",
-    "model_management_db",
     "ai4iplatform_core",
     "policy_db",
     "telemetry_db",
@@ -258,22 +257,6 @@ def _load_telemetry_metadata():
         PROJECT_ROOT / "services" / "telemetry-service" / "models.py",
     )
     return module.Base.metadata
-
-
-def _load_model_management_metadata():
-    fake_db_connection = types.ModuleType("db_connection")
-    fake_db_connection.AppDBBase = declarative_base()
-    fake_db_connection.AuthDBBase = declarative_base()
-
-    def loader():
-        _load_module(
-            "ai4i_alembic_dynamic.model_management.db_models",
-            PROJECT_ROOT / "services" / "model-management-service" / "models" / "db_models.py",
-        )
-        return fake_db_connection.AppDBBase.metadata
-
-    return _with_temp_module("db_connection", fake_db_connection, loader)
-
 
 def _load_core_service_metadata():
     """Load platform-core-service ORM metadata (mm_models/mm_services in ai4iplatform_core schema)."""
@@ -468,15 +451,6 @@ DATABASE_SPECS = {
         port_key="POSTGRES_PORT",
         database_name_key="METRICS_DB_NAME",
         metadata_loader=None,
-    ),
-    "model_management_db": DatabaseSpec(
-        name="model_management_db",
-        user_key="APP_DB_USER",
-        password_key="APP_DB_PASSWORD",
-        host_key="APP_DB_HOST",
-        port_key="APP_DB_PORT",
-        database_name_key="APP_DB_NAME",
-        metadata_loader=_load_model_management_metadata,
     ),
     "ai4iplatform_core": DatabaseSpec(
         name="ai4iplatform_core",
