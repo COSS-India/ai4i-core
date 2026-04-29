@@ -23,16 +23,22 @@ AI4I Core uses **Alembic** for managing PostgreSQL database schema changes. Alem
 - ✅ **Version control** - Track all schema changes
 - ✅ **Rollback support** - Safely undo changes
 
-### Supported Databases
+### Supported Databases (current `scripts/migrate.sh`)
 
-- `auth_db` - Authentication and authorization
-- `model_management_db` - Model management and experiments
+- `ai4iplatform_auth` - Auth-service DB (users/roles/tenants/api keys)
+- `auth_service_v2_db` - Consolidated auth/service metadata DB
 - `config_db` - Configuration management
 - `dashboard_db` - Dashboard data
 - `telemetry_db` - Telemetry and observability
 - `metrics_db` - Metrics storage
 - `alerting_db` - Alerting system
-- `ai4i_platform` - Policy engine
+- `ai4i_platform_db` - Platform policy/PII DB
+- `ai4iplatform_core` - Platform core model/service metadata
+- `policy_db` - Policy service DB
+
+> Note: `model_management_db` is intentionally not part of `scripts/migrate.sh`
+> managed targets anymore. If that DB is still active in your deployment, run
+> its migrations through the owning service flow (or re-add it explicitly).
 
 ## Installation
 
@@ -97,13 +103,6 @@ AUTH_DB_PASSWORD=your_password
 AUTH_DB_HOST=localhost
 AUTH_DB_PORT=5432
 AUTH_DB_NAME=auth_db
-
-# Model Management Database
-APP_DB_USER=your_user
-APP_DB_PASSWORD=your_password
-APP_DB_HOST=localhost
-APP_DB_PORT=5432
-APP_DB_NAME=model_management_db
 
 # Fallback (used for other databases)
 POSTGRES_USER=your_user

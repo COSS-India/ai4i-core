@@ -95,6 +95,9 @@ Notes:
   - `revision` must target a single database.
   - For `upgrade`, the default Alembic target is `head`.
   - For `downgrade`, the default Alembic target is `-1`.
+  - `model_management_db` is intentionally excluded from this script's managed
+    database list. If it is still in use in your environment, migrate it
+    through its owning service workflow (or add it back explicitly).
 EOF
 }
 
