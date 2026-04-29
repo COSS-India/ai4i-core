@@ -28,6 +28,7 @@ import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
 import { authService } from "../../services/authService";
 import { SetPasswordStatusResponse } from "../../types/auth";
+import PasswordRequirements, { passwordPasses } from "../../components/auth/password/PasswordRequirements";
 
 type Phase =
   | { kind: "loading" }
@@ -36,6 +37,81 @@ type Phase =
   | { kind: "submitting" }
   | { kind: "success"; message: string }
   | { kind: "error"; message: string };
+
+// Inline component shown on the invalid/expired/used state so users can
+// recover without leaving the page. Calls /auth/resend-setup-link.
+const ResendSetupLinkForm: React.FC = () => {
+  const [email, setEmail] = useState("");
+  const [phase, setPhase] = useState<
+    | { kind: "idle" }
+    | { kind: "submitting" }
+    | { kind: "sent"; message: string }
+    | { kind: "failed"; message: string }
+  >({ kind: "idle" });
+
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email) return;
+    setPhase({ kind: "submitting" });
+    try {
+      const url = `${(authService as any).baseUrl}/resend-setup-link`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        const msg = json?.detail?.message || json?.detail || `HTTP ${res.status}`;
+        setPhase({ kind: "failed", message: typeof msg === "string" ? msg : "Could not resend." });
+      } else {
+        const msg = json?.data?.message || "If the account exists and isn't activated yet, a new setup link has been sent.";
+        setPhase({ kind: "sent", message: msg });
+      }
+    } catch (err: any) {
+      setPhase({ kind: "failed", message: err?.message || "Could not resend." });
+    }
+  };
+
+  return (
+    <form onSubmit={onSubmit}>
+      <Stack spacing={3}>
+        <FormControl isRequired>
+          <FormLabel fontSize="sm">Email</FormLabel>
+          <Input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.com"
+            size="sm"
+          />
+        </FormControl>
+        {phase.kind === "sent" && (
+          <Alert status="success" rounded="md" size="sm">
+            <AlertIcon />
+            {phase.message}
+          </Alert>
+        )}
+        {phase.kind === "failed" && (
+          <Alert status="error" rounded="md" size="sm">
+            <AlertIcon />
+            {phase.message}
+          </Alert>
+        )}
+        <Button
+          type="submit"
+          colorScheme="blue"
+          size="sm"
+          isLoading={phase.kind === "submitting"}
+          loadingText="Sending…"
+          isDisabled={phase.kind === "sent"}
+        >
+          Resend setup link
+        </Button>
+      </Stack>
+    </form>
+  );
+};
 
 const SetPasswordPage: React.FC = () => {
   const router = useRouter();
@@ -82,8 +158,8 @@ const SetPasswordPage: React.FC = () => {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newPassword.length < 8) {
-      setPhase({ kind: "error", message: "Password must be at least 8 characters." });
+    if (!passwordPasses(newPassword)) {
+      setPhase({ kind: "error", message: "Password does not meet all requirements." });
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -112,14 +188,17 @@ const SetPasswordPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Set your password — AI4I Platform</title>
+        <title>Set Your Password — AI4I</title>
       </Head>
       <Box minH="100vh" bg={pageBg} py={{ base: 8, md: 16 }}>
         <Container maxW="md">
-          <VStack spacing={6} align="stretch">
+          <VStack spacing={3} align="stretch">
             <Heading size="lg" textAlign="center">
-              Set your password
+              Set Your Password
             </Heading>
+            <Text textAlign="center" fontSize="sm" color="gray.600">
+              Please create a strong password to secure your account.
+            </Text>
 
             <Card bg={cardBg} borderWidth="1px" borderColor={cardBorder}>
               <CardBody>
@@ -136,11 +215,15 @@ const SetPasswordPage: React.FC = () => {
                       <AlertIcon />
                       {phase.message}
                     </Alert>
-                    <Text fontSize="sm" color="gray.500">
-                      {phase.status === "expired" || phase.status === "used"
-                        ? "Ask your administrator to send you a new setup link, or request one from the login page."
-                        : "Make sure you used the most recent setup link."}
-                    </Text>
+
+                    {/* Resend setup-link form — recovery path per security spec */}
+                    <Box borderTopWidth="1px" pt={4}>
+                      <Text fontSize="sm" color="gray.600" mb={3}>
+                        Request a new setup link by entering the email your account was created with:
+                      </Text>
+                      <ResendSetupLinkForm />
+                    </Box>
+
                     <Link href="/auth" passHref legacyBehavior>
                       <Button as="a" colorScheme="blue" variant="outline">
                         Go to sign in
@@ -154,11 +237,8 @@ const SetPasswordPage: React.FC = () => {
                   phase.kind === "error") && (
                   <form onSubmit={onSubmit}>
                     <Stack spacing={4}>
-                      <Text fontSize="sm" color="gray.500">
-                        Choose a password to activate your account.
-                      </Text>
                       <FormControl isRequired>
-                        <FormLabel>New password</FormLabel>
+                        <FormLabel>New Password</FormLabel>
                         <InputGroup>
                           <Input
                             type={showPw ? "text" : "password"}
@@ -166,6 +246,7 @@ const SetPasswordPage: React.FC = () => {
                             onChange={(e) => setNewPassword(e.target.value)}
                             autoComplete="new-password"
                             minLength={8}
+                            maxLength={64}
                           />
                           <InputRightElement width="auto" pr={2}>
                             <Button
@@ -178,16 +259,23 @@ const SetPasswordPage: React.FC = () => {
                             </Button>
                           </InputRightElement>
                         </InputGroup>
+                        <PasswordRequirements password={newPassword} compact />
                       </FormControl>
-                      <FormControl isRequired>
-                        <FormLabel>Confirm password</FormLabel>
+                      <FormControl isRequired isInvalid={confirmPassword.length > 0 && confirmPassword !== newPassword}>
+                        <FormLabel>Confirm Password</FormLabel>
                         <Input
                           type={showPw ? "text" : "password"}
                           value={confirmPassword}
                           onChange={(e) => setConfirmPassword(e.target.value)}
                           autoComplete="new-password"
                           minLength={8}
+                          maxLength={64}
                         />
+                        {confirmPassword.length > 0 && confirmPassword !== newPassword && (
+                          <Text color="red.500" fontSize="sm" mt={1}>
+                            Passwords do not match.
+                          </Text>
+                        )}
                       </FormControl>
                       {phase.kind === "error" && (
                         <Alert status="error" rounded="md">
@@ -200,9 +288,13 @@ const SetPasswordPage: React.FC = () => {
                         colorScheme="blue"
                         isLoading={phase.kind === "submitting"}
                         loadingText="Setting password…"
+                        isDisabled={!passwordPasses(newPassword) || newPassword !== confirmPassword}
                       >
-                        Set password
+                        Set Password
                       </Button>
+                      <Text textAlign="center" fontSize="sm" color="gray.500">
+                        Having trouble? Contact your administrator.
+                      </Text>
                     </Stack>
                   </form>
                 )}

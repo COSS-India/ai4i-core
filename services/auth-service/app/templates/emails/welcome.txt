@@ -1,0 +1,22 @@
+AI4I Platform
+================================
+
+You're all set, {{ display_name }}
+----------------------------------
+
+Your AI4I Platform account is now active. You can sign in any time
+using the email address below.
+
+  Email: {{ email }}
+
+Next steps
+----------
+
+Sign in to start using AI4I Platform. If you ever forget your password,
+use the password-reset flow on the sign-in page.
+
+Thanks for joining AI4I Platform. If you have questions, contact your
+administrator.
+
+--
+This is an automated message from AI4I Platform.

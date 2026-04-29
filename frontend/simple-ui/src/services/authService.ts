@@ -15,6 +15,7 @@ import {
   SetPasswordRequest,
   SetPasswordStatusResponse,
   VerifyEmailRequest,
+  ResendVerificationRequest,
   LogoutRequest,
   LogoutResponse,
   APIKeyCreate,
@@ -521,14 +522,19 @@ class AuthService {
   }
 
   async requestPasswordReset(data: PasswordResetRequest): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/request-password-reset', {
+    // Public endpoint — no auth header. Always returns 200 with generic message
+    // (anti-enumeration). Backend rate-limits to 3 per email per hour; on 429
+    // the user sees a "try again later" error.
+    return this.requestWithoutAuth<{ message: string }>('/forgot-password', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
-  async resetPassword(data: PasswordResetConfirm): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/reset-password', {
+  async resetPassword(data: PasswordResetConfirm): Promise<{ message: string; sign_out_other_sessions?: boolean }> {
+    // Public endpoint — token in body authenticates the request. Single-use,
+    // 30-minute expiry. Other sessions are revoked server-side.
+    return this.requestWithoutAuth<{ message: string; sign_out_other_sessions?: boolean }>('/reset-password', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -560,6 +566,13 @@ class AuthService {
 
   async verifyEmail(data: VerifyEmailRequest): Promise<{ message: string }> {
     return this.requestWithoutAuth<{ message: string }>('/verify-email', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async resendVerification(data: ResendVerificationRequest): Promise<{ message: string }> {
+    return this.requestWithoutAuth<{ message: string }>('/resend-verification', {
       method: 'POST',
       body: JSON.stringify(data),
     });

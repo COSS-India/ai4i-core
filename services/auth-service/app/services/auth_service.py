@@ -36,8 +36,10 @@ from app.repositories.verification_repository import VerificationRepository
 from app.schemas.auth import LoginResponse, TokenRefreshResponse
 from app.services.auth_email_templates import (
     render_password_changed,
+    render_password_reset,
     render_setup_link,
     render_verify_email,
+    render_welcome,
 )
 from app.services.password_service import PasswordService
 from app.services.role_service import RoleService
@@ -183,9 +185,9 @@ class AuthService:
         except EntityNotFoundError:
             logger.warning("Default USER role not found, skipping role assignment.")
 
-        user_uuid_str = str(user.id)
+        user_id_str = str(user.id)
         verify_token = self._tokens.create_verify_token(
-            user_id=user_uuid_str,
+            user_id=user_id_str,
             email=email,
             expires_delta=timedelta(hours=settings.setup_token_expire_hours),
         )
@@ -193,7 +195,7 @@ class AuthService:
             token=verify_token,
             is_active=True,
             expires_at=self._setup_token_expires_at(),
-            created_by=user_uuid_str,
+            created_by=user.id,
         )
         await self._verifications.create(token_obj)
 
@@ -204,10 +206,14 @@ class AuthService:
 
     # ── Email verification (consumes verify_token) ──
 
-    async def verify_email_token(self, token: str) -> None:
+    async def verify_email_token(
+        self,
+        token: str,
+        background_tasks: Optional[BackgroundTasks] = None,
+    ) -> None:
         """Consume a verify token and flip the user to active. The user already
         has credentials (set during register), so this is a pure activation —
-        no password change.
+        no password change. Sends a welcome email after activation.
         """
         payload = self._validate_token_of_type(token, TokenType.VERIFY)
 
@@ -225,6 +231,143 @@ class AuthService:
         await self._verifications.deactivate(token_obj)
         await self._users.commit()
         logger.info("Email verified for user id=%s", user.id)
+        self._enqueue_email(background_tasks, lambda: render_welcome(user))
+
+    # ── Email verification: Resend ──
+
+    async def resend_verification(
+        self,
+        email: str,
+        background_tasks: Optional[BackgroundTasks] = None,
+    ) -> str:
+        """Invalidate any active verify tokens for this user and issue a new one.
+
+        Eligible only for users who registered via /auth/register but never
+        clicked the verify link — i.e. user has credentials AND is_active=False.
+        Distinct from resend_setup_link, which targets users with NO credentials.
+        """
+        user = await self._users.get_by_email(email)
+        if not user:
+            raise EntityNotFoundError("User")
+
+        if user.is_active:
+            raise ValidationError(
+                message="Email already verified.",
+                code="ALREADY_VERIFIED",
+                errors=["This account is already active. Sign in instead."],
+            )
+
+        existing_creds = await self._credentials.get_by_user_id(user.id)
+        if not existing_creds:
+            # No credentials → this user came from the setup-link flow, not the
+            # verify-email flow. Direct them to the right resend endpoint.
+            raise ValidationError(
+                message="This account has not set a password yet.",
+                code="NO_CREDENTIALS",
+                errors=["Use /auth/resend-setup-link to receive a setup link."],
+            )
+
+        user_id_str = str(user.id)
+        await self._verifications.deactivate_all_for_user(user_id_str)
+
+        verify_token = self._tokens.create_verify_token(
+            user_id=user_id_str,
+            email=email,
+            expires_delta=timedelta(hours=settings.setup_token_expire_hours),
+        )
+        token_obj = TokenVerification(
+            token=verify_token,
+            is_active=True,
+            expires_at=self._setup_token_expires_at(),
+            created_by=user.id,
+        )
+        await self._verifications.create(token_obj)
+        await self._users.commit()
+
+        logger.info("Verification link resent for user id=%s", user.id)
+        self._enqueue_email(background_tasks, lambda: render_verify_email(user, verify_token))
+        return verify_token
+
+    # ── Password reset (forgot-password flow) ──
+
+    async def request_password_reset(
+        self,
+        email: str,
+        background_tasks: Optional[BackgroundTasks] = None,
+    ) -> None:
+        """Issue a reset token + email if the user exists and is active.
+
+        Anti-enumeration: this method ALWAYS returns successfully. The route
+        handler should also always return the same generic message regardless
+        of whether the email matched a real, active user. We only enqueue the
+        actual email when the user is eligible (active, has credentials).
+        """
+        user = await self._users.get_by_email(email)
+        if not user or not user.is_active:
+            return  # silent no-op (anti-enumeration)
+
+        existing_creds = await self._credentials.get_by_user_id(user.id)
+        if not existing_creds:
+            return  # silent no-op — passwordless account, can't reset
+
+        user_id_str = str(user.id)
+        await self._verifications.deactivate_all_for_user(user_id_str)
+
+        reset_token = self._tokens.create_reset_token(
+            user_id=user_id_str,
+            email=email,
+            expires_delta=timedelta(minutes=settings.reset_token_expire_minutes),
+        )
+        token_obj = TokenVerification(
+            token=reset_token,
+            is_active=True,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.reset_token_expire_minutes),
+            created_by=user.id,
+        )
+        await self._verifications.create(token_obj)
+        await self._users.commit()
+
+        logger.info("Password reset link issued for user id=%s", user.id)
+        self._enqueue_email(background_tasks, lambda: render_password_reset(user, reset_token))
+
+    async def reset_password_with_token(
+        self,
+        token: str,
+        new_password: str,
+        confirm_password: str,
+        background_tasks: Optional[BackgroundTasks] = None,
+    ) -> None:
+        """Consume a RESET token and replace the user's password. Token is
+        single-use; refresh tokens are revoked so other sessions are signed
+        out per security spec. Sends a password_changed notification."""
+        self._passwords.validate_and_confirm(new_password, confirm_password)
+
+        payload = self._validate_token_of_type(token, TokenType.RESET)
+
+        token_obj = await self._verifications.get_by_token(token)
+        if not token_obj:
+            raise TokenInvalidError("Invalid reset link.")
+        if not token_obj.is_active:
+            raise TokenInvalidError("Reset link has already been used.")
+
+        user = await self._users.get_by_id(UUID(payload.sub))
+        if not user:
+            raise TokenInvalidError("Invalid reset link.")
+
+        creds = await self._credentials.get_by_user_id(user.id)
+        if not creds:
+            # Should be impossible (request_password_reset only issues for users
+            # with creds), but guard regardless.
+            raise TokenInvalidError("Invalid reset link.")
+
+        hash_result = self._passwords.hash_password(new_password)
+        await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
+        await self._verifications.deactivate(token_obj)
+        # Sign out all other sessions per security spec.
+        await self._refresh_tokens.delete_by_user_id(user.id)
+        await self._credentials.commit()
+        logger.info("Password reset for user id=%s; refresh tokens revoked", user.id)
+        self._enqueue_email(background_tasks, lambda: render_password_changed(user))
 
     # ── Login ──
 
@@ -403,9 +546,14 @@ class AuthService:
     # ── Email Activation: Set Password ──
 
     async def set_password_with_token(
-        self, token: str, new_password: str, confirm_password: str
+        self,
+        token: str,
+        new_password: str,
+        confirm_password: str,
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> None:
-        """Consume a setup token and create credentials, activating the user."""
+        """Consume a setup token, create credentials, activate the user, send
+        welcome email."""
         self._passwords.validate_and_confirm(new_password, confirm_password)
 
         payload = self._validate_token_of_type(token, TokenType.SETUP)
@@ -432,6 +580,7 @@ class AuthService:
         await self._verifications.deactivate(token_obj)
         await self._users.commit()
         logger.info("Password set via activation link for user id=%s", user.id)
+        self._enqueue_email(background_tasks, lambda: render_welcome(user))
 
     # ── Email Activation: Token Status ──
 

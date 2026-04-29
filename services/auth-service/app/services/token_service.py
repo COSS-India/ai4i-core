@@ -141,6 +141,27 @@ class TokenService:
         }
         return self._sign(payload)
 
+    def create_reset_token(
+        self,
+        user_id: str,
+        email: str,
+        expires_delta: Optional[timedelta] = None,
+    ) -> str:
+        """Short-lived password-reset token. 30-min default per security spec —
+        much shorter than SETUP/VERIFY (48h) since reset is initiated by an
+        already-active user and the link is sensitive."""
+        expire = datetime.now(timezone.utc) + (
+            expires_delta or timedelta(minutes=settings.reset_token_expire_minutes)
+        )
+        payload = {
+            **self._base_claims(),
+            "sub": str(user_id),
+            "email": email,
+            "type": TokenType.RESET,
+            "exp": expire,
+        }
+        return self._sign(payload)
+
     def create_verify_token(
         self,
         user_id: str,

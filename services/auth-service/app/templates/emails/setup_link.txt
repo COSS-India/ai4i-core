@@ -1,19 +1,16 @@
 AI4I Platform
 ================================
 
-Activate your account
----------------------
+Welcome to AI4I!
+----------------
 
-Hi {{ display_name }}, an AI4I Platform account has been created for you.
-Set a password to activate it:
+Your account has been set up successfully. Click the button below to
+set your password and get started.
 
   {{ setup_url }}
 
-Heads up: this link expires in {{ expires_hours }} hours and can be used
-only once.
-
-If you didn't expect this email, you can safely ignore it -- the link
-will expire on its own.
+This link expires in {{ expires_hours }} hours. If you did not request
+this, please ignore this email.
 
 --
-This is an automated message from AI4I Platform.
+This is an automated message, please do not reply.

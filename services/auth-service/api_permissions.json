@@ -642,6 +642,21 @@
       "description": "Verify email via token from registration email (public)"
     },
     {
+      "endpoint": "POST:/api/v1/auth/resend-verification",
+      "permissionRequired": null,
+      "description": "Re-issue a verify-email link for users who registered but never verified (public)"
+    },
+    {
+      "endpoint": "POST:/api/v1/auth/forgot-password",
+      "permissionRequired": null,
+      "description": "Request a password-reset email (public; rate-limited 3/hour/email)"
+    },
+    {
+      "endpoint": "POST:/api/v1/auth/reset-password",
+      "permissionRequired": null,
+      "description": "Consume a reset token and set new password (public; revokes other sessions)"
+    },
+    {
       "endpoint": "POST:/api/v1/auth/refresh",
       "permissionRequired": null,
       "description": "Refresh token (public)"

@@ -3,14 +3,18 @@ Authentication routes: register, login, logout, refresh, password management,
 and email activation (provision + set-password).
 """
 
+import redis.asyncio as aioredis
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
 from app.core.config import settings
+from app.core.redis import get_redis
 from app.core.responses import success_response
 from app.dependencies.auth import get_current_active_user
+from app.dependencies.rate_limit import enforce_rate_limit
 from app.dependencies.services import get_auth_service
 from app.models.user import User
 from app.schemas.auth import (
+    ForgotPasswordRequest,
     LoginRequest,
     LoginResponse,
     LogoutRequest,
@@ -20,6 +24,8 @@ from app.schemas.auth import (
     ProvisionUserResponse,
     RegisterRequest,
     ResendSetupLinkRequest,
+    ResendVerificationRequest,
+    ResetPasswordRequest,
     SetPasswordRequest,
     SetPasswordStatusResponse,
     TokenRefreshRequest,
@@ -62,12 +68,76 @@ async def register(
 @router.post("/verify-email")
 async def verify_email(
     body: VerifyEmailRequest,
+    background_tasks: BackgroundTasks,
     svc: AuthService = Depends(get_auth_service),
 ):
     """Consume a verification token from the link in the verify-email email
-    and activate the user. Idempotent-ish: already-used tokens fail clearly."""
-    await svc.verify_email_token(body.token)
+    and activate the user. Sends a welcome email after activation."""
+    await svc.verify_email_token(body.token, background_tasks=background_tasks)
     return success_response(data={"message": "Email verified. You can now sign in."})
+
+
+@router.post("/resend-verification")
+async def resend_verification(
+    body: ResendVerificationRequest,
+    background_tasks: BackgroundTasks,
+    svc: AuthService = Depends(get_auth_service),
+):
+    """Re-issue a verify-email link for a user who registered but hasn't
+    verified yet. Old verify tokens for this user are deactivated first."""
+    await svc.resend_verification(email=body.email, background_tasks=background_tasks)
+    return success_response(data={"message": "New verification link sent."})
+
+
+@router.post("/forgot-password")
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    svc: AuthService = Depends(get_auth_service),
+    redis: aioredis.Redis = Depends(get_redis),
+):
+    """Request a password-reset link.
+
+    Anti-enumeration: returns the same generic 200 message regardless of
+    whether the email matches a real, active account. Rate-limited per email
+    per spec (3 / hour).
+    """
+    # Per-email rate limit (case-insensitive key)
+    await enforce_rate_limit(
+        redis,
+        f"forgot_password:{body.email.lower()}",
+        limit=settings.reset_request_limit_per_hour,
+        window_seconds=3600,
+        error_code="RESET_RATE_LIMITED",
+        error_message="Too many reset requests for this email. Try again later.",
+    )
+    await svc.request_password_reset(email=body.email, background_tasks=background_tasks)
+    return success_response(data={
+        "message": "If this email is registered, you'll receive a reset link shortly.",
+    })
+
+
+@router.post("/reset-password")
+async def reset_password(
+    body: ResetPasswordRequest,
+    background_tasks: BackgroundTasks,
+    svc: AuthService = Depends(get_auth_service),
+):
+    """Consume a reset token and set the user's new password.
+
+    Single-use, 30-min expiry per spec. Revokes all refresh tokens so other
+    active sessions are signed out. Sends a password-changed notification.
+    """
+    await svc.reset_password_with_token(
+        token=body.token,
+        new_password=body.new_password,
+        confirm_password=body.confirm_password,
+        background_tasks=background_tasks,
+    )
+    return success_response(data={
+        "message": "Password has been reset. Sign in with your new password.",
+        "sign_out_other_sessions": True,
+    })
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -165,13 +235,16 @@ async def get_setup_token_status(
 @router.post("/set-password")
 async def set_password(
     body: SetPasswordRequest,
+    background_tasks: BackgroundTasks,
     svc: AuthService = Depends(get_auth_service),
 ):
-    """Consume a setup token and set the user's password, activating the account."""
+    """Consume a setup token and set the user's password, activating the account.
+    Sends a welcome email after activation."""
     await svc.set_password_with_token(
         token=body.token,
         new_password=body.new_password,
         confirm_password=body.confirm_password,
+        background_tasks=background_tasks,
     )
     return success_response(data={"message": "Password set. You can now log in."})
 
