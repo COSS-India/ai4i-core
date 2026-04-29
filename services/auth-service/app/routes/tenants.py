@@ -121,7 +121,7 @@ async def create_tenant(
         )
 
     tenant = Tenant(
-        name=body.name,
+        name=body.contact_name,
         organisation=body.organisation,
         email=body.email,
         phone_number=body.phone_number,
@@ -137,7 +137,7 @@ async def create_tenant(
     await auth_svc.provision_user(
         email=body.email,
         username=derived_username,
-        full_name=body.name,
+        full_name=body.contact_name,
         phone_number=body.phone_number,
         tenant_id=str(tenant.id),
         creation_type="tenant",
@@ -198,6 +198,9 @@ async def update_tenant(
     data = body.model_dump(exclude_unset=True)
     # Status changes go through PATCH /status to keep authorization split clean.
     data.pop("status", None)
+    # Schema uses `contact_name` (frontend-aligned); model column is `name`.
+    if "contact_name" in data:
+        data["name"] = data.pop("contact_name")
     data["updated_by"] = current_user.id
     await repo.update(tenant, data)
     await repo.save_and_refresh(tenant)
