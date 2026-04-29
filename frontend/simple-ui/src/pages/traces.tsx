@@ -39,6 +39,7 @@ import {
   Span,
 } from "../services/observabilityService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { API_V1, INFERENCE_TRACE_PATHS } from "../services/apiEndpoints";
 
 // Utility functions to extract and categorize spans
 interface ProcessedSpan {
@@ -550,9 +551,7 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
   }
   // Main service operations — {svc}.inference (Telemetry Phase 1 parent; Phase 7 finalizes on close)
   else if (isStandardSvcInferenceOp ||
-           opName.includes("/api/v1/ocr/inference") || opName.includes("/api/v1/nmt/inference") ||
-           opName.includes("/api/v1/transliteration/inference") ||
-           opName.includes("/api/v1/tts/inference") || opName.includes("/api/v1/asr/inference") ||
+           INFERENCE_TRACE_PATHS.some((p) => opName.toLowerCase().includes(p)) ||
            (opName.includes("post") && opName.includes("inference") && !serviceName.includes("gateway"))) {
     category = "processing";
     isImportant = true;
@@ -1592,13 +1591,8 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
   const isStandardSvcInferenceName =
     /^[a-z0-9-]+\.inference$/.test(opLc) && !opLc.startsWith("triton.");
   const isHttpInferenceRoute =
-    opLc.includes("/api/v1/nmt/inference") ||
-    opLc.includes("/api/v1/ocr/inference") ||
-    opLc.includes("/api/v1/transliteration/inference") ||
-    opLc.includes("/api/v1/tts/inference") ||
-    opLc.includes("/api/v1/asr/inference") ||
-    opLc.includes("/api/v1/ner/inference") ||
-    (opLc.includes("post") && opLc.includes("inference") && opLc.includes("/api/v1/"));
+    INFERENCE_TRACE_PATHS.some((p) => opLc.includes(p)) ||
+    (opLc.includes("post") && opLc.includes("inference") && opLc.includes(API_V1));
 
   // If there's an error, return simple error indicator
   // (detailed error will be shown in separate section)

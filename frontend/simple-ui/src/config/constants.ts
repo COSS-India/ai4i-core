@@ -1205,30 +1205,8 @@ export const DEFAULT_NMT_CONFIG = {
   targetScriptCode: "",
 } as const;
 
-// API endpoints
-export const API_ENDPOINTS = {
-  asr: {
-    inference: "/api/v1/asr/inference",
-    models: "/api/v1/asr/models",
-    health: "/api/v1/asr/health",
-  },
-  tts: {
-    inference: "/api/v1/tts/inference",
-    voices: "/api/v1/tts/voices",
-    health: "/api/v1/tts/health",
-  },
-  nmt: {
-    inference: "/api/v1/nmt/inference",
-    models: "/api/v1/nmt/models",
-    languages: "/api/v1/nmt/languages",
-    health: "/api/v1/nmt/health",
-  },
-  pipeline: {
-    inference: "/api/v1/pipeline/inference",
-    info: "/api/v1/pipeline/info",
-    health: "/api/v1/pipeline/health",
-  },
-} as const;
+// API endpoints (canonical definitions live in services/apiEndpoints.ts)
+export { apiEndpoints as API_ENDPOINTS } from "../services/apiEndpoints";
 
 // WebSocket events
 export const WEBSOCKET_EVENTS = {

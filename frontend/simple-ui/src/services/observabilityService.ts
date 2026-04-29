@@ -3,6 +3,7 @@
 import axios, { AxiosInstance } from 'axios';
 import { getJwtToken } from './api';
 import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
+import { apiEndpoints } from './apiEndpoints';
 
 // Telemetry service runs on port 8084 (different from API gateway on 8080)
 const TELEMETRY_SERVICE_URL = process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL ;
@@ -157,7 +158,7 @@ export const searchLogs = async (
     queryParams.append('size', String(params.size || 50));
 
     const response = await observabilityClient.get<LogSearchResponse>(
-      `/api/v1/telemetry/logs/search?${queryParams.toString()}`
+      `${apiEndpoints.telemetry.logsSearch}?${queryParams.toString()}`
     );
 
     console.log('searchLogs: Response received:', {
@@ -216,7 +217,7 @@ export const getLogAggregations = async (
     if (params?.start_time) queryParams.append('start_time', params.start_time);
     if (params?.end_time) queryParams.append('end_time', params.end_time);
 
-    const url = `/api/v1/telemetry/logs/aggregate${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+    const url = `${apiEndpoints.telemetry.logsAggregate}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
     const response = await observabilityClient.get<LogAggregationResponse>(url);
 
     return response.data;
@@ -246,7 +247,7 @@ export const getLogAggregations = async (
 export const getServicesWithLogs = async (): Promise<string[]> => {
   try {
     const response = await observabilityClient.get<{services: string[]} | string[]>(
-      '/api/v1/telemetry/logs/services'
+      apiEndpoints.telemetry.logsServices
     );
 
     console.log('getServicesWithLogs: Response received:', {
@@ -320,7 +321,7 @@ export const searchTraces = async (
     }
 
     const response = await observabilityClient.get<TraceSearchResponse>(
-      `/api/v1/telemetry/traces/search?${queryParams.toString()}`
+      `${apiEndpoints.telemetry.tracesSearch}?${queryParams.toString()}`
     );
 
     return response.data;
@@ -350,7 +351,7 @@ export const searchTraces = async (
 export const getTraceById = async (traceId: string): Promise<Trace> => {
   try {
     const response = await observabilityClient.get<Trace>(
-      `/api/v1/telemetry/traces/${traceId}`
+      apiEndpoints.telemetry.traceById(traceId)
     );
 
     return response.data;
@@ -380,7 +381,7 @@ export const getTraceById = async (traceId: string): Promise<Trace> => {
 export const getServicesWithTraces = async (): Promise<string[]> => {
   try {
     const response = await observabilityClient.get<{services: string[]} | string[]>(
-      '/api/v1/telemetry/traces/services'
+      apiEndpoints.telemetry.tracesServices
     );
 
     // Handle both response formats: {"services": [...]} or [...]
@@ -419,7 +420,7 @@ export const getServicesWithTraces = async (): Promise<string[]> => {
 export const getOperationsForService = async (serviceName: string): Promise<string[]> => {
   try {
     const response = await observabilityClient.get<string[]>(
-      `/api/v1/telemetry/traces/services/${serviceName}/operations`
+      apiEndpoints.telemetry.traceServiceOperations(serviceName)
     );
 
     return response.data;
