@@ -1,11 +1,11 @@
-import api from "./api";
-import { apiEndpoints } from "./apiEndpoints";
+import baseApiService from './baseApiService';
+import { apiEndpoints } from './apiEndpoints';
 
 export const piiService = {
-  getDomains: () => api.get<string[]>(apiEndpoints.pii.domains),
+  getDomains: () => baseApiService.get<string[]>(apiEndpoints.pii.domains),
 
   getPolicy: (domainId: string) =>
-    api.get<{ meta?: unknown; rules?: unknown[] }>(
+    baseApiService.get<{ meta?: unknown; rules?: unknown[] }>(
       `${apiEndpoints.pii.policy}/${encodeURIComponent(domainId)}`
     ),
 
@@ -15,7 +15,7 @@ export const piiService = {
     lang: string,
     tenantId?: string | null
   ) =>
-    api.post(apiEndpoints.pii.redact, payload, {
+    baseApiService.post(apiEndpoints.pii.redact, payload, {
       headers: {
         'X-Target': target,
         'X-Language': lang,
@@ -29,21 +29,21 @@ export const piiService = {
     >(apiEndpoints.pii.admin.allDomains),
 
   activateDomains: (domainIds: string[]) =>
-    api.post(apiEndpoints.pii.admin.activateDomains, {
+    baseApiService.post(apiEndpoints.pii.admin.activateDomains, {
       domain_ids: domainIds,
     }),
 
   createDomain: (domainId: string, description?: string) =>
-    api.post(apiEndpoints.pii.admin.domain, {
+    baseApiService.post(apiEndpoints.pii.admin.domain, {
       domain_id: domainId,
       description: description?.trim() || `Policy scope: ${domainId}`,
     }),
 
   deployRules: (domainId: string, rules: unknown[]) =>
-    api.post(apiEndpoints.pii.admin.deploy, { domain_id: domainId, rules }),
+    baseApiService.post(apiEndpoints.pii.admin.deploy, { domain_id: domainId, rules }),
 
   generateRegex: (exampleText: string) =>
-    api.post(apiEndpoints.pii.admin.generateRegex, {
+    baseApiService.post(apiEndpoints.pii.admin.generateRegex, {
       example_text: exampleText,
     }),
 
@@ -53,13 +53,13 @@ export const piiService = {
     >(apiEndpoints.pii.admin.tenantDomains),
 
   upsertTenantDomainMapping: (tenantId: string, domainId: string) =>
-    api.post(apiEndpoints.pii.admin.tenantDomain, {
+    baseApiService.post(apiEndpoints.pii.admin.tenantDomain, {
       tenant_id: tenantId,
       domain_id: domainId,
     }),
 
   deleteTenantDomainMapping: (tenantId: string) =>
-    api.post(apiEndpoints.pii.admin.tenantDomainDelete, {
+    baseApiService.post(apiEndpoints.pii.admin.tenantDomainDelete, {
       tenant_id: tenantId,
     }),
 

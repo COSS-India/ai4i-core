@@ -21,9 +21,8 @@ import {
   OAuth2Provider,
   Permission,
 } from '../types/auth';
-import axios from 'axios';
-import { apiRequest } from './api';
 import { apiEndpoints } from './apiEndpoints';
+import baseApiService from './baseApiService';
 import {
   getStoredAccessToken,
   getStoredRefreshToken,
@@ -42,92 +41,60 @@ class AuthService {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${apiEndpoints.auth.base}${endpoint}`;
-    
-    const defaultHeaders: HeadersInit = {
-      'Content-Type': 'application/json',
-    };
-
-    // Add authorization header if token exists
+    const method = (options.method || 'GET') as
+      | 'GET'
+      | 'POST'
+      | 'PUT'
+      | 'PATCH'
+      | 'DELETE';
+    const requestData =
+      typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
     const token = this.getAccessToken();
 
-    const config: RequestInit = {
-      ...options,
-      headers: {
-        ...defaultHeaders,
-        ...options.headers,
-      },
-    };
-
-    const method = (options.method || 'GET') as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-    const requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
-    
     try {
-      return await apiRequest<T>({
-        url,
+      return await baseApiService.request<T>(url, {
         method,
         data: requestData,
-        headers: config.headers as Record<string, string>,
         timeout: 10000,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(options.headers as Record<string, string>),
+        },
       });
     } catch (error: any) {
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        const errorData: any = error.response?.data ?? {};
-        if (
-          typeof window !== 'undefined' &&
-          responseIndicatesTenantSuspendedOrInactive(status ?? 0, errorData)
-        ) {
-          try {
-            const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
-            forceFrontendSessionEnd();
-          } catch {
-            this.clearAuthTokens();
-            this.clearStoredUser();
-            window.location.assign('/auth');
-          }
-          throw new Error('Your organization account is no longer active. Please sign in again.');
-        }
-
-        // Extract error message from various possible formats (avoid [object Object] when detail is an object)
-        let errorMessage = `HTTP error! status: ${status ?? 'unknown'}`;
-        if (errorData?.detail) {
-          const d = errorData.detail;
-          if (typeof d === 'string') {
-            errorMessage = d;
-          } else if (typeof d === 'object' && d !== null && typeof (d as any).message === 'string') {
-            errorMessage = (d as any).message;
-          } else if (typeof d === 'object' && d !== null) {
-            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
-          } else {
-            errorMessage = String(d);
-          }
-        } else if (errorData?.message) {
-          errorMessage = String(errorData.message);
-        } else if (typeof errorData === 'string') {
-          errorMessage = errorData;
-        } else if (Array.isArray(errorData) && errorData.length > 0) {
-          errorMessage = errorData.map((err: any) => err.detail?.message ?? err.detail ?? err.message ?? String(err)).join(', ');
-        }
-        
-        // Check if error is "Invalid authentication credentials" (session expiry)
-        const errorMessageLower = errorMessage.toLowerCase();
-        const isInvalidAuth =
-          errorMessageLower.includes('invalid authentication credentials') ||
-          (status === 401 && errorMessageLower.includes('invalid'));
-        
-        if (isInvalidAuth && typeof window !== 'undefined') {
-          // Clear tokens and redirect to login
+      const status = error?.status;
+      const errorData: any = error?.responseData ?? {};
+      if (
+        typeof window !== 'undefined' &&
+        responseIndicatesTenantSuspendedOrInactive(status ?? 0, errorData)
+      ) {
+        try {
+          const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+          forceFrontendSessionEnd();
+        } catch {
           this.clearAuthTokens();
           this.clearStoredUser();
           window.location.assign('/auth');
         }
-        
-        // Add status code to error message for debugging
-        const mappedError = new Error(errorMessage);
-        (mappedError as any).status = status;
-        throw mappedError;
+        throw new Error('Your organization account is no longer active. Please sign in again.');
       }
-      if (error.code === 'ECONNABORTED') {
+
+      // Check if error is "Invalid authentication credentials" (session expiry)
+      const errorMessageLower = (error?.message || '').toLowerCase();
+      const isInvalidAuth =
+        errorMessageLower.includes('invalid authentication credentials') ||
+        (status === 401 && errorMessageLower.includes('invalid'));
+
+      if (isInvalidAuth && typeof window !== 'undefined') {
+        // Clear tokens and redirect to login
+        this.clearAuthTokens();
+        this.clearStoredUser();
+        window.location.href = '/';
+        throw new Error('Session expired. Please sign in again.');
+      }
+
+      if (error?.message?.toLowerCase?.().includes('timeout')) {
         console.error('Auth service request timed out:', url);
         throw new Error('Request timeout: Auth service is not responding');
       }
@@ -214,74 +181,25 @@ class AuthService {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${apiEndpoints.auth.base}${endpoint}`;
-    
-    const defaultHeaders: HeadersInit = {
-      'Content-Type': 'application/json',
-    };
-
-    const config: RequestInit = {
-      ...options,
-      headers: {
-        ...defaultHeaders,
-        ...options.headers,
-      },
-    };
+    const method = (options.method || 'GET') as
+      | 'GET'
+      | 'POST'
+      | 'PUT'
+      | 'PATCH'
+      | 'DELETE';
+    const requestData =
+      typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
 
     try {
-      const method = (options.method || 'GET') as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-      const requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
-      return await apiRequest<T>({
-        url,
+      return await baseApiService.request<T>(url, {
         method,
         data: requestData,
-        headers: config.headers as Record<string, string>,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.headers as Record<string, string>),
+        },
       });
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        let errorData: any = error.response?.data ?? {};
-        if (typeof errorData === 'string') {
-          try {
-            errorData = JSON.parse(errorData);
-          } catch {
-            errorData = { detail: errorData };
-          }
-        }
-
-        // Handle different error response formats (avoid [object Object] when detail is an object)
-        let errorMessage = `HTTP error! status: ${status ?? 'unknown'}`;
-        if (typeof errorData === 'string') {
-          errorMessage = errorData;
-        } else if (errorData?.detail) {
-          const d = errorData.detail;
-          if (typeof d === 'string') {
-            errorMessage = d;
-          } else if (typeof d === 'object' && d !== null && typeof d.message === 'string') {
-            errorMessage = d.message;
-          } else if (typeof d === 'object' && d !== null) {
-            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
-          } else {
-            errorMessage = String(d);
-          }
-        } else if (errorData?.message) {
-          errorMessage = String(errorData.message);
-        } else if (Array.isArray(errorData)) {
-          // Handle array of errors
-          errorMessage = errorData.map((err: any) =>
-            err.detail?.message ?? err.detail ?? err.message ?? String(err)
-          ).join(', ');
-        } else if (typeof errorData === 'object' && Object.keys(errorData).length > 0) {
-          const d = errorData.detail ?? errorData.message ?? errorData.error;
-          errorMessage = typeof d === 'object' && d !== null && (d as any).message != null
-            ? String((d as any).message)
-            : d != null ? String(d) : JSON.stringify(errorData);
-        }
-        
-        // Add status code to error for better debugging
-        const mappedError = new Error(errorMessage);
-        (mappedError as any).status = status;
-        throw mappedError;
-      }
       console.error('Auth service request failed:', error);
       throw error;
     }
@@ -371,12 +289,14 @@ class AuthService {
     timeoutMs: number = 10000
   ): Promise<T> {
     const url = `${apiEndpoints.auth.base}${endpoint}`;
-    
-    const defaultHeaders: HeadersInit = {
-      'Content-Type': 'application/json',
-    };
-
-    // Add authorization header if token exists
+    const method = (options.method || 'GET') as
+      | 'GET'
+      | 'POST'
+      | 'PUT'
+      | 'PATCH'
+      | 'DELETE';
+    const requestData =
+      typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
     const token = this.getAccessToken();
 
     return baseApiService.request<T>(url, {
@@ -388,51 +308,7 @@ class AuthService {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(options.headers as Record<string, string>),
       },
-    };
-
-    const method = (options.method || 'GET') as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-    const requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
-    
-    try {
-      return await apiRequest<T>({
-        url,
-        method,
-        data: requestData,
-        headers: config.headers as Record<string, string>,
-        timeout: timeoutMs,
-      });
-    } catch (error: any) {
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        const errorData: any = error.response?.data ?? {};
-        // Extract error message from various possible formats
-        let errorMessage = `HTTP error! status: ${status ?? 'unknown'}`;
-        if (errorData?.detail) {
-          errorMessage = String(errorData.detail);
-        } else if (errorData?.message) {
-          errorMessage = String(errorData.message);
-        } else if (typeof errorData === 'string') {
-          errorMessage = errorData;
-        } else if (Array.isArray(errorData) && errorData.length > 0) {
-          errorMessage = errorData.map((err: any) => err.detail || err.message || String(err)).join(', ');
-        }
-        
-        // Add status code to error for better debugging
-        const mappedError = new Error(errorMessage);
-        (mappedError as any).status = status;
-        throw mappedError;
-      }
-      if (error.code === 'ECONNABORTED') {
-        console.error('Auth service request timed out:', url);
-        throw new Error(`Request timeout: Auth service is not responding (timeout: ${timeoutMs}ms)`);
-      }
-      console.error('Auth service request failed:', error);
-      // Preserve the original error message and status if available
-      if (error.status) {
-        (error as any).status = error.status;
-      }
-      throw error;
-    }
+    });
   }
 
   async updateCurrentUser(data: Partial<User>): Promise<User> {
@@ -594,13 +470,18 @@ class AuthService {
 
   getStoredUser(): User | null {
     if (typeof window === 'undefined') return null;
-    const userStr = sessionStorage.getItem('user');
+    const userStr = sessionStorage.getItem('user') || localStorage.getItem('user');
+    if (userStr && !sessionStorage.getItem('user')) {
+      // Backward compatibility: migrate legacy localStorage user to sessionStorage.
+      sessionStorage.setItem('user', userStr);
+      localStorage.removeItem('user');
+    }
     return userStr ? JSON.parse(userStr) : null;
   }
 
   setStoredUser(user: User): void {
     if (typeof window === 'undefined') return;
-    // User profile data is session-scoped for better client-side security.
+    // Clear from both storages first
     localStorage.removeItem('user');
     sessionStorage.removeItem('user');
     sessionStorage.setItem('user', JSON.stringify(user));

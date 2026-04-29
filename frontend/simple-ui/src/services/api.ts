@@ -8,7 +8,7 @@ import axios, {
   AxiosRequestConfig,
   Method,
 } from 'axios';
-import { getStoredAccessToken } from '../utils/tokenStorage';
+import { getStoredAccessToken, getRememberMePreference } from '../utils/tokenStorage';
 import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 
 // API Base URL from environment.
@@ -351,158 +351,6 @@ const handleNonServiceUnauthorized = async (
   return null;
 };
 
-type EndpointContext = {
-  url: string;
-  isAuthEndpoint: boolean;
-  isAuthRefreshEndpoint: boolean;
-  isModelManagementEndpoint: boolean;
-  isMultiTenantEndpoint: boolean;
-  isObservabilityEndpoint: boolean;
-  isServiceEndpoint: boolean;
-  requiresJWT: boolean;
-};
-
-const normalizeUrl = (url?: string): string => (url || '').toLowerCase();
-
-const getEndpointContext = (rawUrl?: string): EndpointContext => {
-  const url = normalizeUrl(rawUrl);
-  const pathNoQuery = (url.split('?')[0] || '').toLowerCase();
-  const isTryItServiceListEndpoint = url.includes(apiEndpoints['model-management'].tryItServiceList);
-  const isModelManagementEndpoint =
-    url.includes(apiEndpoints['model-management'].base) && !isTryItServiceListEndpoint;
-  const isASREndpoint = url.includes(apiEndpoints.asr.base);
-  const isNMSEndpoint = url.includes(apiEndpoints.nmt.base);
-  const isTTSEndpoint = url.includes(apiEndpoints.tts.base);
-  const isLLMEndpoint = url.includes(apiEndpoints.llm.base);
-  const isPipelineEndpoint = url.includes(apiEndpoints.pipeline.base);
-  const isNEREndpoint = url.includes(apiEndpoints.ner.base);
-  const isOCREndpoint = url.includes(apiEndpoints.ocr.base);
-  const isTransliterationEndpoint = url.includes(apiEndpoints.transliteration.base);
-  const isLanguageDetectionEndpoint = url.includes(apiEndpoints['language-detection'].base);
-  const isSpeakerDiarizationEndpoint = url.includes(apiEndpoints['speaker-diarization'].base);
-  const isLanguageDiarizationEndpoint = url.includes(apiEndpoints['language-diarization'].base);
-  const isAudioLangDetectionEndpoint = url.includes(apiEndpoints['audio-language-detection'].base);
-  const isObservabilityEndpoint = url.includes(apiEndpoints.telemetry.base);
-  const isMultiTenantEndpoint = url.includes(apiEndpoints['multi-tenant'].base);
-  const isFeatureFlagsEndpoint = url.includes(apiEndpoints['feature-flags'].base);
-  const isPolicyServiceEndpoint = url.includes(apiEndpoints.policy.base);
-  const isPolicyServiceHealthPath = pathNoQuery.endsWith(`${apiEndpoints.policy.base}/health`);
-  const isAuthEndpoint = url.includes(apiEndpoints.auth.base);
-  const isAuthRefreshEndpoint = url.includes(`${apiEndpoints.auth.base}/refresh`);
-
-  const requiresJWT =
-    isModelManagementEndpoint ||
-    isASREndpoint ||
-    isNMSEndpoint ||
-    isTTSEndpoint ||
-    isLLMEndpoint ||
-    isPipelineEndpoint ||
-    isAudioLangDetectionEndpoint ||
-    isLanguageDetectionEndpoint ||
-    isLanguageDiarizationEndpoint ||
-    isSpeakerDiarizationEndpoint ||
-    isNEREndpoint ||
-    isOCREndpoint ||
-    isTransliterationEndpoint ||
-    isObservabilityEndpoint ||
-    isMultiTenantEndpoint ||
-    isFeatureFlagsEndpoint ||
-    (isPolicyServiceEndpoint && !isPolicyServiceHealthPath);
-
-  const isServiceEndpoint =
-    isASREndpoint ||
-    isTTSEndpoint ||
-    isNMSEndpoint ||
-    isLLMEndpoint ||
-    isPipelineEndpoint ||
-    isOCREndpoint ||
-    isNEREndpoint ||
-    isTransliterationEndpoint ||
-    isLanguageDetectionEndpoint ||
-    isSpeakerDiarizationEndpoint ||
-    isLanguageDiarizationEndpoint ||
-    isAudioLangDetectionEndpoint ||
-    isObservabilityEndpoint ||
-    isPolicyServiceEndpoint ||
-    isModelManagementEndpoint ||
-    isMultiTenantEndpoint;
-
-  return {
-    url,
-    isAuthEndpoint,
-    isAuthRefreshEndpoint,
-    isModelManagementEndpoint,
-    isMultiTenantEndpoint,
-    isObservabilityEndpoint,
-    isServiceEndpoint,
-    requiresJWT,
-  };
-};
-
-const extractErrorMessage = (data: unknown, fallback = ''): string => {
-  try {
-    const errorData = data as any;
-    if (errorData?.detail) return String(errorData.detail);
-    if (errorData?.message) return String(errorData.message);
-  } catch {
-    // Ignore parsing issues and return fallback.
-  }
-  return fallback;
-};
-
-const isInvalidAuthCredentialsMessage = (message: string): boolean =>
-  message.toLowerCase().includes('invalid authentication credentials');
-
-const isTokenExpiredMessage = (message: string): boolean => {
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes('expired') ||
-    normalized.includes('token expired') ||
-    normalized.includes('invalid token') ||
-    normalized.includes('token invalid') ||
-    normalized.includes('jwt expired') ||
-    normalized.includes('access token expired') ||
-    isInvalidAuthCredentialsMessage(normalized)
-  );
-};
-
-const isAuthRefreshFailure = (refreshError: any): boolean => {
-  const refreshErrorMsg = (refreshError?.message || '').toLowerCase();
-  return (
-    refreshErrorMsg.includes('expired') ||
-    refreshErrorMsg.includes('invalid') ||
-    refreshErrorMsg.includes('401') ||
-    refreshErrorMsg.includes('unauthorized')
-  );
-};
-
-const createSessionExpiredError = () =>
-  new Error('Session expired. Please sign in again.');
-
-const clearAuthAndRedirect = async (redirectPath: string): Promise<void> => {
-  const { default: authService } = await import('./authService');
-  authService.clearAuthTokens();
-  authService.clearStoredUser();
-  if (typeof window !== 'undefined') {
-    window.location.href = redirectPath;
-  }
-};
-
-const tryRefreshAndRetry = async (originalRequest: any): Promise<AxiosResponse | null> => {
-  const { default: authService } = await import('./authService');
-  const refreshToken = authService.getRefreshToken();
-  if (!refreshToken) return null;
-
-  const response = await authService.refreshToken();
-  const newAccessToken = response.access_token;
-  const rememberMe = localStorage.getItem('remember_me') === 'true';
-  authService.setAccessToken(newAccessToken, rememberMe);
-
-  originalRequest.headers = originalRequest.headers || {};
-  originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
-  return apiClient(originalRequest);
-};
-
 // Request interceptor for authentication and timing
 apiClient.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
@@ -595,108 +443,15 @@ apiClient.interceptors.response.use(
               endpointContext.isModelManagementEndpoint ||
               endpointContext.isMultiTenantEndpoint
             ) {
-              // For service endpoints and model-management endpoints
-              // Check if it's a token expiration issue - if so, redirect to sign-in
-              const errorMessage = extractErrorMessage(data, 'Authentication failed');
-              const isInvalidAuthCredentials = isInvalidAuthCredentialsMessage(errorMessage);
-              const isTokenExpired = isTokenExpiredMessage(errorMessage);
-
-              // Log detailed error information
-              const jwtToken = getJwtToken();
-              const endpointType = endpointContext.isModelManagementEndpoint ? 'model-management' : 'service';
-              console.warn(`${endpointType} endpoint 401 error:`, {
-                url: endpointContext.url,
-                errorMessage,
-                isTokenExpired,
-                isInvalidAuthCredentials,
-                hasJWT: !!jwtToken,
-                jwtLength: jwtToken?.length || 0,
-                responseData: data,
-              });
-              
-              // If invalid authentication credentials, redirect immediately without trying to refresh
-              if (isInvalidAuthCredentials) {
-                console.warn(`Invalid authentication credentials for ${endpointType} endpoint - redirecting to sign-in`);
-                await clearAuthAndRedirect('/');
-                return Promise.reject(createSessionExpiredError());
-              }
-
-              // Try to refresh token if it exists and we haven't retried yet
-              if (jwtToken && !originalRequest._retry) {
-                originalRequest._retry = true;
-
-                try {
-                  const retryResponse = await tryRefreshAndRetry(originalRequest);
-                  if (retryResponse) return retryResponse;
-                } catch (refreshError: any) {
-                  if (isAuthRefreshFailure(refreshError) || isTokenExpired) {
-                    // Token expired or invalid credentials - redirect to sign-in page
-                    console.warn(`Authentication failed for ${endpointType} endpoint - redirecting to sign-in`);
-                    await clearAuthAndRedirect('/auth');
-                    return Promise.reject(createSessionExpiredError());
-                  } else {
-                    // Refresh failed for other reasons - don't logout, let UI handle it
-                    console.warn(`Token refresh failed for ${endpointType} endpoint:`, refreshError);
-                  }
-                }
-              } else if (isTokenExpired) {
-                // Token expired or invalid credentials - redirect to sign-in
-                console.warn(`Authentication failed for ${endpointType} endpoint - redirecting to sign-in`);
-                await clearAuthAndRedirect('/auth');
-                return Promise.reject(createSessionExpiredError());
-              }
-
-              // Tenant APIs back the app shell; any unresolved 401 should end the session
-              // instead of leaving the user on broken pages (e.g. logs, profile).
-              if (endpointContext.isMultiTenantEndpoint) {
-                console.warn('Multi-tenant API returned 401 — ending session');
-                const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
-                forceFrontendSessionEnd();
-                return Promise.reject(createSessionExpiredError());
-              }
-              
-              // For non-expiration errors, don't redirect - let the UI handle the error
-              let enhancedErrorMessage = errorMessage;
-              if (endpointContext.isModelManagementEndpoint) {
-                enhancedErrorMessage = `Model management error: ${errorMessage}. Please check your authentication and try again.`;
-              } else {
-                enhancedErrorMessage = `Authentication failed: ${errorMessage}. Please check your login status.`;
-              }
-              
-              const enhancedError = new Error(enhancedErrorMessage);
-              (enhancedError as any).status = 401;
-              (enhancedError as any).response = resolvedError.response;
-              return Promise.reject(enhancedError);
+              return handleServiceLikeUnauthorized(
+                endpointContext,
+                data,
+                originalRequest,
+                resolvedError.response
+              );
             } else {
-              // For auth endpoints and other non-service endpoints
-              // Check if token expired and redirect to sign-in if so
-              const errorMessage = extractErrorMessage(data);
-              const isTokenExpired = isTokenExpiredMessage(errorMessage);
-              
-              if (!originalRequest._retry) {
-                originalRequest._retry = true;
-
-                try {
-                  const retryResponse = await tryRefreshAndRetry(originalRequest);
-                  if (retryResponse) return retryResponse;
-                } catch (refreshError: any) {
-                  if (isAuthRefreshFailure(refreshError) || isTokenExpired) {
-                    // Token expired - redirect to sign-in
-                    console.warn('Token expired for auth endpoint - redirecting to sign-in');
-                    await clearAuthAndRedirect('/auth');
-                    return Promise.reject(createSessionExpiredError());
-                  } else {
-                    // Other refresh error - logout
-                    console.error('Token refresh failed for auth endpoint:', refreshError);
-                    await clearAuthAndRedirect('/');
-                  }
-                }
-              } else {
-                // Already retried - token likely expired, redirect to sign-in
-                console.warn('Token refresh already attempted - redirecting to sign-in');
-                await clearAuthAndRedirect('/auth');
-                return Promise.reject(createSessionExpiredError());
-              }
+              const retryResponse = await handleNonServiceUnauthorized(data, originalRequest);
+              if (retryResponse) return retryResponse;
             }
           }
           break;
