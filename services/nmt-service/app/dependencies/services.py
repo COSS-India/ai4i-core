@@ -1,3 +1,4 @@
+from ai4icore_bootstrap.database import get_db
 """Dependency injection factories for NMT service."""
 
 import logging
@@ -5,7 +6,6 @@ import logging
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_multi_tenant import get_tenant_db_session_factory
 
 from app.clients.triton_client import NMTTritonClient
 from app.repositories.nmt_repository import NMTRepository
@@ -14,12 +14,11 @@ from app.services.nmt_service import NMTService
 
 logger = logging.getLogger(__name__)
 
-get_tenant_db_session = get_tenant_db_session_factory()
 
 
 async def get_nmt_service(
     request: Request,
-    db: AsyncSession = Depends(get_tenant_db_session),
+    db: AsyncSession = Depends(get_db),
 ) -> NMTService:
     """Construct NMTService from request state set by Model Management middleware.
 

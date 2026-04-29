@@ -40,11 +40,11 @@ import { SearchIcon, ViewIcon, DeleteIcon } from "@chakra-ui/icons";
 import { FaUpload, FaDownload } from "react-icons/fa";
 import { useRouter } from "next/router";
 import { useQueryClient } from "@tanstack/react-query";
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import {
-  listServices,
+  listServicesPaginated,
   createService,
   getServiceById,
   updateService,
@@ -81,6 +81,7 @@ type ModelSummary = {
 
 const ServicesManagementPage: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
+  const [serverTotal, setServerTotal] = useState(0);
   const [models, setModels] = useState<ModelSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
@@ -135,14 +136,6 @@ const ServicesManagementPage: React.FC = () => {
     return typeof modelVersionStatus === "string" && modelVersionStatus.toLowerCase() === "deprecated";
   };
 
-  /** Parse timestamp safely for SQL-like ordering */
-  const getSortTimestamp = (value?: string | number | null): number => {
-    if (value == null) return 0;
-    if (typeof value === "number") return value > 1e12 ? value : value * 1000;
-    const t = new Date(value).getTime();
-    return Number.isNaN(t) ? 0 : t;
-  };
-
   const formatModelSubmissionDate = (value?: string | number | null): string => {
     if (value == null || value === "") return "";
 
@@ -169,55 +162,25 @@ const ServicesManagementPage: React.FC = () => {
     return Array.from(types).sort();
   }, [services]);
 
-  const filteredServices = useMemo(() => {
+  // Client-side name filter + sort applied to the current server-fetched page.
+  const paginatedServices = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const filtered = services.filter((s) => {
-      if (q) {
-        if (!(s.name ?? "").toLowerCase().includes(q)) return false;
-      }
-      if (filterStatus) {
-        const published = s.isPublished === true;
-        if (filterStatus === "published" && !published) return false;
-        if (filterStatus === "unpublished" && published) return false;
-      }
-      if (filterTaskType) {
-        const task = (s.model?.task?.type ?? s.task?.type ?? s.task_type ?? "").toString().toUpperCase();
-        if (task !== filterTaskType) return false;
-      }
-      return true;
-    });
+    const filtered = q
+      ? services.filter((s) => (s.name ?? "").toLowerCase().includes(q))
+      : services;
+    if (sortBy === "time") return filtered;
     return [...filtered].sort((a, b) => {
-      const createdA = getSortTimestamp(a.created_at);
-      const createdB = getSortTimestamp(b.created_at);
-      const updatedA = getSortTimestamp(a.updated_at);
-      const updatedB = getSortTimestamp(b.updated_at);
       const nameCmp = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
-
-      // Default mode: mirror SQL ordering exactly -> ORDER BY created_at DESC, updated_at DESC.
-      if (sortBy === "time") {
-        if (createdB !== createdA) return createdB - createdA;
-        if (updatedB !== updatedA) return updatedB - updatedA;
-        return 0;
-      }
-
-      // Name mode is applied only when user clicks one of the name arrows.
       if (nameCmp !== 0) return nameSortDirection === "asc" ? nameCmp : -nameCmp;
-      // Mirror SQL ordering exactly -> ORDER BY created_at DESC, updated_at DESC.
-      if (createdB !== createdA) return createdB - createdA;
-      if (updatedB !== updatedA) return updatedB - updatedA;
       return 0;
     });
-  }, [services, searchQuery, filterStatus, filterTaskType, sortBy, nameSortDirection]);
+  }, [services, searchQuery, sortBy, nameSortDirection]);
 
-  const totalServices = filteredServices.length;
+  // Server handles pagination; these values drive the pagination bar.
+  const totalServices = serverTotal;
   const totalPages = Math.max(1, Math.ceil(totalServices / listPageSize));
   const startRow = totalServices === 0 ? 0 : (listPage - 1) * listPageSize + 1;
   const endRow = Math.min(listPage * listPageSize, totalServices);
-  const paginatedServices = filteredServices.slice((listPage - 1) * listPageSize, listPage * listPageSize);
-
-  useEffect(() => {
-    if (listPage > totalPages && totalPages >= 1) setListPage(totalPages);
-  }, [totalServices, listPageSize, listPage, totalPages]);
 
   const hasActiveFilters = filterStatus !== "" || filterTaskType !== "" || searchQuery.trim() !== "";
   const clearAllFilters = () => {
@@ -252,34 +215,41 @@ const ServicesManagementPage: React.FC = () => {
   // Model fetched by ID when navigating from a deprecated model's "Create Service" (not in active list)
   const [preselectedModelFromQuery, setPreselectedModelFromQuery] = useState<ModelSummary | null>(null);
 
-  // Fetch services on component mount
-  useEffect(() => {
-    const fetchServices = async () => {
-      setIsLoading(true);
-      try {
-        const fetchedServices = await listServices();
-        setServices(fetchedServices);
-      } catch (error: any) {
-        console.error("Failed to fetch services:", error);
-        
-        // Use centralized error handler
-        const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-        
-        toast({
-          title: showOnlyMessage ? undefined : errorTitle,
-          description: errorMessage,
-          status: "error",
-          duration: 5000,
-          isClosable: true,
-        });
-        setServices([]);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  // Fetch services with server-side pagination + filters (task type, publish status)
+  const fetchServices = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const isPublishedFilter =
+        filterStatus === "published" ? true :
+        filterStatus === "unpublished" ? false :
+        undefined;
 
-    fetchServices();
-  }, [toast]);
+      const result = await listServicesPaginated({
+        offset: (listPage - 1) * listPageSize,
+        limit: listPageSize,
+        taskType: filterTaskType || undefined,
+        isPublished: isPublishedFilter,
+      });
+      setServices(result.items);
+      setServerTotal(result.total);
+    } catch (error: any) {
+      console.error("Failed to fetch services:", error);
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
+      toast({
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMessage,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      setServices([]);
+      setServerTotal(0);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [listPage, listPageSize, filterTaskType, filterStatus, toast]);
+
+  useEffect(() => { fetchServices(); }, [fetchServices]);
 
   // Fetch models on component mount (for dropdown)
   useEffect(() => {
@@ -551,9 +521,9 @@ const ServicesManagementPage: React.FC = () => {
       });
       setPreselectedModelFromQuery(null);
 
-      // Refresh services list
-      const fetchedServices = await listServices();
-      setServices(fetchedServices);
+      // Go to page 1 so the newly created service (newest first) is immediately visible
+      setListPage(1);
+      await fetchServices();
 
       // Switch to list tab
       setActiveTab(0);
@@ -623,10 +593,10 @@ const ServicesManagementPage: React.FC = () => {
     // Check session expiry before updating
     if (!checkSessionExpiry()) return;
     
-    if (!selectedService?.uuid) {
+    if (!selectedService?.serviceId) {
       toast({
         title: "Update Failed",
-        description: "Service UUID is required for update",
+        description: "Service ID is required for update",
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -639,7 +609,7 @@ const ServicesManagementPage: React.FC = () => {
     try {
       const updatedService = await updateService({
         ...updateFormData,
-        uuid: selectedService.uuid,
+        serviceId: selectedService.serviceId,
       });
 
       // Invalidate all service-related queries to refresh service lists across all pages
@@ -667,8 +637,7 @@ const ServicesManagementPage: React.FC = () => {
       setIsEditingService(false);
 
       // Refresh services list
-      const fetchedServices = await listServices();
-      setServices(fetchedServices);
+      await fetchServices();
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : "Failed to update service";
       const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
@@ -740,7 +709,7 @@ const ServicesManagementPage: React.FC = () => {
       return;
     }
 
-    setPublishingServiceUuid(service.uuid || service.serviceId);
+    setPublishingServiceUuid(service.serviceId);
 
     try {
       // Update service to set isPublished = true using PATCH with only serviceId and isPublished
@@ -771,11 +740,10 @@ const ServicesManagementPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
 
       // Refresh services list
-      const fetchedServices = await listServices();
-      setServices(fetchedServices);
+      await fetchServices();
 
       // Update selected service if it's the one being published
-      if (selectedService?.uuid === service.uuid) {
+      if (selectedService?.serviceId === service.serviceId) {
         setSelectedService(updatedService);
       }
     } catch (error: any) {
@@ -805,7 +773,7 @@ const ServicesManagementPage: React.FC = () => {
       return;
     }
 
-    setUnpublishingServiceUuid(service.uuid || service.serviceId);
+    setUnpublishingServiceUuid(service.serviceId);
 
     try {
       // Update service to set isPublished = false using PATCH with only serviceId and isPublished
@@ -836,11 +804,10 @@ const ServicesManagementPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
 
       // Refresh services list
-      const fetchedServices = await listServices();
-      setServices(fetchedServices);
+      await fetchServices();
 
       // Update selected service if it's the one being unpublished
-      if (selectedService?.uuid === service.uuid) {
+      if (selectedService?.serviceId === service.serviceId) {
         setSelectedService(updatedService);
       }
     } catch (error: any) {
@@ -865,10 +832,10 @@ const ServicesManagementPage: React.FC = () => {
 
   const handleDeleteConfirm = async () => {
     if (!checkSessionExpiry()) return;
-    if (!serviceToDelete?.uuid) {
+    if (!serviceToDelete?.serviceId) {
       toast({
         title: "Delete Failed",
-        description: "Service UUID is required for deletion",
+        description: "Service ID is required for deletion",
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -876,9 +843,9 @@ const ServicesManagementPage: React.FC = () => {
       onClose();
       return;
     }
-    setDeletingServiceUuid(serviceToDelete.uuid);
+    setDeletingServiceUuid(serviceToDelete.serviceId);
     try {
-      await deleteService(serviceToDelete.uuid);
+      await deleteService(serviceToDelete.serviceId);
       toast({
         title: "Service deleted",
         description: `${serviceToDelete.name || serviceToDelete.service_id} has been deleted successfully.`,
@@ -897,9 +864,8 @@ const ServicesManagementPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
       queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
       queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
-      const fetchedServices = await listServices();
-      setServices(fetchedServices);
-      if (selectedService?.uuid === serviceToDelete.uuid) {
+      await fetchServices();
+      if (selectedService?.serviceId === serviceToDelete.serviceId) {
         setIsViewingService(false);
         setSelectedService(null);
         setSelectedServiceModelDeprecated(null);
@@ -1049,11 +1015,11 @@ const ServicesManagementPage: React.FC = () => {
                             )}
                           </VStack>
 
-                          {filteredServices.length === 0 ? (
+                          {paginatedServices.length === 0 ? (
                             <Box textAlign="center" py={8}>
                               <Text color="gray.500">
                                 No results found.
-                                {services.length === 0 ? " No services in the registry yet." : " Try adjusting your search or filters."}
+                                {serverTotal === 0 ? " No services in the registry yet." : " Try adjusting your search or filters."}
                               </Text>
                             </Box>
                           ) : (
@@ -1081,13 +1047,14 @@ const ServicesManagementPage: React.FC = () => {
                                   </Th>
                                   <Th>Model Task Type</Th>
                                   <Th>Status</Th>
+                                  <Th>Created At</Th>
                                   <Th>Actions</Th>
                                 </Tr>
                               </Thead>
                               <Tbody>
                                 {paginatedServices.map((service) => (
                                   <Tr
-                                    key={service.uuid || service.service_id}
+                                    key={service.serviceId || service.service_id}
                                     _hover={{ bg: tableRowHoverBg, cursor: "pointer" }}
                                     onClick={() => handleViewService(service.serviceId || service.service_id || "")}
                                   >
@@ -1112,6 +1079,11 @@ const ServicesManagementPage: React.FC = () => {
                                         {service.isPublished === true ? "Published" : "Unpublished"}
                                       </Badge>
                                     </Td>
+                                    <Td>
+                                      <Text fontSize="sm" color="gray.600">
+                                        {service.createdAt ? new Date(service.createdAt).toLocaleDateString() : "N/A"}
+                                      </Text>
+                                    </Td>
                                     <Td onClick={(e) => e.stopPropagation()}>
                                       <HStack spacing={1}>
                                         <Tooltip label="View" placement="top" hasArrow>
@@ -1135,7 +1107,7 @@ const ServicesManagementPage: React.FC = () => {
                                               colorScheme="red"
                                               _hover={{ bg: "red.50" }}
                                               onClick={() => { setConfirmUnpublishService(service); onUnpublishConfirmOpen(); }}
-                                              isLoading={unpublishingServiceUuid === service.uuid}
+                                              isLoading={unpublishingServiceUuid === service.serviceId}
                                               isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
                                             />
                                           </Tooltip>
@@ -1154,7 +1126,7 @@ const ServicesManagementPage: React.FC = () => {
                                                 colorScheme="green"
                                                 _hover={{ bg: "green.50" }}
                                                 onClick={() => { setConfirmPublishService(service); onPublishConfirmOpen(); }}
-                                                isLoading={publishingServiceUuid === service.uuid}
+                                                isLoading={publishingServiceUuid === service.serviceId}
                                                 isDisabled={
                                                   unpublishingServiceUuid !== null ||
                                                   publishingServiceUuid !== null ||
@@ -1173,7 +1145,7 @@ const ServicesManagementPage: React.FC = () => {
                                             colorScheme="red"
                                             _hover={{ bg: "red.50" }}
                                             onClick={() => handleDeleteClick(service)}
-                                            isLoading={deletingServiceUuid === service.uuid}
+                                            isLoading={deletingServiceUuid === service.serviceId}
                                             isDisabled={deletingServiceUuid !== null}
                                           />
                                         </Tooltip>
@@ -1187,7 +1159,7 @@ const ServicesManagementPage: React.FC = () => {
                           )}
                         </>
                         )}
-                        {!isLoading && filteredServices.length > 0 && (
+                        {!isLoading && totalServices > 0 && (
                           <TablePaginationBar
                             startRow={startRow}
                             endRow={endRow}
@@ -1425,7 +1397,7 @@ const ServicesManagementPage: React.FC = () => {
                                           colorScheme="red"
                                           variant="outline"
                                           onClick={() => { setConfirmUnpublishService(selectedService); onUnpublishConfirmOpen(); }}
-                                          isLoading={unpublishingServiceUuid === selectedService.uuid}
+                                          isLoading={unpublishingServiceUuid === selectedService.serviceId}
                                           isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
                                         />
                                       </Tooltip>
@@ -1443,7 +1415,7 @@ const ServicesManagementPage: React.FC = () => {
                                             colorScheme="green"
                                             variant="outline"
                                             onClick={() => { setConfirmPublishService(selectedService); onPublishConfirmOpen(); }}
-                                            isLoading={publishingServiceUuid === selectedService.uuid}
+                                            isLoading={publishingServiceUuid === selectedService.serviceId}
                                             isDisabled={
                                               unpublishingServiceUuid !== null ||
                                               publishingServiceUuid !== null ||
@@ -1493,17 +1465,6 @@ const ServicesManagementPage: React.FC = () => {
                                   </Text>
                                 </Box>
                               </SimpleGrid>
-
-                              {selectedService.uuid && (
-                                <Box>
-                                  <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                                    UUID
-                                  </Text>
-                                  <Text fontSize="sm" fontFamily="mono" color="gray.500">
-                                    {selectedService.uuid}
-                                  </Text>
-                                </Box>
-                              )}
 
                               {selectedService.created_at && (
                                 <Box>
@@ -1555,7 +1516,7 @@ const ServicesManagementPage: React.FC = () => {
         confirmLabel="Confirm"
         cancelLabel="Cancel"
         confirmColorScheme="red"
-        isConfirmLoading={deletingServiceUuid === serviceToDelete?.uuid}
+        isConfirmLoading={deletingServiceUuid === serviceToDelete?.serviceId}
         confirmLoadingText="Deleting..."
         leastDestructiveRef={cancelRef}
       />
@@ -1578,7 +1539,7 @@ const ServicesManagementPage: React.FC = () => {
         confirmLabel="Confirm"
         cancelLabel="Cancel"
         confirmColorScheme="green"
-        isConfirmLoading={publishingServiceUuid === confirmPublishService?.uuid}
+        isConfirmLoading={publishingServiceUuid === confirmPublishService?.serviceId}
         confirmLoadingText="Publishing..."
         leastDestructiveRef={cancelPublishRef}
       />
@@ -1601,7 +1562,7 @@ const ServicesManagementPage: React.FC = () => {
         confirmLabel="Confirm"
         cancelLabel="Cancel"
         confirmColorScheme="red"
-        isConfirmLoading={unpublishingServiceUuid === confirmUnpublishService?.uuid}
+        isConfirmLoading={unpublishingServiceUuid === confirmUnpublishService?.serviceId}
         confirmLoadingText="Unpublishing..."
         leastDestructiveRef={cancelUnpublishRef}
       />

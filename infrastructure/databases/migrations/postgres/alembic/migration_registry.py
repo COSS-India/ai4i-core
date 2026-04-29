@@ -66,14 +66,14 @@ class DatabaseSpec:
 
 DATABASE_ORDER = [
     "alerting_db",
+    "ai4iplatform_auth",
     "auth_service_v2_db",
     "config_db",
     "dashboard_db",
     "ai4i_platform_db",
     "metrics_db",
-    "model_management_db",
+    "ai4iplatform_core",
     "policy_db",
-    "multi_tenant_db",
     "telemetry_db",
 ]
 
@@ -143,6 +143,21 @@ def _ensure_package(name: str) -> None:
     package = types.ModuleType(name)
     package.__path__ = []  # type: ignore[attr-defined]
     sys.modules[name] = package
+
+
+def _load_auth_service_metadata():
+    """Load auth-service ORM metadata (users/passwords/tenants/roles/api keys/oauth/token verification)."""
+    auth_root = PROJECT_ROOT / "services" / "auth-service"
+    auth_path = str(auth_root)
+    if auth_path not in sys.path:
+        sys.path.insert(0, auth_path)
+    # Purge any previously imported `app.*` modules to avoid cross-service collisions.
+    for module_name in list(sys.modules.keys()):
+        if module_name == "app" or module_name.startswith("app."):
+            sys.modules.pop(module_name, None)
+
+    module = importlib.import_module("app.models")
+    return module.Base.metadata
 
 
 def _load_auth_metadata():
@@ -243,20 +258,18 @@ def _load_telemetry_metadata():
     )
     return module.Base.metadata
 
+def _load_core_service_metadata():
+    """Load platform-core-service ORM metadata (mm_models/mm_services in ai4iplatform_core schema)."""
+    core_root = PROJECT_ROOT / "services" / "platform-core-service"
+    core_path = str(core_root)
+    if core_path not in sys.path:
+        sys.path.insert(0, core_path)
+    for module_name in list(sys.modules.keys()):
+        if module_name == "app" or module_name.startswith("app."):
+            sys.modules.pop(module_name, None)
 
-def _load_model_management_metadata():
-    fake_db_connection = types.ModuleType("db_connection")
-    fake_db_connection.AppDBBase = declarative_base()
-    fake_db_connection.AuthDBBase = declarative_base()
-
-    def loader():
-        _load_module(
-            "ai4i_alembic_dynamic.model_management.db_models",
-            PROJECT_ROOT / "services" / "model-management-service" / "models" / "db_models.py",
-        )
-        return fake_db_connection.AppDBBase.metadata
-
-    return _with_temp_module("db_connection", fake_db_connection, loader)
+    module = importlib.import_module("app.models")
+    return module.Base.metadata
 
 
 def _load_policy_service_metadata():
@@ -285,30 +298,6 @@ def _load_policy_service_metadata():
 
     module = importlib.import_module("app.db.base")
     return module.AppDBBase.metadata
-
-
-def _load_multi_tenant_metadata():
-    fake_db_connection = types.ModuleType("db_connection")
-    fake_db_connection.TenantDBBase = declarative_base()
-    fake_db_connection.AuthDBBase = declarative_base()
-    fake_db_connection.ServiceSchemaBase = declarative_base()
-
-    def loader():
-        _ensure_package("ai4i_alembic_dynamic")
-        _ensure_package("ai4i_alembic_dynamic.multi_tenant")
-        _ensure_package("ai4i_alembic_dynamic.multi_tenant.models")
-
-        _load_module(
-            "ai4i_alembic_dynamic.multi_tenant.models.enum_tenant",
-            PROJECT_ROOT / "services" / "multi-tenant-feature" / "models" / "enum_tenant.py",
-        )
-        _load_module(
-            "ai4i_alembic_dynamic.multi_tenant.models.db_models",
-            PROJECT_ROOT / "services" / "multi-tenant-feature" / "models" / "db_models.py",
-        )
-        return fake_db_connection.TenantDBBase.metadata
-
-    return _with_temp_module("db_connection", fake_db_connection, loader)
 
 
 def _load_ai4i_platform_metadata():
@@ -409,6 +398,15 @@ DATABASE_SPECS = {
         database_name_key="ALERTING_DB_NAME",
         metadata_loader=_load_alerting_metadata,
     ),
+    "ai4iplatform_auth": DatabaseSpec(
+        name="ai4iplatform_auth",
+        user_key="AUTH_DB_USER",
+        password_key="AUTH_DB_PASSWORD",
+        host_key="AUTH_DB_HOST",
+        port_key="AUTH_DB_PORT",
+        database_name_key="AUTH_SERVICE_DB_NAME",
+        metadata_loader=_load_auth_service_metadata,
+    ),
     "auth_service_v2_db": DatabaseSpec(
         name="auth_service_v2_db",
         user_key="AUTH_DB_USER",
@@ -454,14 +452,14 @@ DATABASE_SPECS = {
         database_name_key="METRICS_DB_NAME",
         metadata_loader=None,
     ),
-    "model_management_db": DatabaseSpec(
-        name="model_management_db",
-        user_key="APP_DB_USER",
-        password_key="APP_DB_PASSWORD",
-        host_key="APP_DB_HOST",
-        port_key="APP_DB_PORT",
-        database_name_key="APP_DB_NAME",
-        metadata_loader=_load_model_management_metadata,
+    "ai4iplatform_core": DatabaseSpec(
+        name="ai4iplatform_core",
+        user_key="CORE_SERVICE_DB_USER",
+        password_key="CORE_SERVICE_DB_PASSWORD",
+        host_key="CORE_SERVICE_DB_HOST",
+        port_key="CORE_SERVICE_DB_PORT",
+        database_name_key="CORE_SERVICE_DB_NAME",
+        metadata_loader=_load_core_service_metadata,
     ),
     "policy_db": DatabaseSpec(
         name="policy_db",
@@ -471,15 +469,6 @@ DATABASE_SPECS = {
         port_key="POLICY_DB_PORT",
         database_name_key="POLICY_DB_NAME",
         metadata_loader=_load_policy_service_metadata,
-    ),
-    "multi_tenant_db": DatabaseSpec(
-        name="multi_tenant_db",
-        user_key="APP_DB_USER",
-        password_key="APP_DB_PASSWORD",
-        host_key="APP_DB_HOST",
-        port_key="APP_DB_PORT",
-        database_name_key="MULTI_TENANT_DB_NAME",
-        metadata_loader=_load_multi_tenant_metadata,
     ),
     "telemetry_db": DatabaseSpec(
         name="telemetry_db",
@@ -521,6 +510,29 @@ def get_connection_parts(name: str) -> dict[str, str]:
             "host": _require_env_any([spec.host_key, "POSTGRES_HOST", "ALEMBIC_DB_HOST"]),
             "port": _require_env_any([spec.port_key, "POSTGRES_PORT", "ALEMBIC_DB_PORT"]),
             "database": _require_env_any([spec.database_name_key]),
+        }
+
+    # ai4iplatform_core falls back to shared POSTGRES_* vars when CORE_SERVICE_DB_* are absent.
+    if name == "ai4iplatform_core":
+        db_name = os.getenv("CORE_SERVICE_DB_NAME") or "ai4iplatform_core"
+        return {
+            "user": _require_env_any([spec.user_key, "POSTGRES_USER"]),
+            "password": _require_env_any([spec.password_key, "POSTGRES_PASSWORD"]),
+            "host": _require_env_any([spec.host_key, "POSTGRES_HOST", "ALEMBIC_DB_HOST"]),
+            "port": _require_env_any([spec.port_key, "POSTGRES_PORT", "ALEMBIC_DB_PORT"]),
+            "database": db_name,
+        }
+
+    # ai4iplatform_auth falls back to shared AUTH_DB_* vars when AUTH_SERVICE_DB_NAME is absent,
+    # ultimately defaulting to the literal database name "ai4iplatform_auth".
+    if name == "ai4iplatform_auth":
+        db_name = os.getenv("AUTH_SERVICE_DB_NAME") or os.getenv("AUTH_DB_NAME") or "ai4iplatform_auth"
+        return {
+            "user": _require_env_any([spec.user_key, "POSTGRES_USER"]),
+            "password": _require_env_any([spec.password_key, "POSTGRES_PASSWORD"]),
+            "host": _require_env_any([spec.host_key, "POSTGRES_HOST", "ALEMBIC_DB_HOST"]),
+            "port": _require_env_any([spec.port_key, "POSTGRES_PORT", "ALEMBIC_DB_PORT"]),
+            "database": db_name,
         }
 
     return {

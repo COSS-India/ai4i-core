@@ -1,0 +1,22 @@
+AI4I Platform
+================================
+
+Verify your email
+-----------------
+
+Hi {{ display_name }}, thanks for signing up for AI4I Platform.
+
+Confirm this is your email address to activate your account. You can sign
+in with the password you chose at signup as soon as it's verified.
+
+  {{ verify_url }}
+
+Heads up: this link expires in {{ expires_hours }} hours and can be used
+only once. Until you verify, your account stays inactive and sign-in is
+blocked.
+
+Didn't sign up? You can safely ignore this email -- the link will expire
+on its own and the account will remain inactive.
+
+--
+This is an automated message from AI4I Platform.

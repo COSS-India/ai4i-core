@@ -22,6 +22,7 @@ import {
   Tooltip,
   VStack,
 } from "@chakra-ui/react";
+import NextLink from "next/link";
 import React, { useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
 import { LoginRequest } from "../../types/auth";
@@ -197,8 +198,17 @@ const LoginForm: React.FC<LoginFormProps> = ({
             </InputGroup>
           </FormControl>
 
+          {/* Forgot Password — navigates to /auth/forgot-password (per security spec) */}
+          <Box textAlign="right" mt={-2}>
+            <NextLink href="/auth/forgot-password" passHref legacyBehavior>
+              <Link fontSize="sm" color="blue.500">
+                Forgot Password?
+              </Link>
+            </NextLink>
+          </Box>
+
           <FormControl>
-            
+
               <Checkbox
                 name="remember_me"
                 checked={formData.remember_me}

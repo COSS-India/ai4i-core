@@ -4,7 +4,6 @@ import logging
 
 from fastapi import APIRouter, Depends, Request
 
-from ai4icore_multi_tenant import enforce_tenant_and_service_checks
 
 from app.dependencies.auth import AuthProvider
 from app.dependencies.services import get_language_diarization_service
@@ -25,17 +24,6 @@ router = APIRouter(
 
 async def enforce_language_diarization_checks(request: Request):
     """Enforce tenant and service availability checks."""
-    await enforce_tenant_and_service_checks(
-        request,
-        service_name="language_diarization",
-        service_unavailable_code="SERVICE_UNAVAILABLE",
-        service_inactive_message="Language Diarization service is not active at the moment. Please contact your administrator",
-        cannot_detect_message="Cannot detect Language Diarization service availability. Please contact your administrator",
-        timeout_message="Language Diarization service is temporarily unavailable. Please try again in a few minutes.",
-        generic_unavailable_message="Language Diarization service is temporarily unavailable. Please try again in a few minutes.",
-    )
-
-
 router.dependencies.append(Depends(enforce_language_diarization_checks))
 
 

@@ -183,48 +183,31 @@ class PolicyService:
 
     async def _get_active_tenant_ids(self, auth_header: Optional[str]) -> List[str]:
         """
-        Fetch active tenant IDs from multi-tenant service.
+        Fetch active tenant IDs from auth-service (consolidated tenant CRUD).
         """
-        base = (app_env.multi_tenant_service_url or "").rstrip("/")
-        if not base:
-            scheme = (app_env.multi_tenant_service_scheme or "http").strip() or "http"
-            host = (app_env.multi_tenant_service_name or "").strip()
-            port = str(app_env.multi_tenant_service_port or "").strip()
-            if host and port:
-                base = f"{scheme}://{host}:{port}"
-            elif host:
-                base = f"{scheme}://{host}"
-
+        base = (app_env.auth_service_url or "").rstrip("/")
         if not base:
             raise HTTPException(
                 status_code=500,
                 detail={
                     "code": "CONFIG_ERROR",
-                    "message": (
-                        "multi_tenant_service_url is not configured "
-                        "(set multi_tenant_service_url or multi_tenant_service_scheme/name/port)"
-                    ),
+                    "message": "auth_service_url is not configured",
                 },
             )
-        # Multi-tenant-feature runs with root-level prefixes (e.g. /admin/...)
-        # Gateway deployments may mount it under /api/v1/multi-tenant.
-        primary_url = f"{base}/admin/list/tenants"
-        gateway_url = f"{base}/api/v1/multi-tenant/admin/list/tenants"
+        url = f"{base}/api/v1/tenants?status=activated"
         headers = {}
         validated = await _validated_forward_auth_header(auth_header)
         if validated:
             headers["Authorization"] = validated
         try:
             async with httpx.AsyncClient(timeout=app_env.policy_service_http_timeout) as client:
-                resp = await client.get(primary_url, headers=headers)
-                if resp.status_code == 404:
-                    resp = await client.get(gateway_url, headers=headers)
+                resp = await client.get(url, headers=headers)
         except httpx.TimeoutException:
             raise HTTPException(
                 status_code=502,
                 detail={
                     "code": "TENANT_SERVICE_TIMEOUT",
-                    "message": "Timed out fetching tenants from multi-tenant service",
+                    "message": "Timed out fetching tenants from auth-service",
                 },
             )
         except httpx.RequestError as e:
@@ -232,7 +215,7 @@ class PolicyService:
                 status_code=502,
                 detail={
                     "code": "TENANT_SERVICE_ERROR",
-                    "message": f"Failed to reach multi-tenant service: {type(e).__name__}",
+                    "message": f"Failed to reach auth-service: {type(e).__name__}",
                 },
             )
         if resp.status_code >= 400:
@@ -244,9 +227,8 @@ class PolicyService:
                 },
             )
         try:
-            data = resp.json() or {}
+            payload = resp.json() or {}
         except ValueError:
-            # Downstream may return HTML/text for errors even when status < 400 via proxies.
             raise HTTPException(
                 status_code=502,
                 detail={
@@ -254,14 +236,17 @@ class PolicyService:
                     "message": "Failed to parse tenants response as JSON",
                 },
             )
-        tenants = data.get("tenants") or []
-        active = []
-        for t in tenants:
-            tid = t.get("tenant_id")
-            status = str(t.get("status", "")).lower()
-            if tid and status == "active":
-                active.append(str(tid))
-        return active
+        # Auth-service wraps lists as {"success": true, "data": [...]}
+        tenants = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(tenants, list):
+            tenants = []
+        return [
+            str(t["tenant_id"])
+            for t in tenants
+            if isinstance(t, dict)
+            and t.get("tenant_id")
+            and str(t.get("status", "")).lower() == "activated"
+        ]
 
     @staticmethod
     def _validate_tenant_id(tenant_id: str, active_tenant_ids: Sequence[str]) -> None:
@@ -271,6 +256,6 @@ class PolicyService:
                 detail={
                     "code": "VALIDATION_ERROR",
                     "message": "Invalid or inactive tenant_id",
-                    "details": [{"field": "tenant_id", "issue": "Tenant must be ACTIVE in multi-tenant service"}],
+                    "details": [{"field": "tenant_id", "issue": "Tenant must be activated in auth-service"}],
                 },
             )

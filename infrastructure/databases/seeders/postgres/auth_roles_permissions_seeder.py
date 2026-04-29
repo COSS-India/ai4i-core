@@ -118,8 +118,6 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             ('model.read', 'model', 'read'),
             ('model.update', 'model', 'update'),
             ('model.delete', 'model', 'delete'),
-            ('model.publish', 'model', 'publish'),
-            ('model.unpublish', 'model', 'unpublish'),
 
             # Role Management
             ('roles.assign', 'roles', 'assign'),
@@ -167,9 +165,12 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             ('logs.read', 'logs', 'read'),
             ('traces.read', 'traces', 'read'),
 
-            #Multi-tenant
-            ('multi-tenant.read','multi_tenant','read'),
-            ('multi-tenant.inference','multi_tenant','inference'),
+            # Tenant management (consolidated into auth-service)
+            ('tenant.create',       'tenant',       'create'),
+            ('tenant.read',         'tenant',       'read'),
+            ('tenant.update',       'tenant',       'update'),
+            ('tenant.users.read',   'tenant.users', 'read'),
+            ('tenant.users.update', 'tenant.users', 'update'),
 
             # PII Guard
             ('pii_guard.inference', 'pii_guard', 'inference'),
@@ -267,13 +268,16 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'model.read',
               'model.update',
               'model.delete',
-              'model.publish',
-              'model.unpublish',
               'roles.assign',
               'roles.remove',
               'roles.read',
               'pii_guard.admin',
-              'pii_guard.inference'
+              'pii_guard.inference',
+              'tenant.create',
+              'tenant.read',
+              'tenant.update',
+              'tenant.users.read',
+              'tenant.users.update'
             )
             WHERE r.name = 'ADMIN'
             ON CONFLICT (role_id, permission_id) DO NOTHING;
@@ -304,7 +308,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'language-diarization.inference',
               'llm.inference',
               'model-management.inference',
-              'multi-tenant.inference',
+              
               'ner.inference',
               'nmt.inference',
               'ocr.inference',
@@ -386,15 +390,13 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'model.read',
               'model.update',
               'model.delete',
-              'model.publish',
-              'model.unpublish',
               'asr.inference',
               'audio-lang-detection.inference',
               'language-detection.inference',
               'language-diarization.inference',
               'llm.inference',
               'model-management.inference',
-              'multi-tenant.inference',
+              
               'ner.inference',
               'nmt.inference',
               'ocr.inference',
@@ -402,7 +404,10 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'pii_guard.inference',
               'speaker-diarization.inference',
               'transliteration.inference',
-              'tts.inference'
+              'tts.inference',
+              'tenant.read',
+              'tenant.users.read',
+              'tenant.users.update'
             )
             WHERE r.name = 'MODERATOR'
             ON CONFLICT (role_id, permission_id) DO NOTHING;
@@ -445,14 +450,17 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'language-diarization.inference',
               'llm.inference',
               'model-management.inference',
-              'multi-tenant.inference',
+              
               'ner.inference',
               'nmt.inference',
               'ocr.inference',
               'pipeline.inference',
               'speaker-diarization.inference',
               'transliteration.inference',
-              'tts.inference'
+              'tts.inference',
+              'tenant.read',
+              'tenant.users.read',
+              'tenant.users.update'
             )
             WHERE r.name = 'TENANT ADMIN'
             ON CONFLICT (role_id, permission_id) DO NOTHING;

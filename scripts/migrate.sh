@@ -36,14 +36,14 @@ EXTRA_ARGS=("${@:3}")
 
 DATABASES=(
   "alerting_db"
+  "ai4iplatform_auth"
   "auth_service_v2_db"
   "config_db"
   "dashboard_db"
   "ai4i_platform_db"
   "metrics_db"
-  "model_management_db"
+  "ai4iplatform_core"
   "policy_db"
-  "multi_tenant_db"
   "telemetry_db"
 )
 
@@ -85,15 +85,19 @@ Prerequisite:
 
 Examples:
   ./scripts/migrate.sh all upgrade
+  ./scripts/migrate.sh ai4iplatform_auth upgrade head
   ./scripts/migrate.sh auth_service_v2_db upgrade head
   ./scripts/migrate.sh config_db current
-  ./scripts/migrate.sh model_management_db revision --autogenerate -m "add column"
+  ./scripts/migrate.sh ai4iplatform_core upgrade head
   ./scripts/migrate.sh alerting_db revision -m "manual migration"
 
 Notes:
   - `revision` must target a single database.
   - For `upgrade`, the default Alembic target is `head`.
   - For `downgrade`, the default Alembic target is `-1`.
+  - `model_management_db` is intentionally excluded from this script's managed
+    database list. If it is still in use in your environment, migrate it
+    through its owning service workflow (or add it back explicitly).
 EOF
 }
 
@@ -242,7 +246,7 @@ PY
   local output
   local status
   set +e
-  output="$(alembic -c "$temp_ini" -x "db=$db" "$@" 2>&1)"
+  output="$("$PYTHON_BIN" -m alembic -c "$temp_ini" -x "db=$db" "$@" 2>&1)"
   status=$?
   set -e
   rm -f "$temp_ini"

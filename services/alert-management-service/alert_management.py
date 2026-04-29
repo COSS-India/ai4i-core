@@ -35,7 +35,6 @@ VALID_ORGANIZATIONS = ["irctc", "kisanmitra", "bashadaan", "beml"]
 # Database connection pool (will be initialized on startup)
 db_pool: Optional[asyncpg.Pool] = None
 auth_db_pool: Optional[asyncpg.Pool] = None
-multi_tenant_db_pool: Optional[asyncpg.Pool] = None
 
 # Database configuration
 from ai4icore_env import app_env
@@ -46,18 +45,16 @@ DB_USER = app_env.postgres_user
 DB_PASSWORD = app_env.postgres_password
 DB_NAME = "alerting_db"
 
-# Auth database configuration (for querying users by role)
+# Auth database configuration (for querying users by role + tenant data)
 AUTH_DB_NAME = "auth_db"
-# Multi-tenant database (for resolving tenant name -> tenant user email)
-MULTI_TENANT_DB_NAME = os.getenv("MULTI_TENANT_DB_NAME", "multi_tenant_db")
 
 # Sync service configuration
 SYNC_SERVICE_URL = app_env.alert_config_sync_service_url
 SYNC_ENABLED = app_env.alert_sync_enabled
 
 async def init_db_pool():
-    """Initialize database connection pools for alerting_db, auth_db, and multi_tenant_db"""
-    global db_pool, auth_db_pool, multi_tenant_db_pool
+    """Initialize database connection pools for alerting_db and auth_db."""
+    global db_pool, auth_db_pool
     if db_pool is None:
         db_pool = await asyncpg.create_pool(
             host=DB_HOST,
@@ -66,13 +63,12 @@ async def init_db_pool():
             password=DB_PASSWORD,
             database=DB_NAME,
             min_size=5,
-            max_size=50,  # Increased to handle more concurrent requests
-            max_inactive_connection_lifetime=300,  # Close idle connections after 5 minutes
-            max_queries=50000,  # Maximum queries per connection before recycling
-            command_timeout=60  # Timeout for database commands
+            max_size=50,
+            max_inactive_connection_lifetime=300,
+            max_queries=50000,
+            command_timeout=60,
         )
-    
-    # Initialize auth_db connection pool for querying users by role
+
     if auth_db_pool is None:
         auth_db_pool = await asyncpg.create_pool(
             host=DB_HOST,
@@ -84,43 +80,18 @@ async def init_db_pool():
             max_size=10,
             max_inactive_connection_lifetime=300,
             max_queries=50000,
-            command_timeout=60
+            command_timeout=60,
         )
-    
-    # Initialize multi_tenant_db connection pool for resolving tenant -> tenant user email
-    if multi_tenant_db_pool is None:
-        try:
-            multi_tenant_db_pool = await asyncpg.create_pool(
-                host=DB_HOST,
-                port=DB_PORT,
-                user=DB_USER,
-                password=DB_PASSWORD,
-                database=MULTI_TENANT_DB_NAME,
-                min_size=2,
-                max_size=10,
-                max_inactive_connection_lifetime=300,
-                max_queries=50000,
-                command_timeout=60
-            )
-        except Exception as e:
-            logger.warning(
-                f"Could not initialize multi_tenant_db pool (tenant email resolution in responses will fall back to stored email_to): {e}",
-                extra={"context": {"error": str(e)}}
-            )
-            multi_tenant_db_pool = None
 
 async def close_db_pool():
-    """Close database connection pools"""
-    global db_pool, auth_db_pool, multi_tenant_db_pool
+    """Close database connection pools."""
+    global db_pool, auth_db_pool
     if db_pool:
         await db_pool.close()
         db_pool = None
     if auth_db_pool:
         await auth_db_pool.close()
         auth_db_pool = None
-    if multi_tenant_db_pool:
-        await multi_tenant_db_pool.close()
-        multi_tenant_db_pool = None
 
 async def ensure_db_pool():
     """Ensure database connection pools are initialized"""
@@ -221,48 +192,40 @@ async def get_users_by_role(role_name: str) -> List[str]:
 
 async def resolve_tenant_name_to_emails(tenant_name: str) -> List[str]:
     """
-    Resolve tenant name to list of tenant user emails using multi_tenant_db and auth_db.
-    Matches tenant by organization_name only (case-insensitive, trimmed); then auth_db users
-    where id = tenant.user_id and is_tenant = true. Returns [] if tenant not found or no emails.
+    Resolve tenant name to list of tenant-admin emails from the auth DB.
+    Matches `tenants.organisation` (case-insensitive, trimmed); then pulls active
+    users in that tenant who hold the TENANT ADMIN role.
+    Returns [] if tenant not found or no emails.
     """
     if not tenant_name or not str(tenant_name).strip():
         return []
     tenant_name = str(tenant_name).strip()
     try:
-        if multi_tenant_db_pool is None:
+        if auth_db_pool is None:
             await init_db_pool()
-        if multi_tenant_db_pool is None:
-            return []
-        async with multi_tenant_db_pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                SELECT tenant_id, user_id
-                FROM tenants
-                WHERE LOWER(TRIM(organization_name)) = LOWER(TRIM($1))
-                LIMIT 1
-                """,
-                tenant_name
-            )
-            if not row:
-                return []
-            user_id = row.get("user_id")
-            if user_id is None:
-                return []
         if auth_db_pool is None:
             return []
         async with auth_db_pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT email FROM users
-                WHERE id = $1 AND is_tenant = true AND is_active = true AND email IS NOT NULL AND email != ''
+                SELECT u.email
+                FROM tenants t
+                JOIN users u ON u.tenant_id = t.tenant_id
+                JOIN user_role ur ON ur.user_id = u.user_id
+                JOIN roles r ON r.role_id = ur.role_id
+                WHERE LOWER(TRIM(t.organisation)) = LOWER(TRIM($1))
+                  AND u.is_active = true
+                  AND COALESCE(u.is_tenant_active, true) = true
+                  AND r.name = 'TENANT ADMIN'
+                  AND u.email IS NOT NULL AND u.email != ''
                 """,
-                user_id
+                tenant_name,
             )
             return [r["email"] for r in rows if r.get("email")]
     except Exception as e:
         logger.warning(
             f"Failed to resolve tenant '{tenant_name}' to emails: {e}",
-            extra={"context": {"tenant_name": tenant_name, "error": str(e)}}
+            extra={"context": {"tenant_name": tenant_name, "error": str(e)}},
         )
         return []
 
@@ -1802,15 +1765,15 @@ async def create_notification_receiver(
     tenant_val = str(data.tenant).strip() if data.tenant and str(data.tenant).strip() else None
 
     if tenant_val:
-        # Tenant receiver: auth DB user where is_tenant=true for this tenant (from multi_tenant_db.tenants.user_id)
+        # Tenant receiver: auth DB users who hold the TENANT ADMIN role for this tenant.
         email_to = await resolve_tenant_name_to_emails(tenant_val)
         if not email_to:
             raise HTTPException(
                 status_code=404,
-                detail=f"No tenant user found for tenant '{tenant_val}' (is_tenant=true in auth DB)"
+                detail=f"No active TENANT ADMIN user found for tenant '{tenant_val}'"
             )
         logger.info(
-            f"Resolved tenant '{tenant_val}' to {len(email_to)} email(s) (tenant user is_tenant=true)",
+            f"Resolved tenant '{tenant_val}' to {len(email_to)} TENANT ADMIN email(s)",
             extra={"context": {"tenant": tenant_val, "email_count": len(email_to)}},
         )
     elif rbac_role or (not email_to and not tenant_val):

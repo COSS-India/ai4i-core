@@ -9,8 +9,8 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_multi_tenant import get_tenant_db_session_factory
 from ai4icore_constants.error_messages import SERVICE_UNPUBLISHED, SERVICE_UNPUBLISHED_MESSAGE
+from ai4icore_bootstrap.database import get_db
 
 from app.dependencies.auth import AuthProvider
 from app.dependencies.services import get_nmt_service
@@ -27,7 +27,6 @@ from app.utils.auth_utils import extract_auth_headers
 
 logger = logging.getLogger(__name__)
 
-get_tenant_db_session = get_tenant_db_session_factory()
 smr_service = SMRService()
 
 router = APIRouter(
@@ -41,7 +40,7 @@ router = APIRouter(
 async def try_it_inference(
     payload: TryItRequest,
     request: Request,
-    db: AsyncSession = Depends(get_tenant_db_session),
+    db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """Anonymous Try-It access for NMT. Supports rate-limited anonymous and authenticated access."""
 

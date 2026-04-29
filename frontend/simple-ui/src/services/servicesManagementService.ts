@@ -1,6 +1,6 @@
 // Services Management service API client
 
-import { apiClient, apiEndpoints } from './api';
+import { apiClient } from './api';
 
 type ApiEnvelope<T> = {
   success?: boolean;
@@ -31,7 +31,6 @@ export interface PaginatedServices {
 }
 
 export interface Service {
-  uuid?: string;
   serviceId?: string;
   service_id?: string; // For backward compatibility
   name?: string;
@@ -68,6 +67,7 @@ export interface Service {
   publishedAt?: string | null;
   /** ISO timestamp when service was unpublished; used for list ordering */
   unpublishedAt?: string | null;
+  createdAt?: string;
   created_at?: string;
   updated_at?: string;
   /** ISO timestamp when status was last updated; used for list ordering */
@@ -76,21 +76,13 @@ export interface Service {
 }
 
 /**
- * List all services
+ * List all services (no pagination — returns everything, backward-compatible)
  * @returns Promise with list of services
  */
 export const listServices = async (): Promise<Service[]> => {
   try {
-    // The apiClient interceptor will automatically add:
-    // - Content-Type: application/json
-    // - Accept: application/json
-    // - Authorization: Bearer <token>
-    // - X-API-Key: <api_key> (if available)
-    // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
-    const response = await apiClient.get<Service[]>(
-      apiEndpoints['model-management'].services
-    );
-    return unwrapData(response.data as Service[] | ApiEnvelope<Service[]>) || [];
+    const response = await apiClient.get<Service[] | ApiEnvelope<Service[]>>('/api/v1/services');
+    return unwrapData(response.data) || [];
   } catch (error: any) {
     console.error('List services error:', error);
     throw error;
@@ -110,12 +102,9 @@ export const listServicesPaginated = async (params: ServiceListParams = {}): Pro
     if (params.isPublished !== undefined) queryParams.is_published = params.isPublished;
     if (params.createdBy) queryParams.created_by = params.createdBy;
 
-    const response = await apiClient.get<Service[] | ApiEnvelope<Service[]>>(
-      apiEndpoints['model-management'].services,
-      {
+    const response = await apiClient.get<Service[] | ApiEnvelope<Service[]>>('/api/v1/services', {
       params: queryParams,
-      }
-    );
+    });
 
     const total = parseInt(response.headers['x-total-count'] ?? '0', 10);
     const payload = unwrapData(response.data);
@@ -142,9 +131,9 @@ export const getServiceById = async (serviceId: string): Promise<Service> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
     const response = await apiClient.get<Service | ApiEnvelope<Service>>(
-      `${apiEndpoints['model-management'].services}/${serviceId}`,
+      `/api/v1/services/${serviceId}`
     );
-    return response.data;
+    return unwrapData(response.data);
   } catch (error: any) {
     console.error('Get service error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -188,10 +177,10 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
     // - X-API-Key: <api_key> (if available)
     // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
     const response = await apiClient.post<Service>(
-      apiEndpoints['model-management'].services,
+      '/api/v1/services',
       apiPayload
     );
-    return response.data;
+    return unwrapData(response.data as any);
   } catch (error: any) {
     console.error('Create service error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -201,7 +190,7 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
 
 /**
  * Update a service
- * @param serviceData - The service data to update (must include uuid)
+ * @param serviceData - The service data to update (must include serviceId)
  * @returns Promise with updated service
  */
 export const updateService = async (serviceData: Partial<Service>): Promise<Service> => {
@@ -221,7 +210,6 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
     } else {
       // Full update: send all fields
       apiPayload = {
-        uuid: serviceData.uuid,
         serviceId: serviceData.serviceId || serviceData.service_id,
         name: serviceData.name,
         serviceDescription: serviceData.serviceDescription || serviceData.description,
@@ -248,10 +236,10 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
     }
     
     const response = await apiClient.patch<Service>(
-      apiEndpoints['model-management'].services,
+      '/api/v1/services',
       apiPayload
     );
-    return response.data;
+    return unwrapData(response.data as any);
   } catch (error: any) {
     console.error('Update service error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -261,21 +249,20 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
 
 /**
  * Delete a service
- * @param uuid - The UUID of the service to delete
+ * @param serviceId - The service_id of the service to delete
  * @returns Promise with deletion response
  */
-export const deleteService = async (uuid: string): Promise<any> => {
+export const deleteService = async (serviceId: string): Promise<any> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
     const response = await apiClient.delete<any>(
-      `${apiEndpoints['model-management'].services}/${serviceId}`
+      `/api/v1/services/${serviceId}`
     );
-    return response.data;
+    return unwrapData(response.data as any);
   } catch (error: any) {
     console.error('Delete service error:', error);
     // Don't transform the error - let extractErrorInfo handle it
     throw error;
   }
 };
-
 

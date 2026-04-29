@@ -54,7 +54,7 @@ import {
   LogAggregationResponse,
 } from "../services/observabilityService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
-import { listTenants, getViewTenant } from "../services/multiTenantService";
+import { listTenants, getViewTenant } from "../services/tenantService";
 import { TablePaginationBar, useAdminTableSurface } from "../components/common/TableControls";
 
 /**
@@ -95,24 +95,6 @@ const convertToISOFormat = (datetimeLocal: string): string => {
     console.error(`Error converting datetime to ISO: ${datetimeLocal}`, error);
     return "";
   }
-};
-
-// Mapping from DB subscription short names (underscore) to frontend service names (hyphen + "-service").
-// Tenant subscriptions are stored as e.g. "language_detection", "audio_language_detection",
-// while the ALL_SERVICES list uses "language-detection-service", "audio-lang-detection-service".
-const SUBSCRIPTION_TO_SERVICE_MAP: Record<string, string> = {
-  'asr': 'asr-service',
-  'tts': 'tts-service',
-  'nmt': 'nmt-service',
-  'llm': 'llm-service',
-  'ocr': 'ocr-service',
-  'ner': 'ner-service',
-  'language_detection': 'language-detection-service',
-  'transliteration': 'transliteration-service',
-  'speaker_diarization': 'speaker-diarization-service',
-  'audio_language_detection': 'audio-lang-detection-service',
-  'pipeline': 'pipeline-service',
-  'language_diarization': 'language-diarization-service',
 };
 
 const LogsPage: React.FC = () => {
@@ -257,52 +239,15 @@ const LogsPage: React.FC = () => {
   });
 
   // Fetch the current tenant's detail (subscriptions) for TENANT ADMIN role
-  const { data: tenantAdminDetail } = useQuery({
-    queryKey: ["tenant-admin-detail", tenantIdFromToken],
-    queryFn: async () => {
-      if (!tenantIdFromToken) return null;
-      try {
-        const detail = await getViewTenant(tenantIdFromToken);
-        console.log('Tenant admin subscriptions loaded:', detail?.subscriptions);
-        return detail;
-      } catch (error) {
-        console.error('Failed to fetch tenant detail for TENANT ADMIN:', error);
-        return null;
-      }
-    },
-    enabled: isAuthenticated && isTenantAdmin && !!tenantIdFromToken,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    retry: 1,
-  });
-
-  // Filter tenants to only show ACTIVE tenants
+  // Filter tenants to only show activated tenants
   const activeTenants = useMemo(() => {
     if (!tenantsData?.tenants || !Array.isArray(tenantsData.tenants)) {
-      console.log('No tenants data available:', { tenantsData });
       return [];
     }
-    
-    // Filter for ACTIVE tenants (case-insensitive, trim whitespace)
-    const active = tenantsData.tenants.filter((tenant: any) => {
-      const status = String(tenant?.status || '').trim().toUpperCase();
-      return status === 'ACTIVE';
+    return tenantsData.tenants.filter((tenant: any) => {
+      const status = String(tenant?.status || '').trim().toLowerCase();
+      return status === 'activated';
     });
-    
-    console.log('Active tenants filter result:', {
-      totalTenants: tenantsData.tenants.length,
-      activeCount: active.length,
-      allStatuses: tenantsData.tenants.map((t: any) => ({ 
-        tenant_id: t.tenant_id, 
-        status: t.status,
-        statusType: typeof t.status 
-      })),
-      activeTenants: active.map((t: any) => ({ 
-        tenant_id: t.tenant_id, 
-        organization_name: t.organization_name 
-      }))
-    });
-    
-    return active;
   }, [tenantsData]);
 
   // Debug: Log admin status, tenant data, and errors
@@ -322,57 +267,8 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, isAdmin, user, tenantsData, activeTenants, tenantsError]);
 
-  // Use static list of all services, filtered to tenant subscriptions for TENANT ADMIN
-  // and for ADMIN when a specific tenant is selected from the tenant dropdown.
   const filteredServices = useMemo(() => {
-    let serviceList = [...services];
-
-    // For TENANT ADMIN: restrict to services that the tenant has subscribed to.
-    // Tenant subscriptions are stored as short underscore names (e.g. "language_detection")
-    // while frontend service names use full hyphenated names (e.g. "language-detection-service").
-    // Use SUBSCRIPTION_TO_SERVICE_MAP to bridge the two formats.
-    if (isTenantAdmin && tenantAdminDetail?.subscriptions?.length) {
-      // Build the set of allowed frontend service names from the tenant's subscriptions
-      const allowedServices = new Set<string>(
-        tenantAdminDetail.subscriptions
-          .map((sub: string) => SUBSCRIPTION_TO_SERVICE_MAP[sub.toLowerCase().trim()] ?? null)
-          .filter(Boolean)
-      );
-
-      serviceList = serviceList.filter((svc) => allowedServices.has(svc));
-
-      console.log('Tenant admin service filter applied:', {
-        rawSubscriptions: tenantAdminDetail.subscriptions,
-        mappedAllowed: Array.from(allowedServices),
-        filteredCount: serviceList.length,
-        filteredServices: serviceList,
-      });
-    }
-
-    // For ADMIN: when a specific tenant is selected, restrict to that tenant's subscribed services.
-    // When "All Tenants" is selected (selectedTenantId === ""), show all services.
-    if (isAdmin && !isTenantAdmin && selectedTenantId) {
-      const selectedTenant = activeTenants.find((t: any) => t.tenant_id === selectedTenantId);
-      if (selectedTenant?.subscriptions?.length) {
-        const allowedServices = new Set<string>(
-          selectedTenant.subscriptions
-            .map((sub: string) => SUBSCRIPTION_TO_SERVICE_MAP[sub.toLowerCase().trim()] ?? null)
-            .filter(Boolean)
-        );
-
-        serviceList = serviceList.filter((svc) => allowedServices.has(svc));
-
-        console.log('Admin tenant-scoped service filter applied:', {
-          selectedTenantId,
-          rawSubscriptions: selectedTenant.subscriptions,
-          mappedAllowed: Array.from(allowedServices),
-          filteredCount: serviceList.length,
-          filteredServices: serviceList,
-        });
-      }
-    }
-
-    const sorted = serviceList.sort();
+    const sorted = [...services].sort();
     console.log('Filtered services for dropdown:', {
       total: sorted.length,
       services: sorted,
@@ -380,7 +276,7 @@ const LogsPage: React.FC = () => {
       selectedTenantId: selectedTenantId || 'All Tenants',
     });
     return sorted;
-  }, [services, isTenantAdmin, tenantAdminDetail, isAdmin, selectedTenantId, activeTenants]);
+  }, [services]);
 
   // No longer needed - services are static, no error handling required
 
@@ -1150,7 +1046,7 @@ const LogsPage: React.FC = () => {
                       ) : activeTenants.length > 0 ? (
                         activeTenants.map((tenant: any) => (
                           <option key={tenant.tenant_id} value={tenant.tenant_id}>
-                            {tenant.organization_name || tenant.tenant_id}
+                            {tenant.organisation || tenant.tenant_id}
                           </option>
                         ))
                       ) : (

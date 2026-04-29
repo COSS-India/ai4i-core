@@ -446,10 +446,9 @@ const Sidebar: React.FC = () => {
 
   // Check if user is TENANT ADMIN
   const isTenantAdmin = user?.roles?.some((role) => (role ?? "").trim().toUpperCase() === 'TENANT ADMIN') || false;
-  const isAdminOrTenantAdmin = isAdmin || isTenantAdmin;
 
-  // Show Tenant Management only to ADMIN and TENANT ADMIN
-  const showTenantManagement = isAdminOrTenantAdmin;
+  // Show Tenant Management to admins and tenant admins
+  const showTenantManagement = isAdmin || isTenantAdmin;
 
   // Single bulk request shared with home page (same queryKey = one request for whole app)
   const { flags: sidebarFlags } = useBulkFlags({
@@ -484,21 +483,32 @@ const Sidebar: React.FC = () => {
     if (item.id === "traces") {
       return false;
     }
+    // Hide Model Management and Services Management for GUEST, USER, and TENANT ADMIN users
+    if ((isGuest || isUser || isTenantAdmin) && (item.id === "model-management" || item.id === "services-management")) {
+      return false;
+    }
+    // Hide Tenant Management for users who are not superuser or tenant
+    if (item.id === "tenant-management" && !showTenantManagement) {
+      return false;
+    }
+    // Hide admin-only items for non-ADMIN users (only alerts-management is admin-only now)
+    if (item.id === "alerts-management" && !isAdmin) {
+      return false;
+    }
+    if (item.id === "pii-management" && !(isAdmin || isTenantAdmin)) {
+      return false;
+    }
+    if (
+      item.id === "policy-management" &&
+      !isAdmin
+    ) {
+      return false;
+    }
 
-    // Reverse-logic visibility rules: return whether user can view each protected item
-    if (item.id === "model-management" || item.id === "services-management") {
-      return isAdmin;
+    // Hide API Key Management for users who are neither ADMIN nor TENANT ADMIN
+    if (item.id === "api-key-management" && !(isAdmin || isTenantAdmin)) {
+      return false;
     }
-    if (item.id === "tenant-management") {
-      return showTenantManagement;
-    }
-    if (item.id === "alerts-management" || item.id === "policy-management") {
-      return isAdmin;
-    }
-    if (item.id === "pii-management" || item.id === "api-key-management") {
-      return isAdminOrTenantAdmin;
-    }
-
     // Hide logs for users with USER or GUEST role (regardless of tenant_id)
     if (item.id === "logs" && (isUser || isGuest)) {
       return false;

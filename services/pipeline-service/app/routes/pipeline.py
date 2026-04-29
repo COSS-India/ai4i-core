@@ -24,10 +24,6 @@ from ai4icore_constants.exceptions import (
 )
 import httpx
 from ai4icore_env import app_env
-from ai4icore_multi_tenant import (
-    try_get_tenant_context,
-    enforce_tenant_and_service_checks,
-)
 
 #Tenant routing and service checks
 API_GATEWAY_URL = app_env.api_gateway_url
@@ -68,18 +64,7 @@ def get_pipeline_service() -> PipelineService:
 
 
 async def enforce_pipeline_checks(request: Request):
-    """FastAPI dependency that enforces tenant and service checks for Pipeline before other dependencies run."""
-    # the service name is coming from multitenant SubscriptionType enum
-    await enforce_tenant_and_service_checks(
-        request,
-        service_name="pipeline",
-        service_unavailable_code="SERVICE_UNAVAILABLE",
-        service_inactive_message="Speech to speech pipeline service is not active at the moment. Please contact your administrator",
-        cannot_detect_message="Cannot detect Speech to speech pipeline service availability. Please contact your administrator",
-        timeout_message="Speech to speech pipeline service is temporarily unavailable. Please try again in a few minutes.",
-        generic_unavailable_message="Speech to speech pipeline service is temporarily unavailable. Please try again in a few minutes.",
-    )
-
+    """Reserved Pipeline route-level dependency hook."""
 # Add as a router-level dependency so it runs before path-operation dependencies like get_pipeline_service
 pipeline_router.dependencies.append(Depends(enforce_pipeline_checks))
 

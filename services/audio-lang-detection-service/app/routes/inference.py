@@ -4,7 +4,6 @@ import logging
 
 from fastapi import APIRouter, Depends, Request
 
-from ai4icore_multi_tenant import enforce_tenant_and_service_checks
 
 from app.dependencies.auth import AuthProvider
 from app.dependencies.services import get_audio_lang_detection_service
@@ -22,17 +21,6 @@ router = APIRouter(
 
 async def enforce_audio_lang_detection_checks(request: Request):
     """Enforce tenant and service availability checks."""
-    await enforce_tenant_and_service_checks(
-        request,
-        service_name="audio_language_detection",
-        service_unavailable_code="SERVICE_UNAVAILABLE",
-        service_inactive_message="Audio Language Detection service is not active at the moment. Please contact your administrator",
-        cannot_detect_message="Cannot detect Audio Language Detection service availability. Please contact your administrator",
-        timeout_message="Audio Language Detection service is temporarily unavailable. Please try again in a few minutes.",
-        generic_unavailable_message="Audio Language Detection service is temporarily unavailable. Please try again in a few minutes.",
-    )
-
-
 router.dependencies.append(Depends(enforce_audio_lang_detection_checks))
 
 

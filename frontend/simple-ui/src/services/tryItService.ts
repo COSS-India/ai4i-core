@@ -2,14 +2,55 @@
 // Allows users to try NMT service without authentication
 // Rate limited to 5 requests per hour per user/IP
 
-import { apiClient, apiEndpoints } from './api';
+import axios, { AxiosInstance } from 'axios';
+import { API_BASE_URL } from './api';
 import { NMTInferenceRequest, NMTInferenceResponse } from '../types/nmt';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
 
-const getTryItAnonymousHeaders = (): Record<string, string> => ({
-  // Used by the backend for anonymous rate limiting.
-  'X-Anonymous-Session-Id': getAnonymousSessionId(),
+type ApiEnvelope<T> = {
+  success?: boolean;
+  data?: T;
+  meta?: Record<string, any>;
+};
+
+// Create a dedicated axios instance for try-it (no auth required)
+const tryItClient: AxiosInstance = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 300000, // 5 minutes
+  headers: {
+    'Content-Type': 'application/json',
+  },
 });
+
+// Add request interceptor to add anonymous session ID
+tryItClient.interceptors.request.use(
+  (config) => {
+    // Add anonymous session ID for rate limiting
+    const sessionId = getAnonymousSessionId();
+    config.headers['X-Anonymous-Session-Id'] = sessionId;
+    // Add request start time for timing calculation
+    config.headers['request-startTime'] = new Date().getTime().toString();
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Add response interceptor for timing
+tryItClient.interceptors.response.use(
+  (response) => {
+    const startTime = response.config.headers['request-startTime'];
+    if (startTime) {
+      const duration = new Date().getTime() - parseInt(startTime);
+      response.headers['request-duration'] = duration.toString();
+    }
+    return response;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
 
 /**
  * Try-It request payload structure
@@ -21,18 +62,19 @@ export interface TryItRequest {
 
 /**
  * Fetch NMT services for try-it (anonymous) users.
- * Uses GET model-management services try-it-service-list with `task_type=nmt` (no auth).
+ * Uses GET /api/v1/services/try-it-service-list?task_type=nmt (no auth).
  * @returns Promise with raw list of services from the API
  */
 export const listTryItNMTServices = async (): Promise<any[]> => {
-  const response = await apiClient.get<any[]>(
-    apiEndpoints['model-management'].tryItServiceList,
+  const response = await tryItClient.get<any[] | ApiEnvelope<any[]>>(
+    '/api/v1/services/try-it-service-list',
     {
       params: { task_type: 'nmt' },
-      headers: getTryItAnonymousHeaders(),
     }
   );
-  return Array.isArray(response.data) ? response.data : [];
+  const payload = response.data as any;
+  const data = payload && typeof payload === 'object' && 'data' in payload ? payload.data : payload;
+  return Array.isArray(data) ? data : [];
 };
 
 /**
@@ -73,10 +115,9 @@ export const performTryItNMTInference = async (
       payload: nmtPayload,
     };
 
-    const response = await apiClient.post<NMTInferenceResponse>(
-      apiEndpoints['try-it'].inference,
-      tryItPayload,
-      { headers: getTryItAnonymousHeaders() }
+    const response = await tryItClient.post<NMTInferenceResponse>(
+      '/api/v1/try-it',
+      tryItPayload
     );
 
     // Extract response time from headers
@@ -202,4 +243,3 @@ export const getRemainingTryItRequests = (): number => {
     return limit;
   }
 };
-

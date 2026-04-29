@@ -52,7 +52,7 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    entrypoint: ["sh", "-c", "cd /app/infrastructure/databases && pip install -q -r requirements.txt && cd /app && exec \"$@\"", "sh"]
+    entrypoint: ["sh", "-c", "cd /app/infrastructure/databases && pip install -q -r requirements.txt && cd /app && exec \"$$@\"", "sh"]
     command: ["python", "infrastructure/databases/cli.py"]
 
   redis:
@@ -113,7 +113,7 @@ services:
       - xpack.security.enabled=true
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
       - ELASTIC_USERNAME=${ELASTIC_USERNAME}
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "ES_JAVA_OPTS=-Xms256m -Xmx256m"
     ports:
       - "9203:9200"
     volumes:
@@ -228,23 +228,23 @@ services:
   auth-service:
     build:
       context: .
-      dockerfile: ./services/auth-service-v2/Dockerfile
+      dockerfile: ./services/auth-service/Dockerfile
     container_name: ai4v-auth-service
     ports:
       - "8081:8081"
     environment:
       - ENV_FILE=.env
     env_file:
-      - ./services/auth-service-v2/.env
+      - ./services/auth-service/.env
     volumes:
-      - ./services/auth-service-v2:/app
+      - ./services/auth-service:/app
       - ./libs/ai4icore_exceptions:/tmp/ai4icore_exceptions
       - ./libs/ai4icore_constants:/tmp/ai4icore_constants
       - ./libs/ai4icore_env:/tmp/ai4icore_env
       - ./libs/ai4icore_logging:/tmp/ai4icore_logging
       - ./libs/ai4icore_auth:/tmp/ai4icore_auth
       - ./libs/ai4icore_bootstrap:/tmp/ai4icore_bootstrap
-      - ./libs/ai4icore_multi_tenant:/tmp/ai4icore_multi_tenant
+      - ./libs/ai4icore_email:/tmp/ai4icore_email
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
     depends_on:
       postgres:
@@ -488,7 +488,6 @@ services:
       - ./services/asr-service/.env
     volumes:
       - ./services/asr-service:/app
-      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -497,7 +496,6 @@ services:
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
-      - ./services/multi-tenant-feature:/app/services/multi-tenant-feature
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -534,7 +532,6 @@ services:
       - ./services/tts-service/.env
     volumes:
       - ./services/tts-service:/app
-      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -575,14 +572,11 @@ services:
     environment:
       - ENV_FILE=.env
       - API_GATEWAY_URL=http://api-gateway-service:8080
-      - MODEL_MANAGEMENT_SERVICE_URL=http://model-management-service:8091
-      - MODEL_MANAGEMENT_TIMEOUT=20
-      - PYTHONPATH=/app:/app/libs/ai4icore_multi_tenant:/app/libs/ai4icore_observability:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry:/app/libs/ai4icore_model_management:/home/app/.local/lib/python3.11/site-packages
+      - PYTHONPATH=/app:/app/libs/ai4icore_observability:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry:/app/libs/ai4icore_model_management:/home/app/.local/lib/python3.11/site-packages
     env_file:
       - ./services/nmt-service/.env
     volumes:
       - ./services/nmt-service:/app
-      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -599,8 +593,6 @@ services:
         condition: service_started
       config-service:
         condition: service_healthy
-      model-management-service:
-        condition: service_started
       postgres:
         condition: service_healthy
       redis:
@@ -630,7 +622,6 @@ services:
       - ENV_FILE=.env
     volumes:
       - ./services/ocr-service:/app
-      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -677,7 +668,6 @@ services:
       - ./services/ner-service/.env
     volumes:
       - ./services/ner-service:/app
-      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -762,7 +752,6 @@ services:
       - ./services/llm-service/.env
     volumes:
       - ./services/llm-service:/app
-      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -808,7 +797,6 @@ services:
       - ./services/pipeline-service/.env
     volumes:
       - ./services/pipeline-service:/app
-      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -844,47 +832,34 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  model-management-service:
+
+  platform-core-service:
     build:
       context: .
-      dockerfile: ./services/model-management-service/Dockerfile
-    container_name: ai4v-model-management-service
+      dockerfile: ./services/platform-core-service/Dockerfile
+    container_name: ai4v-platform-core-service
     ports:
-      - "8094:8091"
-    environment:
-      - APP_DB_USER=${POSTGRES_USER}
-      - APP_DB_PASSWORD=${POSTGRES_PASSWORD}
-      - APP_DB_HOST=postgres
-      - APP_DB_PORT=5432
-      - APP_DB_NAME=model_management_db
-      - AUTH_DB_USER=${POSTGRES_USER}
-      - AUTH_DB_PASSWORD=${POSTGRES_PASSWORD}
-      - AUTH_DB_HOST=postgres
-      - AUTH_DB_PORT=5432
-      - AUTH_DB_NAME=auth_db
-      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_DB=0
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - RATE_LIMIT_PER_MINUTE=${MODEL_MANAGEMENT_RATE_LIMIT_PER_MINUTE:-60}
-      - RATE_LIMIT_PER_HOUR=${MODEL_MANAGEMENT_RATE_LIMIT_PER_HOUR:-1000}
-      - AUTH_ENABLED=${MODEL_MANAGEMENT_AUTH_ENABLED:-true}
-      - REQUIRE_API_KEY=${MODEL_MANAGEMENT_REQUIRE_API_KEY:-true}
-      - ALLOW_ANONYMOUS_ACCESS=${MODEL_MANAGEMENT_ALLOW_ANONYMOUS_ACCESS:-false}
-      - MAX_ACTIVE_VERSIONS_PER_MODEL=${MAX_ACTIVE_VERSIONS_PER_MODEL:-5}
-      - ALLOW_DEPRECATED_MODEL_CHANGES=${ALLOW_DEPRECATED_MODEL_CHANGES:-true}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - JWT_REFRESH_SECRET_KEY=${JWT_REFRESH_SECRET_KEY}
-      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
-      - PYTHONPATH=/app:/app/libs/ai4icore_env:/app/libs/ai4icore_constants:/app/libs/ai4icore_auth:/app/libs/ai4icore_exceptions
+      - "8102:8095"
+    env_file:
+      - ./services/platform-core-service/.env
     volumes:
-      - ./services/model-management-service:/app
-      - ./libs/ai4icore_env:/app/libs/ai4icore_env
-      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
-      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
-    command: ["--reload"]
+      # Bind-mount app code for hot-reload without image rebuilds
+      - ./services/platform-core-service:/app
+      # Shared platform libraries (editable installs via bind-mount)
+      - ./libs/ai4icore_exceptions:/tmp/ai4icore_exceptions
+      - ./libs/ai4icore_constants:/tmp/ai4icore_constants
+      - ./libs/ai4icore_env:/tmp/ai4icore_env
+      - ./libs/ai4icore_logging:/tmp/ai4icore_logging
+      - ./libs/ai4icore_auth:/tmp/ai4icore_auth
+      - ./libs/ai4icore_bootstrap:/tmp/ai4icore_bootstrap
+    command:
+      - "uvicorn"
+      - "app.main:app"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8095"
+      - "--reload"
     depends_on:
       postgres:
         condition: service_healthy
@@ -893,7 +868,19 @@ services:
     networks:
       microservices-network:
         aliases:
-          - model-management-service
+          - platform-core-service
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8095/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   smr-service:
@@ -909,7 +896,7 @@ services:
       - APP_DB_PASSWORD=${POSTGRES_PASSWORD}
       - APP_DB_HOST=postgres
       - APP_DB_PORT=5432
-      - APP_DB_NAME=model_management_db
+      - APP_DB_NAME=ai4iplatform_core
       - REQUEST_PROFILER_SERVICE_URL=http://request-profiler-service:8000
     env_file:
       - ./services/smr-service/.env
@@ -917,8 +904,6 @@ services:
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
     depends_on:
-      model-management-service:
-        condition: service_started
       postgres:
         condition: service_healthy
     networks:
@@ -970,34 +955,6 @@ services:
     restart: unless-stopped
 
   
-  multi-tenant-service:
-    build:
-      context: .
-      dockerfile: ./services/multi-tenant-feature/Dockerfile
-    container_name: ai4v-multi-tenant-service
-    ports:
-      - "8100:8001"
-    environment:
-      - ENV_FILE=.env
-    env_file:
-      - ./services/multi-tenant-feature/.env
-    volumes:
-      - ./services/multi-tenant-feature:/app
-      - ./libs/ai4icore_env:/app/libs/ai4icore_env
-      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
-      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
-    command: ["--reload"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      microservices-network:
-        aliases:
-          - multi-tenant-service
-    restart: unless-stopped
 
   transliteration-service:
     build:
@@ -1012,7 +969,6 @@ services:
       - ./services/transliteration-service/.env
     volumes:
       - ./services/transliteration-service:/app
-      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -1054,7 +1010,6 @@ services:
       - ./services/language-detection-service/.env
     volumes:
       - ./services/language-detection-service:/app
-      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -1094,7 +1049,6 @@ services:
       - ENV_FILE=.env
       - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
       - JWKS_URL=${JWKS_URL:-http://auth-service:8081/api/v1/auth/.well-known/jwks.json}
-      - MULTI_TENANT_SERVICE_URL=${MULTI_TENANT_SERVICE_URL:-http://multi-tenant-service:8001}
       - PYTHONPATH=/app
     env_file:
       - ./services/policy-service/.env
@@ -1133,7 +1087,6 @@ services:
       - TRITON_ENDPOINT=${TRITON_ENDPOINT}
     volumes:
       - ./services/speaker-diarization-service:/app
-      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -1176,7 +1129,6 @@ services:
       - ./services/language-diarization-service/.env
     volumes:
       - ./services/language-diarization-service:/app
-      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -1219,7 +1171,6 @@ services:
       - ./services/audio-lang-detection-service/.env
     volumes:
       - ./services/audio-lang-detection-service:/app
-      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -1428,7 +1379,6 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - AUTH_DB_NAME=auth_db
       # Required for tenant receivers: resolve tenant name -> tenant_id and tenant user email
-      - MULTI_TENANT_DB_NAME=multi_tenant_db
       - PROMETHEUS_URL=http://prometheus:9090
       - ALERTMANAGER_URL=http://alertmanager:9093
       - PROMETHEUS_APPLICATION_ALERTS_PATH=/etc/prometheus/rules/application-alerts.yml
@@ -1530,7 +1480,7 @@ services:
     image: opensearchproject/opensearch:2.11.0
     container_name: ai4v-opensearch
     environment:
-      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "OPENSEARCH_JAVA_OPTS=-Xms256m -Xmx256m"
     volumes:
       - opensearch-data:/usr/share/opensearch/data
       - ./infrastructure/opensearch/opensearch.yml:/usr/share/opensearch/config/opensearch.yml

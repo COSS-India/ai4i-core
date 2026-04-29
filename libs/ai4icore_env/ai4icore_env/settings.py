@@ -36,10 +36,9 @@ class AppEnv(BaseSettings):
 
     # ── Direct URL overrides (take precedence when set) ──
     database_url: Optional[str] = None
-    multi_tenant_db_url: Optional[str] = None
     auth_database_url: Optional[str] = None
 
-    # ── Component-based overrides (multi-tenant-feature, model-management) ──
+    # ── Component-based overrides (model-management) ──
     app_db_user: Optional[str] = None            # credential – falls back to postgres_user
     app_db_password: Optional[str] = None        # credential – falls back to postgres_password
     app_db_host: Optional[str] = None            # falls back to postgres_host
@@ -53,14 +52,11 @@ class AppEnv(BaseSettings):
     auth_db_name: Optional[str] = None           # falls back to postgres_db
 
     # ── Database names ──
-    multi_tenant_db_name: str = ""
     ai4i_platform_db_name: str = ""
 
     # ── Pool settings ──
     db_pool_size: int = 20
     db_max_overflow: int = 10
-    multi_tenant_db_pool_size: int = 20
-    multi_tenant_db_max_overflow: int = 10
 
     # ── Redis ──
     redis_host: str = ""
@@ -68,6 +64,8 @@ class AppEnv(BaseSettings):
     redis_password: Optional[str] = None         # credential
     redis_db: int = 0
     redis_timeout: int = 10
+    # Optional path to api_permissions.json for inference services (name→id resolved via auth DB).
+    api_permissions_json_path: Optional[str] = None
 
     # ── JWT Authentication ──
     jwt_secret_key: Optional[str] = None         # credential
@@ -113,6 +111,7 @@ class AppEnv(BaseSettings):
     service_instance_id: Optional[str] = None
     environment: str = "development"
     env: Optional[str] = None
+    runtime_env: Optional[str] = None
     log_level: str = "INFO"
     root_log_level: Optional[str] = None
 
@@ -165,7 +164,6 @@ class AppEnv(BaseSettings):
     speaker_diarization_service_url: str = ""
     language_diarization_service_url: str = ""
     audio_lang_detection_service_url: str = ""
-    multi_tenant_service_url: str = ""
     alert_management_service_url: str = ""
     alert_config_sync_service_url: str = ""
     smr_service_url: str = ""
@@ -196,13 +194,6 @@ class AppEnv(BaseSettings):
     # Allow skipping TLS verification for endpoint validation probes (self-signed certs)
     endpoint_validation_skip_tls_verify: bool = False
 
-    # ── Multi-tenant ──
-    multi_tenant_enabled: bool = True
-    multi_tenant_service_name: str = ""
-    multi_tenant_service_port: str = ""
-    multi_tenant_service_scheme: str = ""
-    tenant_paths: Optional[str] = None
-
     # ── HTTP Timeouts ──
     pipeline_http_timeout: float = 120.0
     api_gateway_timeout: float = 10.0
@@ -221,16 +212,17 @@ class AppEnv(BaseSettings):
     smtp_auth_password: Optional[str] = None      # credential
     smtp_smarthost: Optional[str] = None
     smtp_from: Optional[str] = None
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: Optional[str] = None           # credential
+    smtp_password: Optional[str] = None           # credential
+    smtp_tls: bool = True
+    smtp_from_noreply: str = ""
+    smtp_from_alerts: str = ""
+    smtp_reply_to: str = ""
     sendgrid_api_key: Optional[str] = None        # credential
     from_email: str = ""
     default_receiver_emails: str = ""
-    login_url: str = ""
-    email_verification_link: str = ""
-    # Multi-tenant email verification token expiry (used by multi-tenant-feature)
-    email_verification_token_expire_minutes: int = 15
-    email_verification_resend_min_interval_seconds: int = 60
-    email_verification_resend_max_per_hour: int = 5
-    email_verification_resend_max_per_day: int = 10
 
     # ── OAuth ──
     google_client_id: Optional[str] = None        # credential
@@ -397,18 +389,6 @@ class AppEnv(BaseSettings):
             self.postgres_host,
             self.postgres_port,
             db_name or self.postgres_db,
-        )
-
-    def get_multi_tenant_db_url(self) -> str:
-        """Returns the multi-tenant database URL."""
-        if self.multi_tenant_db_url:
-            return self.multi_tenant_db_url
-        return self._build_url(
-            self.postgres_user,
-            self.postgres_password,
-            self.postgres_host,
-            self.postgres_port,
-            self.multi_tenant_db_name,
         )
 
     def get_auth_database_url(self) -> str:
