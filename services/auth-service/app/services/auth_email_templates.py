@@ -110,13 +110,13 @@ def render_setup_link(user: User, setup_token: str) -> EmailMessage:
 
 def render_password_reset(user: User, reset_token: str) -> EmailMessage:
     """Password-reset email triggered by /auth/forgot-password. Short 30-min
-    expiry per security spec — much tighter than setup/verify."""
+    expiry per security spec — much tighter than setup/verify. Content
+    aligned to product spec: no greeting, no username, terse copy."""
     return _render(
         "password_reset",
         to=user.email,
-        subject="Reset your AI4I Platform password",
+        subject="Reset Your Password — AI4I",
         ctx={
-            "display_name": _display_name(user),
             "reset_url": build_reset_url(reset_token),
             "expires_minutes": settings.reset_token_expire_minutes,
         },

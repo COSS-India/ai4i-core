@@ -89,72 +89,67 @@ const ForgotPasswordPage: React.FC = () => {
 
             <Card bg={cardBg} borderWidth="1px" borderColor={cardBorder}>
               <CardBody>
-                {phase.kind === "sent" ? (
-                  <VStack align="stretch" spacing={4}>
-                    <Alert status="success" rounded="md">
-                      <AlertIcon />
-                      {phase.message}
-                    </Alert>
-                    <Link href="/auth" passHref legacyBehavior>
-                      <Button as="a" colorScheme="blue" variant="outline">
-                        Back to Sign In
-                      </Button>
-                    </Link>
-                  </VStack>
-                ) : (
-                  <form onSubmit={onSubmit} noValidate>
-                    <Stack spacing={4}>
-                      <FormControl isRequired isInvalid={!!emailError}>
-                        <FormLabel>Email *</FormLabel>
-                        <Input
-                          type="email"
-                          value={email}
-                          onChange={(e) => {
-                            setEmail(e.target.value);
-                            if (emailError) setEmailError(validate(e.target.value));
-                          }}
-                          placeholder="you@example.com"
-                          autoComplete="email"
-                        />
-                        {emailError && (
-                          <Text color="red.500" fontSize="sm" mt={1}>
-                            {emailError}
-                          </Text>
-                        )}
-                      </FormControl>
-
-                      {phase.kind === "rate_limited" && (
-                        <Alert status="warning" rounded="md">
-                          <AlertIcon />
-                          {phase.message}
-                        </Alert>
+                <form onSubmit={onSubmit} noValidate>
+                  <Stack spacing={4}>
+                    <FormControl isRequired isInvalid={!!emailError}>
+                      <FormLabel>Email *</FormLabel>
+                      <Input
+                        type="email"
+                        value={email}
+                        onChange={(e) => {
+                          setEmail(e.target.value);
+                          if (emailError) setEmailError(validate(e.target.value));
+                        }}
+                        placeholder="you@example.com"
+                        autoComplete="email"
+                        isDisabled={phase.kind === "sent"}
+                      />
+                      {emailError && (
+                        <Text color="red.500" fontSize="sm" mt={1}>
+                          {emailError}
+                        </Text>
                       )}
-                      {phase.kind === "error" && (
-                        <Alert status="error" rounded="md">
-                          <AlertIcon />
-                          {phase.message}
-                        </Alert>
-                      )}
+                    </FormControl>
 
-                      <Button
-                        type="submit"
-                        colorScheme="blue"
-                        isLoading={phase.kind === "submitting"}
-                        loadingText="Sending…"
-                      >
-                        Send Reset Link
-                      </Button>
+                    <Button
+                      type="submit"
+                      colorScheme="blue"
+                      isLoading={phase.kind === "submitting"}
+                      loadingText="Sending…"
+                      isDisabled={phase.kind === "sent"}
+                    >
+                      Send Reset Link
+                    </Button>
 
-                      <Box textAlign="center">
-                        <Link href="/auth" passHref legacyBehavior>
-                          <Text as="a" color="blue.500" fontSize="sm">
-                            ← Back to Sign In
-                          </Text>
-                        </Link>
-                      </Box>
-                    </Stack>
-                  </form>
-                )}
+                    {/* Status banners stay below the form (matches reference UI) */}
+                    {phase.kind === "sent" && (
+                      <Alert status="success" rounded="md">
+                        <AlertIcon />
+                        {phase.message}
+                      </Alert>
+                    )}
+                    {phase.kind === "rate_limited" && (
+                      <Alert status="warning" rounded="md">
+                        <AlertIcon />
+                        {phase.message}
+                      </Alert>
+                    )}
+                    {phase.kind === "error" && (
+                      <Alert status="error" rounded="md">
+                        <AlertIcon />
+                        {phase.message}
+                      </Alert>
+                    )}
+
+                    <Box textAlign="center">
+                      <Link href="/auth" passHref legacyBehavior>
+                        <Text as="a" color="blue.500" fontSize="sm">
+                          ← Back to Sign In
+                        </Text>
+                      </Link>
+                    </Box>
+                  </Stack>
+                </form>
               </CardBody>
             </Card>
           </VStack>
