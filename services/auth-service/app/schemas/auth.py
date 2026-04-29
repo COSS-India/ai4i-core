@@ -66,6 +66,10 @@ class ResendSetupLinkRequest(BaseSchema):
     email: EmailStr
 
 
+class VerifyEmailRequest(BaseSchema):
+    token: str
+
+
 # ── Responses ──
 
 class LoginResponse(BaseSchema):

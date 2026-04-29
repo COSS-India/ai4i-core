@@ -3,3 +3,4 @@ class TokenType:
     REFRESH = "refresh"
     API_KEY = "api_key"
     SETUP = "setup"
+    VERIFY = "verify"

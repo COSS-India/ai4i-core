@@ -3,7 +3,7 @@
 Each consuming service supplies its own template directory:
 
     renderer = TemplateRenderer([Path("app/templates/emails")])
-    html, text = renderer.render("welcome", {"user": user})
+    html, text = renderer.render("<template_name>", {"user": user})
 
 Template naming convention: <name>.html and <name>.txt files in the
 supplied directory. Both are rendered with the same context. HTML is

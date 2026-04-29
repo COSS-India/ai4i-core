@@ -23,20 +23,31 @@ def _display_name(user: User) -> str:
     return user.full_name or user.username or user.email
 
 
-def build_setup_url(token: str) -> str:
-    base = settings.setup_link_base_url
+def _build_link(base: Optional[str], token: str, *, env_var: str) -> str:
+    """HTTPS-only URL builder for email-embedded tokens.
+
+    Allows http://localhost / http://127.0.0.1 only in development. ``env_var``
+    is used in error messages so misconfig points at the right setting.
+    """
     if not base:
-        raise ValueError("SETUP_LINK_BASE_URL is not configured")
+        raise ValueError(f"{env_var} is not configured")
     if not base.startswith("https://"):
-        # Permit http://localhost* and http://127.0.0.1* in development only.
         is_dev = settings.environment.strip().lower() == "development"
         is_localhost = base.startswith(("http://localhost", "http://127.0.0.1"))
         if not (is_dev and is_localhost):
             raise ValueError(
-                "SETUP_LINK_BASE_URL must be HTTPS "
+                f"{env_var} must be HTTPS "
                 "(http://localhost is allowed only in development)"
             )
     return f"{base}?token={quote_plus(token)}"
+
+
+def build_setup_url(token: str) -> str:
+    return _build_link(settings.setup_link_base_url, token, env_var="SETUP_LINK_BASE_URL")
+
+
+def build_verify_url(token: str) -> str:
+    return _build_link(settings.verify_link_base_url, token, env_var="VERIFY_LINK_BASE_URL")
 
 
 def _render(template: str, *, to: str, subject: str, ctx: dict) -> EmailMessage:
@@ -45,15 +56,15 @@ def _render(template: str, *, to: str, subject: str, ctx: dict) -> EmailMessage:
     return EmailMessage(to=to, subject=subject, html_body=html, text_body=text)
 
 
-def render_welcome(user: User) -> EmailMessage:
+def render_verify_email(user: User, verify_token: str) -> EmailMessage:
     return _render(
-        "welcome",
+        "verify_email",
         to=user.email,
-        subject="Welcome to AI4I Platform",
+        subject="Verify your email — AI4I Platform",
         ctx={
             "display_name": _display_name(user),
-            "username": user.username,
-            "email": user.email,
+            "verify_url": build_verify_url(verify_token),
+            "expires_hours": settings.setup_token_expire_hours,
         },
     )
 

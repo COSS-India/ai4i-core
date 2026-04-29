@@ -128,6 +128,7 @@ class AuthSettings(BaseSettings):
     smtp_use_tls: bool = True
     smtp_timeout: int = 30
     setup_link_base_url: Optional[str] = None
+    verify_link_base_url: Optional[str] = None
 
     # ── Derived helpers ──
 

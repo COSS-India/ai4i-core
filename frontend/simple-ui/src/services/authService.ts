@@ -14,6 +14,7 @@ import {
   PasswordResetConfirm,
   SetPasswordRequest,
   SetPasswordStatusResponse,
+  VerifyEmailRequest,
   LogoutRequest,
   LogoutResponse,
   APIKeyCreate,
@@ -550,6 +551,15 @@ class AuthService {
 
   async setPasswordWithToken(data: SetPasswordRequest): Promise<{ message: string }> {
     return this.requestWithoutAuth<{ message: string }>('/set-password', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // ── Email verification (one-time token from /auth/register's verify email) ──
+
+  async verifyEmail(data: VerifyEmailRequest): Promise<{ message: string }> {
+    return this.requestWithoutAuth<{ message: string }>('/verify-email', {
       method: 'POST',
       body: JSON.stringify(data),
     });
