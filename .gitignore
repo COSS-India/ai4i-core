@@ -37,6 +37,7 @@ env/
 ENV/
 env.bak/
 venv.bak/
+!libs/ai4icore_core/ai4icore_core/env/
 
 # IDE
 .vscode/
