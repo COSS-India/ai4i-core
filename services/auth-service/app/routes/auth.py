@@ -20,6 +20,7 @@ from app.schemas.auth import (
     ProvisionUserResponse,
     RegisterRequest,
     ResendSetupLinkRequest,
+    ResendVerificationRequest,
     SetPasswordRequest,
     SetPasswordStatusResponse,
     TokenRefreshRequest,
@@ -62,12 +63,25 @@ async def register(
 @router.post("/verify-email")
 async def verify_email(
     body: VerifyEmailRequest,
+    background_tasks: BackgroundTasks,
     svc: AuthService = Depends(get_auth_service),
 ):
     """Consume a verification token from the link in the verify-email email
-    and activate the user. Idempotent-ish: already-used tokens fail clearly."""
-    await svc.verify_email_token(body.token)
+    and activate the user. Sends a welcome email after activation."""
+    await svc.verify_email_token(body.token, background_tasks=background_tasks)
     return success_response(data={"message": "Email verified. You can now sign in."})
+
+
+@router.post("/resend-verification")
+async def resend_verification(
+    body: ResendVerificationRequest,
+    background_tasks: BackgroundTasks,
+    svc: AuthService = Depends(get_auth_service),
+):
+    """Re-issue a verify-email link for a user who registered but hasn't
+    verified yet. Old verify tokens for this user are deactivated first."""
+    await svc.resend_verification(email=body.email, background_tasks=background_tasks)
+    return success_response(data={"message": "New verification link sent."})
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -165,13 +179,16 @@ async def get_setup_token_status(
 @router.post("/set-password")
 async def set_password(
     body: SetPasswordRequest,
+    background_tasks: BackgroundTasks,
     svc: AuthService = Depends(get_auth_service),
 ):
-    """Consume a setup token and set the user's password, activating the account."""
+    """Consume a setup token and set the user's password, activating the account.
+    Sends a welcome email after activation."""
     await svc.set_password_with_token(
         token=body.token,
         new_password=body.new_password,
         confirm_password=body.confirm_password,
+        background_tasks=background_tasks,
     )
     return success_response(data={"message": "Password set. You can now log in."})
 

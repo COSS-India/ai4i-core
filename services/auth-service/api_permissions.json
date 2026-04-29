@@ -642,6 +642,11 @@
       "description": "Verify email via token from registration email (public)"
     },
     {
+      "endpoint": "POST:/api/v1/auth/resend-verification",
+      "permissionRequired": null,
+      "description": "Re-issue a verify-email link for users who registered but never verified (public)"
+    },
+    {
       "endpoint": "POST:/api/v1/auth/refresh",
       "permissionRequired": null,
       "description": "Refresh token (public)"
