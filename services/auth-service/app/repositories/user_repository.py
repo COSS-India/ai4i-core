@@ -19,7 +19,7 @@ class UserRepository(BaseRepository):
 
     async def get_by_id(self, user_id: UUID) -> Optional[User]:
         result = await self._db.execute(
-            select(User).where(User.user_id == user_id, User.is_delete.isnot(True))
+            select(User).where(User.id == user_id, User.is_delete.isnot(True))
         )
         return result.scalar_one_or_none()
 
@@ -43,17 +43,17 @@ class UserRepository(BaseRepository):
         result = await self._db.execute(
             select(User)
             .where(User.is_delete.isnot(True))
-            .order_by(func.lower(User.username).asc(), User.user_id.asc())
+            .order_by(func.lower(User.username).asc(), User.id.asc())
             .offset(offset)
             .limit(limit)
         )
         return list(result.scalars().all())
 
-    async def list_by_tenant(self, tenant_id: UUID, offset: int = 0, limit: int = 100) -> list[User]:
+    async def list_by_tenant(self, tenant_id: int, offset: int = 0, limit: int = 100) -> list[User]:
         result = await self._db.execute(
             select(User)
             .where(User.tenant_id == tenant_id, User.is_delete.isnot(True))
-            .order_by(User.user_id)
+            .order_by(User.id)
             .offset(offset)
             .limit(limit)
         )
@@ -61,6 +61,6 @@ class UserRepository(BaseRepository):
 
     async def count(self) -> int:
         result = await self._db.execute(
-            select(func.count(User.user_id)).where(User.is_delete.isnot(True))
+            select(func.count(User.id)).where(User.is_delete.isnot(True))
         )
         return result.scalar_one()

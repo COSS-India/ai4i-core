@@ -3,7 +3,6 @@
 import asyncio
 import logging
 from typing import Any, Optional
-from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,14 +35,14 @@ class TenantService:
         if not tenant_id:
             return None
         try:
-            tenant_uuid = UUID(str(tenant_id))
+            tenant_int = int(tenant_id)
         except (ValueError, AttributeError):
             return None
 
         try:
             result = await asyncio.wait_for(
                 self._db.execute(
-                    select(Tenant.status).where(Tenant.tenant_id == tenant_uuid).limit(1)
+                    select(Tenant.status).where(Tenant.id == tenant_int).limit(1)
                 ),
                 timeout=_TENANT_QUERY_TIMEOUT,
             )

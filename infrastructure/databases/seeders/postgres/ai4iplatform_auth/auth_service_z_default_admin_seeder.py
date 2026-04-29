@@ -1,21 +1,21 @@
 """
 Default Admin User Seeder (ai4iplatform_auth)
 
-Mirrors auth_z_default_admin_seeder.py for the auth-service database.
 Creates/updates the default admin user, assigns the ADMIN role, and maps
 the user to the default tenant created by auth_service_t_default_tenant_seeder.py.
 
 IMPORTANT: After first login, change the default admin password immediately.
 The default password is set via ADMIN_DEFAULT_PASSWORD env var (falls back to 'ADMIN_PASSWORD').
 
+Schema notes:
+  - users.id is UUID PK
+  - users.tenant_id is Integer FK to tenants.id
+  - passwords stored in separate user_credentials table (user_id is unique FK)
+  - role assignment via user_role table (no unique constraint on user_id+role_id)
+  - creation_type enum values: 'default', 'google'
+
 Rows created by this seeder carry created_by = SEEDER_ID so they can be
 distinguished from user-created records.
-
-Schema differences vs auth_db:
-  - users.user_id is UUID (not serial int)
-  - passwords stored in separate user_credentials table (no hash_rounds column)
-  - role assignment via user_role table (no unique constraint on user_id+role_id)
-  - users.tenant_id (UUID FK to tenants.tenant_id)
 
 Runs after auth_service_t_default_tenant_seeder.py (filename order).
 """
@@ -45,7 +45,7 @@ def _resolve_credentials(adapter, email: str, plain_password: str) -> tuple[str,
         """
         SELECT uc.password_hash, uc.password_salt
         FROM users u
-        JOIN user_credentials uc ON u.user_id = uc.user_id
+        JOIN user_credentials uc ON u.id = uc.user_id
         WHERE u.email = :email
         """,
         {"email": email},
@@ -74,19 +74,19 @@ class AuthServiceDefaultAdminSeeder(BaseSeeder):
 
         password_hash, salt = _resolve_credentials(adapter, admin_email, default_password)
 
-        # Resolve the default tenant_id
+        # Resolve the default tenant id (Integer)
         tenant_row = adapter.fetch_one(
-            "SELECT tenant_id FROM tenants WHERE organisation = :org LIMIT 1",
+            "SELECT id FROM tenants WHERE organisation = :org LIMIT 1",
             {"org": tenant_org},
         )
-        tenant_id = str(tenant_row[0]) if tenant_row else None
+        tenant_id = tenant_row[0] if tenant_row else None
 
-        # Upsert user (user_id is a UUID; preserve existing UUID on conflict)
+        # Upsert user (id is a UUID; preserve existing UUID on conflict)
         new_user_id = str(uuid.uuid4())
         adapter.execute(
             """
             INSERT INTO users (
-                user_id, email, username, full_name,
+                id, email, username, full_name,
                 is_active, tenant_id, timezone, is_delete, is_tenant_active,
                 creation_type, created_by
             )
@@ -115,19 +115,19 @@ class AuthServiceDefaultAdminSeeder(BaseSeeder):
                 "timezone": "UTC",
                 "is_delete": False,
                 "is_tenant_active": True,
-                "creation_type": "direct",
+                "creation_type": "default",
                 "created_by": SEEDER_ID,
             },
         )
 
-        # Fetch the actual user_id (may differ from new_user_id on conflict)
+        # Fetch the actual id (may differ from new_user_id on conflict)
         row = adapter.fetch_one(
-            "SELECT user_id FROM users WHERE email = :email",
+            "SELECT id FROM users WHERE email = :email",
             {"email": admin_email},
         )
         actual_user_id = str(row[0])
 
-        # Upsert credentials (PK = user_id)
+        # Upsert credentials (unique on user_id FK)
         adapter.execute(
             """
             INSERT INTO user_credentials (user_id, password_hash, password_salt, created_by)
@@ -151,13 +151,13 @@ class AuthServiceDefaultAdminSeeder(BaseSeeder):
         adapter.execute(
             f"""
             INSERT INTO user_role (user_id, role_id, created_by)
-            SELECT u.user_id, r.role_id, '{SEEDER_ID}'
+            SELECT u.id, r.id, '{SEEDER_ID}'
             FROM users u
             JOIN roles r ON r.name = 'ADMIN'
             WHERE u.email = :email
               AND NOT EXISTS (
                   SELECT 1 FROM user_role ur
-                  WHERE ur.user_id = u.user_id AND ur.role_id = r.role_id
+                  WHERE ur.user_id = u.id AND ur.role_id = r.id
               )
             """,
             {"email": admin_email},

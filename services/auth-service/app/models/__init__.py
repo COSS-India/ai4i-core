@@ -12,6 +12,7 @@ Base = declarative_base()
 from app.models.tenant import Tenant  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.models.credentials import UserCredentials  # noqa: E402
+from app.models.role_name import RoleName  # noqa: E402
 from app.models.role import Role, Permission, UserRole, RolePermission  # noqa: E402
 from app.models.api_key import APIKey  # noqa: E402
 from app.models.verification import TokenVerification  # noqa: E402
@@ -23,6 +24,7 @@ __all__ = [
     "Tenant",
     "User",
     "UserCredentials",
+    "RoleName",
     "Role",
     "Permission",
     "UserRole",

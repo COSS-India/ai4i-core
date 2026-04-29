@@ -15,6 +15,7 @@ from app.dependencies.auth import get_current_active_user
 from app.core.roles import Roles
 from app.dependencies.services import get_auth_service
 from app.models.tenant import Tenant, TenantStatus
+from app.models.role_name import RoleName
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.repositories.tenant_repository import TenantRepository
@@ -53,12 +54,12 @@ router = APIRouter(prefix="/tenants", tags=["Tenants"])
 
 async def _is_system_admin(current_user: User, db: AsyncSession) -> bool:
     role_repo = RoleRepository(db)
-    roles = await role_repo.get_user_roles(current_user.user_id)
-    return "ADMIN" in roles or "MODERATOR" in roles
+    roles = await role_repo.get_user_roles(current_user.id)
+    return RoleName.ADMIN.value in roles or RoleName.MODERATOR.value in roles
 
 
 async def _enforce_tenant_scope(
-    current_user: User, target_tenant_id: UUID, db: AsyncSession
+    current_user: User, target_tenant_id: int, db: AsyncSession
 ) -> None:
     if await _is_system_admin(current_user, db):
         return
@@ -73,7 +74,7 @@ async def _enforce_tenant_scope(
 
 
 async def _load_tenant_user(
-    tenant_id: UUID, user_id: UUID, db: AsyncSession
+    tenant_id: int, user_id: UUID, db: AsyncSession
 ) -> User:
     target = await UserRepository(db).get_by_id(user_id)
     if not target:
@@ -91,9 +92,7 @@ def _tenant_response(tenant: Tenant) -> dict:
 
 
 def _user_response(user: User) -> dict:
-    return UserListResponse.model_validate(user, from_attributes=True).model_dump(
-        mode="json", by_alias=True
-    )
+    return UserListResponse.model_validate(user, from_attributes=True).model_dump(mode="json")
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -122,12 +121,12 @@ async def create_tenant(
         )
 
     tenant = Tenant(
-        contact_name=body.contact_name,
+        name=body.name,
         organisation=body.organisation,
         email=body.email,
         phone_number=body.phone_number,
         status=TenantStatus.ACTIVATED,
-        created_by=str(current_user.user_id),
+        created_by=current_user.id,
     )
     await repo.create(tenant)  # flush only — tenant_id now populated
 
@@ -138,9 +137,9 @@ async def create_tenant(
     await auth_svc.provision_user(
         email=body.email,
         username=derived_username,
-        full_name=body.contact_name,
+        full_name=body.name,
         phone_number=body.phone_number,
-        tenant_id=str(tenant.tenant_id),
+        tenant_id=str(tenant.id),
         creation_type="tenant",
         role_name=Roles.TENANT_ADMIN,
         background_tasks=background_tasks,
@@ -174,7 +173,7 @@ async def list_tenants(
 
 @router.get("/{tenant_id}")
 async def get_tenant(
-    tenant_id: UUID,
+    tenant_id: int,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -187,7 +186,7 @@ async def get_tenant(
 
 @router.patch("/{tenant_id}")
 async def update_tenant(
-    tenant_id: UUID,
+    tenant_id: int,
     body: TenantUpdate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -199,7 +198,7 @@ async def update_tenant(
     data = body.model_dump(exclude_unset=True)
     # Status changes go through PATCH /status to keep authorization split clean.
     data.pop("status", None)
-    data["updated_by"] = str(current_user.user_id)
+    data["updated_by"] = current_user.id
     await repo.update(tenant, data)
     await repo.save_and_refresh(tenant)
     return success_response(data=_tenant_response(tenant))
@@ -207,7 +206,7 @@ async def update_tenant(
 
 @router.patch("/{tenant_id}/status")
 async def update_tenant_status(
-    tenant_id: UUID,
+    tenant_id: int,
     body: TenantStatusUpdate,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -218,7 +217,7 @@ async def update_tenant_status(
         raise EntityNotFoundError(f"Tenant {tenant_id}")
     await repo.update(
         tenant,
-        {"status": body.status, "updated_by": str(current_user.user_id)},
+        {"status": body.status, "updated_by": current_user.id},
     )
     await repo.save_and_refresh(tenant)
     return success_response(data=_tenant_response(tenant))
@@ -226,7 +225,7 @@ async def update_tenant_status(
 
 @router.get("/{tenant_id}/users")
 async def list_tenant_users(
-    tenant_id: UUID,
+    tenant_id: int,
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     current_user: User = Depends(get_current_active_user),
@@ -239,7 +238,7 @@ async def list_tenant_users(
 
 @router.post("/{tenant_id}/users", status_code=status.HTTP_201_CREATED)
 async def create_tenant_user(
-    tenant_id: UUID,
+    tenant_id: int,
     body: TenantUserCreate,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_active_user),
@@ -267,7 +266,7 @@ async def create_tenant_user(
 
 @router.patch("/{tenant_id}/users/{user_id}/status")
 async def update_tenant_user_status(
-    tenant_id: UUID,
+    tenant_id: int,
     user_id: UUID,
     body: TenantUserStatusUpdate,
     current_user: User = Depends(get_current_active_user),
@@ -277,7 +276,7 @@ async def update_tenant_user_status(
     target = await _load_tenant_user(tenant_id, user_id, db)
 
     payload = body.model_dump(exclude_unset=True)
-    payload["updated_by"] = str(current_user.user_id)
+    payload["updated_by"] = current_user.id
     user_repo = UserRepository(db)
     await user_repo.update(target, payload)
     await user_repo.save_and_refresh(target)
@@ -286,7 +285,7 @@ async def update_tenant_user_status(
 
 @router.patch("/{tenant_id}/users/{user_id}")
 async def update_tenant_user(
-    tenant_id: UUID,
+    tenant_id: int,
     user_id: UUID,
     body: TenantUserUpdate,
     current_user: User = Depends(get_current_active_user),
@@ -296,7 +295,7 @@ async def update_tenant_user(
     target = await _load_tenant_user(tenant_id, user_id, db)
 
     payload = body.model_dump(exclude_unset=True)
-    payload["updated_by"] = str(current_user.user_id)
+    payload["updated_by"] = current_user.id
     user_repo = UserRepository(db)
     await user_repo.update(target, payload)
     await user_repo.save_and_refresh(target)
@@ -305,7 +304,7 @@ async def update_tenant_user(
 
 @router.delete("/{tenant_id}/users/{user_id}")
 async def delete_tenant_user(
-    tenant_id: UUID,
+    tenant_id: int,
     user_id: UUID,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -320,7 +319,7 @@ async def delete_tenant_user(
             "is_delete": True,
             "is_active": False,
             "is_tenant_active": False,
-            "updated_by": str(current_user.user_id),
+            "updated_by": current_user.id,
         },
     )
     await user_repo.commit()

@@ -7,15 +7,16 @@ from enum import Enum
 from typing import Optional
 from uuid import UUID
 
-from pydantic import EmailStr, Field
+from pydantic import AliasChoices, EmailStr, Field
 
 from app.schemas.base import BaseSchema
 
 
 class CreationType(str, Enum):
-    DIRECT = "direct"
+    """Must match Postgres `creation_type_enum` and ORM `app.models.user.CreationType`."""
+
+    DEFAULT = "default"
     GOOGLE = "google"
-    TENANT = "tenant"
 
 
 class UserUpdate(BaseSchema):
@@ -26,7 +27,7 @@ class UserUpdate(BaseSchema):
 
 
 class UserResponse(BaseSchema):
-    user_id: UUID
+    user_id: UUID = Field(validation_alias=AliasChoices("user_id", "id"))
     email: EmailStr
     username: str
     full_name: Optional[str] = None
@@ -34,7 +35,7 @@ class UserResponse(BaseSchema):
     is_delete: Optional[bool] = None
     is_tenant_active: Optional[bool] = None
     creation_type: Optional[CreationType] = None
-    tenant_id: Optional[UUID] = Field(None, description="Tenant identifier")
+    tenant_id: Optional[int] = Field(None, description="Tenant identifier")
     last_login: Optional[datetime] = None
     avatar_url: Optional[str] = None
     phone_number: Optional[str] = None
@@ -48,7 +49,7 @@ class UserResponse(BaseSchema):
 
 class UserDetailResponse(BaseSchema):
     """Admin view of user details."""
-    user_id: UUID
+    user_id: UUID = Field(validation_alias=AliasChoices("user_id", "id"))
     username: str
     email: EmailStr
     phone_number: Optional[str] = None
@@ -57,14 +58,14 @@ class UserDetailResponse(BaseSchema):
     is_delete: Optional[bool] = None
     is_tenant_active: Optional[bool] = None
     creation_type: Optional[CreationType] = None
-    tenant_id: Optional[UUID] = None
+    tenant_id: Optional[int] = None
     created_at: datetime
     last_login: Optional[datetime] = None
 
 
 class UserListResponse(BaseSchema):
     """Compact user list item."""
-    user_id: UUID
+    user_id: UUID = Field(validation_alias=AliasChoices("user_id", "id"))
     username: str
     email: EmailStr
     phone_number: Optional[str] = None
