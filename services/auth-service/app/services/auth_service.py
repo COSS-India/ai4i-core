@@ -183,7 +183,7 @@ class AuthService:
         except EntityNotFoundError:
             logger.warning("Default USER role not found, skipping role assignment.")
 
-        user_uuid_str = str(user.user_id)
+        user_uuid_str = str(user.id)
         verify_token = self._tokens.create_verify_token(
             user_id=user_uuid_str,
             email=email,
@@ -224,7 +224,7 @@ class AuthService:
         user.is_active = True
         await self._verifications.deactivate(token_obj)
         await self._users.commit()
-        logger.info("Email verified for user id=%s", user.user_id)
+        logger.info("Email verified for user id=%s", user.id)
 
     # ── Login ──
 
