@@ -256,7 +256,7 @@ async def create_tenant_user(
         full_name=body.full_name,
         phone_number=body.phone_number,
         tenant_id=str(tenant_id),
-        creation_type="default",
+        creation_type="tenant",
         background_tasks=background_tasks,
     )
     return success_response(
