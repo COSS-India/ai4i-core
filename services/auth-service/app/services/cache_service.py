@@ -1,9 +1,7 @@
 """
 Auth-service cache — extends shared CacheService with auth-specific operations.
 
-Generic caching (role permissions, API permission map) comes from shared lib.
-Auth-specific caching (API key tokens) is added here.
-Refresh tokens are stored in DB only — no Redis caching.
+Uses a single Redis logical DB; keys are distinguished by prefix.
 """
 
 import json
@@ -18,57 +16,23 @@ from app.core.config import settings
 # Defined once here — no other file should construct this key manually.
 REDIS_API_KEY_PREFIX = "auth:apikey:"
 
-_ROLE_PERMS_PREFIX = "auth:role:"
-_API_PERMS_KEY = "auth:api_perms"
 _TENANT_STATUS_PREFIX = "auth:tenant_status:"
 _TENANT_USER_STATUS_PREFIX = "auth:tenant_user_status:"
 _REVOCATION_COOLDOWN_PREFIX = "auth:revocation_cooldown:"
+_LEGACY_API_PERMS_KEY = "auth:api_perms"
 
 
 class CacheService(_BaseCacheService):
     """Extends shared CacheService with auth-specific token caching."""
 
-    def __init__(
-        self,
-        redis_api_keys: aioredis.Redis,
-        redis_role_permissions: aioredis.Redis,
-        redis_api_permissions: aioredis.Redis,
-    ) -> None:
-        super().__init__(redis_api_keys)
-        self._redis_api_keys = redis_api_keys
-        self._redis_role_permissions = redis_role_permissions
-        self._redis_api_permissions = redis_api_permissions
-
-    # ── Role/API permission caches (env-configurable TTL) ──
-
-    async def cache_role_permissions(self, role_id: int, permission_ids: list[int]) -> None:
-        key = f"{_ROLE_PERMS_PREFIX}{role_id}:perms"
-        await self._redis_role_permissions.setex(key, settings.role_cache_ttl_seconds, json.dumps(permission_ids))
-
-    async def get_role_permissions(self, role_id: int) -> Optional[list[int]]:
-        key = f"{_ROLE_PERMS_PREFIX}{role_id}:perms"
-        data = await self._redis_role_permissions.get(key)
-        return json.loads(data) if data else None
-
-    async def invalidate_role_cache(self, role_id: int) -> None:
-        await self._redis_role_permissions.delete(f"{_ROLE_PERMS_PREFIX}{role_id}:perms")
-
-    async def cache_api_permission_map(self, mapping: dict[str, str]) -> None:
-        await self._redis_api_permissions.setex(
-            _API_PERMS_KEY,
-            settings.api_perms_cache_ttl_seconds,
-            json.dumps(mapping),
-        )
-
-    async def get_api_permission_map(self) -> Optional[dict[str, str]]:
-        data = await self._redis_api_permissions.get(_API_PERMS_KEY)
-        return json.loads(data) if data else None
+    def __init__(self, redis: aioredis.Redis) -> None:
+        super().__init__(redis)
 
     # ── API Key cache (canonical methods) ──
 
     async def set_api_key_cache(self, api_key: str, ttl_seconds: int, data: dict) -> None:
         """Store api_key metadata in Redis. TTL matches key expiry."""
-        await self._redis_api_keys.setex(
+        await self._redis.setex(
             f"{REDIS_API_KEY_PREFIX}{api_key}",
             ttl_seconds,
             json.dumps(data),
@@ -76,14 +40,18 @@ class CacheService(_BaseCacheService):
 
     async def get_api_key_cache(self, api_key: str) -> Optional[dict]:
         """Return cached metadata dict, or None on miss/expiry."""
-        raw = await self._redis_api_keys.get(f"{REDIS_API_KEY_PREFIX}{api_key}")
+        raw = await self._redis.get(f"{REDIS_API_KEY_PREFIX}{api_key}")
         if raw is None:
             return None
         return json.loads(raw)
 
     async def delete_api_key_cache(self, api_key: str) -> None:
         """Immediately invalidate an API key — used on revocation."""
-        await self._redis_api_keys.delete(f"{REDIS_API_KEY_PREFIX}{api_key}")
+        await self._redis.delete(f"{REDIS_API_KEY_PREFIX}{api_key}")
+
+    async def delete_legacy_api_perms_key(self) -> None:
+        """Remove stale permission-map key from Redis (pre-consolidation)."""
+        await self._redis.delete(_LEGACY_API_PERMS_KEY)
 
     # ── Backward-compat aliases (used by dependencies/auth.py) ──
 
@@ -99,7 +67,7 @@ class CacheService(_BaseCacheService):
     # ── Tenant status caches (short TTL for validate path) ──
 
     async def get_tenant_status(self, tenant_id: str) -> Optional[str]:
-        data = await self._redis_api_permissions.get(f"{_TENANT_STATUS_PREFIX}{tenant_id}")
+        data = await self._redis.get(f"{_TENANT_STATUS_PREFIX}{tenant_id}")
         if not data:
             return None
         if isinstance(data, bytes):
@@ -107,7 +75,7 @@ class CacheService(_BaseCacheService):
         return str(data)
 
     async def set_tenant_status(self, tenant_id: str, status: str, ttl_seconds: int) -> None:
-        await self._redis_api_permissions.setex(
+        await self._redis.setex(
             f"{_TENANT_STATUS_PREFIX}{tenant_id}",
             ttl_seconds,
             status,
@@ -117,10 +85,10 @@ class CacheService(_BaseCacheService):
         tenant_id_norm = (tenant_id or "").strip().lower()
         if not tenant_id_norm:
             return
-        await self._redis_api_permissions.delete(f"{_TENANT_STATUS_PREFIX}{tenant_id_norm}")
+        await self._redis.delete(f"{_TENANT_STATUS_PREFIX}{tenant_id_norm}")
 
     async def get_tenant_user_status(self, tenant_id: str, user_id: int) -> Optional[str]:
-        data = await self._redis_api_permissions.get(
+        data = await self._redis.get(
             f"{_TENANT_USER_STATUS_PREFIX}{tenant_id}:{user_id}"
         )
         if not data:
@@ -136,7 +104,7 @@ class CacheService(_BaseCacheService):
         status: str,
         ttl_seconds: int,
     ) -> None:
-        await self._redis_api_permissions.setex(
+        await self._redis.setex(
             f"{_TENANT_USER_STATUS_PREFIX}{tenant_id}:{user_id}",
             ttl_seconds,
             status,
@@ -150,13 +118,13 @@ class CacheService(_BaseCacheService):
         Returns True only for the first caller during the cooldown window.
         """
         key = f"{_REVOCATION_COOLDOWN_PREFIX}{scope}"
-        result = await self._redis_api_permissions.set(key, "1", ex=ttl_seconds, nx=True)
+        result = await self._redis.set(key, "1", ex=ttl_seconds, nx=True)
         return bool(result)
 
     async def get_revocation_cooldown_ttl(self, scope: str) -> int:
         """Return remaining cooldown in seconds for a scope (0 when absent)."""
         key = f"{_REVOCATION_COOLDOWN_PREFIX}{scope}"
-        ttl = await self._redis_api_permissions.ttl(key)
+        ttl = await self._redis.ttl(key)
         if ttl is None or ttl < 0:
             return 0
         return int(ttl)
