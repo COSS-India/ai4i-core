@@ -1,46 +1,14 @@
 """
-AI4ICore Telemetry Library
+Backwards-compatibility shim.
 
-Provides distributed tracing and telemetry capabilities for AI4ICore services.
+The canonical implementation lives in ``ai4icore_core.telemetry``. This package re-exports
+its public API so existing ``from ai4icore_<lib> import ...`` continues
+to work. New code should import from ``ai4icore_core.telemetry`` directly.
 """
+from ai4icore_core.telemetry import *  # noqa: F401,F403
 
-from .tracing import setup_tracing, get_tracer
-from .opensearch_client import OpenSearchQueryClient
-from .jaeger_client import JaegerQueryClient
-from .rbac_helper import get_organization_filter, extract_user_info
-from .ip_capture import extract_client_ip, add_ip_to_current_span
-from .ip_middleware import IPCaptureMiddleware
-from .config import TelemetryConfig
-from .standard_spans import StandardSpanManager, Status, StatusCode
-from .plugin import (
-    TelemetryPlugin,
-    create_telemetry_plugin,
-    register_telemetry_plugin,
-)
-
-__all__ = [
-    # Plugin pattern (recommended)
-    "TelemetryPlugin",
-    "TelemetryConfig",
-    "create_telemetry_plugin",
-    "register_telemetry_plugin",
-    # Legacy functions (backward compatibility)
-    "setup_tracing",
-    "get_tracer",
-    # Client utilities
-    "OpenSearchQueryClient",
-    "JaegerQueryClient",
-    # Helper functions
-    "get_organization_filter",
-    "extract_user_info",
-    "extract_client_ip",
-    "add_ip_to_current_span",
-    # Middleware
-    "IPCaptureMiddleware",
-    # Standard spans
-    "StandardSpanManager",
-    "Status",
-    "StatusCode",
-]
-
-__version__ = "1.0.0"
+# Also propagate private symbols (e.g. helpers) for full backwards compatibility.
+from importlib import import_module as _import_module
+_real = _import_module("ai4icore_core.telemetry")
+globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})
+del _real, _import_module

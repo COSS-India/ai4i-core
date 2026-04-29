@@ -1,10 +1,15 @@
-class EmailError(Exception):
-    """Base class for email lib errors."""
+"""
+Backwards-compatibility shim.
 
+The canonical implementation lives in ``ai4icore_core.email.exceptions``. This module re-exports
+its public API so existing ``from ai4icore_<lib>... import ...`` continues
+to work. New code should import from ``ai4icore_core.email.exceptions`` directly.
+"""
+from ai4icore_core.email.exceptions import *  # noqa: F401,F403
 
-class EmailConfigError(EmailError):
-    """Raised when settings are invalid or missing for the selected provider."""
-
-
-class EmailDeliveryError(EmailError):
-    """Raised when a provider fails to send a message."""
+# Also propagate private symbols (e.g. helpers, module-level state) for full
+# backwards compatibility with services that imported private names.
+from importlib import import_module as _import_module
+_real = _import_module("ai4icore_core.email.exceptions")
+globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})
+del _real, _import_module

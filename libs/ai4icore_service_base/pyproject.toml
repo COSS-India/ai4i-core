@@ -1,20 +1,20 @@
-[build-system]
-requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "ai4icore-service-base"
-version = "1.0.0"
-description = "Shared infrastructure for AI4I-Core inference services: service registry, rate limiting, health checks"
+version = "1.0.0-shim"
+description = "Backwards-compatibility shim — re-exports ai4icore_core.service_base. New code should import ai4icore-core directly."
+readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "AI4I Team", email = "team@ai4inclusion.org"}
+]
 dependencies = [
-    "fastapi>=0.104.0",
-    "httpx>=0.25.0",
-    "redis>=5.0.0",
-    "starlette>=0.27.0",
-    "ai4icore-exceptions",
-    "ai4icore-env",
+    "ai4icore-core>=1.0.0",
 ]
 
-[tool.setuptools.packages.find]
-include = ["ai4icore_service_base*"]
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["ai4icore_service_base"]

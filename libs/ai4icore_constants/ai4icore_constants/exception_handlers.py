@@ -1,18 +1,15 @@
 """
-BACKWARD COMPATIBILITY — re-exports from ai4icore_exceptions.
-New code should import from ai4icore_exceptions directly.
+Backwards-compatibility shim.
 
-Requires: pip install ai4icore-constants[compat]
-  or:     pip install ai4icore-exceptions
+The canonical implementation lives in ``ai4icore_core.constants.exception_handlers``. This module re-exports
+its public API so existing ``from ai4icore_<lib>... import ...`` continues
+to work. New code should import from ``ai4icore_core.constants.exception_handlers`` directly.
 """
+from ai4icore_core.constants.exception_handlers import *  # noqa: F401,F403
 
-try:
-    from ai4icore_exceptions.handlers import register_exception_handlers  # noqa: F401
-    __all__ = ["register_exception_handlers"]
-except ImportError:
-    raise ImportError(
-        "ai4icore_constants.exception_handlers has moved to ai4icore_exceptions.\n"
-        "Either:\n"
-        "  1. pip install ai4icore-exceptions   (and use 'from ai4icore_exceptions import register_exception_handlers')\n"
-        "  2. pip install ai4icore-constants[compat]\n"
-    )
+# Also propagate private symbols (e.g. helpers, module-level state) for full
+# backwards compatibility with services that imported private names.
+from importlib import import_module as _import_module
+_real = _import_module("ai4icore_core.constants.exception_handlers")
+globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})
+del _real, _import_module

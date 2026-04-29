@@ -1,31 +1,15 @@
 """
-Shared Redis caching patterns for microservices.
+Backwards-compatibility shim.
 
-Provides generic key-value helpers on a single Redis connection (logical DB 0).
+The canonical implementation lives in ``ai4icore_core.bootstrap.cache``. This module re-exports
+its public API so existing ``from ai4icore_<lib>... import ...`` continues
+to work. New code should import from ``ai4icore_core.bootstrap.cache`` directly.
 """
+from ai4icore_core.bootstrap.cache import *  # noqa: F401,F403
 
-import logging
-from typing import Optional
-
-import redis.asyncio as aioredis
-
-logger = logging.getLogger(__name__)
-
-
-class CacheService:
-    """Generic Redis caching operations on one client."""
-
-    def __init__(self, redis_client: aioredis.Redis) -> None:
-        self._redis = redis_client
-
-    async def set(self, key: str, value: str, ttl: int) -> None:
-        await self._redis.setex(key, ttl, value)
-
-    async def get(self, key: str) -> Optional[str]:
-        return await self._redis.get(key)
-
-    async def delete(self, key: str) -> None:
-        await self._redis.delete(key)
-
-    async def exists(self, key: str) -> bool:
-        return await self._redis.exists(key) > 0
+# Also propagate private symbols (e.g. helpers, module-level state) for full
+# backwards compatibility with services that imported private names.
+from importlib import import_module as _import_module
+_real = _import_module("ai4icore_core.bootstrap.cache")
+globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})
+del _real, _import_module
