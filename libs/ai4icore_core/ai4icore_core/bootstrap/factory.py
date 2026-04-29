@@ -2,7 +2,7 @@
 Service app factory — the single way to create a FastAPI app in AI4I-Core.
 
 Wires up everything that every service needs:
-1. Standardized exception handlers (from ai4icore_constants)
+1. Standardized exception handlers (from ai4icore_exceptions)
 2. Structured JSON logging (from ai4icore_logging)
 3. Auth middleware with JWT verification (from ai4icore_auth)
 4. CORS configuration (production-safe)
@@ -12,8 +12,9 @@ Wires up everything that every service needs:
 """
 
 import logging
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Awaitable, Callable, List, Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -76,7 +77,49 @@ def create_service_app(
 
     is_prod = config.environment in ("production", "staging")
 
-    # ── Create app ──
+    # Startup / shutdown callbacks accumulated by feature blocks below.
+    # The combined `lifespan` context manager (the modern replacement for
+    # @app.on_event) runs them in registration order on startup and in
+    # reverse order on shutdown.
+    startup_tasks: List[Callable[[], Awaitable[None]]] = []
+    shutdown_tasks: List[Callable[[], Awaitable[None]]] = []
+
+    # ── 4. Auth middleware (from ai4icore_auth) ──
+    # Build verifier early so we can register its initializer in lifespan.
+    auth_verifier = None
+    if config.jwks_url:
+        try:
+            from ai4icore_core.auth import JWTVerifier
+
+            auth_verifier = JWTVerifier(
+                jwks_url=config.jwks_url,
+                issuer=config.jwt_issuer,
+                audience=config.jwt_audience,
+            )
+
+            async def _init_verifier(verifier=auth_verifier, jwks_url=config.jwks_url):
+                await verifier.initialize()
+                logger.info("[bootstrap] JWTVerifier initialized with JWKS from %s", jwks_url)
+
+            startup_tasks.append(_init_verifier)
+        except ImportError:
+            logger.warning("[bootstrap] ai4icore_auth not available, auth middleware skipped.")
+
+    # ── Lifespan: orchestrates all startup/shutdown callbacks ──
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        for task in startup_tasks:
+            await task()
+        try:
+            yield
+        finally:
+            for task in reversed(shutdown_tasks):
+                try:
+                    await task()
+                except Exception:
+                    logger.exception("[bootstrap] shutdown task failed")
+
+    # ── Create app with lifespan ──
     app = FastAPI(
         title=config.service_name,
         version=config.version,
@@ -84,6 +127,7 @@ def create_service_app(
         docs_url=None if (is_prod and config.hide_docs_in_production) else "/docs",
         redoc_url=None if (is_prod and config.hide_docs_in_production) else "/redoc",
         openapi_url=None if (is_prod and config.hide_docs_in_production) else "/openapi.json",
+        lifespan=lifespan,
     )
 
     # ── 1. Exception handlers (from ai4icore_exceptions) ──
@@ -124,31 +168,18 @@ def create_service_app(
         logger.warning("[bootstrap] ai4icore_logging not available, using basic logging.")
         logging.basicConfig(level=getattr(logging, config.log_level, logging.INFO))
 
-    # ── 4. Auth middleware (from ai4icore_auth) ──
-    if config.jwks_url:
+    # ── 4. Auth middleware (continued) — register middleware now that app exists ──
+    if auth_verifier is not None:
         try:
-            from ai4icore_core.auth import AuthMiddleware, JWTVerifier
-
-            verifier = JWTVerifier(
-                jwks_url=config.jwks_url,
-                issuer=config.jwt_issuer,
-                audience=config.jwt_audience,
-            )
+            from ai4icore_core.auth import AuthMiddleware
 
             app.add_middleware(
                 AuthMiddleware,
-                jwt_verifier_factory=lambda: verifier,
+                jwt_verifier_factory=lambda v=auth_verifier: v,
                 service_name=config.service_name,
                 skip_paths=config.auth_skip_paths,
                 require_auth=config.require_auth,
             )
-
-            # Initialize verifier on startup
-            @app.on_event("startup")
-            async def _init_verifier():
-                await verifier.initialize()
-                logger.info("[bootstrap] JWTVerifier initialized with JWKS from %s", config.jwks_url)
-
             logger.info("[bootstrap] Auth middleware registered (JWKS: %s).", config.jwks_url)
         except ImportError:
             logger.warning("[bootstrap] ai4icore_auth not available, auth middleware skipped.")
@@ -174,8 +205,12 @@ def create_service_app(
     async def _health():
         return {"status": "healthy"}
 
-    # Store config on app for downstream access
+    # Store config on app for downstream access. Also expose the lifespan
+    # task lists so callers / plugins can append additional startup or
+    # shutdown callbacks before serving begins.
     app.state.service_config = config
+    app.state.startup_tasks = startup_tasks
+    app.state.shutdown_tasks = shutdown_tasks
 
     logger.info(
         "[bootstrap] %s v%s ready [%s]",
