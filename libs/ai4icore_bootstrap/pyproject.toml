@@ -15,7 +15,6 @@ dependencies = [
     "pydantic>=2.5.0",
     "ai4icore-exceptions",
     "ai4icore-logging",
-    "ai4icore-auth",
     "ai4icore-env",
 ]
 

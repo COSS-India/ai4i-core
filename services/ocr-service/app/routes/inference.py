@@ -4,7 +4,6 @@ import logging
 
 from fastapi import APIRouter, Depends, Request
 
-from ai4icore_multi_tenant import enforce_tenant_and_service_checks
 
 from app.dependencies.auth import AuthProvider
 from app.dependencies.services import get_ocr_service
@@ -22,17 +21,6 @@ router = APIRouter(
 
 async def enforce_ocr_checks(request: Request):
     """Enforce tenant and service availability checks."""
-    await enforce_tenant_and_service_checks(
-        request,
-        service_name="ocr",
-        service_unavailable_code="SERVICE_UNAVAILABLE",
-        service_inactive_message="OCR service is not active at the moment. Please contact your administrator",
-        cannot_detect_message="Cannot detect OCR service availability. Please contact your administrator",
-        timeout_message="OCR service is temporarily unavailable. Please try again in a few minutes.",
-        generic_unavailable_message="OCR service is temporarily unavailable. Please try again in a few minutes.",
-    )
-
-
 router.dependencies.append(Depends(enforce_ocr_checks))
 
 

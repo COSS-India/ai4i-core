@@ -38,14 +38,12 @@ export interface CreateApiKeyTabProps {
   users: import("../../types/auth").User[];
   isLoadingUsers: boolean;
   setApiKeys: (keys: import("../../types/auth").APIKeyResponse[]) => void;
-  setSelectedApiKeyId: (id: number | null) => void;
 }
 
 export default function CreateApiKeyTab({
   users,
   isLoadingUsers,
   setApiKeys,
-  setSelectedApiKeyId,
 }: CreateApiKeyTabProps) {
   const toast = useToastWithDeduplication();
   const cardBg = useColorModeValue("white", "gray.800");
@@ -55,7 +53,6 @@ export default function CreateApiKeyTab({
     users,
     isLoadingUsers,
     setApiKeys,
-    setSelectedApiKeyId,
   });
 
   return (
@@ -87,7 +84,7 @@ export default function CreateApiKeyTab({
               <FormLabel fontWeight="semibold">User</FormLabel>
               <UserSearchableSelect
                 variant="pick"
-                value={perm.selectedUserForPermissions?.id ?? null}
+                value={perm.selectedUserForPermissions?.user_id ?? null}
                 onChange={(id, picked) => perm.handleUserSelect(id, picked)}
                 seedUsers={users}
                 isLoading={isLoadingUsers}

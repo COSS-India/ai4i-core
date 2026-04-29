@@ -9,7 +9,6 @@ RUN apt-get update && apt-get install -y \
 
 # Copy AI4ICore plugins from monorepo
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
-COPY libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY libs/ai4icore_env /app/libs/ai4icore_env
 COPY libs/ai4icore_auth /app/libs/ai4icore_auth
 COPY libs/ai4icore_service_base /app/libs/ai4icore_service_base
@@ -35,7 +34,6 @@ RUN pip install --no-cache-dir packaging>=21.0 && \
 # Install Python deps (packaging is already installed above)
 RUN pip install --no-cache-dir --user -r requirements.txt
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_multi_tenant
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_exceptions
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
@@ -64,9 +62,8 @@ COPY --from=builder /root/.local /home/app/.local
 ENV PATH=/home/app/.local/bin:$PATH
 # Ensure Python can see:
 # - service code at /app
-# - multi-tenant plugin source at /app/libs/ai4icore_multi_tenant
 # - user site-packages at /home/app/.local/lib/python3.11/site-packages
-ENV PYTHONPATH="/app:/app/libs/ai4icore_multi_tenant:/home/app/.local/lib/python3.11/site-packages"
+ENV PYTHONPATH="/app:/home/app/.local/lib/python3.11/site-packages"
 ENV PYTHONUNBUFFERED=1
 
 # Ensure packaging is available in runtime - install system-wide AND user-wide
@@ -78,7 +75,6 @@ RUN pip install --no-cache-dir packaging>=21.0 && \
 
 # Copy AI4ICore plugins
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
-COPY --from=builder /app/libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
 COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
 COPY --from=builder /app/libs/ai4icore_service_base /app/libs/ai4icore_service_base

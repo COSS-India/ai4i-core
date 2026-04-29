@@ -10,6 +10,21 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Process-wide fallback map (endpoint key → permission id str). Auth-service and
+# inference apps populate this once at startup after resolving names → DB IDs.
+_GLOBAL_ENDPOINT_PERMISSION_MAP: dict[str, str] = {}
+
+
+def set_global_endpoint_permission_map(mapping: dict[str, str]) -> None:
+    """Replace the process-wide endpoint → permission_id map."""
+    _GLOBAL_ENDPOINT_PERMISSION_MAP.clear()
+    _GLOBAL_ENDPOINT_PERMISSION_MAP.update(mapping)
+
+
+def get_global_endpoint_permission_map() -> dict[str, str]:
+    """Return a copy of the process-wide endpoint → permission_id map."""
+    return dict(_GLOBAL_ENDPOINT_PERMISSION_MAP)
+
 
 class PermissionChecker:
     """
@@ -17,7 +32,7 @@ class PermissionChecker:
 
     Usage::
 
-        checker = PermissionChecker(redis_client=redis)
+        checker = PermissionChecker()
         await checker.load_api_permission_map("/path/to/api_permissions.json")
 
         # Check if user has permission for this endpoint
@@ -32,16 +47,20 @@ class PermissionChecker:
     """
 
     def __init__(self, redis_client=None) -> None:
+        # redis_client retained for backward compatibility; endpoint maps are in-memory only.
         self._redis = redis_client
         self._api_permission_map: dict[str, str] = {}
 
     async def load_api_permission_map(self, json_path: Optional[str] = None) -> None:
         """
-        Load endpoint → required permission code mapping from JSON file and cache in Redis.
+        Load endpoint → required permission code mapping from JSON file (permission names).
         Entries with null permissionRequired are public endpoints (skipped).
+
+        Does not persist to Redis — services that need numeric IDs must resolve via DB at startup.
         """
         if json_path:
             import pathlib
+
             data = json.loads(pathlib.Path(json_path).read_text())
             mappings = data.get("apiMappings", [])
             self._api_permission_map = {
@@ -49,14 +68,6 @@ class PermissionChecker:
                 for m in mappings
                 if "endpoint" in m and m.get("permissionRequired") is not None
             }
-
-            # Cache in Redis if available
-            if self._redis:
-                await self._redis.setex(
-                    "auth:api_perms",
-                    3600,
-                    json.dumps(self._api_permission_map),
-                )
             logger.info("Loaded %d API permission mappings.", len(self._api_permission_map))
 
     async def get_required_permission(self, method: str, path: str) -> Optional[str]:
@@ -66,12 +77,7 @@ class PermissionChecker:
         """
         endpoint_key = f"{method.upper()}:{path}"
 
-        # Load mapping from local cache or Redis
-        mapping = self._api_permission_map
-        if not mapping and self._redis:
-            data = await self._redis.get("auth:api_perms")
-            if data:
-                mapping = json.loads(data)
+        mapping = self._api_permission_map or _GLOBAL_ENDPOINT_PERMISSION_MAP
 
         if not mapping:
             return None

@@ -21,7 +21,12 @@ sys.path.insert(0, str(project_root))
 
 from dotenv import load_dotenv
 load_dotenv(project_root / ".env")
-load_dotenv(project_root / "infrastructure" / "databases" / "migrations" / "postgres" / "alembic" / ".env", override=True)
+# alembic/.env holds local-dev overrides (localhost:5434); load with override=True
+# so these win over the Docker service names in the root .env
+load_dotenv(
+    project_root / "infrastructure" / "databases" / "migrations" / "postgres" / "alembic" / ".env",
+    override=True,
+)
 
 from infrastructure.databases.core.migration_manager import MigrationManager
 from infrastructure.databases.config import MigrationConfig
@@ -32,14 +37,15 @@ class MigrationCLI:
     
     DATABASES = ['postgres', 'redis', 'influxdb', 'elasticsearch', 'kafka']
     POSTGRES_DBS = [
-        'auth_db', 
+        'auth_db',
+        'ai4iplatform_auth',
+        'ai4iplatform_core',
         'config_db', 
         'alerting_db',
         'metrics_db',
         'telemetry_db',
         'dashboard_db',
-        'model_management_db', 
-        'multi_tenant_db',
+        'model_management_db',
         'ai4i_platform'
     ]
     
@@ -340,8 +346,9 @@ Examples:
         
         # Databases that have seeders
         postgres_dbs_with_seeders = [
-            'auth_db', 'config_db', 'alerting_db',
-            'dashboard_db', 'model_management_db', 'multi_tenant_db', 'ai4i_platform'
+            'auth_db', 'ai4iplatform_auth', 'ai4iplatform_core',
+            'config_db', 'alerting_db',
+            'dashboard_db', 'model_management_db', 'ai4i_platform'
         ]
         
         # Seed PostgreSQL databases

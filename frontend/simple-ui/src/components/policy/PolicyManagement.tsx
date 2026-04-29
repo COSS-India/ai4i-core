@@ -66,8 +66,8 @@ import {
   type PiiTypeOut,
   type PolicyOut,
 } from "../../services/policyService";
-import { listTenants } from "../../services/multiTenantService";
-import type { TenantView } from "../../types/multiTenant";
+import { listTenants } from "../../services/tenantService";
+import type { TenantView } from "../../types/tenant";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 const AUDIT_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
@@ -1024,10 +1024,10 @@ function PolicyFormModal({
     void listTenants()
       .then((res) => {
         if (cancelled) return;
-        const list = (res.tenants ?? []).filter((tenant) => tenant.status === "ACTIVE");
+        const list = (res.tenants ?? []).filter((tenant) => tenant.status === "activated");
         setTenants(
           [...list].sort((a, b) =>
-            (a.organization_name ?? "").localeCompare(b.organization_name ?? "", undefined, {
+            (a.organisation ?? "").localeCompare(b.organisation ?? "", undefined, {
               sensitivity: "base",
             })
           )
@@ -1227,7 +1227,7 @@ function PolicyFormModal({
                           ))}
                         {tenants.map((t) => (
                           <Checkbox key={t.tenant_id} value={t.tenant_id}>
-                            {t.organization_name || "(Unnamed)"}{" "}
+                            {t.organisation || "(Unnamed)"}{" "}
                             <Text as="span" color="gray.500" fontSize="sm">
                               ({t.tenant_id})
                             </Text>

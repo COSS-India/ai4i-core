@@ -179,6 +179,17 @@ class MigrationManager:
         if not seeders_path.exists():
             print(f"✅ No seeders found for {self.database_type}")
             return
+
+        # Prefer a db-specific subfolder (e.g. seeders/postgres/auth_db/) when it exists.
+        # Seeders inside a subfolder are assumed to belong to that database, so the
+        # `database` property filter is skipped for them. The flat directory still
+        # uses the property filter for backward compatibility.
+        use_subfolder = False
+        if self.database_type == 'postgres' and self.database_name:
+            db_subfolder = seeders_path / self.database_name
+            if db_subfolder.exists():
+                seeders_path = db_subfolder
+                use_subfolder = True
         
         with self.adapter:
             if seeder_class:
@@ -201,9 +212,9 @@ class MigrationManager:
                     seeder_instance = self._load_seeder(seeders_path / seeder_file)()
                     seeder_name = seeder_file.replace('.py', '')
                     
-                    # Check if seeder has a 'database' property and if it matches
-                    if hasattr(seeder_instance, 'database'):
-                        # For PostgreSQL, check if the seeder is for this specific database
+                    # When using a flat directory, filter by the `database` property.
+                    # When using a db-specific subfolder all files belong to that db.
+                    if not use_subfolder and hasattr(seeder_instance, 'database'):
                         if self.database_type == 'postgres' and self.database_name:
                             if seeder_instance.database != self.database_name:
                                 print(f"  ⏭️  Skipping: {seeder_name} (for {seeder_instance.database}, not {self.database_name})")

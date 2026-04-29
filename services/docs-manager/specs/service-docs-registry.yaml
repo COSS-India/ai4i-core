@@ -31,9 +31,6 @@ services:
   model-management-service:
     description: "Model Management"
     spec_file: "model-management-service.yaml"
-  multi-tenant-service:
-    description: "Multi-Tenant"
-    spec_file: "multi-tenant-service.yaml"
   ner-service:
     description: "NER (Named Entity Recognition)"
     spec_file: "ner-service.yaml"

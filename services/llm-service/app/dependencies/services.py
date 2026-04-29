@@ -1,3 +1,4 @@
+from ai4icore_bootstrap.database import get_db
 """Dependency injection factories for LLM service."""
 
 import logging
@@ -5,7 +6,6 @@ import logging
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_multi_tenant import get_tenant_db_session_factory
 
 from app.clients.triton_client import LLMTritonClient
 from app.repositories.llm_repository import LLMRepository
@@ -13,12 +13,11 @@ from app.services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
 
-get_tenant_db_session = get_tenant_db_session_factory()
 
 
 async def get_llm_service(
     request: Request,
-    db: AsyncSession = Depends(get_tenant_db_session),
+    db: AsyncSession = Depends(get_db),
 ) -> LLMService:
     """Construct LLMService with Triton client and repository from request state."""
     repository = LLMRepository(db)

@@ -11,9 +11,7 @@ const PolicyManagementPage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
-  const canManagePolicies = Boolean(
-    user?.roles?.includes("ADMIN") || user?.is_superuser
-  );
+  const canManagePolicies = Boolean(user?.roles?.includes("ADMIN"));
 
   React.useEffect(() => {
     if (!authLoading && !isAuthenticated) {

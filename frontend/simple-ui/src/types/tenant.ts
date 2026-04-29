@@ -1,0 +1,92 @@
+// Tenant + tenant-user types — calls auth-service /api/v1/tenants endpoints.
+
+export type TenantStatus = 'activated' | 'deactivated' | 'suspended';
+export type CreationType = 'direct' | 'google' | 'tenant';
+
+export interface TenantView {
+  tenant_id: string; // UUID
+  contact_name: string;
+  organisation: string;
+  email: string;
+  phone_number?: string | null;
+  status: TenantStatus;
+  created_at: string;
+  created_by?: string | null;
+  updated_at?: string | null;
+  updated_by?: string | null;
+}
+
+export interface ListTenantsResponse {
+  count: number;
+  tenants: TenantView[];
+}
+
+export interface TenantUserView {
+  user_id: string; // UUID
+  username: string;
+  email: string;
+  phone_number?: string | null;
+  full_name?: string | null;
+  is_active: boolean;
+  is_tenant_active?: boolean;
+  creation_type?: CreationType | null;
+}
+
+export interface ListUsersResponse {
+  count: number;
+  users: TenantUserView[];
+}
+
+// POST /api/v1/tenants
+export interface TenantRegisterRequest {
+  contact_name: string;
+  organisation: string;
+  email: string;
+  phone_number?: string;
+}
+export type TenantRegisterResponse = TenantView;
+
+// POST /api/v1/tenants/{tenant_id}/users
+export interface UserRegisterRequest {
+  email: string;
+  username: string;
+  full_name?: string;
+  phone_number?: string;
+}
+
+export interface UserRegisterResponse {
+  user_id: string;
+  setup_token: string;
+  message: string;
+}
+
+// PATCH /api/v1/tenants/{tenant_id}/status
+export interface TenantStatusUpdateRequest {
+  status: TenantStatus;
+}
+export type TenantStatusUpdateResponse = TenantView;
+
+// PATCH /api/v1/tenants/{tenant_id}/users/{user_id}/status
+export interface TenantUserStatusUpdateRequest {
+  is_active?: boolean;
+  is_tenant_active?: boolean;
+}
+export type TenantUserStatusUpdateResponse = TenantUserView;
+
+// PATCH /api/v1/tenants/{tenant_id}
+export interface TenantUpdateRequest {
+  contact_name?: string;
+  organisation?: string;
+  email?: string;
+  phone_number?: string;
+}
+export type TenantUpdateResponse = TenantView;
+
+// PATCH /api/v1/tenants/{tenant_id}/users/{user_id}
+export interface TenantUserUpdateRequest {
+  email?: string;
+  full_name?: string;
+  phone_number?: string;
+  username?: string;
+}
+export type TenantUserUpdateResponse = TenantUserView;

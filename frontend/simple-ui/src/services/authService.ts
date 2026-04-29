@@ -12,6 +12,10 @@ import {
   PasswordChangeRequest,
   PasswordResetRequest,
   PasswordResetConfirm,
+  SetPasswordRequest,
+  SetPasswordStatusResponse,
+  VerifyEmailRequest,
+  ResendVerificationRequest,
   LogoutRequest,
   LogoutResponse,
   APIKeyCreate,
@@ -518,14 +522,57 @@ class AuthService {
   }
 
   async requestPasswordReset(data: PasswordResetRequest): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/request-password-reset', {
+    // Public endpoint — no auth header. Always returns 200 with generic message
+    // (anti-enumeration). Backend rate-limits to 3 per email per hour; on 429
+    // the user sees a "try again later" error.
+    return this.requestWithoutAuth<{ message: string }>('/forgot-password', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
-  async resetPassword(data: PasswordResetConfirm): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/reset-password', {
+  async resetPassword(data: PasswordResetConfirm): Promise<{ message: string; sign_out_other_sessions?: boolean }> {
+    // Public endpoint — token in body authenticates the request. Single-use,
+    // 30-minute expiry. Other sessions are revoked server-side.
+    return this.requestWithoutAuth<{ message: string; sign_out_other_sessions?: boolean }>('/reset-password', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // ── Email-activation set-password (one-time setup token) ──
+
+  async getSetPasswordStatus(token: string): Promise<SetPasswordStatusResponse> {
+    // Bypasses the requestWithoutAuth helper on purpose: this endpoint does NOT
+    // return the v2 {success, data} envelope (route uses response_model=
+    // SetPasswordStatusResponse), so the helper's auto-unwrap would mangle it.
+    const url = `${this.baseUrl}/set-password/status?token=${encodeURIComponent(token)}`;
+    const res = await fetch(url, { method: 'GET' });
+    if (!res.ok) {
+      // Backend always returns 200 for valid/expired/used; HTTP error == network/CORS.
+      return { valid: false, status: 'invalid', message: `HTTP ${res.status}` };
+    }
+    return res.json();
+  }
+
+  async setPasswordWithToken(data: SetPasswordRequest): Promise<{ message: string }> {
+    return this.requestWithoutAuth<{ message: string }>('/set-password', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // ── Email verification (one-time token from /auth/register's verify email) ──
+
+  async verifyEmail(data: VerifyEmailRequest): Promise<{ message: string }> {
+    return this.requestWithoutAuth<{ message: string }>('/verify-email', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async resendVerification(data: ResendVerificationRequest): Promise<{ message: string }> {
+    return this.requestWithoutAuth<{ message: string }>('/resend-verification', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -539,13 +586,12 @@ class AuthService {
     });
   }
 
-  async createApiKeyForUser(data: APIKeyCreate & { user_id: number }): Promise<APIKeyResponse> {
-    // Convert user_id to userId (camelCase) for the API payload
+  async createApiKeyForUser(data: APIKeyCreate & { user_id: string }): Promise<APIKeyResponse> {
     const payload = {
       key_name: data.key_name,
       permissions: data.permissions,
       expires_days: data.expires_days,
-      userId: data.user_id, // Send as userId (camelCase) in JSON payload
+      user_id: data.user_id,
     };
     return this.request<APIKeyResponse>('/api-keys', {
       method: 'POST',
@@ -555,15 +601,10 @@ class AuthService {
 
   async listApiKeys(): Promise<APIKeyListResponse> {
     const data = await this.request<APIKeyListResponse | APIKeyResponse[]>('/api-keys');
-    // Backend may return { api_keys, selected_api_key_id } or a plain array (legacy)
     if (Array.isArray(data)) {
-      return { api_keys: data, selected_api_key_id: null };
+      return { api_keys: data };
     }
-    const normalized = data as APIKeyListResponse;
-    return {
-      api_keys: Array.isArray(normalized.api_keys) ? normalized.api_keys : [],
-      selected_api_key_id: normalized.selected_api_key_id ?? null,
-    };
+    return { api_keys: Array.isArray(data?.api_keys) ? data.api_keys : [] };
   }
 
   async listAllApiKeys(): Promise<AdminAPIKeyWithUserResponse[]> {
@@ -605,7 +646,7 @@ class AuthService {
     return this.request<User[]>(`/users?limit=${limit}&offset=${offset}`);
   }
 
-  async getUserById(userId: number): Promise<User> {
+  async getUserById(userId: string): Promise<User> {
     return this.request<User>(`/users/${userId}`);
   }
 

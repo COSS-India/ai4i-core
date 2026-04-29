@@ -505,7 +505,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
         }
       }
       
-      // Append hint when present (e.g. multi-tenant "set MULTI_TENANT_SERVICE_URL=...")
+      // Append hint when present (e.g. "set FOO_URL=...")
       if (data.detail.hint && typeof data.detail.hint === 'string') {
         errorMessage = errorMessage + (errorMessage.endsWith('.') ? ' ' : '. ') + data.detail.hint;
       }
@@ -550,7 +550,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
     }
     return { title: errorTitle, message: errorMessage, showOnlyMessage: true };
   }
-  // Handle 500/503 service unavailable (e.g. backend or multi-tenant service down)
+  // Handle 500/503 service unavailable (backend service down)
   const status = error?.response?.status;
   if ((status === 500 || status === 503) && typeof errorMessage === 'string' && errorMessage.toLowerCase().includes('unavailable')) {
     errorTitle = 'Service Unavailable';

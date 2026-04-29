@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Request
 
-from ai4icore_multi_tenant import enforce_tenant_and_service_checks
 from ai4icore_constants.error_messages import SERVICE_UNAVAILABLE, SERVICE_UNAVAILABLE_MESSAGE
 
 from app.dependencies.auth import AuthProvider
@@ -30,17 +29,6 @@ smr_service = SMRService()
 
 async def enforce_asr_checks(request: Request):
     """Enforce tenant and service availability checks."""
-    await enforce_tenant_and_service_checks(
-        request,
-        service_name="asr",
-        service_unavailable_code=SERVICE_UNAVAILABLE,
-        service_inactive_message="ASR service is not active at the moment. Please contact your administrator",
-        cannot_detect_message="Cannot detect ASR service availability. Please contact your administrator",
-        timeout_message=SERVICE_UNAVAILABLE_MESSAGE,
-        generic_unavailable_message=SERVICE_UNAVAILABLE_MESSAGE,
-    )
-
-
 router.dependencies.append(Depends(enforce_asr_checks))
 
 

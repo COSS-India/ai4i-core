@@ -123,11 +123,10 @@ class ASRService:
                 from app.repositories.asr_repository import ASRRepository as _Repo
                 from app.services.audio_service import AudioService as _Audio
                 from app.clients.triton_client import ASRTritonClient as _Triton
+                from ai4icore_bootstrap.database import get_db
 
-                from ai4icore_multi_tenant import get_tenant_db_session_factory
-
-                _get_session = get_tenant_db_session_factory()
-                fallback_db = await _get_session(http_request)
+                async for fallback_db in get_db():
+                    break
 
                 fallback_service = ASRService(
                     repository=_Repo(fallback_db),

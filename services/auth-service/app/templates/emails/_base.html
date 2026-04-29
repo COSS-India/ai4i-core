@@ -1,0 +1,96 @@
+{# Base layout for transactional emails.
+   Email-client constraints respected:
+   - Table-based outer layout (Outlook desktop/Word renderer)
+   - All critical styles inlined (Gmail strips unused <style>)
+   - 600px max width (standard for inboxes)
+   - System font stack (no web fonts) to render natively everywhere
+   - No JavaScript, no <form>
+   - Bulletproof CTA via nested table
+
+   Child templates override these blocks:
+     {% block preheader %}  short snippet shown in inbox preview (under 90 chars)
+     {% block heading %}    h1 text inside the card
+     {% block body %}       main paragraphs / call-to-action area
+     {% block footer_extra %}  optional extra footer line
+#}<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
+  <meta name="color-scheme" content="light only">
+  <meta name="supported-color-schemes" content="light only">
+  <title>{% block title %}AI4I Platform{% endblock %}</title>
+  <!--[if mso]>
+  <style type="text/css">
+    table {border-collapse: collapse;}
+    .button a {padding: 14px 28px !important;}
+  </style>
+  <![endif]-->
+  <style>
+    @media only screen and (max-width: 480px) {
+      .container { width: 100% !important; }
+      .px-32 { padding-left: 24px !important; padding-right: 24px !important; }
+      .py-40 { padding-top: 28px !important; padding-bottom: 28px !important; }
+      .heading { font-size: 22px !important; line-height: 28px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0; padding:0; background-color:#f3f4f6; -webkit-font-smoothing:antialiased; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; mso-line-height-rule:exactly;">
+  <div style="display:none; font-size:1px; color:#f3f4f6; line-height:1px; max-height:0; max-width:0; opacity:0; overflow:hidden;">
+    {% block preheader %}{% endblock %}
+  </div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f3f4f6;">
+    <tr>
+      <td align="center" style="padding: 40px 16px;">
+        <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#ffffff; border-radius:12px; border:1px solid #e5e7eb; overflow:hidden;">
+
+          {# ── Header ── #}
+          <tr>
+            <td class="px-32" style="padding: 28px 32px 20px 32px; border-bottom:1px solid #eef0f3;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size:16px; font-weight:700; letter-spacing:-0.01em; color:#0b66ff;">
+                    <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:#0b66ff; vertical-align:middle; margin-right:8px;"></span>AI4I Platform
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          {# ── Body ── #}
+          <tr>
+            <td class="px-32 py-40" style="padding: 36px 32px 36px 32px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color:#1f2937;">
+              {% block heading_block %}
+              <h1 class="heading" style="margin:0 0 16px 0; font-size:24px; line-height:32px; font-weight:700; letter-spacing:-0.01em; color:#111827;">
+                {% block heading %}{% endblock %}
+              </h1>
+              {% endblock %}
+              <div style="font-size:15px; line-height:24px; color:#374151;">
+                {% block body %}{% endblock %}
+              </div>
+            </td>
+          </tr>
+
+          {# ── Footer ── #}
+          <tr>
+            <td class="px-32" style="padding: 20px 32px 24px 32px; background-color:#f9fafb; border-top:1px solid #eef0f3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size:12px; line-height:18px; color:#6b7280;">
+                {% block footer_extra %}{% endblock %}
+                <div style="margin-top:8px;">
+                  This is an automated message from AI4I Platform. If you weren&rsquo;t expecting it, you can safely ignore it.
+                </div>
+            </td>
+          </tr>
+
+        </table>
+
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size:12px; line-height:18px; color:#9ca3af; margin-top:16px; max-width:600px;">
+          &copy; AI4I Platform
+        </div>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
