@@ -97,7 +97,8 @@ async def validate_token(
         response.headers["X-User-Plan"] = USER_PLAN_APIKEY
         response.headers["X-Auth-Type"] = "api_key"
         tenant_id = result.get("tenant_id")
-        response.headers["X-Tenant-ID"] = str(tenant_id) if tenant_id else ""
+        if tenant_id:
+            response.headers["X-Tenant-ID"] = str(tenant_id)
         return ValidateAPIKeyResponse(
             valid=True,
             user_id=user_id,
@@ -173,7 +174,8 @@ async def validate_token(
     response.headers["X-User-Plan"] = USER_PLAN_JWT
     tt = claims.token_type
     response.headers["X-Auth-Type"] = str(tt.value) if hasattr(tt, "value") else str(tt)
-    response.headers["X-Tenant-ID"] = str(claims.tenant_id) if claims.tenant_id else ""
+    if claims.tenant_id:
+        response.headers["X-Tenant-ID"] = str(claims.tenant_id)
 
     return TokenValidationResponse(
         valid=True,

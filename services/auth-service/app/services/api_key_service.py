@@ -18,7 +18,6 @@ from app.core.config import settings
 from app.core.exceptions import EntityNotFoundError, InvalidAPIKeyError, ValidationError
 from app.models.api_key import APIKey
 from app.repositories.api_key_repository import APIKeyRepository
-from app.repositories.user_repository import UserRepository
 from app.services.cache_service import CacheService
 
 logger = logging.getLogger(__name__)
@@ -31,11 +30,9 @@ class APIKeyService:
         self,
         api_key_repo: APIKeyRepository,
         cache_service: CacheService,
-        user_repo: UserRepository,
     ) -> None:
         self._repo = api_key_repo
         self._cache = cache_service
-        self._user_repo = user_repo
 
     @staticmethod
     def generate_api_key() -> str:
@@ -62,6 +59,7 @@ class APIKeyService:
         key_name: str,
         permissions: list[int],
         expires_days: Optional[int] = None,
+        tenant_id: Optional[str] = None,
     ) -> tuple[str, APIKey]:
         """
         Generate a hex API key, persist to DB, cache in Redis.
@@ -72,8 +70,6 @@ class APIKeyService:
         await self._validate_permission_ids(permission_ids)
 
         raw_key = self.generate_api_key()
-        user = await self._user_repo.get_by_id(user_id)
-        tenant_id: Optional[str] = str(user.tenant_id) if user and user.tenant_id else None
         days = expires_days or settings.api_key_expire_days
         expires_at = datetime.now(timezone.utc) + timedelta(days=days)
         ttl = int(timedelta(days=days).total_seconds())

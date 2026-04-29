@@ -83,6 +83,6 @@ async def get_api_key_service(
     db: AsyncSession = Depends(get_db),
     cache: CacheService = Depends(get_cache_service),
 ) -> APIKeyService:
-    return APIKeyService(APIKeyRepository(db), cache, UserRepository(db))
+    return APIKeyService(APIKeyRepository(db), cache)
 
 
