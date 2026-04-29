@@ -188,14 +188,17 @@ const SetPasswordPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Set your password — AI4I Platform</title>
+        <title>Set Your Password — AI4I</title>
       </Head>
       <Box minH="100vh" bg={pageBg} py={{ base: 8, md: 16 }}>
         <Container maxW="md">
-          <VStack spacing={6} align="stretch">
+          <VStack spacing={3} align="stretch">
             <Heading size="lg" textAlign="center">
-              Set your password
+              Set Your Password
             </Heading>
+            <Text textAlign="center" fontSize="sm" color="gray.600">
+              Please create a strong password to secure your account.
+            </Text>
 
             <Card bg={cardBg} borderWidth="1px" borderColor={cardBorder}>
               <CardBody>
@@ -234,11 +237,8 @@ const SetPasswordPage: React.FC = () => {
                   phase.kind === "error") && (
                   <form onSubmit={onSubmit}>
                     <Stack spacing={4}>
-                      <Text fontSize="sm" color="gray.500">
-                        Choose a password to activate your account.
-                      </Text>
                       <FormControl isRequired>
-                        <FormLabel>New password</FormLabel>
+                        <FormLabel>New Password</FormLabel>
                         <InputGroup>
                           <Input
                             type={showPw ? "text" : "password"}
@@ -262,7 +262,7 @@ const SetPasswordPage: React.FC = () => {
                         <PasswordRequirements password={newPassword} compact />
                       </FormControl>
                       <FormControl isRequired isInvalid={confirmPassword.length > 0 && confirmPassword !== newPassword}>
-                        <FormLabel>Confirm password</FormLabel>
+                        <FormLabel>Confirm Password</FormLabel>
                         <Input
                           type={showPw ? "text" : "password"}
                           value={confirmPassword}
@@ -290,8 +290,11 @@ const SetPasswordPage: React.FC = () => {
                         loadingText="Setting password…"
                         isDisabled={!passwordPasses(newPassword) || newPassword !== confirmPassword}
                       >
-                        Set password
+                        Set Password
                       </Button>
+                      <Text textAlign="center" fontSize="sm" color="gray.500">
+                        Having trouble? Contact your administrator.
+                      </Text>
                     </Stack>
                   </form>
                 )}

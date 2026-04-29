@@ -96,12 +96,16 @@ def render_verify_email(user: User, verify_token: str) -> EmailMessage:
 
 
 def render_setup_link(user: User, setup_token: str) -> EmailMessage:
+    """Setup-link email — sent on tenant-admin / tenant-user activation.
+
+    Per product spec (reference UI: 'Welcome to AI4I!'): no greeting, no
+    username; the recipient sees an account-was-created message and a
+    Set Your Password CTA. Single-use, 48-hour expiry."""
     return _render(
         "setup_link",
         to=user.email,
-        subject="Activate your AI4I Platform account",
+        subject="Welcome to AI4I — Set Your Password",
         ctx={
-            "display_name": _display_name(user),
             "setup_url": build_setup_url(setup_token),
             "expires_hours": settings.setup_token_expire_hours,
         },
