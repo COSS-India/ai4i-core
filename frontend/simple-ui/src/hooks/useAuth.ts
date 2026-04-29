@@ -8,9 +8,14 @@ import { useTokenRefresh } from './useTokenRefresh';
 
 // Broadcast auth state changes so other hook instances (e.g., Header) can react immediately
 const AUTH_UPDATED_EVENT = 'auth:updated';
+const AUTH_SESSION_CHANNEL = 'ai4i:auth:session-events';
 
-/** Written when the app ends the session locally so other tabs on the same origin clear auth too */
-const AUTH_SESSION_REVOKED_STORAGE_KEY = 'ai4i:auth:session-revoked';
+function createAuthSessionChannel(): BroadcastChannel | null {
+  if (typeof window === 'undefined' || typeof window.BroadcastChannel === 'undefined') {
+    return null;
+  }
+  return new BroadcastChannel(AUTH_SESSION_CHANNEL);
+}
 
 // Shared init promise: only one getCurrentUser() + listApiKeys() run for all useAuth() instances.
 // This prevents N components (Header, Sidebar, AuthGuard, pages, useFeatureFlag hooks) from each
@@ -58,11 +63,9 @@ export function forceFrontendSessionEnd(): void {
   authService.clearStoredUser();
   resetAuthInitPromise();
   window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
-  try {
-    localStorage.setItem(AUTH_SESSION_REVOKED_STORAGE_KEY, String(Date.now()));
-  } catch {
-    // private mode / blocked storage — still redirect below
-  }
+  const sessionChannel = createAuthSessionChannel();
+  sessionChannel?.postMessage({ type: 'session-revoked', ts: Date.now() });
+  sessionChannel?.close();
   window.location.assign('/auth');
 }
 
@@ -139,8 +142,7 @@ export const useAuth = () => {
       }
     };
 
-    const handleSessionRevokedFromStorage = (event: StorageEvent) => {
-      if (event.key !== AUTH_SESSION_REVOKED_STORAGE_KEY || event.newValue == null) return;
+    const handleSessionRevoked = () => {
       authService.clearAuthTokens();
       authService.clearStoredUser();
       resetAuthInitPromise();
@@ -162,14 +164,17 @@ export const useAuth = () => {
     };
 
     initializeAuth();
-    if (typeof window !== 'undefined') {
-      window.addEventListener('storage', handleSessionRevokedFromStorage);
-    }
+    const sessionChannel = createAuthSessionChannel();
+    sessionChannel?.addEventListener('message', (event: MessageEvent) => {
+      if (event.data?.type === 'session-revoked') {
+        handleSessionRevoked();
+      }
+    });
     return () => {
       if (typeof window !== 'undefined') {
         window.removeEventListener(AUTH_UPDATED_EVENT, handleAuthUpdated as EventListener);
-        window.removeEventListener('storage', handleSessionRevokedFromStorage);
       }
+      sessionChannel?.close();
     };
   }, []);
 

@@ -6,7 +6,6 @@ import {
   LoginResponse,
   RegisterRequest,
   User,
-  TokenRefreshRequest,
   TokenRefreshResponse,
   TokenValidationResponse,
   PasswordChangeRequest,
@@ -22,15 +21,15 @@ import {
   OAuth2Provider,
   Permission,
 } from '../types/auth';
-import axios from 'axios';
-import { apiClient } from './api';
 import { apiEndpoints } from './apiEndpoints';
+import baseApiService from './baseApiService';
 import {
   getStoredAccessToken,
   getStoredRefreshToken,
   setStoredAccessToken,
   setStoredRefreshToken,
   clearTokenStorage,
+  getRememberMePreference,
 } from '../utils/tokenStorage';
 import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 
@@ -42,111 +41,65 @@ class AuthService {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${apiEndpoints.auth.base}${endpoint}`;
-    
-    const defaultHeaders: HeadersInit = {
-      'Content-Type': 'application/json',
-    };
-
-    // Add authorization header if token exists
+    const method = (options.method || 'GET') as
+      | 'GET'
+      | 'POST'
+      | 'PUT'
+      | 'PATCH'
+      | 'DELETE';
+    const requestData =
+      typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
     const token = this.getAccessToken();
-    if (token) {
-      defaultHeaders.Authorization = `Bearer ${token}`;
-    }
 
-    const config: RequestInit = {
-      ...options,
-      headers: {
-        ...defaultHeaders,
-        ...options.headers,
-      },
-    };
-
-    const method = (options.method || 'GET') as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-    const requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
-    
     try {
-      const response = await apiClient.request<T>({
-        url,
+      return await baseApiService.request<T>(url, {
         method,
         data: requestData,
-        headers: config.headers as Record<string, string>,
         timeout: 10000,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(options.headers as Record<string, string>),
+        },
       });
-      const json = response.data as any;
-
-      // Unwrap v2 response envelope: { success: true, data: {...} }
-      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
-        return json.data as T;
-      }
-      return json as T;
     } catch (error: any) {
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        const errorData: any = error.response?.data ?? {};
-        if (
-          typeof window !== 'undefined' &&
-          responseIndicatesTenantSuspendedOrInactive(status ?? 0, errorData)
-        ) {
-          try {
-            const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
-            forceFrontendSessionEnd();
-          } catch {
-            this.clearAuthTokens();
-            this.clearStoredUser();
-            window.location.assign('/auth');
-          }
-          throw new Error('Your organization account is no longer active. Please sign in again.');
-        }
-
-        // Extract error message from various possible formats (avoid [object Object] when detail is an object)
-        let errorMessage = `HTTP error! status: ${status ?? 'unknown'}`;
-        if (errorData?.detail) {
-          const d = errorData.detail;
-          if (typeof d === 'string') {
-            errorMessage = d;
-          } else if (typeof d === 'object' && d !== null && typeof (d as any).message === 'string') {
-            errorMessage = (d as any).message;
-          } else if (typeof d === 'object' && d !== null) {
-            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
-          } else {
-            errorMessage = String(d);
-          }
-        } else if (errorData?.message) {
-          errorMessage = String(errorData.message);
-        } else if (typeof errorData === 'string') {
-          errorMessage = errorData;
-        } else if (Array.isArray(errorData) && errorData.length > 0) {
-          errorMessage = errorData.map((err: any) => err.detail?.message ?? err.detail ?? err.message ?? String(err)).join(', ');
-        }
-        
-        // Check if error is "Invalid authentication credentials" (session expiry)
-        const errorMessageLower = errorMessage.toLowerCase();
-        const isInvalidAuth =
-          errorMessageLower.includes('invalid authentication credentials') ||
-          (status === 401 && errorMessageLower.includes('invalid'));
-        
-        if (isInvalidAuth && typeof window !== 'undefined') {
-          // Clear tokens and redirect to login
+      const status = error?.status;
+      const errorData: any = error?.responseData ?? {};
+      if (
+        typeof window !== 'undefined' &&
+        responseIndicatesTenantSuspendedOrInactive(status ?? 0, errorData)
+      ) {
+        try {
+          const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+          forceFrontendSessionEnd();
+        } catch {
           this.clearAuthTokens();
           this.clearStoredUser();
-          window.location.href = '/';
-          throw new Error('Session expired. Please sign in again.');
+          window.location.assign('/auth');
         }
-        
-        // Add status code to error message for debugging
-        const mappedError = new Error(errorMessage);
-        (mappedError as any).status = status;
-        throw mappedError;
+        throw new Error('Your organization account is no longer active. Please sign in again.');
       }
-      if (error.code === 'ECONNABORTED') {
+
+      // Check if error is "Invalid authentication credentials" (session expiry)
+      const errorMessageLower = (error?.message || '').toLowerCase();
+      const isInvalidAuth =
+        errorMessageLower.includes('invalid authentication credentials') ||
+        (status === 401 && errorMessageLower.includes('invalid'));
+
+      if (isInvalidAuth && typeof window !== 'undefined') {
+        // Clear tokens and redirect to login
+        this.clearAuthTokens();
+        this.clearStoredUser();
+        window.location.href = '/';
+        throw new Error('Session expired. Please sign in again.');
+      }
+
+      if (error?.message?.toLowerCase?.().includes('timeout')) {
         console.error('Auth service request timed out:', url);
         throw new Error('Request timeout: Auth service is not responding');
       }
+
       console.error('Auth service request failed:', error);
-      // Preserve the original error message and status if available
-      if (error.status) {
-        (error as any).status = error.status;
-      }
       throw error;
     }
   }
@@ -228,102 +181,27 @@ class AuthService {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${apiEndpoints.auth.base}${endpoint}`;
-    
-    const defaultHeaders: HeadersInit = {
-      'Content-Type': 'application/json',
-    };
-
-    const config: RequestInit = {
-      ...options,
-      headers: {
-        ...defaultHeaders,
-        ...options.headers,
-      },
-    };
+    const method = (options.method || 'GET') as
+      | 'GET'
+      | 'POST'
+      | 'PUT'
+      | 'PATCH'
+      | 'DELETE';
+    const requestData =
+      typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
 
     try {
-      const method = (options.method || 'GET') as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-      const requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
-      const response = await apiClient.request<T>({
-        url,
+      return await baseApiService.request<T>(url, {
         method,
         data: requestData,
-        headers: config.headers as Record<string, string>,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.headers as Record<string, string>),
+        },
       });
-
-      const json = response.data as any;
-      // Unwrap v2 response envelope: { success: true, data: {...} }
-      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
-        return json.data as T;
-      }
-      return json as T;
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        let errorData: any = error.response?.data ?? {};
-        if (typeof errorData === 'string') {
-          try {
-            errorData = JSON.parse(errorData);
-          } catch {
-            errorData = { detail: errorData };
-          }
-        }
-
-        // Handle different error response formats (avoid [object Object] when detail is an object)
-        let errorMessage = `HTTP error! status: ${status ?? 'unknown'}`;
-        if (typeof errorData === 'string') {
-          errorMessage = errorData;
-        } else if (errorData?.detail) {
-          const d = errorData.detail;
-          if (typeof d === 'string') {
-            errorMessage = d;
-          } else if (typeof d === 'object' && d !== null && typeof d.message === 'string') {
-            errorMessage = d.message;
-          } else if (typeof d === 'object' && d !== null) {
-            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
-          } else {
-            errorMessage = String(d);
-          }
-        } else if (errorData?.message) {
-          errorMessage = String(errorData.message);
-        } else if (Array.isArray(errorData)) {
-          // Handle array of errors
-          errorMessage = errorData.map((err: any) =>
-            err.detail?.message ?? err.detail ?? err.message ?? String(err)
-          ).join(', ');
-        } else if (typeof errorData === 'object' && Object.keys(errorData).length > 0) {
-          const d = errorData.detail ?? errorData.message ?? errorData.error;
-          errorMessage = typeof d === 'object' && d !== null && (d as any).message != null
-            ? String((d as any).message)
-            : d != null ? String(d) : JSON.stringify(errorData);
-        }
-        
-        // Add status code to error for better debugging
-        const mappedError = new Error(errorMessage);
-        (mappedError as any).status = status;
-        throw mappedError;
-      }
       console.error('Auth service request failed:', error);
-      // Re-throw as Error if it's not already one, with proper message
-      if (error instanceof Error) {
-        // If error message is "[object Object]", try to extract meaningful info
-        if (error.message === '[object Object]' || error.message.includes('[object Object]')) {
-          // Try to get more info from the error object
-          const errorInfo = (error as any).response?.data || (error as any).data || error;
-          if (typeof errorInfo === 'object' && errorInfo !== null) {
-            const extractedMsg = errorInfo.detail || errorInfo.message || errorInfo.error || JSON.stringify(errorInfo);
-            throw new Error(typeof extractedMsg === 'string' ? extractedMsg : JSON.stringify(extractedMsg));
-          }
-        }
-        throw error;
-      } else {
-        // If it's not an Error instance, try to extract meaningful message
-        if (typeof error === 'object' && error !== null) {
-          const extractedMsg = (error as any).detail || (error as any).message || (error as any).error || JSON.stringify(error);
-          throw new Error(typeof extractedMsg === 'string' ? extractedMsg : JSON.stringify(extractedMsg));
-        }
-        throw new Error(String(error));
-      }
+      throw error;
     }
   }
 
@@ -383,7 +261,7 @@ class AuthService {
           body: JSON.stringify({ refresh_token: refreshToken }),
         });
 
-        const rememberMe = typeof window !== 'undefined' && localStorage.getItem('remember_me') === 'true';
+        const rememberMe = getRememberMePreference();
         this.setAccessToken(response.access_token, rememberMe);
 
         return response;
@@ -411,74 +289,26 @@ class AuthService {
     timeoutMs: number = 10000
   ): Promise<T> {
     const url = `${apiEndpoints.auth.base}${endpoint}`;
-    
-    const defaultHeaders: HeadersInit = {
-      'Content-Type': 'application/json',
-    };
-
-    // Add authorization header if token exists
+    const method = (options.method || 'GET') as
+      | 'GET'
+      | 'POST'
+      | 'PUT'
+      | 'PATCH'
+      | 'DELETE';
+    const requestData =
+      typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
     const token = this.getAccessToken();
-    if (token) {
-      defaultHeaders.Authorization = `Bearer ${token}`;
-    }
 
-    const config: RequestInit = {
-      ...options,
+    return baseApiService.request<T>(url, {
+      method,
+      data: requestData,
+      timeout: timeoutMs,
       headers: {
-        ...defaultHeaders,
-        ...options.headers,
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers as Record<string, string>),
       },
-    };
-
-    const method = (options.method || 'GET') as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-    const requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
-    
-    try {
-      const response = await apiClient.request<T>({
-        url,
-        method,
-        data: requestData,
-        headers: config.headers as Record<string, string>,
-        timeout: timeoutMs,
-      });
-      const json = response.data as any;
-      // Unwrap v2 response envelope: { success: true, data: {...} }
-      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
-        return json.data as T;
-      }
-      return json as T;
-    } catch (error: any) {
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        const errorData: any = error.response?.data ?? {};
-        // Extract error message from various possible formats
-        let errorMessage = `HTTP error! status: ${status ?? 'unknown'}`;
-        if (errorData?.detail) {
-          errorMessage = String(errorData.detail);
-        } else if (errorData?.message) {
-          errorMessage = String(errorData.message);
-        } else if (typeof errorData === 'string') {
-          errorMessage = errorData;
-        } else if (Array.isArray(errorData) && errorData.length > 0) {
-          errorMessage = errorData.map((err: any) => err.detail || err.message || String(err)).join(', ');
-        }
-        
-        // Add status code to error for better debugging
-        const mappedError = new Error(errorMessage);
-        (mappedError as any).status = status;
-        throw mappedError;
-      }
-      if (error.code === 'ECONNABORTED') {
-        console.error('Auth service request timed out:', url);
-        throw new Error(`Request timeout: Auth service is not responding (timeout: ${timeoutMs}ms)`);
-      }
-      console.error('Auth service request failed:', error);
-      // Preserve the original error message and status if available
-      if (error.status) {
-        (error as any).status = error.status;
-      }
-      throw error;
-    }
+    });
   }
 
   async updateCurrentUser(data: Partial<User>): Promise<User> {
@@ -599,23 +429,21 @@ class AuthService {
 
   getStoredUser(): User | null {
     if (typeof window === 'undefined') return null;
-    // Check both storages (for backward compatibility)
-    const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
+    const userStr = sessionStorage.getItem('user') || localStorage.getItem('user');
+    if (userStr && !sessionStorage.getItem('user')) {
+      // Backward compatibility: migrate legacy localStorage user to sessionStorage.
+      sessionStorage.setItem('user', userStr);
+      localStorage.removeItem('user');
+    }
     return userStr ? JSON.parse(userStr) : null;
   }
 
   setStoredUser(user: User): void {
     if (typeof window === 'undefined') return;
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
     // Clear from both storages first
     localStorage.removeItem('user');
     sessionStorage.removeItem('user');
-    // Store in appropriate storage
-    if (rememberMe) {
-      localStorage.setItem('user', JSON.stringify(user));
-    } else {
-      sessionStorage.setItem('user', JSON.stringify(user));
-    }
+    sessionStorage.setItem('user', JSON.stringify(user));
   }
 
   clearStoredUser(): void {
@@ -759,16 +587,10 @@ class AuthService {
   private setLoginTimestamp(): void {
     if (typeof window === 'undefined') return;
     const timestamp = Date.now().toString();
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
     // Clear from both storages first
     localStorage.removeItem('login_timestamp');
     sessionStorage.removeItem('login_timestamp');
-    // Store in appropriate storage
-    if (rememberMe) {
-      localStorage.setItem('login_timestamp', timestamp);
-    } else {
-      sessionStorage.setItem('login_timestamp', timestamp);
-    }
+    sessionStorage.setItem('login_timestamp', timestamp);
   }
 
   /**
@@ -776,7 +598,12 @@ class AuthService {
    */
   public getLoginTimestamp(): number | null {
     if (typeof window === 'undefined') return null;
-    const timestampStr = localStorage.getItem('login_timestamp') || sessionStorage.getItem('login_timestamp');
+    const timestampStr = sessionStorage.getItem('login_timestamp') || localStorage.getItem('login_timestamp');
+    if (timestampStr && !sessionStorage.getItem('login_timestamp')) {
+      // Backward compatibility: migrate legacy localStorage timestamp to sessionStorage.
+      sessionStorage.setItem('login_timestamp', timestampStr);
+      localStorage.removeItem('login_timestamp');
+    }
     return timestampStr ? parseInt(timestampStr, 10) : null;
   }
 
@@ -792,7 +619,7 @@ class AuthService {
       return true;
     }
     const now = Date.now();
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
+    const rememberMe = getRememberMePreference();
     const sessionDurationMs = rememberMe 
       ? 7 * 24 * 60 * 60 * 1000  // 7 days
       : 24 * 60 * 60 * 1000;      // 24 hours
@@ -810,7 +637,7 @@ class AuthService {
       return null;
     }
     const now = Date.now();
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
+    const rememberMe = getRememberMePreference();
     const sessionDurationMs = rememberMe 
       ? 7 * 24 * 60 * 60 * 1000  // 7 days
       : 24 * 60 * 60 * 1000;      // 24 hours

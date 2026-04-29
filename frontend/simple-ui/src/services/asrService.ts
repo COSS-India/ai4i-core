@@ -1,6 +1,7 @@
 // ASR service API client with typed methods
 
-import { apiClient, apiEndpoints } from './api';
+import { apiEndpoints } from './api';
+import baseApiService from './baseApiService';
 import { 
   ASRInferenceRequest, 
   ASRInferenceResponse, 
@@ -42,12 +43,11 @@ export const performASRInference = async (
       },
     };
 
-    const response = await apiClient.post<ASRInferenceResponse>(
+    const response = await baseApiService.post<ASRInferenceResponse>(
       apiEndpoints.asr.inference,
       payload
     );
-
-    return response.data;
+    return response;
   } catch (error) {
     console.error('ASR inference error:', error);
     throw error; // Re-throw so toast can show backend message via extractErrorInfo
@@ -88,9 +88,12 @@ export const transcribeAudio = async (
       audio: [{ audioContent: `${audioContent.substring(0, 50)}... (truncated)` }]
     });
 
-    const response = await apiClient.post<ASRInferenceResponse>(
+    const response = await baseApiService.requestWithMeta<ASRInferenceResponse>(
       apiEndpoints.asr.inference,
-      payload
+      {
+        method: 'POST',
+        data: payload,
+      }
     );
 
     console.log('=== ASR API Response ===');
@@ -117,11 +120,10 @@ export const transcribeAudio = async (
  */
 export const listASRModels = async (): Promise<ASRModelsResponse> => {
   try {
-    const response = await apiClient.get<ASRModelsResponse>(
+    const response = await baseApiService.get<ASRModelsResponse>(
       apiEndpoints.asr.models
     );
-
-    return response.data;
+    return response;
   } catch (error) {
     console.error('Failed to fetch ASR models:', error);
     throw new Error('Failed to fetch ASR models');
@@ -193,11 +195,10 @@ export const listASRServices = async (): Promise<ASRServiceDetails[]> => {
  */
 export const checkASRHealth = async (): Promise<ASRHealthResponse> => {
   try {
-    const response = await apiClient.get<ASRHealthResponse>(
+    const response = await baseApiService.get<ASRHealthResponse>(
       apiEndpoints.asr.health
     );
-
-    return response.data;
+    return response;
   } catch (error) {
     console.error('Failed to check ASR health:', error);
     throw new Error('Failed to check ASR service health');
@@ -210,8 +211,7 @@ export const checkASRHealth = async (): Promise<ASRHealthResponse> => {
  */
 export const getASRConfig = async () => {
   try {
-    const response = await apiClient.get(apiEndpoints.asr.config);
-    return response.data;
+    return await baseApiService.get(apiEndpoints.asr.config);
   } catch (error) {
     console.error('Failed to fetch ASR config:', error);
     throw new Error('Failed to fetch ASR configuration');

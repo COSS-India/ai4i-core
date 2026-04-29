@@ -1,6 +1,7 @@
 // Pipeline Service API client
 
-import apiClient, { apiEndpoints } from './api';
+import { apiEndpoints } from './api';
+import baseApiService from './baseApiService';
 import { 
   PipelineInferenceRequest, 
   PipelineInferenceResponse 
@@ -13,11 +14,10 @@ export const runPipelineInference = async (
   request: PipelineInferenceRequest
 ): Promise<PipelineInferenceResponse> => {
   try {
-    const response = await apiClient.post(
+    return await baseApiService.post<PipelineInferenceResponse>(
       apiEndpoints.pipeline.inference,
       request
     );
-    return response.data;
   } catch (error) {
     console.error('Pipeline inference error:', error);
     throw error; // Re-throw so toast can show backend message via extractErrorInfo
@@ -28,16 +28,14 @@ export const runPipelineInference = async (
  * Get pipeline service information
  */
 export const getPipelineInfo = async (): Promise<any> => {
-  const response = await apiClient.get(apiEndpoints.pipeline.info);
-  return response.data;
+  return baseApiService.get(apiEndpoints.pipeline.info);
 };
 
 /**
  * Check pipeline service health
  */
 export const checkPipelineHealth = async (): Promise<any> => {
-  const response = await apiClient.get(apiEndpoints.pipeline.health);
-  return response.data;
+  return baseApiService.get(apiEndpoints.pipeline.health);
 };
 
 const pipelineService = {

@@ -47,9 +47,34 @@ function decrypt(value: string): string | null {
 
 function getRawFromStorage(key: string): string | null {
   if (typeof window === 'undefined') return null;
-  const fromLocal = localStorage.getItem(key);
   const fromSession = sessionStorage.getItem(key);
-  return fromLocal || fromSession;
+  if (fromSession) return fromSession;
+
+  // Backward compatibility: migrate any legacy localStorage tokens to sessionStorage.
+  const fromLocal = localStorage.getItem(key);
+  if (fromLocal) {
+    sessionStorage.setItem(key, fromLocal);
+    localStorage.removeItem(key);
+    return fromLocal;
+  }
+
+  return null;
+}
+
+export function getRememberMePreference(): boolean {
+  if (typeof window === 'undefined') return false;
+  const fromSession = sessionStorage.getItem('remember_me');
+  if (fromSession != null) return fromSession === 'true';
+
+  // Backward compatibility: migrate old remember_me value to sessionStorage.
+  const fromLocal = localStorage.getItem('remember_me');
+  if (fromLocal != null) {
+    sessionStorage.setItem('remember_me', fromLocal);
+    localStorage.removeItem('remember_me');
+    return fromLocal === 'true';
+  }
+
+  return false;
 }
 
 /**
@@ -77,15 +102,12 @@ export function getStoredRefreshToken(): string | null {
  */
 export function setStoredAccessToken(token: string, rememberMe: boolean): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem('remember_me', rememberMe ? 'true' : 'false');
+  sessionStorage.setItem('remember_me', rememberMe ? 'true' : 'false');
+  localStorage.removeItem('remember_me');
   localStorage.removeItem(ACCESS_TOKEN_KEY);
   sessionStorage.removeItem(ACCESS_TOKEN_KEY);
   const encrypted = encrypt(token);
-  if (rememberMe) {
-    localStorage.setItem(ACCESS_TOKEN_KEY, encrypted);
-  } else {
-    sessionStorage.setItem(ACCESS_TOKEN_KEY, encrypted);
-  }
+  sessionStorage.setItem(ACCESS_TOKEN_KEY, encrypted);
 }
 
 /**
@@ -93,15 +115,12 @@ export function setStoredAccessToken(token: string, rememberMe: boolean): void {
  */
 export function setStoredRefreshToken(token: string, rememberMe: boolean): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem('remember_me', rememberMe ? 'true' : 'false');
+  sessionStorage.setItem('remember_me', rememberMe ? 'true' : 'false');
+  localStorage.removeItem('remember_me');
   localStorage.removeItem(REFRESH_TOKEN_KEY);
   sessionStorage.removeItem(REFRESH_TOKEN_KEY);
   const encrypted = encrypt(token);
-  if (rememberMe) {
-    localStorage.setItem(REFRESH_TOKEN_KEY, encrypted);
-  } else {
-    sessionStorage.setItem(REFRESH_TOKEN_KEY, encrypted);
-  }
+  sessionStorage.setItem(REFRESH_TOKEN_KEY, encrypted);
 }
 
 /**
@@ -113,6 +132,7 @@ export function clearTokenStorage(): void {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
   sessionStorage.removeItem(ACCESS_TOKEN_KEY);
   sessionStorage.removeItem(REFRESH_TOKEN_KEY);
+  sessionStorage.removeItem('remember_me');
   localStorage.removeItem('remember_me');
   localStorage.removeItem('login_timestamp');
   sessionStorage.removeItem('login_timestamp');

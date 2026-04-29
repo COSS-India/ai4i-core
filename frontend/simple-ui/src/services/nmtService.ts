@@ -1,6 +1,7 @@
 // NMT service API client with typed methods
 
-import { apiClient, apiEndpoints } from './api';
+import { apiEndpoints } from './api';
+import baseApiService from './baseApiService';
 import { listServices } from './modelManagementService';
 import {
   NMTInferenceRequest,
@@ -54,9 +55,12 @@ export const performNMTInference = async (
       },
     };
 
-    const response = await apiClient.post<NMTInferenceResponse>(
+    const response = await baseApiService.requestWithMeta<NMTInferenceResponse>(
       apiEndpoints.nmt.inference,
-      payload
+      {
+        method: 'POST',
+        data: payload,
+      }
     );
 
     // Extract response time from headers
@@ -78,11 +82,10 @@ export const performNMTInference = async (
  */
 export const listNMTModels = async (): Promise<NMTModelDetailsResponse[]> => {
   try {
-    const response = await apiClient.get<{ models: NMTModelDetailsResponse[]; total_models: number }>(
+    const response = await baseApiService.get<{ models: NMTModelDetailsResponse[]; total_models: number }>(
       apiEndpoints.nmt.models
     );
-
-    return response.data.models;
+    return response.models;
   } catch (error) {
     console.error('Failed to fetch NMT models:', error);
     throw new Error('Failed to fetch NMT models');
@@ -390,11 +393,10 @@ export const getNMTLanguagesForService = async (
  */
 export const checkNMTHealth = async (): Promise<NMTHealthResponse> => {
   try {
-    const response = await apiClient.get<NMTHealthResponse>(
+    const response = await baseApiService.get<NMTHealthResponse>(
       apiEndpoints.nmt.health
     );
-
-    return response.data;
+    return response;
   } catch (error) {
     console.error('Failed to check NMT health:', error);
     throw new Error('Failed to check NMT service health');
@@ -407,8 +409,7 @@ export const checkNMTHealth = async (): Promise<NMTHealthResponse> => {
  */
 export const getNMTConfig = async () => {
   try {
-    const response = await apiClient.get(apiEndpoints.nmt.config);
-    return response.data;
+    return await baseApiService.get(apiEndpoints.nmt.config);
   } catch (error) {
     console.error('Failed to fetch NMT config:', error);
     throw new Error('Failed to fetch NMT configuration');

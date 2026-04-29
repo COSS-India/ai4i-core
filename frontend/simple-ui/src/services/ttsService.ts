@@ -1,6 +1,7 @@
 // TTS service API client with typed methods
 
-import { apiClient, apiEndpoints } from './api';
+import { apiEndpoints } from './api';
+import baseApiService from './baseApiService';
 import { 
   TTSInferenceRequest, 
   TTSInferenceResponse, 
@@ -97,9 +98,12 @@ export const performTTSInference = async (
       },
     };
 
-    const response = await apiClient.post<TTSInferenceResponse>(
+    const response = await baseApiService.requestWithMeta<TTSInferenceResponse>(
       apiEndpoints.tts.inference,
-      payload
+      {
+        method: 'POST',
+        data: payload,
+      }
     );
 
     // Extract response time from headers
@@ -137,12 +141,10 @@ export const listVoices = async (filters?: VoiceFilterOptions): Promise<VoiceLis
       params.is_active = filters.isActive;
     }
 
-    const response = await apiClient.get<VoiceListResponse>(
+    return await baseApiService.get<VoiceListResponse>(
       apiEndpoints.tts.voices,
       { params, timeout: 15000 }
     );
-
-    return response.data;
   } catch (error) {
     console.error('Failed to fetch voices:', error);
     throw new Error('Failed to fetch available voices');
@@ -155,11 +157,10 @@ export const listVoices = async (filters?: VoiceFilterOptions): Promise<VoiceLis
  */
 export const checkTTSHealth = async (): Promise<TTSHealthResponse> => {
   try {
-    const response = await apiClient.get<TTSHealthResponse>(
+    const response = await baseApiService.get<TTSHealthResponse>(
       apiEndpoints.tts.health
     );
-
-    return response.data;
+    return response;
   } catch (error) {
     console.error('Failed to check TTS health:', error);
     throw new Error('Failed to check TTS service health');
@@ -172,8 +173,7 @@ export const checkTTSHealth = async (): Promise<TTSHealthResponse> => {
  */
 export const getTTSConfig = async () => {
   try {
-    const response = await apiClient.get(apiEndpoints.tts.config);
-    return response.data;
+    return await baseApiService.get(apiEndpoints.tts.config);
   } catch (error) {
     console.error('Failed to fetch TTS config:', error);
     throw new Error('Failed to fetch TTS configuration');
@@ -187,8 +187,7 @@ export const getTTSConfig = async () => {
  */
 export const getVoiceById = async (voiceId: string): Promise<Voice> => {
   try {
-    const response = await apiClient.get<Voice>(`${apiEndpoints.tts.voices}/${voiceId}`);
-    return response.data;
+    return await baseApiService.get<Voice>(`${apiEndpoints.tts.voices}/${voiceId}`);
   } catch (error) {
     console.error('Failed to fetch voice details:', error);
     throw new Error('Failed to fetch voice details');
