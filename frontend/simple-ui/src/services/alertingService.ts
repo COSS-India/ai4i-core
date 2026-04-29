@@ -3,6 +3,7 @@
  * Follows the same request pattern as authService (fetch + Bearer token).
  */
 import { API_BASE_URL } from './api';
+import { apiEndpoints } from './apiEndpoints';
 import authService from './authService';
 import type {
   AlertDefinition,
@@ -22,7 +23,7 @@ class AlertingService {
   private baseUrl: string;
 
   constructor() {
-    this.baseUrl = `${API_BASE_URL}/api/v1/alerts`;
+    this.baseUrl = `${API_BASE_URL}${apiEndpoints.alerts.base}`;
   }
 
   private getAccessToken(): string | null {
