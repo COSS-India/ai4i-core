@@ -331,7 +331,7 @@ class AuthService:
         await self._users.create(user)
 
         try:
-            await self._roles.assign_role(user.id, RoleName.USER)
+            await self._roles.assign_role(user.id, role_name)
         except EntityNotFoundError:
             logger.warning("Role %r not found, skipping role assignment.", role_name)
 

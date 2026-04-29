@@ -16,7 +16,7 @@ from app.core.roles import Roles
 from app.dependencies.services import get_auth_service
 from app.models.tenant import Tenant, TenantStatus
 from app.models.role_name import RoleName
-from app.models.user import CreationType, User
+from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
@@ -256,7 +256,8 @@ async def create_tenant_user(
         full_name=body.full_name,
         phone_number=body.phone_number,
         tenant_id=str(tenant_id),
-        creation_type=CreationType.DEFAULT.value,
+        creation_type="default",
+        background_tasks=background_tasks,
     )
     return success_response(
         data=TenantUserCreateResponse(user_id=user_id_str, setup_token=setup_token).model_dump()
