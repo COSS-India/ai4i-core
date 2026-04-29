@@ -27,6 +27,9 @@ from app.services.user_service import UserService
 
 logger = logging.getLogger(__name__)
 
+USER_PLAN_JWT: str = "P1"
+USER_PLAN_APIKEY: str = "P2"
+
 router = APIRouter(prefix="/auth", tags=["Validation"])
 
 security = HTTPBearer(auto_error=False)
@@ -91,6 +94,11 @@ async def validate_token(
         user_id = result.get("user_id")
         if user_id:
             response.headers["X-User-ID"] = str(user_id)
+        response.headers["X-User-Plan"] = USER_PLAN_APIKEY
+        response.headers["X-Auth-Type"] = "api_key"
+        tenant_id = result.get("tenant_id")
+        if tenant_id:
+            response.headers["X-Tenant-ID"] = str(tenant_id)
         return ValidateAPIKeyResponse(
             valid=True,
             user_id=user_id,
@@ -163,6 +171,11 @@ async def validate_token(
     # Backward-compatible: keep JSON body and add user id header for consumers
     if claims.user_id:
         response.headers["X-User-ID"] = str(claims.user_id)
+    response.headers["X-User-Plan"] = USER_PLAN_JWT
+    tt = claims.token_type
+    response.headers["X-Auth-Type"] = str(tt.value) if hasattr(tt, "value") else str(tt)
+    if claims.tenant_id:
+        response.headers["X-Tenant-ID"] = str(claims.tenant_id)
 
     return TokenValidationResponse(
         valid=True,
