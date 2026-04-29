@@ -63,11 +63,7 @@ export const listSpeakerDiarizationServices = async (): Promise<SpeakerDiarizati
         });
       }
       
-      // Extract endpoint and clean it
-      let endpoint = service.endpoint || '';
-      if (endpoint) {
-        endpoint = endpoint.replace('http://', '').replace('https://', '');
-      }
+      const endpoint = service.endpoint || '';
       
       return {
         service_id: service.serviceId || service.service_id,

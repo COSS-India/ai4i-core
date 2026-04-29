@@ -1,6 +1,7 @@
 // Multi-tenant admin API client (list, view, register, update tenants and users)
 
 import { apiClient } from './api';
+import { apiEndpoints } from './apiEndpoints';
 import type {
   ListTenantsResponse,
   ListUsersResponse,
@@ -29,156 +30,170 @@ import type {
   UserSubscriptionResponse,
 } from '../types/multiTenant';
 
-const BASE = '/api/v1/multi-tenant';
+const mt = apiEndpoints['multi-tenant'];
+const mtAdmin = mt.admin;
 
 /**
  * List all tenants in the system (admin).
- * GET /api/v1/multi-tenant/admin/list/tenants
+ * GET mtAdmin.listTenants
  */
 export async function listTenants(): Promise<ListTenantsResponse> {
-  const { data } = await apiClient.get<ListTenantsResponse>(`${BASE}/admin/list/tenants`);
+  const { data } = await apiClient.get<ListTenantsResponse>(mtAdmin.listTenants);
   return data;
 }
 
 /**
  * List users for one tenant. Backend requires `tenant_id` query param; TENANT ADMIN may only request their own tenant.
- * GET /api/v1/multi-tenant/admin/list/users
- * @param tenant_id - Tenant to list (logged-in tenant admin: use `user.tenant_id` from /api/v1/auth/me; platform admin: pass selected tenant).
+ * GET mtAdmin.listUsers
+ * @param tenant_id - Tenant to list (logged-in tenant admin: use `user.tenant_id` from auth/me; platform admin: pass selected tenant).
  */
 export async function listUsers(tenant_id: string): Promise<ListUsersResponse> {
   const params = { tenant_id };
-  const { data } = await apiClient.get<ListUsersResponse>(`${BASE}/admin/list/users`, { params });
+  const { data } = await apiClient.get<ListUsersResponse>(mtAdmin.listUsers, { params });
   return data;
 }
 
 /**
  * View tenant details by tenant_id.
- * GET /api/v1/multi-tenant/admin/view/tenant
+ * GET mtAdmin.viewTenant
  */
 export async function getViewTenant(tenant_id: string): Promise<TenantView> {
-  const { data } = await apiClient.get<TenantView>(`${BASE}/admin/view/tenant`, { params: { tenant_id } });
+  const { data } = await apiClient.get<TenantView>(mtAdmin.viewTenant, { params: { tenant_id } });
   return data;
 }
 
 /**
  * View tenant user details by user_id.
- * GET /api/v1/multi-tenant/admin/view/user
+ * GET mtAdmin.viewUser
  */
 export async function getViewUser(user_id: number): Promise<TenantUserView> {
-  const { data } = await apiClient.get<TenantUserView>(`${BASE}/admin/view/user`, { params: { user_id } });
+  const { data } = await apiClient.get<TenantUserView>(mtAdmin.viewUser, { params: { user_id } });
   return data;
 }
 
 /**
  * Update a tenant's status.
- * PATCH /api/v1/multi-tenant/admin/update/tenants/status
+ * PATCH mtAdmin.updateTenantsStatus
  */
 export async function updateTenantStatus(payload: TenantStatusUpdateRequest): Promise<TenantStatusUpdateResponse> {
-  const { data } = await apiClient.patch<TenantStatusUpdateResponse>(`${BASE}/admin/update/tenants/status`, payload);
+  const { data } = await apiClient.patch<TenantStatusUpdateResponse>(mtAdmin.updateTenantsStatus, payload);
   return data;
 }
 
 /**
  * Update a tenant user's status.
- * PATCH /api/v1/multi-tenant/admin/update/users/status
+ * PATCH mtAdmin.updateUsersStatus
  */
 export async function updateUserStatus(payload: TenantUserStatusUpdateRequest): Promise<TenantUserStatusUpdateResponse> {
-  const { data } = await apiClient.patch<TenantUserStatusUpdateResponse>(`${BASE}/admin/update/users/status`, payload);
+  const { data } = await apiClient.patch<TenantUserStatusUpdateResponse>(mtAdmin.updateUsersStatus, payload);
   return data;
 }
 
 /**
  * Update tenant details. Only passed fields are updated.
- * PATCH /api/v1/multi-tenant/admin/update/tenant
+ * PATCH mtAdmin.updateTenant
  */
 export async function updateTenant(payload: TenantUpdateRequest): Promise<TenantUpdateResponse> {
-  const { data } = await apiClient.patch<TenantUpdateResponse>(`${BASE}/admin/update/tenant`, payload);
+  const { data } = await apiClient.patch<TenantUpdateResponse>(mtAdmin.updateTenant, payload);
   return data;
 }
 
 /**
  * Register a new tenant (organization). Creates tenant record, schema, and sends verification email.
- * POST /api/v1/multi-tenant/admin/register/tenant
+ * POST mtAdmin.registerTenant
  */
 export async function registerTenant(payload: TenantRegisterRequest): Promise<TenantRegisterResponse> {
-  const { data } = await apiClient.post<TenantRegisterResponse>(`${BASE}/admin/register/tenant`, payload);
+  const { data } = await apiClient.post<TenantRegisterResponse>(mtAdmin.registerTenant, payload);
   return data;
 }
 
 /**
  * Register a new user under a tenant. Creates user in both tenant and auth DBs.
- * POST /api/v1/multi-tenant/admin/register/users
+ * POST mtAdmin.registerUsers
  */
 export async function registerUser(payload: UserRegisterRequest): Promise<UserRegisterResponse> {
-  const { data } = await apiClient.post<UserRegisterResponse>(`${BASE}/admin/register/users`, payload);
+  const { data } = await apiClient.post<UserRegisterResponse>(mtAdmin.registerUsers, payload);
   return data;
 }
 
 /**
  * Update tenant user (username, email, is_approved). Partial updates.
- * PATCH /api/v1/multi-tenant/admin/update/user
+ * PATCH mtAdmin.updateUser
  */
 export async function updateUser(payload: TenantUserUpdateRequest): Promise<TenantUserUpdateResponse> {
-  const { data } = await apiClient.patch<TenantUserUpdateResponse>(`${BASE}/admin/update/user`, payload);
+  const { data } = await apiClient.patch<TenantUserUpdateResponse>(mtAdmin.updateUser, payload);
   return data;
 }
 
 /**
  * Delete a user under a tenant.
- * DELETE /api/v1/multi-tenant/admin/delete/user
+ * DELETE mtAdmin.deleteUser
  */
 export async function deleteUser(payload: TenantUserDeleteRequest): Promise<TenantUserDeleteResponse> {
-  const { data } = await apiClient.delete<TenantUserDeleteResponse>(`${BASE}/admin/delete/user`, { data: payload });
+  const { data } = await apiClient.delete<TenantUserDeleteResponse>(mtAdmin.deleteUser, { data: payload });
   return data;
 }
 
 /**
- * List all registered (active) services. GET /list/services.
+ * List all registered (active) services.
+ * GET mt.listServices
  */
 export async function listServices(): Promise<ListServicesResponse> {
-  const { data } = await apiClient.get<ListServicesResponse>(`${BASE}/list/services`);
+  const { data } = await apiClient.get<ListServicesResponse>(mt.listServices);
   return data;
 }
 
 /**
  * Add subscriptions to a tenant.
- * POST /api/v1/multi-tenant/tenant/subscriptions/add
+ * POST mt.tenantSubscriptionsAdd
  */
 export async function addTenantSubscriptions(payload: TenantSubscriptionAddRequest): Promise<TenantSubscriptionResponse> {
-  const { data } = await apiClient.post<TenantSubscriptionResponse>(`${BASE}/tenant/subscriptions/add`, payload);
+  const { data } = await apiClient.post<TenantSubscriptionResponse>(
+    mt.tenantSubscriptionsAdd,
+    payload
+  );
   return data;
 }
 
 /**
  * Remove subscriptions from a tenant.
- * POST /api/v1/multi-tenant/tenant/subscriptions/remove
+ * POST mt.tenantSubscriptionsRemove
  */
 export async function removeTenantSubscriptions(payload: TenantSubscriptionRemoveRequest): Promise<TenantSubscriptionResponse> {
-  const { data } = await apiClient.post<TenantSubscriptionResponse>(`${BASE}/tenant/subscriptions/remove`, payload);
+  const { data } = await apiClient.post<TenantSubscriptionResponse>(
+    mt.tenantSubscriptionsRemove,
+    payload
+  );
   return data;
 }
 
 /**
  * Add subscriptions to a tenant user.
- * POST /api/v1/multi-tenant/user/subscriptions/add
+ * POST mt.userSubscriptionsAdd
  */
 export async function addUserSubscriptions(payload: UserSubscriptionAddRequest): Promise<UserSubscriptionResponse> {
-  const { data } = await apiClient.post<UserSubscriptionResponse>(`${BASE}/user/subscriptions/add`, payload);
+  const { data } = await apiClient.post<UserSubscriptionResponse>(
+    mt.userSubscriptionsAdd,
+    payload
+  );
   return data;
 }
 
 /**
  * Remove subscriptions from a tenant user.
- * POST /api/v1/multi-tenant/user/subscriptions/remove
+ * POST mt.userSubscriptionsRemove
  */
 export async function removeUserSubscriptions(payload: UserSubscriptionRemoveRequest): Promise<UserSubscriptionResponse> {
-  const { data } = await apiClient.post<UserSubscriptionResponse>(`${BASE}/user/subscriptions/remove`, payload);
+  const { data } = await apiClient.post<UserSubscriptionResponse>(
+    mt.userSubscriptionsRemove,
+    payload
+  );
   return data;
 }
 
 /**
  * Send verification email to a tenant. Used for tenants in PENDING status to re-send verification.
- * POST /api/v1/multi-tenant/admin/email/send/verification
+ * POST mtAdmin.emailSendVerification
  * Returns the full response including token (for use in verify flow).
  */
 export interface SendVerificationEmailResponse {
@@ -190,7 +205,7 @@ export interface SendVerificationEmailResponse {
 
 export async function sendVerificationEmail(tenant_id: string): Promise<SendVerificationEmailResponse> {
   const { data } = await apiClient.post<SendVerificationEmailResponse>(
-    `${BASE}/admin/email/send/verification`,
+    mtAdmin.emailSendVerification,
     { tenant_id }
   );
   return data;
@@ -198,18 +213,21 @@ export async function sendVerificationEmail(tenant_id: string): Promise<SendVeri
 
 /**
  * Resend verification email to a PENDING tenant (new token, same flow as user-facing resend).
- * POST /api/v1/multi-tenant/email/resend
+ * POST mt.emailResend
  */
 export async function resendVerificationEmail(tenant_id: string): Promise<SendVerificationEmailResponse> {
-  const { data } = await apiClient.post<SendVerificationEmailResponse>(`${BASE}/email/resend`, { tenant_id });
+  const { data } = await apiClient.post<SendVerificationEmailResponse>(
+    mt.emailResend,
+    { tenant_id }
+  );
   return data;
 }
 
 /**
- * Verify tenant email with token. GET /api/v1/multi-tenant/email/verify?token=...
+ * Verify tenant email with token. GET mt.emailVerify?token=...
  */
 export async function verifyEmailWithToken(token: string): Promise<{ message: string }> {
-  const { data } = await apiClient.get<{ message: string }>(`${BASE}/email/verify`, {
+  const { data } = await apiClient.get<{ message: string }>(mt.emailVerify, {
     params: { token },
   });
   return data;
@@ -217,11 +235,11 @@ export async function verifyEmailWithToken(token: string): Promise<{ message: st
 
 /**
  * Resolve tenant context from user_id. Used by services to get tenant schema information.
- * GET /api/v1/multi-tenant/resolve/tenant/from/user/{user_id}
+ * GET mt.resolveTenantFromUser/{user_id}
  */
 export async function resolveTenantFromUser(user_id: number): Promise<Record<string, unknown>> {
   const { data } = await apiClient.get<Record<string, unknown>>(
-    `${BASE}/resolve/tenant/from/user/${user_id}`
+    `${mt.resolveTenantFromUser}/${user_id}`
   );
   return data;
 }

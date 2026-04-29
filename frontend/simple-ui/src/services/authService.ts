@@ -22,7 +22,9 @@ import {
   OAuth2Provider,
   Permission,
 } from '../types/auth';
-import { API_BASE_URL } from './api';
+import axios from 'axios';
+import { apiClient } from './api';
+import { apiEndpoints } from './apiEndpoints';
 import {
   getStoredAccessToken,
   getStoredRefreshToken,
@@ -32,18 +34,14 @@ import {
 } from '../utils/tokenStorage';
 import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 
+const authPaths = apiEndpoints.auth.paths;
+
 class AuthService {
-  private baseUrl: string;
-
-  constructor() {
-    this.baseUrl = `${API_BASE_URL}/api/v1/auth`;
-  }
-
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`;
+    const url = `${apiEndpoints.auth.base}${endpoint}`;
     
     const defaultHeaders: HeadersInit = {
       'Content-Type': 'application/json',
@@ -63,34 +61,31 @@ class AuthService {
       },
     };
 
-    // Add timeout to prevent hanging (10 seconds)
-    const timeoutMs = 10000;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const method = (options.method || 'GET') as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+    const requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
     
     try {
-      const response = await fetch(url, {
-        ...config,
-        signal: controller.signal,
+      const response = await apiClient.request<T>({
+        url,
+        method,
+        data: requestData,
+        headers: config.headers as Record<string, string>,
+        timeout: 10000,
       });
-      
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        let errorData: any = {};
-        try {
-          const text = await response.text();
-          if (text) {
-            errorData = JSON.parse(text);
-          }
-        } catch (e) {
-          // If JSON parsing fails, use empty object
-          errorData = {};
-        }
+      const json = response.data as any;
 
+      // Unwrap v2 response envelope: { success: true, data: {...} }
+      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
+        return json.data as T;
+      }
+      return json as T;
+    } catch (error: any) {
+      if (axios.isAxiosError(error)) {
+        const status = error.response?.status;
+        const errorData: any = error.response?.data ?? {};
         if (
           typeof window !== 'undefined' &&
-          responseIndicatesTenantSuspendedOrInactive(response.status, errorData)
+          responseIndicatesTenantSuspendedOrInactive(status ?? 0, errorData)
         ) {
           try {
             const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
@@ -102,9 +97,9 @@ class AuthService {
           }
           throw new Error('Your organization account is no longer active. Please sign in again.');
         }
-        
+
         // Extract error message from various possible formats (avoid [object Object] when detail is an object)
-        let errorMessage = `HTTP error! status: ${response.status}`;
+        let errorMessage = `HTTP error! status: ${status ?? 'unknown'}`;
         if (errorData?.detail) {
           const d = errorData.detail;
           if (typeof d === 'string') {
@@ -126,8 +121,9 @@ class AuthService {
         
         // Check if error is "Invalid authentication credentials" (session expiry)
         const errorMessageLower = errorMessage.toLowerCase();
-        const isInvalidAuth = errorMessageLower.includes('invalid authentication credentials') ||
-                            (response.status === 401 && errorMessageLower.includes('invalid'));
+        const isInvalidAuth =
+          errorMessageLower.includes('invalid authentication credentials') ||
+          (status === 401 && errorMessageLower.includes('invalid'));
         
         if (isInvalidAuth && typeof window !== 'undefined') {
           // Clear tokens and redirect to login
@@ -138,20 +134,11 @@ class AuthService {
         }
         
         // Add status code to error message for debugging
-        const error = new Error(errorMessage);
-        (error as any).status = response.status;
-        throw error;
+        const mappedError = new Error(errorMessage);
+        (mappedError as any).status = status;
+        throw mappedError;
       }
-
-      const json = await response.json();
-      // Unwrap v2 response envelope: { success: true, data: {...} }
-      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
-        return json.data as T;
-      }
-      return json as T;
-    } catch (error: any) {
-      clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
+      if (error.code === 'ECONNABORTED') {
         console.error('Auth service request timed out:', url);
         throw new Error('Request timeout: Auth service is not responding');
       }
@@ -195,15 +182,18 @@ class AuthService {
   // Authentication methods
   async register(data: RegisterRequest): Promise<{ id: number; email: string; username: string; message: string }> {
     // Register endpoint doesn't require authentication
-    return this.requestWithoutAuth<{ id: number; email: string; username: string; message: string }>('/register', {
+    return this.requestWithoutAuth<{ id: number; email: string; username: string; message: string }>(
+      authPaths.register,
+      {
       method: 'POST',
       body: JSON.stringify(data),
-    });
+      }
+    );
   }
 
   async login(data: LoginRequest): Promise<LoginResponse> {
     // Login endpoint doesn't require authentication
-    const response = await this.requestWithoutAuth<LoginResponse>('/login', {
+    const response = await this.requestWithoutAuth<LoginResponse>(authPaths.login, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -217,7 +207,7 @@ class AuthService {
   }
 
   async guestLogin(): Promise<LoginResponse> {
-    const response = await this.requestWithoutAuth<LoginResponse>('/guest/login', {
+    const response = await this.requestWithoutAuth<LoginResponse>(authPaths.guestLogin, {
       method: 'POST',
     });
 
@@ -229,7 +219,7 @@ class AuthService {
   }
 
   async getGuestEnabledServices(): Promise<any> {
-    return this.request<any>('/roles/list/guest/services');
+    return this.request<any>(authPaths.guestServices);
   }
 
   // Request method without authentication header (for login/register)
@@ -237,7 +227,7 @@ class AuthService {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`;
+    const url = `${apiEndpoints.auth.base}${endpoint}`;
     
     const defaultHeaders: HeadersInit = {
       'Content-Type': 'application/json',
@@ -252,27 +242,35 @@ class AuthService {
     };
 
     try {
-      const response = await fetch(url, config);
-      
-      if (!response.ok) {
-        let errorData: any = {};
-        try {
-          const text = await response.text();
-          if (text) {
-            try {
-              errorData = JSON.parse(text);
-            } catch (e) {
-              // If JSON parsing fails, use text as error message
-              errorData = { detail: text };
-            }
+      const method = (options.method || 'GET') as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+      const requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+      const response = await apiClient.request<T>({
+        url,
+        method,
+        data: requestData,
+        headers: config.headers as Record<string, string>,
+      });
+
+      const json = response.data as any;
+      // Unwrap v2 response envelope: { success: true, data: {...} }
+      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
+        return json.data as T;
+      }
+      return json as T;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const status = error.response?.status;
+        let errorData: any = error.response?.data ?? {};
+        if (typeof errorData === 'string') {
+          try {
+            errorData = JSON.parse(errorData);
+          } catch {
+            errorData = { detail: errorData };
           }
-        } catch (textError) {
-          console.error('Failed to parse error response:', textError);
-          errorData = {};
         }
-        
+
         // Handle different error response formats (avoid [object Object] when detail is an object)
-        let errorMessage = `HTTP error! status: ${response.status}`;
+        let errorMessage = `HTTP error! status: ${status ?? 'unknown'}`;
         if (typeof errorData === 'string') {
           errorMessage = errorData;
         } else if (errorData?.detail) {
@@ -301,18 +299,10 @@ class AuthService {
         }
         
         // Add status code to error for better debugging
-        const error = new Error(errorMessage);
-        (error as any).status = response.status;
-        throw error;
+        const mappedError = new Error(errorMessage);
+        (mappedError as any).status = status;
+        throw mappedError;
       }
-
-      const json = await response.json();
-      // Unwrap v2 response envelope: { success: true, data: {...} }
-      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
-        return json.data as T;
-      }
-      return json as T;
-    } catch (error) {
       console.error('Auth service request failed:', error);
       // Re-throw as Error if it's not already one, with proper message
       if (error instanceof Error) {
@@ -354,7 +344,7 @@ class AuthService {
     }
 
     try {
-      const response = await this.request<LogoutResponse>('/logout', {
+      const response = await this.request<LogoutResponse>(authPaths.logout, {
         method: 'POST',
         body: JSON.stringify({
           refresh_token: data.refresh_token || refreshToken,
@@ -388,7 +378,7 @@ class AuthService {
 
     this.refreshPromise = (async () => {
       try {
-        const response = await this.requestWithoutAuth<TokenRefreshResponse>('/refresh', {
+        const response = await this.requestWithoutAuth<TokenRefreshResponse>(authPaths.refresh, {
           method: 'POST',
           body: JSON.stringify({ refresh_token: refreshToken }),
         });
@@ -406,12 +396,12 @@ class AuthService {
   }
 
   async validateToken(): Promise<TokenValidationResponse> {
-    return this.request<TokenValidationResponse>('/validate');
+    return this.request<TokenValidationResponse>(authPaths.validate);
   }
 
   async getCurrentUser(): Promise<User> {
     // Use a longer timeout for /me endpoint as it's critical for auth validation
-    return this.requestWithTimeout<User>('/me', {}, 20000);
+    return this.requestWithTimeout<User>(authPaths.me, {}, 20000);
   }
 
   // Request method with custom timeout
@@ -420,7 +410,7 @@ class AuthService {
     options: RequestInit = {},
     timeoutMs: number = 10000
   ): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`;
+    const url = `${apiEndpoints.auth.base}${endpoint}`;
     
     const defaultHeaders: HeadersInit = {
       'Content-Type': 'application/json',
@@ -440,32 +430,29 @@ class AuthService {
       },
     };
 
-    // Use custom timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const method = (options.method || 'GET') as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+    const requestData = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
     
     try {
-      const response = await fetch(url, {
-        ...config,
-        signal: controller.signal,
+      const response = await apiClient.request<T>({
+        url,
+        method,
+        data: requestData,
+        headers: config.headers as Record<string, string>,
+        timeout: timeoutMs,
       });
-      
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        let errorData: any = {};
-        try {
-          const text = await response.text();
-          if (text) {
-            errorData = JSON.parse(text);
-          }
-        } catch (e) {
-          // If JSON parsing fails, use empty object
-          errorData = {};
-        }
-        
+      const json = response.data as any;
+      // Unwrap v2 response envelope: { success: true, data: {...} }
+      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
+        return json.data as T;
+      }
+      return json as T;
+    } catch (error: any) {
+      if (axios.isAxiosError(error)) {
+        const status = error.response?.status;
+        const errorData: any = error.response?.data ?? {};
         // Extract error message from various possible formats
-        let errorMessage = `HTTP error! status: ${response.status}`;
+        let errorMessage = `HTTP error! status: ${status ?? 'unknown'}`;
         if (errorData?.detail) {
           errorMessage = String(errorData.detail);
         } else if (errorData?.message) {
@@ -477,20 +464,11 @@ class AuthService {
         }
         
         // Add status code to error for better debugging
-        const error = new Error(errorMessage);
-        (error as any).status = response.status;
-        throw error;
+        const mappedError = new Error(errorMessage);
+        (mappedError as any).status = status;
+        throw mappedError;
       }
-
-      const json = await response.json();
-      // Unwrap v2 response envelope: { success: true, data: {...} }
-      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
-        return json.data as T;
-      }
-      return json as T;
-    } catch (error: any) {
-      clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
+      if (error.code === 'ECONNABORTED') {
         console.error('Auth service request timed out:', url);
         throw new Error(`Request timeout: Auth service is not responding (timeout: ${timeoutMs}ms)`);
       }
@@ -504,28 +482,28 @@ class AuthService {
   }
 
   async updateCurrentUser(data: Partial<User>): Promise<User> {
-    return this.request<User>('/me', {
+    return this.request<User>(authPaths.me, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   async changePassword(data: PasswordChangeRequest): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/change-password', {
+    return this.request<{ message: string }>(authPaths.changePassword, {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   async requestPasswordReset(data: PasswordResetRequest): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/request-password-reset', {
+    return this.request<{ message: string }>(authPaths.requestPasswordReset, {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   async resetPassword(data: PasswordResetConfirm): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/reset-password', {
+    return this.request<{ message: string }>(authPaths.resetPassword, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -533,7 +511,7 @@ class AuthService {
 
   // API Key management
   async createApiKey(data: APIKeyCreate): Promise<APIKeyResponse> {
-    return this.request<APIKeyResponse>('/api-keys', {
+    return this.request<APIKeyResponse>(authPaths.apiKeys, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -547,14 +525,14 @@ class AuthService {
       expires_days: data.expires_days,
       userId: data.user_id, // Send as userId (camelCase) in JSON payload
     };
-    return this.request<APIKeyResponse>('/api-keys', {
+    return this.request<APIKeyResponse>(authPaths.apiKeys, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
   }
 
   async listApiKeys(): Promise<APIKeyListResponse> {
-    const data = await this.request<APIKeyListResponse | APIKeyResponse[]>('/api-keys');
+    const data = await this.request<APIKeyListResponse | APIKeyResponse[]>(authPaths.apiKeys);
     // Backend may return { api_keys, selected_api_key_id } or a plain array (legacy)
     if (Array.isArray(data)) {
       return { api_keys: data, selected_api_key_id: null };
@@ -567,17 +545,17 @@ class AuthService {
   }
 
   async listAllApiKeys(): Promise<AdminAPIKeyWithUserResponse[]> {
-    return this.request<AdminAPIKeyWithUserResponse[]>('/api-keys/all');
+    return this.request<AdminAPIKeyWithUserResponse[]>(authPaths.apiKeysAll);
   }
 
   async revokeApiKey(keyId: number): Promise<{ message: string }> {
-    return this.request<{ message: string }>(`/api-keys/${keyId}`, {
+    return this.request<{ message: string }>(`${authPaths.apiKeys}/${keyId}`, {
       method: 'DELETE',
     });
   }
 
   async updateApiKey(keyId: number, updateData: APIKeyUpdate): Promise<APIKeyResponse> {
-    return this.request<APIKeyResponse>(`/api-keys/${keyId}`, {
+    return this.request<APIKeyResponse>(`${authPaths.apiKeys}/${keyId}`, {
       method: 'PATCH',
       body: JSON.stringify(updateData),
     });
@@ -585,11 +563,11 @@ class AuthService {
 
   // OAuth2
   async getOAuth2Providers(): Promise<OAuth2Provider[]> {
-    return this.request<OAuth2Provider[]>('/oauth2/providers');
+    return this.request<OAuth2Provider[]>(authPaths.oauth2Providers);
   }
 
   async exchangeOAuthCode(code: string): Promise<LoginResponse> {
-    return this.requestWithoutAuth<LoginResponse>('/oauth2/exchange', {
+    return this.requestWithoutAuth<LoginResponse>(authPaths.oauth2Exchange, {
       method: 'POST',
       body: JSON.stringify({ code }),
     });
@@ -597,21 +575,21 @@ class AuthService {
 
   // User management (Admin / Mod / Tenant Admin)
   async getAllUsers(): Promise<User[]> {
-    return this.request<User[]>('/users?limit=500&offset=0');
+    return this.request<User[]>(`${authPaths.users}?limit=500&offset=0`);
   }
 
   /** Paginated user list (same endpoint as getAllUsers; for infinite-scroll pickers). */
   async listUsersPage(offset: number, limit: number = 100): Promise<User[]> {
-    return this.request<User[]>(`/users?limit=${limit}&offset=${offset}`);
+    return this.request<User[]>(`${authPaths.users}?limit=${limit}&offset=${offset}`);
   }
 
   async getUserById(userId: number): Promise<User> {
-    return this.request<User>(`/users/${userId}`);
+    return this.request<User>(`${authPaths.users}/${userId}`);
   }
 
   // Permissions management (inference-only)
   async getAllPermissions(): Promise<Permission[]> {
-    return this.request<Permission[]>('/inference/permissions');
+    return this.request<Permission[]>(authPaths.inferencePermissions);
   }
 
   // Utility methods

@@ -1,7 +1,8 @@
 /**
  * Role management service for RBAC
  */
-import { API_BASE_URL } from './api';
+import axios from 'axios';
+import { apiClient, apiEndpoints } from './api';
 import authService from './authService';
 
 export interface Role {
@@ -17,18 +18,14 @@ export interface UserRole {
   roles: string[];
 }
 
+const rolePaths = apiEndpoints.auth.rolesPaths;
+
 class RoleService {
-  private baseUrl: string;
-
-  constructor() {
-    this.baseUrl = `${API_BASE_URL}/api/v1/auth/roles`;
-  }
-
   private async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`;
+    const url = `${apiEndpoints.auth.roles}${endpoint}`;
     
     const token = authService.getAccessToken();
     if (!token) {
@@ -45,27 +42,36 @@ class RoleService {
     };
 
     try {
-      const response = await fetch(url, config);
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
+      const method = (options.method || 'GET') as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+      const requestData =
+        typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+      const response = await apiClient.request<T>({
+        url,
+        method,
+        data: requestData,
+        headers: config.headers as Record<string, string>,
+      });
+
+      const payload = response.data as any;
+      if (payload && typeof payload === 'object' && 'success' in payload && 'data' in payload) {
+        return payload.data as T;
+      }
+      return payload as T;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const status = error.response?.status;
+        const errorData: any = error.response?.data ?? {};
         const detail = errorData.detail;
         const message =
           typeof detail === 'object' && detail !== null && typeof detail.message === 'string'
             ? detail.message
             : typeof detail === 'string'
               ? detail
-              : `HTTP error! status: ${response.status}`;
-        throw new Error(message);
+              : errorData?.message || error.message || `HTTP error! status: ${status ?? 'unknown'}`;
+        const mappedError = new Error(message);
+        (mappedError as any).status = status;
+        throw mappedError;
       }
-
-      const json = await response.json();
-      // Unwrap v2 response envelope: { success: true, data: {...} }
-      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
-        return json.data as T;
-      }
-      return json as T;
-    } catch (error) {
       console.error('Role service request failed:', error);
       throw error;
     }
@@ -75,21 +81,21 @@ class RoleService {
    * List all available roles
    */
   async listRoles(): Promise<Role[]> {
-    return this.request<Role[]>('/list');
+    return this.request<Role[]>(rolePaths.list);
   }
 
   /**
    * Get roles for a specific user
    */
   async getUserRoles(userId: number): Promise<UserRole> {
-    return this.request<UserRole>(`/user/${userId}`);
+    return this.request<UserRole>(`${rolePaths.user}/${userId}`);
   }
 
   /**
    * Assign a role to a user
    */
   async assignRole(userId: number, roleName: string): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/assign', {
+    return this.request<{ message: string }>(rolePaths.assign, {
       method: 'POST',
       body: JSON.stringify({ user_id: userId, role_name: roleName }),
     });
@@ -99,7 +105,7 @@ class RoleService {
    * Remove a role from a user
    */
   async removeRole(userId: number, roleName: string): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/remove', {
+    return this.request<{ message: string }>(rolePaths.remove, {
       method: 'POST',
       body: JSON.stringify({ user_id: userId, role_name: roleName }),
     });

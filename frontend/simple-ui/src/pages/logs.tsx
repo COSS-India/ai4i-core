@@ -44,7 +44,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth, forceFrontendSessionEnd } from "../hooks/useAuth";
 import { useRouter } from "next/router";
-import { getJwtToken } from "../services/api";
+import { getJwtToken, appUrlDefaults } from "../services/api";
 import { getTenantIdFromToken } from "../utils/helpers";
 import {
   searchLogs,
@@ -1386,12 +1386,12 @@ const LogsPage: React.FC = () => {
                               jaegerUrl = jaegerTraceUrl;
                             } else {
                               // If it's just a trace ID, construct the URL
-                              const jaegerBaseUrl = process.env.NEXT_PUBLIC_JAEGER_URL || 'http://localhost:16686';
+                              const jaegerBaseUrl = appUrlDefaults.jaegerBase;
                               jaegerUrl = `${jaegerBaseUrl}/trace/${jaegerTraceUrl}`;
                             }
                           } else if (traceId) {
                             // Construct URL from trace_id
-                            const jaegerBaseUrl = process.env.NEXT_PUBLIC_JAEGER_URL || 'http://localhost:16686';
+                            const jaegerBaseUrl = appUrlDefaults.jaegerBase;
                             jaegerUrl = `${jaegerBaseUrl}/trace/${traceId}`;
                           }
                           

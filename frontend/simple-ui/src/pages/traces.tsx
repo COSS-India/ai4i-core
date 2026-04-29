@@ -38,6 +38,7 @@ import {
   Trace,
   Span,
 } from "../services/observabilityService";
+import { apiEndpoints, API_V1_PREFIX } from "../services/apiEndpoints";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 // Utility functions to extract and categorize spans
@@ -550,9 +551,9 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
   }
   // Main service operations — {svc}.inference (Telemetry Phase 1 parent; Phase 7 finalizes on close)
   else if (isStandardSvcInferenceOp ||
-           opName.includes("/api/v1/ocr/inference") || opName.includes("/api/v1/nmt/inference") ||
-           opName.includes("/api/v1/transliteration/inference") ||
-           opName.includes("/api/v1/tts/inference") || opName.includes("/api/v1/asr/inference") ||
+           opName.includes(apiEndpoints.ocr.inference) || opName.includes(apiEndpoints.nmt.inference) ||
+           opName.includes(apiEndpoints.transliteration.inference) ||
+           opName.includes(apiEndpoints.tts.inference) || opName.includes(apiEndpoints.asr.inference) ||
            (opName.includes("post") && opName.includes("inference") && !serviceName.includes("gateway"))) {
     category = "processing";
     isImportant = true;
@@ -1064,7 +1065,7 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       const parentId = spanToParent.get(processedSpan.span.spanID);
       if (parentId) {
         // This is a child span from auth-service - filter it out
-        // Only keep top-level auth spans (like POST /api/v1/auth/validate)
+        // Only keep top-level auth spans (like POST auth/validate)
         if (!processedSpan.isTopLevel || processedSpan.category === "database") {
           console.log(`[DEBUG] Filtering out child auth-service span (non-auth trace): ${processedSpan.displayName}`);
           continue;
@@ -1592,13 +1593,15 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
   const isStandardSvcInferenceName =
     /^[a-z0-9-]+\.inference$/.test(opLc) && !opLc.startsWith("triton.");
   const isHttpInferenceRoute =
-    opLc.includes("/api/v1/nmt/inference") ||
-    opLc.includes("/api/v1/ocr/inference") ||
-    opLc.includes("/api/v1/transliteration/inference") ||
-    opLc.includes("/api/v1/tts/inference") ||
-    opLc.includes("/api/v1/asr/inference") ||
-    opLc.includes("/api/v1/ner/inference") ||
-    (opLc.includes("post") && opLc.includes("inference") && opLc.includes("/api/v1/"));
+    opLc.includes(apiEndpoints.nmt.inference.toLowerCase()) ||
+    opLc.includes(apiEndpoints.ocr.inference.toLowerCase()) ||
+    opLc.includes(apiEndpoints.transliteration.inference.toLowerCase()) ||
+    opLc.includes(apiEndpoints.tts.inference.toLowerCase()) ||
+    opLc.includes(apiEndpoints.asr.inference.toLowerCase()) ||
+    opLc.includes(apiEndpoints.ner.inference.toLowerCase()) ||
+    (opLc.includes("post") &&
+      opLc.includes("inference") &&
+      opLc.includes(`${API_V1_PREFIX.toLowerCase()}/`));
 
   // If there's an error, return simple error indicator
   // (detailed error will be shown in separate section)

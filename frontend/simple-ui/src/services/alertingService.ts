@@ -1,8 +1,9 @@
 /**
  * Alerting service — Alert Definitions, Receivers, Routing Rules, and read-only Alert History.
- * Follows the same request pattern as authService (fetch + Bearer token).
+ * Follows the same request pattern as authService.
  */
-import { API_BASE_URL } from './api';
+import axios from 'axios';
+import { apiClient, apiEndpoints } from './api';
 import authService from './authService';
 import type {
   AlertDefinition,
@@ -18,13 +19,9 @@ import type {
   RoutingRuleTimingUpdate,
 } from '../types/alerting';
 
+const alertPaths = apiEndpoints.alerts.paths;
+
 class AlertingService {
-  private baseUrl: string;
-
-  constructor() {
-    this.baseUrl = `${API_BASE_URL}/api/v1/alerts`;
-  }
-
   private getAccessToken(): string | null {
     return authService.getAccessToken();
   }
@@ -33,7 +30,7 @@ class AlertingService {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`;
+    const url = `${apiEndpoints.alerts.base}${endpoint}`;
 
     const defaultHeaders: HeadersInit = {
       'Content-Type': 'application/json',
@@ -52,52 +49,51 @@ class AlertingService {
       },
     };
 
-    const timeoutMs = 15000;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const method = (options.method || 'GET') as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+    const requestData =
+      typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
 
     try {
-      const response = await fetch(url, {
-        ...config,
-        signal: controller.signal,
+      const response = await apiClient.request<T>({
+        url,
+        method,
+        data: requestData,
+        headers: config.headers as Record<string, string>,
+        timeout: 15000,
       });
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        let errorData: any = {};
-        try {
-          const text = await response.text();
-          if (text) {
-            errorData = JSON.parse(text);
-          }
-        } catch {
-          errorData = {};
+      const payload = response.data as any;
+      if (payload && typeof payload === 'object' && 'success' in payload && 'data' in payload) {
+        return payload.data as T;
+      }
+      return payload as T;
+    } catch (error: any) {
+      if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNABORTED') {
+          throw new Error('Request timeout: Alerting service is not responding');
         }
 
-        let errorMessage = `HTTP error! status: ${response.status}`;
+        const status = error.response?.status;
+        const errorData: any = error.response?.data ?? {};
+        let errorMessage = `HTTP error! status: ${status ?? 'unknown'}`;
         if (errorData?.detail) {
           const d = errorData.detail;
           if (typeof d === 'string') {
             errorMessage = d;
           } else if (typeof d === 'object' && d !== null) {
-            errorMessage =
-              (d as any).message != null
-                ? String((d as any).message)
-                : JSON.stringify(d);
+            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
           }
         } else if (errorData?.message) {
           errorMessage = String(errorData.message);
+        } else if (error.message) {
+          errorMessage = error.message;
         }
 
-        const error = new Error(errorMessage);
-        (error as any).status = response.status;
-        throw error;
+        const mappedError = new Error(errorMessage);
+        (mappedError as any).status = status;
+        throw mappedError;
       }
 
-      return await response.json();
-    } catch (error: any) {
-      clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
+      if (error?.name === 'AbortError') {
         throw new Error('Request timeout: Alerting service is not responding');
       }
       throw error;
@@ -108,11 +104,11 @@ class AlertingService {
 
   async listDefinitions(enabledOnly?: boolean): Promise<AlertDefinition[]> {
     const params = enabledOnly ? '?enabled_only=true' : '';
-    return this.request<AlertDefinition[]>(`/definitions${params}`);
+    return this.request<AlertDefinition[]>(`${alertPaths.definitions}${params}`);
   }
 
   async getDefinition(alertId: number): Promise<AlertDefinition> {
-    return this.request<AlertDefinition>(`/definitions/${alertId}`);
+    return this.request<AlertDefinition>(`${alertPaths.definitions}/${alertId}`);
   }
 
   async createDefinition(
@@ -136,7 +132,7 @@ class AlertingService {
       enabled: data.enabled !== false,
       annotations: data.annotations,
     };
-    return this.request<AlertDefinition>('/definitions', {
+    return this.request<AlertDefinition>(alertPaths.definitions, {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -146,7 +142,7 @@ class AlertingService {
     alertId: number,
     data: AlertDefinitionUpdate
   ): Promise<AlertDefinition> {
-    return this.request<AlertDefinition>(`/definitions/${alertId}`, {
+    return this.request<AlertDefinition>(`${alertPaths.definitions}/${alertId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -156,14 +152,17 @@ class AlertingService {
     alertId: number,
     enabled: boolean
   ): Promise<AlertDefinition> {
-    return this.request<AlertDefinition>(`/definitions/${alertId}/enabled`, {
+    return this.request<AlertDefinition>(
+      `${alertPaths.definitions}/${alertId}/enabled`,
+      {
       method: 'PATCH',
       body: JSON.stringify({ enabled }),
-    });
+      }
+    );
   }
 
   async deleteDefinition(alertId: number): Promise<{ message: string }> {
-    return this.request<{ message: string }>(`/definitions/${alertId}`, {
+    return this.request<{ message: string }>(`${alertPaths.definitions}/${alertId}`, {
       method: 'DELETE',
     });
   }
@@ -172,17 +171,17 @@ class AlertingService {
 
   async listReceivers(enabledOnly?: boolean): Promise<NotificationReceiver[]> {
     const params = enabledOnly ? '?enabled_only=true' : '';
-    return this.request<NotificationReceiver[]>(`/receivers${params}`);
+    return this.request<NotificationReceiver[]>(`${alertPaths.receivers}${params}`);
   }
 
   async getReceiver(receiverId: number): Promise<NotificationReceiver> {
-    return this.request<NotificationReceiver>(`/receivers/${receiverId}`);
+    return this.request<NotificationReceiver>(`${alertPaths.receivers}/${receiverId}`);
   }
 
   async createReceiver(
     data: NotificationReceiverCreate
   ): Promise<NotificationReceiver> {
-    return this.request<NotificationReceiver>('/receivers', {
+    return this.request<NotificationReceiver>(alertPaths.receivers, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -192,14 +191,14 @@ class AlertingService {
     receiverId: number,
     data: NotificationReceiverUpdate
   ): Promise<NotificationReceiver> {
-    return this.request<NotificationReceiver>(`/receivers/${receiverId}`, {
+    return this.request<NotificationReceiver>(`${alertPaths.receivers}/${receiverId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   async deleteReceiver(receiverId: number): Promise<{ message: string }> {
-    return this.request<{ message: string }>(`/receivers/${receiverId}`, {
+    return this.request<{ message: string }>(`${alertPaths.receivers}/${receiverId}`, {
       method: 'DELETE',
     });
   }
@@ -208,15 +207,15 @@ class AlertingService {
 
   async listRoutingRules(enabledOnly?: boolean): Promise<RoutingRule[]> {
     const params = enabledOnly ? '?enabled_only=true' : '';
-    return this.request<RoutingRule[]>(`/routing-rules${params}`);
+    return this.request<RoutingRule[]>(`${alertPaths.routingRules}${params}`);
   }
 
   async getRoutingRule(ruleId: number): Promise<RoutingRule> {
-    return this.request<RoutingRule>(`/routing-rules/${ruleId}`);
+    return this.request<RoutingRule>(`${alertPaths.routingRules}/${ruleId}`);
   }
 
   async createRoutingRule(data: RoutingRuleCreate): Promise<RoutingRule> {
-    return this.request<RoutingRule>('/routing-rules', {
+    return this.request<RoutingRule>(alertPaths.routingRules, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -226,22 +225,25 @@ class AlertingService {
     ruleId: number,
     data: RoutingRuleUpdate
   ): Promise<RoutingRule> {
-    return this.request<RoutingRule>(`/routing-rules/${ruleId}`, {
+    return this.request<RoutingRule>(`${alertPaths.routingRules}/${ruleId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   async deleteRoutingRule(ruleId: number): Promise<{ message: string }> {
-    return this.request<{ message: string }>(`/routing-rules/${ruleId}`, {
+    return this.request<{ message: string }>(
+      `${alertPaths.routingRules}/${ruleId}`,
+      {
       method: 'DELETE',
-    });
+      }
+    );
   }
 
   async bulkUpdateRoutingRuleTiming(
     data: RoutingRuleTimingUpdate
   ): Promise<any> {
-    return this.request<any>('/routing-rules/timing', {
+    return this.request<any>(alertPaths.routingRulesTiming, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
@@ -267,8 +269,9 @@ class AlertingService {
     if (params?.limit != null) q.set('limit', String(params.limit));
     if (params?.offset != null) q.set('offset', String(params.offset));
     const qs = q.toString();
+    const historyPath = alertPaths.history;
     return this.request<AlertHistoryListResponse>(
-      qs ? `/history?${qs}` : '/history'
+      qs ? `${historyPath}?${qs}` : historyPath
     );
   }
 }

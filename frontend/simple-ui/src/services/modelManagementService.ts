@@ -1,6 +1,6 @@
 // Model Management service API client
 
-import { apiClient } from './api';
+import { apiClient, apiEndpoints } from './api';
 
 export interface ModelDetails {
   modelId?: string;
@@ -35,7 +35,7 @@ export const unpublishModel = async (
   try {
     // The API expects model_id as a query parameter
     const response = await apiClient.post<UnpublishModelResponse>(
-      `/api/v1/model-management/models/unpublish?model_id=${encodeURIComponent(modelId)}`
+      `${apiEndpoints['model-management'].modelsUnpublish}?model_id=${encodeURIComponent(modelId)}`
     );
     return response.data;
   } catch (error: any) {
@@ -51,7 +51,9 @@ export const unpublishModel = async (
  */
 export const getAllModels = async (): Promise<ModelDetails[]> => {
   try {
-    const response = await apiClient.get<ModelDetails[]>('/api/v1/model-management/models');
+    const response = await apiClient.get<ModelDetails[]>(
+      apiEndpoints['model-management'].models
+    );
     return response.data;
   } catch (error: any) {
     console.error('Get models error:', error);
@@ -67,7 +69,10 @@ export const getAllModels = async (): Promise<ModelDetails[]> => {
  */
 export const createModel = async (modelData: any): Promise<any> => {
   try {
-    const response = await apiClient.post<any>('/api/v1/model-management/models', modelData);
+    const response = await apiClient.post<any>(
+      apiEndpoints['model-management'].models,
+      modelData
+    );
     return response.data;
   } catch (error: any) {
     console.error('Register model error:', error);
@@ -84,7 +89,7 @@ export const createModel = async (modelData: any): Promise<any> => {
 export const getModelById = async (modelId: string): Promise<ModelDetails> => {
   try {
     const response = await apiClient.post<ModelDetails>(
-      `/api/v1/model-management/models/${encodeURIComponent(modelId)}`,
+      `${apiEndpoints['model-management'].models}/${encodeURIComponent(modelId)}`,
       { modelId }
     );
     return response.data;
@@ -102,7 +107,10 @@ export const getModelById = async (modelId: string): Promise<ModelDetails> => {
  */
 export const updateModel = async (modelData: any): Promise<any> => {
   try {
-    const response = await apiClient.patch<any>('/api/v1/model-management/models', modelData);
+    const response = await apiClient.patch<any>(
+      apiEndpoints['model-management'].models,
+      modelData
+    );
     return response.data;
   } catch (error: any) {
     console.error('Update model error:', error);
@@ -119,7 +127,7 @@ export const updateModel = async (modelData: any): Promise<any> => {
 export const publishModel = async (modelId: string): Promise<any> => {
   try {
     const response = await apiClient.post<any>(
-      `/api/v1/model-management/models/publish?model_id=${encodeURIComponent(modelId)}`
+      `${apiEndpoints['model-management'].modelsPublish}?model_id=${encodeURIComponent(modelId)}`
     );
     return response.data;
   } catch (error: any) {
@@ -140,7 +148,7 @@ export const listServices = async (
   publishedOnly?: boolean
 ): Promise<any[]> => {
   try {
-    const url = '/api/v1/model-management/services';
+    const url = apiEndpoints['model-management'].services;
     const params: Record<string, string> = {};
     if (taskType) params.task_type = taskType;
     if (publishedOnly === true) params.is_published = 'true';

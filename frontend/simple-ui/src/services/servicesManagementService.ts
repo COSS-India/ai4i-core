@@ -1,6 +1,6 @@
 // Services Management service API client
 
-import { apiClient } from './api';
+import { apiClient, apiEndpoints } from './api';
 
 export interface Service {
   uuid?: string;
@@ -59,7 +59,9 @@ export const listServices = async (): Promise<Service[]> => {
     // - Authorization: Bearer <token>
     // - X-API-Key: <api_key> (if available)
     // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
-    const response = await apiClient.get<Service[]>('/api/v1/model-management/services');
+    const response = await apiClient.get<Service[]>(
+      apiEndpoints['model-management'].services
+    );
     return response.data;
   } catch (error: any) {
     console.error('List services error:', error);
@@ -77,7 +79,7 @@ export const getServiceById = async (serviceId: string): Promise<Service> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
     const response = await apiClient.post<Service>(
-      `/api/v1/model-management/services/${serviceId}`,
+      `${apiEndpoints['model-management'].services}/${serviceId}`,
       { service_id: serviceId }
     );
     return response.data;
@@ -124,7 +126,7 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
     // - X-API-Key: <api_key> (if available)
     // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
     const response = await apiClient.post<Service>(
-      '/api/v1/model-management/services',
+      apiEndpoints['model-management'].services,
       apiPayload
     );
     return response.data;
@@ -184,7 +186,7 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
     }
     
     const response = await apiClient.patch<Service>(
-      '/api/v1/model-management/services',
+      apiEndpoints['model-management'].services,
       apiPayload
     );
     return response.data;
@@ -204,7 +206,7 @@ export const deleteService = async (uuid: string): Promise<any> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
     const response = await apiClient.delete<any>(
-      `/api/v1/model-management/services/${uuid}`
+      `${apiEndpoints['model-management'].services}/${uuid}`
     );
     return response.data;
   } catch (error: any) {
