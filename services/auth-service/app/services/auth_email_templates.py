@@ -20,7 +20,10 @@ _renderer = TemplateRenderer([_TEMPLATE_DIR])
 
 
 def _display_name(user: User) -> str:
-    return user.full_name or user.username or user.email
+    """Render-safe greeting name. Falls back to a generic greeting when
+    full_name is missing — never the username (per security spec: emails must
+    not reveal credentials, and username is part of the credential pair)."""
+    return user.full_name or "there"
 
 
 def _build_link(base: Optional[str], token: str, *, env_var: str) -> str:
@@ -50,6 +53,10 @@ def build_verify_url(token: str) -> str:
     return _build_link(settings.verify_link_base_url, token, env_var="VERIFY_LINK_BASE_URL")
 
 
+def build_reset_url(token: str) -> str:
+    return _build_link(settings.reset_link_base_url, token, env_var="RESET_LINK_BASE_URL")
+
+
 def _render(template: str, *, to: str, subject: str, ctx: dict) -> EmailMessage:
     """Render an HTML+text template pair into an EmailMessage."""
     html, text = _renderer.render(template, ctx)
@@ -59,14 +66,17 @@ def _render(template: str, *, to: str, subject: str, ctx: dict) -> EmailMessage:
 def render_welcome(user: User) -> EmailMessage:
     """Post-activation welcome email. Sent after the user clicks either the
     verify-email link OR the setup-password link, confirming their account is
-    now active. Distinct from the verify/setup emails — this has no token."""
+    now active. Distinct from the verify/setup emails — this has no token.
+
+    Per security spec: no username in any email body. Only display_name
+    (which falls back to a generic greeting, never the username) and the
+    email address itself (which the recipient already knows)."""
     return _render(
         "welcome",
         to=user.email,
         subject="Welcome to AI4I Platform",
         ctx={
             "display_name": _display_name(user),
-            "username": user.username,
             "email": user.email,
         },
     )
@@ -86,14 +96,33 @@ def render_verify_email(user: User, verify_token: str) -> EmailMessage:
 
 
 def render_setup_link(user: User, setup_token: str) -> EmailMessage:
+    """Setup-link email — sent on tenant-admin / tenant-user activation.
+
+    Per product spec (reference UI: 'Welcome to AI4I!'): no greeting, no
+    username; the recipient sees an account-was-created message and a
+    Set Your Password CTA. Single-use, 48-hour expiry."""
     return _render(
         "setup_link",
         to=user.email,
-        subject="Activate your AI4I Platform account",
+        subject="Welcome to AI4I — Set Your Password",
         ctx={
-            "display_name": _display_name(user),
             "setup_url": build_setup_url(setup_token),
             "expires_hours": settings.setup_token_expire_hours,
+        },
+    )
+
+
+def render_password_reset(user: User, reset_token: str) -> EmailMessage:
+    """Password-reset email triggered by /auth/forgot-password. Short 30-min
+    expiry per security spec — much tighter than setup/verify. Content
+    aligned to product spec: no greeting, no username, terse copy."""
+    return _render(
+        "password_reset",
+        to=user.email,
+        subject="Reset Your Password — AI4I",
+        ctx={
+            "reset_url": build_reset_url(reset_token),
+            "expires_minutes": settings.reset_token_expire_minutes,
         },
     )
 

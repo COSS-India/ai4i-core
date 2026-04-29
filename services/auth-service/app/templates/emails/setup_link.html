@@ -1,11 +1,11 @@
 {% extends "_base.html" %}
-{% block title %}Activate your AI4I Platform account{% endblock %}
-{% block preheader %}Set a password to activate your AI4I Platform account. Link expires in {{ expires_hours }} hours.{% endblock %}
-{% block heading %}Activate your account{% endblock %}
+{% block title %}Welcome to AI4I — Set Your Password{% endblock %}
+{% block preheader %}Your account has been set up. Click to set your password. Link expires in {{ expires_hours }} hours.{% endblock %}
+{% block heading %}Welcome to AI4I!{% endblock %}
 {% block body %}
-  <p style="margin:0 0 20px 0;">
-    Hi {{ display_name }}, an AI4I Platform account has been created for you.
-    Set a password to activate it:
+  <p style="margin:0 0 24px 0; text-align:center;">
+    Your account has been set up successfully. Click the button below to
+    set your password and get started.
   </p>
 
   {# ── Bulletproof CTA button (Outlook VML + standard fallback) ── #}
@@ -15,34 +15,31 @@
         <!--[if mso]>
         <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{ setup_url }}" style="height:48px;v-text-anchor:middle;width:220px;" arcsize="17%" stroke="f" fillcolor="#0b66ff">
           <w:anchorlock/>
-          <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:600;">Set your password</center>
+          <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:600;">Set Your Password</center>
         </v:roundrect>
         <![endif]-->
         <!--[if !mso]><!-- -->
         <a href="{{ setup_url }}"
            style="display:inline-block; padding:14px 28px; background-color:#0b66ff; color:#ffffff; text-decoration:none; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size:15px; font-weight:600; line-height:20px; border-radius:8px; mso-hide:all;">
-          Set your password
+          Set Your Password
         </a>
         <!--<![endif]-->
       </td>
     </tr>
   </table>
 
-  <p style="margin:0 0 8px 0; font-size:13px; color:#6b7280;">
-    Or paste this link into your browser:
-  </p>
-  <p style="margin:0 0 24px 0; font-size:13px; color:#374151; word-break:break-all; background:#f3f4f6; padding:12px 14px; border-radius:6px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">
-    <a href="{{ setup_url }}" style="color:#0b66ff; text-decoration:none; word-break:break-all;">{{ setup_url }}</a>
+  <p style="margin:0 0 16px 0; font-size:13px; color:#6b7280; text-align:center;">
+    This link expires in {{ expires_hours }} hours. If you did not request this, please ignore this email.
   </p>
 
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 8px 0; border-left:3px solid #fbbf24; background:#fffbeb; border-radius:4px;">
-    <tr>
-      <td style="padding: 12px 14px; font-size:13px; line-height:20px; color:#78350f;">
-        <strong>Heads up:</strong> this link expires in {{ expires_hours }} hours and can be used only once.
-      </td>
-    </tr>
-  </table>
+  {# Fallback URL kept for clients that strip the button. #}
+  <p style="margin:16px 0 8px 0; font-size:13px; color:#6b7280;">
+    Trouble with the button? Paste this link into your browser:
+  </p>
+  <p style="margin:0 0 0 0; font-size:13px; color:#374151; word-break:break-all; background:#f3f4f6; padding:12px 14px; border-radius:6px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">
+    <a href="{{ setup_url }}" style="color:#0b66ff; text-decoration:none; word-break:break-all;">{{ setup_url }}</a>
+  </p>
 {% endblock %}
 {% block footer_extra %}
-  If you didn&rsquo;t expect this email, you can safely ignore it &mdash; the link will expire on its own.
+  This is an automated message, please do not reply.
 {% endblock %}

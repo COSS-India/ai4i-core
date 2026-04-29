@@ -129,6 +129,11 @@ class AuthSettings(BaseSettings):
     smtp_timeout: int = 30
     setup_link_base_url: Optional[str] = None
     verify_link_base_url: Optional[str] = None
+    reset_link_base_url: Optional[str] = None
+    # 30 minutes per security spec for password-reset links (vs 48h for setup/verify)
+    reset_token_expire_minutes: int = 30
+    # Per-email rate limit for /auth/forgot-password
+    reset_request_limit_per_hour: int = 3
 
     # ── Derived helpers ──
 

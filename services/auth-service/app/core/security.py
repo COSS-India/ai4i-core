@@ -228,10 +228,18 @@ class PasswordManager:
 
     @staticmethod
     def validate_strength(password: str) -> tuple[bool, list[str]]:
-        """Validate password meets minimum strength requirements."""
+        """Validate password meets product password-policy requirements.
+
+        Rules (per security spec):
+          - Min 8 chars, max 64 chars
+          - At least one uppercase, one lowercase, one digit, one special char
+          - No spaces (anywhere)
+        """
         errors: list[str] = []
         if len(password) < 8:
             errors.append("Password must be at least 8 characters long.")
+        if len(password) > 64:
+            errors.append("Password must be at most 64 characters long.")
         if not any(c.isupper() for c in password):
             errors.append("Password must contain at least one uppercase letter.")
         if not any(c.islower() for c in password):
@@ -240,6 +248,8 @@ class PasswordManager:
             errors.append("Password must contain at least one number.")
         if not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password):
             errors.append("Password must contain at least one special character.")
+        if any(c.isspace() for c in password):
+            errors.append("Password must not contain spaces.")
         return len(errors) == 0, errors
 
 

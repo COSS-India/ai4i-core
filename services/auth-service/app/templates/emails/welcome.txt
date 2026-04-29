@@ -5,10 +5,9 @@ You're all set, {{ display_name }}
 ----------------------------------
 
 Your AI4I Platform account is now active. You can sign in any time
-using the credentials below.
+using the email address below.
 
-  Username: {{ username }}
-  Email:    {{ email }}
+  Email: {{ email }}
 
 Next steps
 ----------
