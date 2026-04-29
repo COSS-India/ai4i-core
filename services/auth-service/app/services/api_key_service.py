@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.core.exceptions import EntityNotFoundError, InvalidAPIKeyError, ValidationError
 from app.models.api_key import APIKey
 from app.repositories.api_key_repository import APIKeyRepository
+from app.repositories.user_repository import UserRepository
 from app.services.cache_service import CacheService
 
 logger = logging.getLogger(__name__)
@@ -30,9 +31,11 @@ class APIKeyService:
         self,
         api_key_repo: APIKeyRepository,
         cache_service: CacheService,
+        user_repo: UserRepository,
     ) -> None:
         self._repo = api_key_repo
         self._cache = cache_service
+        self._user_repo = user_repo
 
     @staticmethod
     def generate_api_key() -> str:
@@ -69,6 +72,8 @@ class APIKeyService:
         await self._validate_permission_ids(permission_ids)
 
         raw_key = self.generate_api_key()
+        user = await self._user_repo.get_by_id(user_id)
+        tenant_id: Optional[str] = str(user.tenant_id) if user and user.tenant_id else None
         days = expires_days or settings.api_key_expire_days
         expires_at = datetime.now(timezone.utc) + timedelta(days=days)
         ttl = int(timedelta(days=days).total_seconds())
@@ -87,7 +92,12 @@ class APIKeyService:
         await self._cache.set_api_key_cache(
             raw_key,
             ttl,
-            {"api_key": raw_key, "permissions": permission_ids, "user_id": str(user_id)},
+            {
+                "api_key": raw_key,
+                "permissions": permission_ids,
+                "user_id": str(user_id),
+                "tenant_id": tenant_id,
+            },
         )
 
         await self._repo.commit()
@@ -134,6 +144,7 @@ class APIKeyService:
             "valid": True,
             "user_id": cached.get("user_id"),
             "permission_ids": permission_ids,
+            "tenant_id": cached.get("tenant_id"),
         }
 
     async def revoke_api_key(
