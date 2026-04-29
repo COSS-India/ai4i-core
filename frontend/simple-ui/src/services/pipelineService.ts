@@ -1,16 +1,13 @@
 // Pipeline Service API client
 
 import apiClient from './api';
+import { apiEndpoints } from './apiEndpoints';
 import { 
   PipelineInferenceRequest, 
   PipelineInferenceResponse 
 } from '../types/pipeline';
 
-const PIPELINE_ENDPOINTS = {
-  inference: '/api/v1/pipeline/inference',
-  info: '/api/v1/pipeline/info',
-  health: '/api/v1/pipeline/health',
-} as const;
+const PIPELINE_ENDPOINTS = apiEndpoints.pipeline;
 
 /**
  * Execute a pipeline inference request

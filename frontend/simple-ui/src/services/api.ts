@@ -3,6 +3,14 @@
 import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { getStoredAccessToken } from '../utils/tokenStorage';
 import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
+import { apiEndpoints, API_URL_PATH_MARKERS } from './apiEndpoints';
+
+export {
+  apiEndpoints,
+  API_URL_PATH_MARKERS,
+  API_V1,
+  INFERENCE_TRACE_PATHS,
+} from './apiEndpoints';
 
 // API Base URL from environment.
 // For production this should be set to the browser-facing API gateway URL
@@ -26,72 +34,6 @@ const getAuthToken = (): string | null => {
   }
   return null;
 };
-
-// API Endpoints
-export const apiEndpoints = {
-  asr: {
-    inference: '/api/v1/asr/inference',
-    models: '/api/v1/asr/models',
-    health: '/api/v1/asr/health',
-    streamingInfo: '/api/v1/asr/streaming/info',
-    streaming:
-      process.env.NEXT_PUBLIC_ASR_STREAM_URL || 'ws://localhost:8087/socket.io',
-  },
-  tts: {
-    inference: '/api/v1/tts/inference',
-    voices: '/api/v1/tts/voices',
-    health: '/api/v1/tts/health',
-  },
-  nmt: {
-    inference: '/api/v1/nmt/inference',
-    models: '/api/v1/nmt/models',
-    services: '/api/v1/nmt/services',
-    languages: '/api/v1/nmt/languages',
-    health: '/api/v1/nmt/health',
-  },
-  llm: {
-    inference: '/api/v1/llm/inference',
-    models: '/api/v1/llm/models',
-    health: '/api/v1/llm/health',
-  },
-  ocr: {
-    inference: '/api/v1/ocr/inference',
-    health: '/api/v1/ocr/health',
-  },
-  transliteration: {
-    inference: '/api/v1/transliteration/inference',
-    health: '/api/v1/transliteration/health',
-  },
-  'language-detection': {
-    inference: '/api/v1/language-detection/inference',
-    health: '/api/v1/language-detection/health',
-  },
-  'speaker-diarization': {
-    inference: '/api/v1/speaker-diarization/inference',
-    health: '/api/v1/speaker-diarization/health',
-  },
-  'language-diarization': {
-    inference: '/api/v1/language-diarization/inference',
-    health: '/api/v1/language-diarization/health',
-  },
-  'audio-language-detection': {
-    inference: '/api/v1/audio-lang-detection/inference',
-    health: '/api/v1/audio-lang-detection/health',
-  },
-  ner: {
-    inference: '/api/v1/ner/inference',
-    health: '/api/v1/ner/health',
-  },
-  pii: {
-    base: '/api/v1/pii',
-    redact: '/api/v1/pii/redact',
-    domains: '/api/v1/pii/domains',
-  },
-  policy: {
-    /** Gateway prefix; service mounts routes at /v1 (see policy-service main.py). */
-    base: '/api/v1/policy-service',
- },
-} as const;
 
 // Create Axios instance with standard timeout
 const apiClient: AxiosInstance = axios.create({
@@ -129,9 +71,9 @@ llmApiClient.interceptors.request.use(
     
     // Check endpoint type to determine authentication method (case-insensitive)
     const url = (config.url || '').toLowerCase();
-    const isLLMEndpoint = url.includes('/api/v1/llm');
-    const isAuthEndpoint = url.includes('/api/v1/auth');
-    const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
+    const isLLMEndpoint = url.includes(API_URL_PATH_MARKERS.llm);
+    const isAuthEndpoint = url.includes(API_URL_PATH_MARKERS.auth);
+    const isAuthRefreshEndpoint = url.includes(API_URL_PATH_MARKERS.authRefresh);
     
     // Proactively refresh token if it's expiring soon
     if (isLLMEndpoint && !isAuthRefreshEndpoint) {
@@ -268,29 +210,29 @@ apiClient.interceptors.request.use(
     // Check endpoint type to determine authentication method (case-insensitive)
     const url = (config.url || '').toLowerCase();
     const isModelManagementEndpoint =
-      url.includes('/model-management') ||
-      url.includes('/api/v1/models') ||
-      url.includes('/api/v1/services');
-    const isASREndpoint = url.includes('/api/v1/asr');
-    const isNMSEndpoint = url.includes('/api/v1/nmt');
-    const isTTSEndpoint = url.includes('/api/v1/tts');
-    const isLLMEndpoint = url.includes('/api/v1/llm');
-    const isPipelineEndpoint = url.includes('/api/v1/pipeline');
-    const isNEREndpoint = url.includes('/api/v1/ner');
-    const isOCREndpoint = url.includes('/api/v1/ocr');
-    const isTransliterationEndpoint = url.includes('/api/v1/transliteration');
-    const isLanguageDetectionEndpoint = url.includes('/api/v1/language-detection');
-    const isSpeakerDiarizationEndpoint = url.includes('/api/v1/speaker-diarization');
-    const isLanguageDiarizationEndpoint = url.includes('/api/v1/language-diarization');
-    const isAudioLangDetectionEndpoint = url.includes('/api/v1/audio-lang-detection');
-    const isObservabilityEndpoint = url.includes('/api/v1/telemetry');
-    const isTenantsEndpoint = url.includes('/api/v1/tenants');
-    const isFeatureFlagsEndpoint = url.includes('/api/v1/feature-flags');
-    const isPolicyServiceEndpoint = url.includes('/api/v1/policy-service');
+      url.includes(API_URL_PATH_MARKERS.modelManagement) ||
+      url.includes(API_URL_PATH_MARKERS.v1Models) ||
+      url.includes(API_URL_PATH_MARKERS.v1Services);
+    const isASREndpoint = url.includes(API_URL_PATH_MARKERS.asr);
+    const isNMSEndpoint = url.includes(API_URL_PATH_MARKERS.nmt);
+    const isTTSEndpoint = url.includes(API_URL_PATH_MARKERS.tts);
+    const isLLMEndpoint = url.includes(API_URL_PATH_MARKERS.llm);
+    const isPipelineEndpoint = url.includes(API_URL_PATH_MARKERS.pipeline);
+    const isNEREndpoint = url.includes(API_URL_PATH_MARKERS.ner);
+    const isOCREndpoint = url.includes(API_URL_PATH_MARKERS.ocr);
+    const isTransliterationEndpoint = url.includes(API_URL_PATH_MARKERS.transliteration);
+    const isLanguageDetectionEndpoint = url.includes(API_URL_PATH_MARKERS.languageDetection);
+    const isSpeakerDiarizationEndpoint = url.includes(API_URL_PATH_MARKERS.speakerDiarization);
+    const isLanguageDiarizationEndpoint = url.includes(API_URL_PATH_MARKERS.languageDiarization);
+    const isAudioLangDetectionEndpoint = url.includes(API_URL_PATH_MARKERS.audioLangDetection);
+    const isObservabilityEndpoint = url.includes(API_URL_PATH_MARKERS.telemetry);
+    const isTenantsEndpoint = url.includes(API_URL_PATH_MARKERS.tenants);
+    const isFeatureFlagsEndpoint = url.includes(API_URL_PATH_MARKERS.featureFlags);
+    const isPolicyServiceEndpoint = url.includes(API_URL_PATH_MARKERS.policyService);
     const pathNoQuery = (url.split('?')[0] || '').toLowerCase();
-    const isPolicyServiceHealthPath = pathNoQuery.endsWith('/api/v1/policy-service/health');
-    const isAuthEndpoint = url.includes('/api/v1/auth');
-    const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
+    const isPolicyServiceHealthPath = pathNoQuery.endsWith(apiEndpoints.policy.health);
+    const isAuthEndpoint = url.includes(API_URL_PATH_MARKERS.auth);
+    const isAuthRefreshEndpoint = url.includes(API_URL_PATH_MARKERS.authRefresh);
     
     // Services that require JWT tokens (routed via Kong with token-validator)
     const requiresJWT = isModelManagementEndpoint || isASREndpoint || isNMSEndpoint || 
@@ -375,27 +317,27 @@ apiClient.interceptors.response.use(
           if (typeof window !== 'undefined') {
             const url = (error.config?.url || '').toLowerCase();
             const isModelManagementEndpoint =
-              url.includes('/model-management') ||
-              url.includes('/api/v1/models') ||
-              url.includes('/api/v1/services');
-            const isTenantsEndpoint = url.includes('/api/v1/tenants');
+              url.includes(API_URL_PATH_MARKERS.modelManagement) ||
+              url.includes(API_URL_PATH_MARKERS.v1Models) ||
+              url.includes(API_URL_PATH_MARKERS.v1Services);
+            const isTenantsEndpoint = url.includes(API_URL_PATH_MARKERS.tenants);
             
             // Check if it's a service endpoint or model-management endpoint
             // These should NOT automatically logout - let the UI handle the error
-            const isServiceEndpoint = url.includes('/api/v1/asr') || 
-                                     url.includes('/api/v1/tts') ||
-                                     url.includes('/api/v1/nmt') ||
-                                     url.includes('/api/v1/llm') ||
-                                     url.includes('/api/v1/pipeline') ||
-                                     url.includes('/api/v1/ocr') ||
-                                     url.includes('/api/v1/ner') ||
-                                     url.includes('/api/v1/transliteration') ||
-                                     url.includes('/api/v1/language-detection') ||
-                                     url.includes('/api/v1/speaker-diarization') ||
-                                     url.includes('/api/v1/language-diarization') ||
-                                     url.includes('/api/v1/audio-lang-detection') ||
-                                     url.includes('/api/v1/telemetry') ||
-                                     url.includes('/api/v1/policy-service') ||
+            const isServiceEndpoint = url.includes(API_URL_PATH_MARKERS.asr) || 
+                                     url.includes(API_URL_PATH_MARKERS.tts) ||
+                                     url.includes(API_URL_PATH_MARKERS.nmt) ||
+                                     url.includes(API_URL_PATH_MARKERS.llm) ||
+                                     url.includes(API_URL_PATH_MARKERS.pipeline) ||
+                                     url.includes(API_URL_PATH_MARKERS.ocr) ||
+                                     url.includes(API_URL_PATH_MARKERS.ner) ||
+                                     url.includes(API_URL_PATH_MARKERS.transliteration) ||
+                                     url.includes(API_URL_PATH_MARKERS.languageDetection) ||
+                                     url.includes(API_URL_PATH_MARKERS.speakerDiarization) ||
+                                     url.includes(API_URL_PATH_MARKERS.languageDiarization) ||
+                                     url.includes(API_URL_PATH_MARKERS.audioLangDetection) ||
+                                     url.includes(API_URL_PATH_MARKERS.telemetry) ||
+                                     url.includes(API_URL_PATH_MARKERS.policyService) ||
                                      isModelManagementEndpoint ||
                                      isTenantsEndpoint;
             

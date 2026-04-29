@@ -1,6 +1,7 @@
 import api from "./api";
+import { apiEndpoints } from "./apiEndpoints";
 
-const BASE_URL = "/api/v1/pii";
+const BASE_URL = apiEndpoints.pii.base;
 
 export const piiService = {
   getDomains: () => api.get<string[]>(`${BASE_URL}/domains`),
