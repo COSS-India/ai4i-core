@@ -173,7 +173,8 @@ export const checkTTSHealth = async (): Promise<TTSHealthResponse> => {
  */
 export const getTTSConfig = async () => {
   try {
-    return await baseApiService.get(apiEndpoints.tts.config);
+    const response = await apiClient.get(apiEndpoints.tts.config);
+    return response.data;
   } catch (error) {
     console.error('Failed to fetch TTS config:', error);
     throw new Error('Failed to fetch TTS configuration');

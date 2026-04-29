@@ -2,7 +2,8 @@
  * Alerting service — Alert Definitions, Receivers, Routing Rules, and read-only Alert History.
  * Follows the same request pattern as authService.
  */
-import { apiEndpoints } from './api';
+import axios from 'axios';
+import { apiClient, apiEndpoints } from './api';
 import authService from './authService';
 import baseApiService from './baseApiService';
 import type {
@@ -41,24 +42,58 @@ class AlertingService {
       defaultHeaders.Authorization = `Bearer ${token}`;
     }
 
+    const config: RequestInit = {
+      ...options,
+      headers: {
+        ...defaultHeaders,
+        ...options.headers,
+      },
+    };
+
     const method = (options.method || 'GET') as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
     const requestData =
       typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
 
     try {
-      return await baseApiService.request<T>(url, {
+      const response = await apiClient.request<T>({
+        url,
         method,
-        data: requestData as unknown,
-        headers: {
-          ...defaultHeaders,
-          ...(options.headers as Record<string, string>),
-        },
+        data: requestData,
+        headers: config.headers as Record<string, string>,
         timeout: 15000,
       });
-    } catch (error: any) {
-      if (error?.message?.toLowerCase?.().includes('timeout')) {
-        throw new Error('Request timeout: Alerting service is not responding');
+      const payload = response.data as any;
+      if (payload && typeof payload === 'object' && 'success' in payload && 'data' in payload) {
+        return payload.data as T;
       }
+      return payload as T;
+    } catch (error: any) {
+      if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNABORTED') {
+          throw new Error('Request timeout: Alerting service is not responding');
+        }
+
+        const status = error.response?.status;
+        const errorData: any = error.response?.data ?? {};
+        let errorMessage = `HTTP error! status: ${status ?? 'unknown'}`;
+        if (errorData?.detail) {
+          const d = errorData.detail;
+          if (typeof d === 'string') {
+            errorMessage = d;
+          } else if (typeof d === 'object' && d !== null) {
+            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
+          }
+        } else if (errorData?.message) {
+          errorMessage = String(errorData.message);
+        } else if (error.message) {
+          errorMessage = error.message;
+        }
+
+        const mappedError = new Error(errorMessage);
+        (mappedError as any).status = status;
+        throw mappedError;
+      }
+
       if (error?.name === 'AbortError') {
         throw new Error('Request timeout: Alerting service is not responding');
       }

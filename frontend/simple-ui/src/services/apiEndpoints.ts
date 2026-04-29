@@ -124,6 +124,7 @@ export const apiEndpoints = {
       changePassword: '/change-password',
       requestPasswordReset: '/request-password-reset',
       resetPassword: '/reset-password',
+      setPasswordStatus: '/set-password/status',
       apiKeys: '/api-keys',
       apiKeysAll: '/api-keys/all',
       oauth2Providers: '/oauth2/providers',
@@ -196,6 +197,9 @@ export const apiEndpoints = {
     tracesSearch: '/api/v1/telemetry/traces/search',
     tracesRoot: '/api/v1/telemetry/traces',
     tracesServices: '/api/v1/telemetry/traces/services',
+  },
+  tenants: {
+    base: '/api/v1/tenants',
   },
 } as const;
 

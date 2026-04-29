@@ -1,7 +1,6 @@
 // ASR service API client with typed methods
 
-import { apiEndpoints } from './api';
-import baseApiService from './baseApiService';
+import { apiClient, apiEndpoints } from './api';
 import { 
   ASRInferenceRequest, 
   ASRInferenceResponse, 
@@ -43,7 +42,7 @@ export const performASRInference = async (
       },
     };
 
-    const response = await baseApiService.post<ASRInferenceResponse>(
+    const response = await apiClient.post<ASRInferenceResponse>(
       apiEndpoints.asr.inference,
       payload
     );
@@ -88,7 +87,7 @@ export const transcribeAudio = async (
       audio: [{ audioContent: `${audioContent.substring(0, 50)}... (truncated)` }]
     });
 
-    const response = await baseApiService.requestWithMeta<ASRInferenceResponse>(
+    const response = await apiClient.post<ASRInferenceResponse>(
       apiEndpoints.asr.inference,
       {
         method: 'POST',
@@ -120,7 +119,7 @@ export const transcribeAudio = async (
  */
 export const listASRModels = async (): Promise<ASRModelsResponse> => {
   try {
-    const response = await baseApiService.get<ASRModelsResponse>(
+    const response = await apiClient.get<ASRModelsResponse>(
       apiEndpoints.asr.models
     );
     return response;
@@ -195,7 +194,7 @@ export const listASRServices = async (): Promise<ASRServiceDetails[]> => {
  */
 export const checkASRHealth = async (): Promise<ASRHealthResponse> => {
   try {
-    const response = await baseApiService.get<ASRHealthResponse>(
+    const response = await apiClient.get<ASRHealthResponse>(
       apiEndpoints.asr.health
     );
     return response;
@@ -211,7 +210,8 @@ export const checkASRHealth = async (): Promise<ASRHealthResponse> => {
  */
 export const getASRConfig = async () => {
   try {
-    return await baseApiService.get(apiEndpoints.asr.config);
+    const response = await apiClient.get(apiEndpoints.asr.config);
+    return response.data;
   } catch (error) {
     console.error('Failed to fetch ASR config:', error);
     throw new Error('Failed to fetch ASR configuration');
