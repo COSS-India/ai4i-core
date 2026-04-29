@@ -24,6 +24,7 @@ from app.schemas.auth import (
     SetPasswordStatusResponse,
     TokenRefreshRequest,
     TokenRefreshResponse,
+    VerifyEmailRequest,
 )
 from app.services.auth_service import AuthService
 
@@ -51,8 +52,22 @@ async def register(
         "user_id": str(user.user_id),
         "email": user.email,
         "username": user.username,
-        "message": "User registered successfully.",
+        "message": (
+            "Account created. Check your inbox for a verification link to "
+            "activate your account before signing in."
+        ),
     })
+
+
+@router.post("/verify-email")
+async def verify_email(
+    body: VerifyEmailRequest,
+    svc: AuthService = Depends(get_auth_service),
+):
+    """Consume a verification token from the link in the verify-email email
+    and activate the user. Idempotent-ish: already-used tokens fail clearly."""
+    await svc.verify_email_token(body.token)
+    return success_response(data={"message": "Email verified. You can now sign in."})
 
 
 @router.post("/login", response_model=LoginResponse)

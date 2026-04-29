@@ -36,7 +36,7 @@ from app.schemas.auth import LoginResponse, TokenRefreshResponse
 from app.services.auth_email_templates import (
     render_password_changed,
     render_setup_link,
-    render_welcome,
+    render_verify_email,
 )
 from app.services.password_service import PasswordService
 from app.services.role_service import RoleService
@@ -132,7 +132,14 @@ class AuthService:
         tenant_id: Optional[str] = None,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> User:
-        """Create a user with credentials in one transaction. Used for direct portal sign-up."""
+        """Create an inactive user with credentials and issue a verify-email
+        token. The user CANNOT log in until they click the verification link
+        and the account is activated via verify_email_token().
+
+        Direct portal sign-up follows the password-at-signup + email-verify
+        pattern: the user types the password they want, but the account stays
+        inactive until they prove ownership of the email address.
+        """
         self._passwords.validate_and_confirm(password, confirm_password)
 
         if await self._users.get_by_email(email):
@@ -149,7 +156,7 @@ class AuthService:
             phone_number=phone_number,
             timezone=tz,
             tenant_id=parsed_tenant_id,
-            is_active=True,
+            is_active=False,
             creation_type=CreationType.DIRECT,
         )
         await self._users.create(user)
@@ -167,10 +174,48 @@ class AuthService:
         except EntityNotFoundError:
             logger.warning("Default USER role not found, skipping role assignment.")
 
+        user_uuid_str = str(user.user_id)
+        verify_token = self._tokens.create_verify_token(
+            user_id=user_uuid_str,
+            email=email,
+            expires_delta=timedelta(hours=settings.setup_token_expire_hours),
+        )
+        token_obj = TokenVerification(
+            token=verify_token,
+            is_active=True,
+            expires_at=self._setup_token_expires_at(),
+            created_by=user_uuid_str,
+        )
+        await self._verifications.create(token_obj)
+
         await self._users.commit()
-        logger.info("User registered: %s (id=%s)", email, user.user_id)
-        self._enqueue_email(background_tasks, lambda: render_welcome(user))
+        logger.info("User registered (pending verification): %s (id=%s)", email, user.user_id)
+        self._enqueue_email(background_tasks, lambda: render_verify_email(user, verify_token))
         return user
+
+    # ── Email verification (consumes verify_token) ──
+
+    async def verify_email_token(self, token: str) -> None:
+        """Consume a verify token and flip the user to active. The user already
+        has credentials (set during register), so this is a pure activation —
+        no password change.
+        """
+        payload = self._validate_token_of_type(token, TokenType.VERIFY)
+
+        token_obj = await self._verifications.get_by_token(token)
+        if not token_obj:
+            raise TokenInvalidError("Invalid verification link.")
+        if not token_obj.is_active:
+            raise TokenInvalidError("Verification link has already been used.")
+
+        user = await self._users.get_by_id(UUID(payload.sub))
+        if not user:
+            raise TokenInvalidError("Invalid verification link.")
+
+        user.is_active = True
+        await self._verifications.deactivate(token_obj)
+        await self._users.commit()
+        logger.info("Email verified for user id=%s", user.user_id)
 
     # ── Login ──
 

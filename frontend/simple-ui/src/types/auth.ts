@@ -100,6 +100,10 @@ export interface SetPasswordStatusResponse {
   message: string;
 }
 
+export interface VerifyEmailRequest {
+  token: string;
+}
+
 export interface LogoutRequest {
   refresh_token?: string;
 }

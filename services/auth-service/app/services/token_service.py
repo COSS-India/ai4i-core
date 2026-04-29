@@ -141,6 +141,28 @@ class TokenService:
         }
         return self._sign(payload)
 
+    def create_verify_token(
+        self,
+        user_id: str,
+        email: str,
+        expires_delta: Optional[timedelta] = None,
+    ) -> str:
+        """Short-lived email-verification token. Signed JWT, stored in
+        token_verification table. Distinct from SETUP: VERIFY only flips
+        is_active=True (the user already supplied a password at signup).
+        """
+        expire = datetime.now(timezone.utc) + (
+            expires_delta or timedelta(hours=settings.setup_token_expire_hours)
+        )
+        payload = {
+            **self._base_claims(),
+            "sub": str(user_id),
+            "email": email,
+            "type": TokenType.VERIFY,
+            "exp": expire,
+        }
+        return self._sign(payload)
+
     # ── Validation ──
 
     def validate_token(self, token: str) -> TokenPayload:
