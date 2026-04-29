@@ -1,18 +1,14 @@
-from ai4icore_email.client import EmailClient
-from ai4icore_email.exceptions import EmailConfigError, EmailDeliveryError
-from ai4icore_email.fastapi import get_email_client
-from ai4icore_email.message import EmailMessage
-from ai4icore_email.providers.base import EmailProvider
-from ai4icore_email.settings import EmailSettings
-from ai4icore_email.templates import TemplateRenderer
+"""
+Backwards-compatibility shim.
 
-__all__ = [
-    "EmailClient",
-    "EmailConfigError",
-    "EmailDeliveryError",
-    "EmailMessage",
-    "EmailProvider",
-    "EmailSettings",
-    "TemplateRenderer",
-    "get_email_client",
-]
+The canonical implementation lives in ``ai4icore_core.email``. This package re-exports
+its public API so existing ``from ai4icore_<lib> import ...`` continues
+to work. New code should import from ``ai4icore_core.email`` directly.
+"""
+from ai4icore_core.email import *  # noqa: F401,F403
+
+# Also propagate private symbols (e.g. helpers) for full backwards compatibility.
+from importlib import import_module as _import_module
+_real = _import_module("ai4icore_core.email")
+globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})
+del _real, _import_module

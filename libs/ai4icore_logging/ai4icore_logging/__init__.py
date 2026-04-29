@@ -1,60 +1,14 @@
 """
-AI4ICore Logging Library
+Backwards-compatibility shim.
 
-Structured JSON logging with trace correlation for AI4ICore microservices.
+The canonical implementation lives in ``ai4icore_core.logging``. This package re-exports
+its public API so existing ``from ai4icore_<lib> import ...`` continues
+to work. New code should import from ``ai4icore_core.logging`` directly.
 """
+from ai4icore_core.logging import *  # noqa: F401,F403
 
-__version__ = "1.0.0"
-__author__ = "AI4I Team"
-
-from .logger import get_logger, configure_logging
-from .context import (
-    set_trace_id,
-    get_trace_id,
-    clear_trace_id,
-    TraceContext,
-    generate_trace_id,
-    set_organization,
-    get_organization,
-    clear_organization,
-)
-from .formatters import JSONFormatter
-from .handlers import KafkaHandler
-from .middleware import (
-    CorrelationMiddleware,
-    RequestLoggingMiddleware,
-    get_correlation_id,
-    get_trace_id_from_request,
-)
-from .service_request_logging import ServiceRequestLoggingMiddleware
-from .config import LoggingConfig
-from .plugin import (
-    LoggingPlugin,
-    create_logging_plugin,
-    register_logging_plugin,
-)
-
-__all__ = [
-    "get_logger",
-    "configure_logging",
-    "set_trace_id",
-    "get_trace_id",
-    "clear_trace_id",
-    "TraceContext",
-    "generate_trace_id",
-    "set_organization",
-    "get_organization",
-    "clear_organization",
-    "JSONFormatter",
-    "KafkaHandler",
-    "CorrelationMiddleware",
-    "RequestLoggingMiddleware",
-    "ServiceRequestLoggingMiddleware",
-    "get_correlation_id",
-    "get_trace_id_from_request",
-    "LoggingConfig",
-    "LoggingPlugin",
-    "create_logging_plugin",
-    "register_logging_plugin",
-]
-
+# Also propagate private symbols (e.g. helpers) for full backwards compatibility.
+from importlib import import_module as _import_module
+_real = _import_module("ai4icore_core.logging")
+globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})
+del _real, _import_module

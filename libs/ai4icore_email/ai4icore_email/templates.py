@@ -1,38 +1,15 @@
-"""Jinja2 wrapper with autoescape forced on for HTML.
-
-Each consuming service supplies its own template directory:
-
-    renderer = TemplateRenderer([Path("app/templates/emails")])
-    html, text = renderer.render("<template_name>", {"user": user})
-
-Template naming convention: <name>.html and <name>.txt files in the
-supplied directory. Both are rendered with the same context. HTML is
-auto-escaped; text is not (text has no HTML exploit surface).
 """
+Backwards-compatibility shim.
 
-from pathlib import Path
-from typing import Iterable
+The canonical implementation lives in ``ai4icore_core.email.templates``. This module re-exports
+its public API so existing ``from ai4icore_<lib>... import ...`` continues
+to work. New code should import from ``ai4icore_core.email.templates`` directly.
+"""
+from ai4icore_core.email.templates import *  # noqa: F401,F403
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
-
-
-class TemplateRenderer:
-    def __init__(self, template_dirs: Iterable[Path]) -> None:
-        loader = FileSystemLoader([str(p) for p in template_dirs])
-        common = dict(
-            loader=loader,
-            undefined=StrictUndefined,
-            trim_blocks=True,
-            lstrip_blocks=True,
-        )
-        # HTML env auto-escapes; text env does not (no exploit surface).
-        self._html_env = Environment(
-            autoescape=select_autoescape(default_for_string=True, default=True),
-            **common,
-        )
-        self._text_env = Environment(autoescape=False, **common)
-
-    def render(self, name: str, ctx: dict) -> tuple[str, str]:
-        html = self._html_env.get_template(f"{name}.html").render(**ctx)
-        text = self._text_env.get_template(f"{name}.txt").render(**ctx)
-        return html, text
+# Also propagate private symbols (e.g. helpers, module-level state) for full
+# backwards compatibility with services that imported private names.
+from importlib import import_module as _import_module
+_real = _import_module("ai4icore_core.email.templates")
+globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})
+del _real, _import_module

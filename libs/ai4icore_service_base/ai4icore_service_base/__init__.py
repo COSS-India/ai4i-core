@@ -1,27 +1,14 @@
 """
-ai4icore_service_base -- Shared infrastructure for AI4I-Core inference services.
+Backwards-compatibility shim.
 
-Provides common building blocks that every inference service needs:
-- ServiceRegistryClient: register/deregister with central service discovery
-- RateLimitMiddleware: Redis-based per-API-key rate limiting
-- health_router: standard health/ready/live endpoints
+The canonical implementation lives in ``ai4icore_core.service_base``. This package re-exports
+its public API so existing ``from ai4icore_<lib> import ...`` continues
+to work. New code should import from ``ai4icore_core.service_base`` directly.
 """
+from ai4icore_core.service_base import *  # noqa: F401,F403
 
-from .service_registry import ServiceRegistryClient
-from .rate_limit import RateLimitMiddleware
-from .health import create_health_router
-
-# Lazy import: create_inference_app depends on ai4icore_platform_core
-# which is not installed in non-inference services (e.g. pipeline-service).
-def __getattr__(name):
-    if name == "create_inference_app":
-        from .app_factory import create_inference_app
-        return create_inference_app
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-__all__ = [
-    "ServiceRegistryClient",
-    "RateLimitMiddleware",
-    "create_health_router",
-    "create_inference_app",
-]
+# Also propagate private symbols (e.g. helpers) for full backwards compatibility.
+from importlib import import_module as _import_module
+_real = _import_module("ai4icore_core.service_base")
+globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})
+del _real, _import_module

@@ -1,38 +1,14 @@
 """
-ai4icore_auth — Shared authentication & authorization library for AI4I-Core.
+Backwards-compatibility shim.
 
-RS256 JWKS-based JWT verification, permission checking, auth middleware,
-endpoint guard, and FastAPI dependencies.
-Used by ALL microservices as the single source of truth for auth.
+The canonical implementation lives in ``ai4icore_core.auth``. This package re-exports
+its public API so existing ``from ai4icore_<lib> import ...`` continues
+to work. New code should import from ``ai4icore_core.auth`` directly.
 """
+from ai4icore_core.auth import *  # noqa: F401,F403
 
-from .jwt_verifier import (
-    AuthClaims,
-    JWTVerifier,
-    JWTVerificationError,
-    JWTExpiredError,
-    JWTRevokedError,
-)
-from .permission_checker import PermissionChecker
-from .middleware import AuthMiddleware
-from .dependencies import (
-    create_require_auth,
-    create_require_role,
-)
-from .endpoint_guard import create_endpoint_guard
-from .providers import create_auth_providers, build_jwt_verifier
-
-__all__ = [
-    "AuthClaims",
-    "JWTVerifier",
-    "JWTVerificationError",
-    "JWTExpiredError",
-    "JWTRevokedError",
-    "PermissionChecker",
-    "AuthMiddleware",
-    "create_require_auth",
-    "create_require_role",
-    "create_endpoint_guard",
-    "create_auth_providers",
-    "build_jwt_verifier",
-]
+# Also propagate private symbols (e.g. helpers) for full backwards compatibility.
+from importlib import import_module as _import_module
+_real = _import_module("ai4icore_core.auth")
+globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})
+del _real, _import_module

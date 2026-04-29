@@ -1,26 +1,15 @@
 """
-Standardized API response envelope for ALL microservices.
+Backwards-compatibility shim.
 
-Every service uses this — consistent response shape across the platform.
-
-Success: {"success": true, "data": ..., "meta": ...}
-Error:   {"success": false, "error": {"code": ..., "message": ..., "details": ...}}
+The canonical implementation lives in ``ai4icore_core.exceptions.responses``. This module re-exports
+its public API so existing ``from ai4icore_<lib>... import ...`` continues
+to work. New code should import from ``ai4icore_core.exceptions.responses`` directly.
 """
+from ai4icore_core.exceptions.responses import *  # noqa: F401,F403
 
-from typing import Any, Optional
-
-
-def success_response(data: Any = None, meta: Optional[dict[str, Any]] = None) -> dict:
-    """Build a success response dict."""
-    resp: dict[str, Any] = {"success": True, "data": data}
-    if meta:
-        resp["meta"] = meta
-    return resp
-
-
-def error_response(code: str, message: str, details: Optional[dict[str, Any]] = None) -> dict:
-    """Build an error response dict."""
-    err: dict[str, Any] = {"code": code, "message": message}
-    if details:
-        err["details"] = details
-    return {"success": False, "error": err}
+# Also propagate private symbols (e.g. helpers, module-level state) for full
+# backwards compatibility with services that imported private names.
+from importlib import import_module as _import_module
+_real = _import_module("ai4icore_core.exceptions.responses")
+globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})
+del _real, _import_module

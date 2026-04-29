@@ -1,21 +1,15 @@
-"""Provider abstraction.
-
-A provider is anything that can deliver a fully-rendered EmailMessage.
-Concrete providers in this package: SmtpEmailProvider, ConsoleEmailProvider.
-Future providers (SendGrid HTTP, Mailgun HTTP, boto3 SES, etc.) implement
-the same Protocol and register in providers/factory.py — no consumer code
-changes.
 """
+Backwards-compatibility shim.
 
-from typing import Protocol, runtime_checkable
+The canonical implementation lives in ``ai4icore_core.email.providers.base``. This module re-exports
+its public API so existing ``from ai4icore_<lib>... import ...`` continues
+to work. New code should import from ``ai4icore_core.email.providers.base`` directly.
+"""
+from ai4icore_core.email.providers.base import *  # noqa: F401,F403
 
-from ai4icore_email.message import EmailMessage
-
-
-@runtime_checkable
-class EmailProvider(Protocol):
-    name: str
-
-    async def send(self, message: EmailMessage) -> None:
-        """Deliver the message. Raise EmailDeliveryError on failure."""
-        ...
+# Also propagate private symbols (e.g. helpers, module-level state) for full
+# backwards compatibility with services that imported private names.
+from importlib import import_module as _import_module
+_real = _import_module("ai4icore_core.email.providers.base")
+globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})
+del _real, _import_module

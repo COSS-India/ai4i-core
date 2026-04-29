@@ -1,34 +1,15 @@
-"""FastAPI dependency factory.
-
-Lazily builds an EmailClient singleton from EmailSettings on first request.
-Use via:
-
-    from ai4icore_email import EmailClient, get_email_client
-    @app.post("/something")
-    async def handler(client: EmailClient = Depends(get_email_client)):
-        ...
-
-Tests can override with FastAPI's dependency_overrides[get_email_client].
 """
+Backwards-compatibility shim.
 
-from functools import lru_cache
+The canonical implementation lives in ``ai4icore_core.email.fastapi``. This module re-exports
+its public API so existing ``from ai4icore_<lib>... import ...`` continues
+to work. New code should import from ``ai4icore_core.email.fastapi`` directly.
+"""
+from ai4icore_core.email.fastapi import *  # noqa: F401,F403
 
-from ai4icore_email.client import EmailClient
-from ai4icore_email.providers.factory import build_provider
-from ai4icore_email.settings import EmailSettings
-
-
-@lru_cache(maxsize=1)
-def _build_default_client() -> EmailClient:
-    settings = EmailSettings()
-    provider = build_provider(settings)
-    return EmailClient(provider)
-
-
-def get_email_client() -> EmailClient:
-    return _build_default_client()
-
-
-def reset_default_client_cache() -> None:
-    """Test helper: clear the lru_cache so a new EmailSettings() is read."""
-    _build_default_client.cache_clear()
+# Also propagate private symbols (e.g. helpers, module-level state) for full
+# backwards compatibility with services that imported private names.
+from importlib import import_module as _import_module
+_real = _import_module("ai4icore_core.email.fastapi")
+globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})
+del _real, _import_module

@@ -1,50 +1,15 @@
-"""Dev-only provider that logs the rendered message instead of sending.
-
-Auto-selected by the factory when EMAIL_PROVIDER=smtp + SMTP_HOST is empty
-+ ENVIRONMENT=development. Never used in staging/production — the factory
-raises EmailConfigError there.
 """
+Backwards-compatibility shim.
 
-import logging
-from typing import Optional
+The canonical implementation lives in ``ai4icore_core.email.providers.console``. This module re-exports
+its public API so existing ``from ai4icore_<lib>... import ...`` continues
+to work. New code should import from ``ai4icore_core.email.providers.console`` directly.
+"""
+from ai4icore_core.email.providers.console import *  # noqa: F401,F403
 
-from ai4icore_email.message import EmailMessage, build_mime
-
-logger = logging.getLogger(__name__)
-
-
-class ConsoleEmailProvider:
-    name = "console"
-
-    def __init__(
-        self,
-        *,
-        default_from_email: Optional[str],
-        default_from_name: str,
-        default_reply_to: Optional[str],
-        extra_headers: dict[str, str],
-    ) -> None:
-        self._default_from_email = default_from_email or "dev@localhost"
-        self._default_from_name = default_from_name
-        self._default_reply_to = default_reply_to
-        self._extra_headers = extra_headers
-
-    async def send(self, message: EmailMessage) -> None:
-        mime = build_mime(
-            message,
-            default_from_email=self._default_from_email,
-            default_from_name=self._default_from_name,
-            default_reply_to=self._default_reply_to,
-            extra_headers=self._extra_headers,
-        )
-        logger.info(
-            "[ConsoleEmailProvider] would send email\n"
-            "  From:    %s\n"
-            "  To:      %s\n"
-            "  Subject: %s\n"
-            "  Text body:\n%s",
-            mime["From"],
-            mime["To"],
-            mime["Subject"],
-            message.text_body,
-        )
+# Also propagate private symbols (e.g. helpers, module-level state) for full
+# backwards compatibility with services that imported private names.
+from importlib import import_module as _import_module
+_real = _import_module("ai4icore_core.email.providers.console")
+globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})
+del _real, _import_module

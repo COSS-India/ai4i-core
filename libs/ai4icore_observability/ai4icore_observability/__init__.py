@@ -1,41 +1,14 @@
 """
-AI4ICore Observability Plugin
+Backwards-compatibility shim.
 
-This package provides enterprise-grade observability features for the AI4ICore Platform,
-including comprehensive metrics, monitoring, and business analytics.
-
-Universal Framework Support:
-- FastAPI: ObservabilityPlugin (built-in)
-- Flask: FlaskObservabilityAdapter
-- Django: DjangoObservabilityAdapter
-- Generic: GenericObservabilityAdapter
-- Manual: ManualObservabilityAdapter
+The canonical implementation lives in ``ai4icore_core.observability``. This package re-exports
+its public API so existing ``from ai4icore_<lib> import ...`` continues
+to work. New code should import from ``ai4icore_core.observability`` directly.
 """
+from ai4icore_core.observability import *  # noqa: F401,F403
 
-__version__ = "1.0.9"
-__author__ = "AI4X Team"
-__email__ = "team@ai4x.com"
-
-from .plugin import ObservabilityPlugin
-from .metrics import MetricsCollector
-from .config import PluginConfig
-from .middleware import ObservabilityMiddleware
-
-# Import dashboard utilities
-from .dashboards import (
-    get_dashboard_path,
-    get_dashboard_json,
-    list_available_dashboards
-)
-
-__all__ = [
-    "ObservabilityPlugin",
-    "MetricsCollector", 
-    "PluginConfig",
-    "ObservabilityMiddleware",
-    # Dashboard utilities
-    "get_dashboard_path",
-    "get_dashboard_json",
-    "list_available_dashboards",
-]
-
+# Also propagate private symbols (e.g. helpers) for full backwards compatibility.
+from importlib import import_module as _import_module
+_real = _import_module("ai4icore_core.observability")
+globals().update({k: v for k, v in vars(_real).items() if not k.startswith("__")})
+del _real, _import_module

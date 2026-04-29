@@ -1,16 +1,20 @@
-[build-system]
-requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "ai4icore-exceptions"
-version = "1.0.0"
-description = "Shared exception hierarchy, response envelope, and exception handlers for AI4I-Core"
+version = "1.0.0-shim"
+description = "Backwards-compatibility shim — re-exports ai4icore_core.exceptions. New code should import ai4icore-core directly."
+readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "AI4I Team", email = "team@ai4inclusion.org"}
+]
 dependencies = [
-    "fastapi>=0.104.0",
-    "pydantic>=2.0.0",
+    "ai4icore-core>=1.0.0",
 ]
 
-[tool.setuptools.packages.find]
-include = ["ai4icore_exceptions*"]
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["ai4icore_exceptions"]
