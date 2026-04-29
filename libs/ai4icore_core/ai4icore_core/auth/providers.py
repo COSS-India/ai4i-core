@@ -26,7 +26,13 @@ from typing import Callable, Optional
 
 from fastapi import Header, Request
 
-from .jwt_verifier import JWTVerifier, AuthClaims
+from .jwt_verifier import (
+    JWTVerifier,
+    AuthClaims,
+    JWTVerificationError,
+    JWTExpiredError,
+    JWTRevokedError,
+)
 from .permission_checker import PermissionChecker
 from .dependencies import create_require_auth
 
@@ -120,8 +126,15 @@ def create_auth_providers(
             return None
         try:
             return await AuthProvider(request=request, authorization=authorization)
-        except Exception:
-            logger.debug("OptionalAuthProvider: auth failed, returning None", exc_info=True)
+        except (JWTVerificationError, JWTExpiredError, JWTRevokedError):
+            # Token-related failures (invalid / expired / revoked) → silent anonymous.
+            logger.debug(
+                "OptionalAuthProvider: token verification failed, treating as anonymous",
+                exc_info=True,
+            )
             return None
+        # NOTE: infrastructure failures (Redis outage, JWKS fetch error, etc.)
+        # propagate as 5xx so transient backend issues do not silently downgrade
+        # the request to anonymous and potentially bypass auth.
 
     return AuthProvider, OptionalAuthProvider

@@ -232,7 +232,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             elif service_type == "asr":
                 asr_audio_length = self._extract_asr_audio_length_from_body(body_bytes)
             elif service_type == "ocr":
-                ocr_characters = self._extract_ocr_characters_from_body(body_bytes)
+                ocr_characters = await self._extract_ocr_characters_from_body(body_bytes)
                 ocr_image_size_kb = self._extract_ocr_image_size_kb_from_body(body_bytes)
             elif service_type == "transliteration":
                 transliteration_characters = self._extract_transliteration_characters_from_body(body_bytes)
@@ -704,7 +704,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 print(f"⚠️ Failed to extract translation characters: {e}")
             return 0
     
-    def _extract_ocr_characters_from_body(self, body_bytes: bytes) -> int:
+    async def _extract_ocr_characters_from_body(self, body_bytes: bytes) -> int:
         """Extract real character count from OCR request body (from image text)."""
         try:
             if not body_bytes:
@@ -732,8 +732,10 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     elif 'imageUri' in image_item:
                         image_uri = image_item['imageUri']
                         try:
-                            # Download image from URL to estimate size
-                            response = httpx.get(image_uri, timeout=5.0, follow_redirects=True)
+                            # Download image from URL to estimate size — async to avoid
+                            # blocking the event loop in middleware context.
+                            async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as _client:
+                                response = await _client.get(image_uri)
                             if response.status_code == 200:
                                 image_data = response.content
                                 # Estimate characters based on image size
