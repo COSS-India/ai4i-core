@@ -20,7 +20,10 @@ _renderer = TemplateRenderer([_TEMPLATE_DIR])
 
 
 def _display_name(user: User) -> str:
-    return user.full_name or user.username or user.email
+    """Render-safe greeting name. Falls back to a generic greeting when
+    full_name is missing — never the username (per security spec: emails must
+    not reveal credentials, and username is part of the credential pair)."""
+    return user.full_name or "there"
 
 
 def _build_link(base: Optional[str], token: str, *, env_var: str) -> str:
@@ -48,6 +51,10 @@ def build_setup_url(token: str) -> str:
 
 def build_verify_url(token: str) -> str:
     return _build_link(settings.verify_link_base_url, token, env_var="VERIFY_LINK_BASE_URL")
+
+
+def build_reset_url(token: str) -> str:
+    return _build_link(settings.reset_link_base_url, token, env_var="RESET_LINK_BASE_URL")
 
 
 def _render(template: str, *, to: str, subject: str, ctx: dict) -> EmailMessage:
@@ -94,6 +101,21 @@ def render_setup_link(user: User, setup_token: str) -> EmailMessage:
             "display_name": _display_name(user),
             "setup_url": build_setup_url(setup_token),
             "expires_hours": settings.setup_token_expire_hours,
+        },
+    )
+
+
+def render_password_reset(user: User, reset_token: str) -> EmailMessage:
+    """Password-reset email triggered by /auth/forgot-password. Short 30-min
+    expiry per security spec — much tighter than setup/verify."""
+    return _render(
+        "password_reset",
+        to=user.email,
+        subject="Reset your AI4I Platform password",
+        ctx={
+            "display_name": _display_name(user),
+            "reset_url": build_reset_url(reset_token),
+            "expires_minutes": settings.reset_token_expire_minutes,
         },
     )
 
