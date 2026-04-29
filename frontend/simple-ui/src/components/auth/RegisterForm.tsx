@@ -23,6 +23,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { RegisterRequest } from '../../types/auth';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
+import PasswordRequirements, { passwordPasses } from './password/PasswordRequirements';
 
 interface RegisterFormProps {
   onSuccess?: () => void;
@@ -82,8 +83,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       errors.confirm_password = 'Passwords do not match';
     }
 
-    if (formData.password.length < 8) {
-      errors.password = 'Password must be at least 8 characters long';
+    if (!passwordPasses(formData.password)) {
+      errors.password = 'Password does not meet all requirements';
     }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
@@ -315,11 +316,13 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
                 name="password"
                 value={formData.password}
                 onChange={handleChange}
-                placeholder="Create a password (min 8 characters)"
+                placeholder="Create a password"
                 size="md"
                 pr="4.5rem"
                 autoComplete="new-password"
                 data-form-type="other"
+                minLength={8}
+                maxLength={64}
               />
               <InputRightElement width="4.5rem">
                 <IconButton
@@ -335,6 +338,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
             {validationErrors.password && (
               <FormErrorMessage>{validationErrors.password}</FormErrorMessage>
             )}
+            {/* Live policy checklist — mirrors backend rules exactly */}
+            <PasswordRequirements password={formData.password} compact />
           </FormControl>
 
           <FormControl isRequired isInvalid={!!validationErrors.confirm_password}>
@@ -376,7 +381,11 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
             width="full"
             isLoading={isLoading}
             loadingText="Signing up..."
-            disabled={isLoading}
+            disabled={
+              isLoading ||
+              !passwordPasses(formData.password) ||
+              formData.password !== formData.confirm_password
+            }
           >
             {isLoading ? <LoadingSpinner size="sm" /> : 'Sign Up'}
           </Button>

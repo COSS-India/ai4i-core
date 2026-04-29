@@ -27,6 +27,7 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
 import { authService } from "../../services/authService";
+import PasswordRequirements, { passwordPasses } from "../../components/auth/password/PasswordRequirements";
 
 type Phase =
   | { kind: "ready" }
@@ -61,7 +62,7 @@ const ResetPasswordPage: React.FC = () => {
   }, [router.isReady, router.query.token]);
 
   const validate = (): string | null => {
-    if (newPassword.length < 8) return "Password must be at least 8 characters.";
+    if (!passwordPasses(newPassword)) return "Password does not meet all requirements.";
     if (newPassword !== confirmPassword) return "Passwords do not match.";
     return null;
   };
@@ -142,7 +143,7 @@ const ResetPasswordPage: React.FC = () => {
                   phase.kind === "error") && (
                   <form onSubmit={onSubmit}>
                     <Stack spacing={4}>
-                      <FormControl isRequired isInvalid={!!pwErr}>
+                      <FormControl isRequired>
                         <FormLabel>New Password *</FormLabel>
                         <InputGroup>
                           <Input
@@ -154,6 +155,7 @@ const ResetPasswordPage: React.FC = () => {
                             }}
                             autoComplete="new-password"
                             minLength={8}
+                            maxLength={64}
                           />
                           <InputRightElement width="auto" pr={2}>
                             <Button
@@ -166,9 +168,10 @@ const ResetPasswordPage: React.FC = () => {
                             </Button>
                           </InputRightElement>
                         </InputGroup>
+                        <PasswordRequirements password={newPassword} compact />
                       </FormControl>
 
-                      <FormControl isRequired isInvalid={!!pwErr}>
+                      <FormControl isRequired isInvalid={confirmPassword.length > 0 && confirmPassword !== newPassword}>
                         <FormLabel>Confirm Password *</FormLabel>
                         <Input
                           type={showPw ? "text" : "password"}
@@ -179,8 +182,14 @@ const ResetPasswordPage: React.FC = () => {
                           }}
                           autoComplete="new-password"
                           minLength={8}
+                          maxLength={64}
                         />
-                        {pwErr && (
+                        {confirmPassword.length > 0 && confirmPassword !== newPassword && (
+                          <Text color="red.500" fontSize="sm" mt={1}>
+                            Passwords do not match.
+                          </Text>
+                        )}
+                        {pwErr && pwErr !== "Passwords do not match." && (
                           <Text color="red.500" fontSize="sm" mt={1}>
                             {pwErr}
                           </Text>
@@ -199,6 +208,7 @@ const ResetPasswordPage: React.FC = () => {
                         colorScheme="blue"
                         isLoading={phase.kind === "submitting"}
                         loadingText="Resetting…"
+                        isDisabled={!passwordPasses(newPassword) || newPassword !== confirmPassword}
                       >
                         Reset Password
                       </Button>
