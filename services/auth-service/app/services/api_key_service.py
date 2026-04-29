@@ -59,6 +59,7 @@ class APIKeyService:
         key_name: str,
         permissions: list[int],
         expires_days: Optional[int] = None,
+        tenant_id: Optional[str] = None,
     ) -> tuple[str, APIKey]:
         """
         Generate a hex API key, persist to DB, cache in Redis.
@@ -87,7 +88,12 @@ class APIKeyService:
         await self._cache.set_api_key_cache(
             raw_key,
             ttl,
-            {"api_key": raw_key, "permissions": permission_ids, "user_id": str(user_id)},
+            {
+                "api_key": raw_key,
+                "permissions": permission_ids,
+                "user_id": str(user_id),
+                "tenant_id": tenant_id,
+            },
         )
 
         await self._repo.commit()
@@ -134,6 +140,7 @@ class APIKeyService:
             "valid": True,
             "user_id": cached.get("user_id"),
             "permission_ids": permission_ids,
+            "tenant_id": cached.get("tenant_id"),
         }
 
     async def revoke_api_key(

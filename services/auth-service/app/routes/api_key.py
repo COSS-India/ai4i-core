@@ -48,6 +48,7 @@ async def create_api_key(
         key_name=body.key_name,
         permissions=body.permissions,
         expires_days=body.expires_days,
+        tenant_id=str(current_user.tenant_id) if current_user.tenant_id else None,
     )
     return success_response(data=CreateAPIKeyResponse(
         api_key=raw_key,
