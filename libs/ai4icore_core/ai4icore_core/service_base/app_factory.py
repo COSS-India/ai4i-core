@@ -36,7 +36,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from ai4icore_core.env import app_env
 from ai4icore_core.exceptions import register_exception_handlers
 from ai4icore_core.platform_core import (
-    AuthContextMiddleware,
     ModelManagementConfig,
     ModelManagementPlugin,
 )
@@ -373,9 +372,6 @@ def create_inference_app(
         )
         ModelManagementPlugin(config=mm_config).register_plugin(
             application, redis_client=redis_sync_client
-        )
-        application.add_middleware(
-            AuthContextMiddleware, path_prefixes=[config.api_prefix]
         )
     except Exception as e:
         logger.warning("Model Management plugin failed: %s", e)

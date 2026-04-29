@@ -22,7 +22,6 @@ from .triton_client import TritonClient, _current_scope, _accumulate_inference_t
 from .middleware import ModelResolutionMiddleware
 from .config import ModelManagementConfig
 from .plugin import ModelManagementPlugin
-from .auth_context_middleware import AuthContextMiddleware
 
 __all__ = [
     "ModelManagementClient",
@@ -33,6 +32,5 @@ __all__ = [
     "ModelResolutionMiddleware",
     "ModelManagementConfig",
     "ModelManagementPlugin",
-    "AuthContextMiddleware",
 ]
 
