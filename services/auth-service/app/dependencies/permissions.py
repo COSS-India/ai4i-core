@@ -15,6 +15,7 @@ from ai4icore_core.auth.permission_checker import PermissionChecker
 from app.core.database import get_db
 from app.core.exceptions import InsufficientPermissionsError
 from app.dependencies.auth import get_current_active_user
+from app.models.role_name import RoleName, role_name_to_str
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 
@@ -30,7 +31,7 @@ def require_permission(resource: str, action: str) -> Callable:
         db: AsyncSession = Depends(get_db),
     ) -> User:
         repo = RoleRepository(db)
-        permission_names = await repo.get_user_permission_names(current_user.user_id)
+        permission_names = await repo.get_user_permission_names(current_user.id)
         required = f"{resource}.{action}"
 
         if not PermissionChecker.has_permission(required, permission_names):
@@ -41,11 +42,12 @@ def require_permission(resource: str, action: str) -> Callable:
     return _check
 
 
-def require_any_role(*role_names: str) -> Callable:
+def require_any_role(*role_names: RoleName | str) -> Callable:
     """
     Dependency factory: requires current user to have at least one of the roles.
     Uses shared PermissionChecker.has_any_role.
     """
+    required = [role_name_to_str(r) for r in role_names]
 
     async def _check(
         request: Request,
@@ -53,13 +55,13 @@ def require_any_role(*role_names: str) -> Callable:
         db: AsyncSession = Depends(get_db),
     ) -> User:
         repo = RoleRepository(db)
-        user_roles = await repo.get_user_roles(current_user.user_id)
+        user_roles = await repo.get_user_roles(current_user.id)
 
         # Reuse these role names in downstream services to avoid duplicate DB queries.
         # (Routes can read `request.state.user_roles`.)
         request.state.user_roles = user_roles
 
-        if not PermissionChecker.has_any_role(list(role_names), user_roles):
+        if not PermissionChecker.has_any_role(required, user_roles):
             raise InsufficientPermissionsError()
 
         return current_user

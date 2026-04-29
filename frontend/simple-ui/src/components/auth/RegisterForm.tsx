@@ -124,12 +124,13 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       setShowPassword(false);
       setShowConfirmPassword(false);
       
-      // Show success toast
+      // Show success toast — user must verify email before sign-in works.
       toast({
-        title: "Registration Successful",
-        description: "Your account has been created successfully! Please sign in to continue.",
+        title: "Check your email",
+        description:
+          "We sent a verification link to your inbox. Click the link to activate your account, then sign in.",
         status: "success",
-        duration: 5000,
+        duration: 8000,
         isClosable: true,
       });
       

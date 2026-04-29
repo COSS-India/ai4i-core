@@ -11,6 +11,7 @@ from app.core.responses import success_response
 from app.dependencies.auth import get_current_active_user
 from app.dependencies.permissions import require_any_role
 from app.dependencies.services import get_api_key_service, get_role_service
+from app.models.role_name import RoleName
 from app.models.user import User
 from app.schemas.api_key import (
     CreateAPIKeyRequest,
@@ -43,7 +44,7 @@ async def create_api_key(
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     raw_key, api_key = await svc.create_api_key(
-        user_id=current_user.user_id,
+        user_id=current_user.id,
         key_name=body.key_name,
         permissions=body.permissions,
         expires_days=body.expires_days,
@@ -61,7 +62,7 @@ async def list_api_keys(
     current_user: User = Depends(get_current_active_user),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
-    keys = await svc.list_by_user(current_user.user_id)
+    keys = await svc.list_by_user(current_user.id)
     return success_response(data={"api_keys": [_key_dict(k) for k in keys]})
 
 
@@ -75,7 +76,7 @@ async def update_api_key(
     api_key = await svc.update_key(
         api_key_value=body.api_key,
         data=update_data,
-        user_id=current_user.user_id,
+        user_id=current_user.id,
     )
     return success_response(data={
         "key_name": api_key.key_name,
@@ -93,9 +94,9 @@ async def revoke_api_key(
     svc: APIKeyService = Depends(get_api_key_service),
     role_svc: RoleService = Depends(get_role_service),
 ):
-    owner_scoped_user_id = current_user.user_id
-    roles = await role_svc.get_user_roles(current_user.user_id)
-    if "ADMIN" in roles:
+    owner_scoped_user_id = current_user.id
+    roles = await role_svc.get_user_roles(current_user.id)
+    if RoleName.ADMIN.value in roles:
         owner_scoped_user_id = None
 
     await svc.revoke_api_key(api_key, user_id=owner_scoped_user_id)
@@ -106,7 +107,7 @@ async def revoke_api_key(
 async def list_all_api_keys(
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    _admin: User = Depends(require_any_role("ADMIN", "MODERATOR")),
+    _admin: User = Depends(require_any_role(RoleName.ADMIN, RoleName.MODERATOR)),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     results = await svc.list_all_with_users(offset, limit)

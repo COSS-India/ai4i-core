@@ -4,6 +4,7 @@ from typing import Optional
 from uuid import UUID
 
 from app.core.exceptions import AuthorizationError
+from app.models.role_name import RoleName
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
 from app.repositories.user_repository import UserRepository
@@ -15,16 +16,16 @@ class UserService:
         self._roles = role_repo
 
     async def get_user_profile(self, user: User) -> dict:
-        roles = await self._roles.get_user_roles(user.user_id)
+        roles = await self._roles.get_user_roles(user.id)
         return {
-            "user_id": str(user.user_id),
+            "user_id": str(user.id),
             "email": user.email,
             "username": user.username,
             "full_name": user.full_name,
             "is_active": user.is_active,
             "is_tenant_active": user.is_tenant_active,
             "creation_type": user.creation_type.value if user.creation_type else None,
-            "tenant_id": str(user.tenant_id) if user.tenant_id else None,
+            "tenant_id": user.tenant_id,
             "last_login": user.last_login,
             "avatar_url": user.avatar_url,
             "phone_number": user.phone_number,
@@ -67,9 +68,9 @@ class UserService:
         """ADMIN/MODERATOR see all users; TENANT ADMIN sees only their own tenant."""
         effective_role_set = await self._resolve_caller_role_set(caller, role_set)
 
-        if "ADMIN" in effective_role_set or "MODERATOR" in effective_role_set:
+        if RoleName.ADMIN.value in effective_role_set or RoleName.MODERATOR.value in effective_role_set:
             return await self._users.list_all(offset, limit)
-        if "TENANT ADMIN" in effective_role_set:
+        if RoleName.TENANT_ADMIN.value in effective_role_set:
             self._assert_tenant_context(caller, "list users")
             return await self._users.list_by_tenant(caller.tenant_id, offset, limit)
         raise AuthorizationError(
@@ -96,9 +97,9 @@ class UserService:
 
         effective_role_set = await self._resolve_caller_role_set(caller, role_set)
 
-        if "ADMIN" in effective_role_set or "MODERATOR" in effective_role_set:
+        if RoleName.ADMIN.value in effective_role_set or RoleName.MODERATOR.value in effective_role_set:
             return user
-        if "TENANT ADMIN" in effective_role_set:
+        if RoleName.TENANT_ADMIN.value in effective_role_set:
             self._assert_tenant_context(caller, "view users")
             if user.tenant_id != caller.tenant_id:
                 raise AuthorizationError(

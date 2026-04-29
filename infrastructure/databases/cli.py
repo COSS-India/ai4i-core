@@ -21,7 +21,12 @@ sys.path.insert(0, str(project_root))
 
 from dotenv import load_dotenv
 load_dotenv(project_root / ".env")
-load_dotenv(project_root / "infrastructure" / "databases" / "migrations" / "postgres" / "alembic" / ".env")
+# alembic/.env holds local-dev overrides (localhost:5434); load with override=True
+# so these win over the Docker service names in the root .env
+load_dotenv(
+    project_root / "infrastructure" / "databases" / "migrations" / "postgres" / "alembic" / ".env",
+    override=True,
+)
 
 from infrastructure.databases.core.migration_manager import MigrationManager
 from infrastructure.databases.config import MigrationConfig

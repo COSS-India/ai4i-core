@@ -5,6 +5,7 @@ AuditLog ORM model.
 import enum
 
 from sqlalchemy import Column, DateTime, Enum, Integer, JSON, String
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
 from app.models import Base
@@ -26,7 +27,7 @@ class AuditEntityAction(str, enum.Enum):
 class AuditLog(Base):
     __tablename__ = "audit"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     entity_type = Column(
         Enum(AuditEntityType, name="audit_entity_type_enum"),
         nullable=False,
@@ -40,4 +41,4 @@ class AuditLog(Base):
     details = Column(JSON, nullable=True)
     subject = Column(String(255), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    created_by = Column(String(255), nullable=True)
+    created_by = Column(UUID(as_uuid=True), nullable=True)

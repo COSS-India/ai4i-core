@@ -135,9 +135,10 @@ async def load_api_permissions() -> None:
 
         name_to_id: dict[str, int] = {}
         async for db in get_db():
-            result = await db.execute(select(Permission.name, Permission.permission_id))
+            result = await db.execute(select(Permission.name, Permission.id))
             for name, pid in result.all():
-                name_to_id[name] = pid
+                key = name.value if hasattr(name, "value") else str(name)
+                name_to_id[key] = pid
             break
 
         endpoint_to_id: dict[str, str] = {}

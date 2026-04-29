@@ -25,6 +25,7 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.models.credentials import UserCredentials
+from app.models.role_name import RoleName
 from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
 from app.repositories.credentials_repository import CredentialsRepository
@@ -36,7 +37,7 @@ from app.schemas.auth import LoginResponse, TokenRefreshResponse
 from app.services.auth_email_templates import (
     render_password_changed,
     render_setup_link,
-    render_welcome,
+    render_verify_email,
 )
 from app.services.password_service import PasswordService
 from app.services.role_service import RoleService
@@ -105,10 +106,17 @@ class AuthService:
             raise TokenInvalidError(f"Expected a '{expected_type}' token.")
         return payload
 
-    async def _resolve_tenant_id(self, explicit: Optional[str]) -> Optional[UUID]:
+    async def _resolve_tenant_id(self, explicit: Optional[int | str]) -> Optional[int]:
         """Honor an explicit tenant_id, otherwise fall back to the default tenant."""
-        if explicit:
-            return UUID(explicit)
+        if explicit is not None:
+            try:
+                return int(explicit)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(
+                    message="Invalid tenant_id.",
+                    code="INVALID_TENANT_ID",
+                    errors=[f"tenant_id must be an integer, got: {explicit!r}"],
+                ) from exc
         default = await self._tenants.get_by_organisation(settings.default_tenant_org)
         if default is None:
             logger.warning(
@@ -116,7 +124,7 @@ class AuthService:
                 settings.default_tenant_org,
             )
             return None
-        return default.tenant_id
+        return default.id
 
     # ── Register (direct portal signup) ──
 
@@ -129,10 +137,17 @@ class AuthService:
         full_name: Optional[str] = None,
         phone_number: Optional[str] = None,
         tz: str = "UTC",
-        tenant_id: Optional[str] = None,
+        tenant_id: Optional[int | str] = None,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> User:
-        """Create a user with credentials in one transaction. Used for direct portal sign-up."""
+        """Create an inactive user with credentials and issue a verify-email
+        token. The user CANNOT log in until they click the verification link
+        and the account is activated via verify_email_token().
+
+        Direct portal sign-up follows the password-at-signup + email-verify
+        pattern: the user types the password they want, but the account stays
+        inactive until they prove ownership of the email address.
+        """
         self._passwords.validate_and_confirm(password, confirm_password)
 
         if await self._users.get_by_email(email):
@@ -149,28 +164,67 @@ class AuthService:
             phone_number=phone_number,
             timezone=tz,
             tenant_id=parsed_tenant_id,
-            is_active=True,
-            creation_type=CreationType.DIRECT,
+            is_active=False,
+            # ORM enum currently supports only "default" and "google".
+            creation_type=CreationType.DEFAULT,
         )
         await self._users.create(user)
 
         hash_result = self._passwords.hash_password(password)
         creds = UserCredentials(
-            user_id=user.user_id,
+            user_id=user.id,
             password_hash=hash_result.hashed,
             password_salt=hash_result.salt,
         )
         await self._credentials.create(creds)
 
         try:
-            await self._roles.assign_role(user.user_id, Roles.USER)
+            await self._roles.assign_role(user.id, RoleName.USER)
         except EntityNotFoundError:
             logger.warning("Default USER role not found, skipping role assignment.")
 
+        user_uuid_str = str(user.user_id)
+        verify_token = self._tokens.create_verify_token(
+            user_id=user_uuid_str,
+            email=email,
+            expires_delta=timedelta(hours=settings.setup_token_expire_hours),
+        )
+        token_obj = TokenVerification(
+            token=verify_token,
+            is_active=True,
+            expires_at=self._setup_token_expires_at(),
+            created_by=user_uuid_str,
+        )
+        await self._verifications.create(token_obj)
+
         await self._users.commit()
-        logger.info("User registered: %s (id=%s)", email, user.user_id)
-        self._enqueue_email(background_tasks, lambda: render_welcome(user))
+        logger.info("User registered (pending verification): %s (id=%s)", email, user.id)
+        self._enqueue_email(background_tasks, lambda: render_verify_email(user, verify_token))
         return user
+
+    # ── Email verification (consumes verify_token) ──
+
+    async def verify_email_token(self, token: str) -> None:
+        """Consume a verify token and flip the user to active. The user already
+        has credentials (set during register), so this is a pure activation —
+        no password change.
+        """
+        payload = self._validate_token_of_type(token, TokenType.VERIFY)
+
+        token_obj = await self._verifications.get_by_token(token)
+        if not token_obj:
+            raise TokenInvalidError("Invalid verification link.")
+        if not token_obj.is_active:
+            raise TokenInvalidError("Verification link has already been used.")
+
+        user = await self._users.get_by_id(UUID(payload.sub))
+        if not user:
+            raise TokenInvalidError("Invalid verification link.")
+
+        user.is_active = True
+        await self._verifications.deactivate(token_obj)
+        await self._users.commit()
+        logger.info("Email verified for user id=%s", user.user_id)
 
     # ── Login ──
 
@@ -183,7 +237,7 @@ class AuthService:
         if not user.is_active:
             raise UserInactiveError()
 
-        creds = await self._credentials.get_by_user_id(user.user_id)
+        creds = await self._credentials.get_by_user_id(user.id)
         if not creds or not creds.password_hash or not creds.password_salt:
             raise InvalidCredentialsError()
 
@@ -192,23 +246,23 @@ class AuthService:
 
         tenant_id = str(user.tenant_id) if user.tenant_id else None
 
-        permission_ids = await self._roles.get_user_permission_ids_cached(user.user_id)
+        permission_ids = await self._roles.get_user_permission_ids_cached(user.id)
 
         access_token = self._tokens.create_access_token(
-            user_id=str(user.user_id),
+            user_id=str(user.id),
             tenant_id=tenant_id,
             permission_ids=permission_ids,
         )
         refresh_token = self._tokens.create_refresh_token(
-            user_id=str(user.user_id),
+            user_id=str(user.id),
             tenant_id=tenant_id,
         )
 
-        await self._refresh_tokens.upsert(user.user_id, refresh_token)
+        await self._refresh_tokens.upsert(user.id, refresh_token)
         await self._users.update_last_login(user)
         await self._users.commit()
 
-        logger.info("User logged in: %s (id=%s)", email, user.user_id)
+        logger.info("User logged in: %s (id=%s)", email, user.id)
         return LoginResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -231,10 +285,10 @@ class AuthService:
             raise UserInactiveError()
 
         tenant_id = str(user.tenant_id) if user.tenant_id else None
-        permission_ids = await self._roles.get_user_permission_ids_cached(user.user_id)
+        permission_ids = await self._roles.get_user_permission_ids_cached(user.id)
 
         access_token = self._tokens.create_access_token(
-            user_id=str(user.user_id),
+            user_id=str(user.id),
             tenant_id=tenant_id,
             permission_ids=permission_ids,
         )
@@ -265,7 +319,7 @@ class AuthService:
     ) -> None:
         self._passwords.validate_and_confirm(new_password, confirm_password)
 
-        creds = await self._credentials.get_by_user_id(user.user_id)
+        creds = await self._credentials.get_by_user_id(user.id)
         if not creds:
             raise InvalidCredentialsError("No credentials found for user.")
 
@@ -275,7 +329,7 @@ class AuthService:
         hash_result = self._passwords.hash_password(new_password)
         await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
         await self._credentials.commit()
-        logger.info("Password changed for user id=%s", user.user_id)
+        logger.info("Password changed for user id=%s", user.id)
         self._enqueue_email(background_tasks, lambda: render_password_changed(user))
 
     # ── Email Activation: Provision User ──
@@ -286,8 +340,8 @@ class AuthService:
         username: str,
         full_name: Optional[str] = None,
         phone_number: Optional[str] = None,
-        tenant_id: Optional[str] = None,
-        creation_type: str = "tenant",
+        tenant_id: Optional[int | str] = None,
+        creation_type: str = "default",
         role_name: str = Roles.USER,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> tuple[str, str]:
@@ -306,7 +360,9 @@ class AuthService:
             raise DuplicateEntityError("User", "username")
 
         parsed_tenant_id = await self._resolve_tenant_id(tenant_id)
-        creation = CreationType(creation_type) if creation_type in CreationType._value2member_map_ else CreationType.TENANT
+        # `CreationType` in the ORM currently supports only "default" and "google".
+        # Treat any unknown creation_type input as DEFAULT.
+        creation = CreationType(creation_type) if creation_type in CreationType._value2member_map_ else CreationType.DEFAULT
 
         user = User(
             email=email,
@@ -320,13 +376,13 @@ class AuthService:
         await self._users.create(user)
 
         try:
-            await self._roles.assign_role(user.user_id, role_name)
+            await self._roles.assign_role(user.id, role_name)
         except EntityNotFoundError:
             logger.warning("Role %r not found, skipping role assignment.", role_name)
 
-        user_uuid_str = str(user.user_id)
+        user_id_str = str(user.id)
         setup_token = self._tokens.create_setup_token(
-            user_id=user_uuid_str,
+            user_id=user_id_str,
             email=email,
             expires_delta=timedelta(hours=settings.setup_token_expire_hours),
         )
@@ -335,14 +391,14 @@ class AuthService:
             token=setup_token,
             is_active=True,
             expires_at=self._setup_token_expires_at(),
-            created_by=user_uuid_str,
+            created_by=user.id,
         )
         await self._verifications.create(token_obj)
         await self._users.commit()
 
-        logger.info("User provisioned (no credentials): %s (id=%s)", email, user.user_id)
+        logger.info("User provisioned (no credentials): %s (id=%s)", email, user.id)
         self._enqueue_email(background_tasks, lambda: render_setup_link(user, setup_token))
-        return user_uuid_str, setup_token
+        return user_id_str, setup_token
 
     # ── Email Activation: Set Password ──
 
@@ -366,7 +422,7 @@ class AuthService:
 
         hash_result = self._passwords.hash_password(new_password)
         creds = UserCredentials(
-            user_id=user.user_id,
+            user_id=user.id,
             password_hash=hash_result.hashed,
             password_salt=hash_result.salt,
         )
@@ -375,7 +431,7 @@ class AuthService:
         user.is_active = True
         await self._verifications.deactivate(token_obj)
         await self._users.commit()
-        logger.info("Password set via activation link for user id=%s", user.user_id)
+        logger.info("Password set via activation link for user id=%s", user.id)
 
     # ── Email Activation: Token Status ──
 
@@ -411,7 +467,7 @@ class AuthService:
         if not user:
             raise EntityNotFoundError("User")
 
-        existing_creds = await self._credentials.get_by_user_id(user.user_id)
+        existing_creds = await self._credentials.get_by_user_id(user.id)
         if existing_creds:
             raise ValidationError(
                 message="User has already set a password.",
@@ -419,11 +475,11 @@ class AuthService:
                 errors=["Cannot resend setup link for an already-activated account."],
             )
 
-        user_uuid_str = str(user.user_id)
-        await self._verifications.deactivate_all_for_user(user_uuid_str)
+        user_id_str = str(user.id)
+        await self._verifications.deactivate_all_for_user(user_id_str)
 
         setup_token = self._tokens.create_setup_token(
-            user_id=user_uuid_str,
+            user_id=user_id_str,
             email=email,
             expires_delta=timedelta(hours=settings.setup_token_expire_hours),
         )
@@ -431,11 +487,11 @@ class AuthService:
             token=setup_token,
             is_active=True,
             expires_at=self._setup_token_expires_at(),
-            created_by=user_uuid_str,
+            created_by=user.id,
         )
         await self._verifications.create(token_obj)
         await self._users.commit()
 
-        logger.info("Setup link resent for user id=%s", user.user_id)
+        logger.info("Setup link resent for user id=%s", user.id)
         self._enqueue_email(background_tasks, lambda: render_setup_link(user, setup_token))
         return setup_token
