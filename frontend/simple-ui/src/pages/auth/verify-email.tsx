@@ -10,8 +10,12 @@ import {
   Card,
   CardBody,
   Container,
+  FormControl,
+  FormLabel,
   Heading,
+  Input,
   Spinner,
+  Stack,
   Text,
   VStack,
   useColorModeValue,
@@ -27,6 +31,12 @@ type Phase =
   | { kind: "success"; message: string }
   | { kind: "error"; message: string };
 
+type ResendPhase =
+  | { kind: "idle" }
+  | { kind: "submitting" }
+  | { kind: "sent"; message: string }
+  | { kind: "failed"; message: string };
+
 const VerifyEmailPage: React.FC = () => {
   const router = useRouter();
   const cardBg = useColorModeValue("white", "gray.800");
@@ -34,6 +44,8 @@ const VerifyEmailPage: React.FC = () => {
   const pageBg = useColorModeValue("gray.50", "gray.900");
 
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
+  const [resendPhase, setResendPhase] = useState<ResendPhase>({ kind: "idle" });
+  const [resendEmail, setResendEmail] = useState("");
   // StrictMode in dev mounts twice; guard so the one-time token isn't
   // consumed on the first mount and reported as "already used" on the second.
   const fired = useRef(false);
@@ -107,10 +119,75 @@ const VerifyEmailPage: React.FC = () => {
                       <AlertIcon />
                       {phase.message}
                     </Alert>
-                    <Text fontSize="sm" color="gray.500">
-                      If the link is expired or already used, contact your
-                      administrator or sign up again.
-                    </Text>
+
+                    {/* Resend-verification form, shown on any error so users
+                        can recover from expired/used/invalid links. */}
+                    <Box borderTopWidth="1px" pt={4}>
+                      <Text fontSize="sm" color="gray.600" mb={3}>
+                        Request a new verification link:
+                      </Text>
+                      <form
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          if (!resendEmail) return;
+                          setResendPhase({ kind: "submitting" });
+                          try {
+                            const res = await authService.resendVerification({
+                              email: resendEmail,
+                            });
+                            setResendPhase({
+                              kind: "sent",
+                              message:
+                                res?.message ||
+                                "If that account exists and isn't verified yet, a new link has been sent.",
+                            });
+                          } catch (err: any) {
+                            setResendPhase({
+                              kind: "failed",
+                              message:
+                                err?.message ||
+                                "Could not resend verification email.",
+                            });
+                          }
+                        }}
+                      >
+                        <Stack spacing={3}>
+                          <FormControl isRequired>
+                            <FormLabel fontSize="sm">Email</FormLabel>
+                            <Input
+                              type="email"
+                              value={resendEmail}
+                              onChange={(e) => setResendEmail(e.target.value)}
+                              placeholder="you@example.com"
+                              size="sm"
+                            />
+                          </FormControl>
+                          {resendPhase.kind === "sent" && (
+                            <Alert status="success" rounded="md" size="sm">
+                              <AlertIcon />
+                              {resendPhase.message}
+                            </Alert>
+                          )}
+                          {resendPhase.kind === "failed" && (
+                            <Alert status="error" rounded="md" size="sm">
+                              <AlertIcon />
+                              {resendPhase.message}
+                            </Alert>
+                          )}
+                          <Button
+                            type="submit"
+                            colorScheme="blue"
+                            size="sm"
+                            isLoading={resendPhase.kind === "submitting"}
+                            loadingText="Sending…"
+                            isDisabled={resendPhase.kind === "sent"}
+                          >
+                            Resend verification email
+                          </Button>
+                        </Stack>
+                      </form>
+                    </Box>
+
                     <Link href="/auth" passHref legacyBehavior>
                       <Button as="a" colorScheme="blue" variant="outline">
                         Go to sign in

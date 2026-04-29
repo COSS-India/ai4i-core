@@ -56,6 +56,22 @@ def _render(template: str, *, to: str, subject: str, ctx: dict) -> EmailMessage:
     return EmailMessage(to=to, subject=subject, html_body=html, text_body=text)
 
 
+def render_welcome(user: User) -> EmailMessage:
+    """Post-activation welcome email. Sent after the user clicks either the
+    verify-email link OR the setup-password link, confirming their account is
+    now active. Distinct from the verify/setup emails — this has no token."""
+    return _render(
+        "welcome",
+        to=user.email,
+        subject="Welcome to AI4I Platform",
+        ctx={
+            "display_name": _display_name(user),
+            "username": user.username,
+            "email": user.email,
+        },
+    )
+
+
 def render_verify_email(user: User, verify_token: str) -> EmailMessage:
     return _render(
         "verify_email",

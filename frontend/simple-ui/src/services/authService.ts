@@ -15,6 +15,7 @@ import {
   SetPasswordRequest,
   SetPasswordStatusResponse,
   VerifyEmailRequest,
+  ResendVerificationRequest,
   LogoutRequest,
   LogoutResponse,
   APIKeyCreate,
@@ -560,6 +561,13 @@ class AuthService {
 
   async verifyEmail(data: VerifyEmailRequest): Promise<{ message: string }> {
     return this.requestWithoutAuth<{ message: string }>('/verify-email', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async resendVerification(data: ResendVerificationRequest): Promise<{ message: string }> {
+    return this.requestWithoutAuth<{ message: string }>('/resend-verification', {
       method: 'POST',
       body: JSON.stringify(data),
     });

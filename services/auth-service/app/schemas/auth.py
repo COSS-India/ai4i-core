@@ -70,6 +70,10 @@ class VerifyEmailRequest(BaseSchema):
     token: str
 
 
+class ResendVerificationRequest(BaseSchema):
+    email: EmailStr
+
+
 # ── Responses ──
 
 class LoginResponse(BaseSchema):
