@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy AI4ICore libraries
+COPY libs/ai4icore_core /app/libs/ai4icore_core
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
@@ -29,6 +30,7 @@ COPY services/pipeline-service/requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Install AI4ICore libraries
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_core
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
@@ -67,6 +69,7 @@ ENV PYTHONUNBUFFERED=1
 COPY services/pipeline-service /app
 
 # Copy AI4ICore libraries from builder AFTER app code
+COPY --from=builder /app/libs/ai4icore_core /app/libs/ai4icore_core
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry

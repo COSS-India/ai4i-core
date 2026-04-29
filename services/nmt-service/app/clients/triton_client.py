@@ -4,7 +4,7 @@ from typing import List, Tuple
 
 from tritonclient.http import InferInput, InferRequestedOutput
 
-from ai4icore_model_management import TritonClient
+from ai4icore_platform_core import TritonClient
 
 
 class NMTTritonClient(TritonClient):

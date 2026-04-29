@@ -1,6 +1,6 @@
 [project]
 name = "ai4icore-platform-core"
-version = "1.0.0-shim"
+version = "1.0.0+shim"
 description = "Backwards-compatibility shim — re-exports ai4icore_core.platform_core. New code should import ai4icore-core directly."
 readme = "README.md"
 requires-python = ">=3.10"

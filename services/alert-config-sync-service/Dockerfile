@@ -5,11 +5,13 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends gcc curl && rm -rf /var/lib/apt/lists/*
 
 # Copy logging lib (required for JSON logs -> OpenSearch via Fluent Bit)
+COPY libs/ai4icore_core /app/libs/ai4icore_core
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_env /app/libs/ai4icore_env
 COPY services/alert-config-sync-service/requirements.txt /app/requirements.txt
 
 RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN pip install --no-cache-dir /app/libs/ai4icore_core
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_env
 
@@ -20,6 +22,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl wget && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local /usr/local
+COPY --from=builder /app/libs/ai4icore_core /app/libs/ai4icore_core
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
 

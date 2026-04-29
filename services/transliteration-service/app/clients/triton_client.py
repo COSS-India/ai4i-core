@@ -7,7 +7,7 @@ import numpy as np
 from tritonclient.http import InferInput, InferRequestedOutput
 from tritonclient.utils import np_to_triton_dtype
 
-from ai4icore_model_management import TritonClient
+from ai4icore_platform_core import TritonClient
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class TransliterationTritonClient(TritonClient):
         """
         Backward-compatible wrapper.
 
-        Some deployments still run an older `ai4icore_model_management.TritonClient`
+        Some deployments still run an older `ai4icore_platform_core.TritonClient`
         without the `trace_attributes=` keyword. In that case, we retry without it.
         """
         try:

@@ -5,6 +5,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y gcc g++ curl && rm -rf /var/lib/apt/lists/*
 
 # Copy shared libs
+COPY libs/ai4icore_core /app/libs/ai4icore_core
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_env /app/libs/ai4icore_env
 
@@ -13,6 +14,7 @@ COPY services/smr-service/requirements.txt /app/requirements.txt
 
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir --user -r /app/requirements.txt
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_core
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
 
