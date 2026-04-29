@@ -97,8 +97,7 @@ def create_auth_providers(
         claims = await require_auth(request=request, authorization=authorization)
 
         if _permission_checker is None:
-            redis_client = getattr(request.app.state, "redis_client", None)
-            _permission_checker = PermissionChecker(redis_client=redis_client)
+            _permission_checker = PermissionChecker()
 
         required = await _permission_checker.get_required_permission(
             request.method, request.url.path,
