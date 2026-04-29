@@ -16,7 +16,7 @@ from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from .client import ModelManagementClient, ServiceInfo
+from .client import PlatformCoreClient, ServiceInfo
 from .triton_client import TritonClient
 
 logger = logging.getLogger(__name__)
@@ -105,7 +105,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app,
-        model_management_client: ModelManagementClient,
+        platform_core_client: PlatformCoreClient,
         redis_client = None,
         app_state: Any = None,
         cache_ttl_seconds: int = 300,
@@ -119,10 +119,10 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
     ):
         """
         Initialize middleware
-        
+
         Args:
             app: FastAPI application
-            model_management_client: Model Management client instance
+            platform_core_client: Platform Core client instance
             redis_client: Optional Redis client for shared caching
             cache_ttl_seconds: Cache TTL in seconds
             default_triton_endpoint: Default Triton endpoint (fallback)
@@ -130,7 +130,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             enabled_paths: List of URL path prefixes where middleware should run
         """
         super().__init__(app)
-        self.model_management_client = model_management_client
+        self.platform_core_client = platform_core_client
         self.redis_client = redis_client
         self.cache_ttl_seconds = cache_ttl_seconds
         self.default_triton_endpoint = default_triton_endpoint
@@ -380,7 +380,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         
         # Fetch from model management service
         try:
-            service_info = await self.model_management_client.get_service(
+            service_info = await self.platform_core_client.get_service(
                 service_id,
                 use_cache=True,
                 redis_client=self.redis_client,
@@ -401,7 +401,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             else:
                 logger.warning(
                     f"Model management returned no service for service_id={service_id!r} (404 or no data). "
-                    "Check that the id exists in model_management_db.services.service_id or that model-management-service is reachable."
+                    "Check that the id exists in mm_services.service_id or that platform-core-service is reachable."
                 )
             return service_info
         except Exception as e:
@@ -567,7 +567,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         # Routers are responsible for returning clear HTTP 4xx/5xx errors in this case.
         if service_info is None:
             logger.error(
-                f"Model Management did not resolve serviceId: {service_id!r} (no service returned - check 404/connectivity and that service_id exists in model_management_db.services). "
+                f"Platform Core did not resolve serviceId: {service_id!r} (no service returned - check 404/connectivity and that service_id exists in mm_services). "
                 "No default endpoint is allowed."
             )
         else:
@@ -649,14 +649,14 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                     logger.debug(f"Resolved endpoint: {endpoint} for serviceId: {service_id}")
                 else:
                     logger.error(f"Failed to resolve endpoint for serviceId: {service_id}")
-                    request.state.model_management_error = "Endpoint not found"
+                    request.state.platform_core_error = "Endpoint not found"
                 if model_name:
                     request.state.triton_model_name = model_name
                     # Log removed - middleware handles request/response logging
                     logger.debug(f"Resolved model_name: {model_name} for serviceId: {service_id}")
                 else:
                     logger.error(f"Failed to resolve model_name for serviceId: {service_id}")
-                    request.state.model_management_error = "Model name not found"
+                    request.state.platform_core_error = "Model name not found"
                 if triton_client:
                     request.state.triton_client = triton_client
                 request.state.ssl_verify = service_info.ssl_verify if service_info else None

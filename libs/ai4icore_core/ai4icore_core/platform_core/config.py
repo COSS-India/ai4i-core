@@ -1,6 +1,6 @@
 """
-Model Management Configuration
-Configuration class for Model Management plugin
+Platform Core Configuration
+Configuration class for the Platform Core plugin
 """
 
 from typing import Optional
@@ -9,23 +9,24 @@ from pydantic import BaseModel, Field
 from ai4icore_core.env import app_env
 
 
-class ModelManagementConfig(BaseModel):
-    """Configuration for Model Management plugin"""
+class PlatformCoreConfig(BaseModel):
+    """Configuration for Platform Core plugin"""
 
-    # Model Management Service settings
-    model_management_service_url: str = Field(
-        default_factory=lambda: app_env.model_management_service_url,
-        description="Base URL of Model Management Service"
-    )
-
-    model_management_api_key: Optional[str] = Field(
-        default_factory=lambda: app_env.model_management_service_api_key,
-        description="API key for Model Management Service (optional, fallback)"
+    # Platform Core Service settings
+    platform_core_service_url: str = Field(
+        default_factory=lambda: (
+            getattr(app_env, "platform_core_service_url", None)
+            or app_env.model_management_service_url
+        ),
+        description="Base URL of Platform Core Service"
     )
 
     # Cache settings
     cache_ttl_seconds: int = Field(
-        default_factory=lambda: app_env.model_management_cache_ttl,
+        default_factory=lambda: (
+            getattr(app_env, "platform_core_cache_ttl", None)
+            or app_env.model_management_cache_ttl
+        ),
         description="Cache TTL in seconds (default: 300 = 5 minutes)"
     )
 
@@ -37,7 +38,7 @@ class ModelManagementConfig(BaseModel):
     # Default Triton settings (fallback)
     default_triton_endpoint: Optional[str] = Field(
         default_factory=lambda: app_env.triton_endpoint,
-        description="Default Triton endpoint (fallback if Model Management unavailable)"
+        description="Default Triton endpoint (fallback if Platform Core unavailable)"
     )
 
     default_triton_api_key: Optional[str] = Field(
@@ -69,22 +70,30 @@ class ModelManagementConfig(BaseModel):
     )
 
     health_gate_enabled: bool = Field(
-        default_factory=lambda: getattr(app_env, "model_management_health_gate_enabled", False),
+        default_factory=lambda: (
+            getattr(app_env, "platform_core_health_gate_enabled", None)
+            or getattr(app_env, "model_management_health_gate_enabled", False)
+        ),
         description="When true, block inference for unhealthy/unknown backends with fast 503"
     )
 
     health_gate_timeout_seconds: float = Field(
-        default_factory=lambda: getattr(app_env, "model_management_health_gate_timeout_seconds", 1.0),
+        default_factory=lambda: (
+            getattr(app_env, "platform_core_health_gate_timeout_seconds", None)
+            or getattr(app_env, "model_management_health_gate_timeout_seconds", 1.0)
+        ),
         description="Timeout (seconds) for config-service health-status pre-flight check"
     )
 
     health_gate_cache_ttl_seconds: float = Field(
-        default_factory=lambda: getattr(app_env, "model_management_health_gate_cache_ttl_seconds", 3.0),
+        default_factory=lambda: (
+            getattr(app_env, "platform_core_health_gate_cache_ttl_seconds", None)
+            or getattr(app_env, "model_management_health_gate_cache_ttl_seconds", 3.0)
+        ),
         description="Small in-memory TTL (seconds) for health-status results to reduce overhead"
     )
 
     @classmethod
-    def from_env(cls) -> "ModelManagementConfig":
+    def from_env(cls) -> "PlatformCoreConfig":
         """Create config from environment variables"""
         return cls()
-
