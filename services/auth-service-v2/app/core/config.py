@@ -112,6 +112,11 @@ class AuthSettings(BaseSettings):
     # ── Swagger ──
     swagger_server_url: Optional[str] = None
 
+    setup_token_expire_hours: int = Field(
+        default=48,
+        validation_alias=AliasChoices("SETUP_TOKEN_EXPIRE_HOURS", "AUTH_SETUP_TOKEN_EXPIRE_HOURS"),
+    )
+
     # ── Guest login (POST /auth/guest/login) — must match guest user email seeded in auth_db ──
     guest_email: Optional[str] = None
     guest_password: Optional[str] = None

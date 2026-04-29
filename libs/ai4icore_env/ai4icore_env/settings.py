@@ -111,6 +111,7 @@ class AppEnv(BaseSettings):
     service_instance_id: Optional[str] = None
     environment: str = "development"
     env: Optional[str] = None
+    runtime_env: Optional[str] = None
     log_level: str = "INFO"
     root_log_level: Optional[str] = None
 
@@ -211,6 +212,14 @@ class AppEnv(BaseSettings):
     smtp_auth_password: Optional[str] = None      # credential
     smtp_smarthost: Optional[str] = None
     smtp_from: Optional[str] = None
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: Optional[str] = None           # credential
+    smtp_password: Optional[str] = None           # credential
+    smtp_tls: bool = True
+    smtp_from_noreply: str = ""
+    smtp_from_alerts: str = ""
+    smtp_reply_to: str = ""
     sendgrid_api_key: Optional[str] = None        # credential
     from_email: str = ""
     default_receiver_emails: str = ""
