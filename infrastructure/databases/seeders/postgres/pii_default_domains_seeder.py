@@ -93,7 +93,7 @@ _POLICIES = [
 class PiiDefaultDomainsSeeder(BaseSeeder):
     """Seed default PII types and domain policies into policy_db."""
 
-    database = "policy_db"
+    database = "ai4i_platform"
 
     def run(self, adapter):
         existing = adapter.fetch_one("SELECT COUNT(*) FROM pii_policy")
