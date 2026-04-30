@@ -6,6 +6,7 @@ Triton Inference Server client wrapper for NMT
 import logging
 import numpy as np
 from typing import List, Tuple, Optional, Dict
+from urllib.parse import urlparse
 
 import tritonclient.http as http_client
 from tritonclient.utils import np_to_triton_dtype
@@ -35,17 +36,24 @@ class TritonClient:
     
     @staticmethod
     def _normalize_url(url: str) -> str:
-        """Normalize Triton URL to ensure proper format
-        
-        Triton HTTP client expects host:port format, NOT http://host:port
+        """Return ``hostname:port`` for ``InferenceServerClient`` (no path, no scheme).
+
+        The client appends ``/v2/...`` itself. Model Management sometimes stores a
+        full URL such as ``http://host:8000/v2/models/nmt/infer``; passing that
+        through leads to malformed requests and empty HTTP responses.
         """
-        url = url.strip()
-        # Remove http:// or https:// prefix if present
-        # Triton HTTP client expects just host:port
-        if url.startswith("http://"):
-            url = url[7:]  # Remove "http://"
-        elif url.startswith("https://"):
-            url = url[8:]  # Remove "https://"
+        url = (url or "").strip()
+        if not url:
+            return url
+
+        if url.startswith("http://") or url.startswith("https://"):
+            parsed = urlparse(url)
+            if parsed.netloc:
+                return parsed.netloc
+
+        if "/" in url:
+            return url.split("/", 1)[0].rstrip()
+
         return url
     
     @property

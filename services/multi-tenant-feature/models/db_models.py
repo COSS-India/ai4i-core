@@ -7,8 +7,19 @@ from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID, JSONB, TIMESTAMP
 from sqlalchemy.orm import relationship
 
-from .enum_tenant import TenantStatus , AuditAction ,BillingStatus , AuditActorType , ServiceUnitType , TenantUserStatus
+from .enum_tenant import (
+    TenantStatus,
+    AuditAction,
+    BillingStatus,
+    AuditActorType,
+    ServiceUnitType,
+    TenantUserStatus,
+)
 from db_connection import TenantDBBase
+
+import logging
+
+_logger_db = logging.getLogger(__name__)
 
 
 class ServiceUnitTypeEnum(TypeDecorator):
@@ -26,15 +37,21 @@ class ServiceUnitTypeEnum(TypeDecorator):
     def process_result_value(self, value, dialect):
         if value is None:
             return None
+        if isinstance(value, ServiceUnitType):
+            return value
         if isinstance(value, str):
             try:
                 return ServiceUnitType(value)
             except ValueError:
-                # Fallback: try to find by value
+                v_lower = value.strip().lower()
                 for member in ServiceUnitType:
-                    if member.value == value:
+                    if member.value == v_lower:
                         return member
-                raise ValueError(f"Invalid ServiceUnitType value: {value}")
+                _logger_db.warning(
+                    "Invalid service_config.unit_type %r; coercing to minute",
+                    value,
+                )
+                return ServiceUnitType.MINUTE
         return value
 
 

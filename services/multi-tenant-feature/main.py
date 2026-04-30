@@ -52,6 +52,7 @@ async def lifespan(app: FastAPI):
     app.state.app_db_engine = db_connection.tenant_db_engine
     app.state.auth_session_factory = db_connection.AuthDBSessionLocal
     app.state.app_session_factory = db_connection.TenantDBSessionLocal
+    app.state.redis_client = redis_client
 
     yield   # everything before this runs at startup; everything after runs at shutdown
     logger.info("Shutting down FastAPI app...")
