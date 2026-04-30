@@ -1,6 +1,7 @@
 // Anonymous session ID utility for rate limiting
 // Generates and stores a unique session ID for anonymous users
 // Used by the backend to track rate limits for try-it feature
+import { getStoredAccessToken } from './tokenStorage';
 
 /**
  * Generate a random UUID v4
@@ -74,11 +75,7 @@ export function isAnonymousUser(): boolean {
   if (typeof window === 'undefined') return true;
   
   try {
-    // Check if user has access token
-    const hasAccessToken = 
-      localStorage.getItem('access_token') || 
-      sessionStorage.getItem('access_token');
-    
+    const hasAccessToken = getStoredAccessToken();
     return !hasAccessToken;
   } catch (e) {
     return true;

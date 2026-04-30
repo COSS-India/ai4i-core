@@ -1,14 +1,14 @@
 // Custom hook for pipeline functionality
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { useToast } from '@chakra-ui/react';
+import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { runPipelineInference } from '../services/pipelineService';
-import { convertWebmToWav } from '../utils/helpers';
+import { convertWebmToWav, base64ToAudioObjectUrl } from '../utils/helpers';
 import { 
   PipelineInferenceRequest, 
   PipelineResult 
 } from '../types/pipeline';
-import { MAX_RECORDING_DURATION } from '../config/constants';
+import { MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS, PIPELINE_ERRORS } from '../config/constants';
 import { extractErrorInfo } from '../utils/errorHandler';
 
 export const usePipeline = () => {
@@ -18,13 +18,28 @@ export const usePipeline = () => {
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
   const [timer, setTimer] = useState<number>(0);
+  const [pendingAudio, setPendingAudio] = useState<string | null>(null);
+  const [pendingAudioFormat, setPendingAudioFormat] = useState<string>('wav');
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const stopRecordingRef = useRef<(() => void) | null>(null);
   const processRecordedAudioRef = useRef<((base64Audio: string) => Promise<void>) | null>(null);
-  const toast = useToast();
+  const microphoneErrorToastShownRef = useRef(false);
+  const recordingDurationRef = useRef<number>(0);
+  const pipelineAudioUrlRef = useRef<string | null>(null);
+  const toast = useToastWithDeduplication();
+
+  // Revoke pipeline result audio blob URL on unmount
+  useEffect(() => {
+    return () => {
+      if (pipelineAudioUrlRef.current) {
+        URL.revokeObjectURL(pipelineAudioUrlRef.current);
+        pipelineAudioUrlRef.current = null;
+      }
+    };
+  }, []);
 
   // Initialize audio stream on mount
   useEffect(() => {
@@ -32,15 +47,20 @@ export const usePipeline = () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         setAudioStream(stream);
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error accessing microphone:', err);
-        toast({
-          title: 'Microphone Access Denied',
-          description: 'Please enable microphone access to use recording.',
-          status: 'error',
-          duration: 5000,
-          isClosable: true,
-        });
+        if (!microphoneErrorToastShownRef.current) {
+          microphoneErrorToastShownRef.current = true;
+          const isNotFoundError = err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError';
+          const pipelineErr = isNotFoundError ? PIPELINE_ERRORS.MIC_NOT_FOUND : PIPELINE_ERRORS.MIC_ACCESS_DENIED;
+          toast({
+            title: pipelineErr.title,
+            description: pipelineErr.description,
+            status: 'error',
+            duration: 5000,
+            isClosable: true,
+          });
+        }
       }
     };
 
@@ -67,16 +87,18 @@ export const usePipeline = () => {
       timerRef.current = setInterval(() => {
         setTimer(prev => {
           const newTimer = prev + 1;
-          if (newTimer >= MAX_RECORDING_DURATION && stopRecordingRef.current) {
+            if (newTimer >= MAX_RECORDING_DURATION && stopRecordingRef.current) {
             stopRecordingRef.current();
+            const err = PIPELINE_ERRORS.REC_TOO_LONG;
             toast({
-              title: 'Recording Time Limit',
-              description: 'Maximum recording time reached.',
+              title: err.title,
+              description: err.description,
               status: 'warning',
               duration: 3000,
               isClosable: true,
             });
           }
+          recordingDurationRef.current = newTimer;
           return newTimer;
         });
       }, 1000);
@@ -105,15 +127,20 @@ export const usePipeline = () => {
         console.log('Audio stream not available, initializing new stream...');
         streamToUse = await navigator.mediaDevices.getUserMedia({ audio: true });
         setAudioStream(streamToUse);
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error reinitializing audio stream:', err);
-        toast({
-          title: 'Recording Error',
-          description: 'Audio stream not available. Please check microphone permissions.',
-          status: 'error',
-          duration: 3000,
-          isClosable: true,
-        });
+        if (!microphoneErrorToastShownRef.current) {
+          microphoneErrorToastShownRef.current = true;
+          const isNotFoundError = err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError';
+          const pipelineErr = isNotFoundError ? PIPELINE_ERRORS.MIC_NOT_FOUND : PIPELINE_ERRORS.REC_START_FAILED;
+          toast({
+            title: pipelineErr.title,
+            description: pipelineErr.description,
+            status: 'error',
+            duration: 3000,
+            isClosable: true,
+          });
+        }
         return;
       }
     }
@@ -130,24 +157,30 @@ export const usePipeline = () => {
         // Get new stream
         streamToUse = await navigator.mediaDevices.getUserMedia({ audio: true });
         setAudioStream(streamToUse);
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error reinitializing audio stream:', err);
-        toast({
-          title: 'Recording Error',
-          description: 'Failed to access microphone. Please check permissions.',
-          status: 'error',
-          duration: 3000,
-          isClosable: true,
-        });
+        if (!microphoneErrorToastShownRef.current) {
+          microphoneErrorToastShownRef.current = true;
+          const isNotFoundError = err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError';
+          const pipelineErr = isNotFoundError ? PIPELINE_ERRORS.MIC_NOT_FOUND : PIPELINE_ERRORS.MIC_ACCESS_DENIED;
+          toast({
+            title: pipelineErr.title,
+            description: pipelineErr.description,
+            status: 'error',
+            duration: 3000,
+            isClosable: true,
+          });
+        }
         return;
       }
     }
 
     // Check if MediaRecorder is supported
     if (!window.MediaRecorder) {
+      const err = RECORDING_ERRORS.BROWSER_NOT_SUPPORTED;
       toast({
-        title: 'Recording Error',
-        description: 'MediaRecorder API is not supported in this browser.',
+        title: err.title,
+        description: err.description,
         status: 'error',
         duration: 3000,
         isClosable: true,
@@ -164,9 +197,10 @@ export const usePipeline = () => {
       const tracks = streamToUse.getAudioTracks();
       if (tracks.length === 0 || tracks.every(track => track.readyState !== 'live')) {
         console.error('No active audio tracks available');
+        const err = PIPELINE_ERRORS.REC_START_FAILED;
         toast({
-          title: 'Recording Error',
-          description: 'No active audio tracks available.',
+          title: err.title,
+          description: err.description,
           status: 'error',
           duration: 3000,
           isClosable: true,
@@ -220,9 +254,10 @@ export const usePipeline = () => {
           // Validate blob has actual audio data (not just header)
           if (webmBlob.size < 1000) {
             console.error('Recording blob too small, likely contains no audio data');
+            const err = PIPELINE_ERRORS.NO_SPEECH_DETECTED;
             toast({
-              title: 'Recording Failed',
-              description: 'No audio data was captured. Please check your microphone and try again.',
+              title: err.title,
+              description: err.description,
               status: 'error',
               duration: 5000,
               isClosable: true,
@@ -316,11 +351,12 @@ export const usePipeline = () => {
       // Handle errors
       mediaRecorder.onerror = (event) => {
         console.error('MediaRecorder error:', event);
+        const err = PIPELINE_ERRORS.REC_INTERRUPTED;
         setIsRecording(false);
         setTimer(0); // Reset timer on error
         toast({
-          title: 'Recording Error',
-          description: 'An error occurred during recording.',
+          title: err.title,
+          description: err.description,
           status: 'error',
           duration: 3000,
           isClosable: true,
@@ -344,11 +380,12 @@ export const usePipeline = () => {
       });
     } catch (err) {
       console.error('Error starting recording:', err);
+      const recErr = PIPELINE_ERRORS.REC_START_FAILED;
       setIsRecording(false);
       setTimer(0); // Reset timer on error
       toast({
-        title: 'Recording Error',
-        description: 'Failed to start recording. Please try again.',
+        title: recErr.title,
+        description: recErr.description,
         status: 'error',
         duration: 3000,
         isClosable: true,
@@ -443,30 +480,33 @@ export const usePipeline = () => {
   const blobToBase64 = (blob: Blob): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
+      const timeout = setTimeout(() => {
+        reader.abort();
+        reject(new Error('UPLOAD_TIMEOUT'));
+      }, 30000); // 30 second timeout for file reading
+      
       reader.onloadend = () => {
+        clearTimeout(timeout);
         const result = reader.result as string;
         const base64Data = result.split(',')[1];
-        resolve(base64Data);
+        if (!base64Data) {
+          reject(new Error('INVALID_FILE'));
+        } else {
+          resolve(base64Data);
+        }
       };
-      reader.onerror = reject;
+      reader.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error('INVALID_FILE'));
+      };
       reader.readAsDataURL(blob);
     });
   };
 
-  /**
-   * Process audio file input
-   */
-  const processAudioFile = async (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        const base64Data = result.split(',')[1];
-        resolve(base64Data);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+  const inferAudioFormatFromFile = (file: File): string => {
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.mp3') || file.type === 'audio/mpeg' || file.type === 'audio/mp3') return 'mp3';
+    return 'wav';
   };
 
   /**
@@ -476,6 +516,10 @@ export const usePipeline = () => {
     request: PipelineInferenceRequest
   ) => {
     setIsLoading(true);
+    if (pipelineAudioUrlRef.current) {
+      URL.revokeObjectURL(pipelineAudioUrlRef.current);
+      pipelineAudioUrlRef.current = null;
+    }
     setResult(null);
 
     try {
@@ -492,25 +536,26 @@ export const usePipeline = () => {
         const nmtOutput = pipelineData[1].output?.[0];
         
         // Extract TTS audio (index 2)
-        const ttsAudio = pipelineData[2].audio?.[0];
+        const ttsAudio = pipelineData[2].audio?.[0] || pipelineData[2].output?.[0];
         
         const sourceText = nmtOutput?.source || asrOutput?.source || '';
         const targetText = nmtOutput?.target || '';
         const audioContent = ttsAudio?.audioContent || '';
+        const outputAudioFormat =
+          ttsAudio?.audioFormat ||
+          pipelineData[2]?.config?.audioFormat ||
+          'wav';
 
-        // Create audio element for duration calculation
-        let audioDuration = 0;
+        let audioUrl = '';
         if (audioContent) {
-          const audio = new Audio(`data:audio/wav;base64,${audioContent}`);
-          audio.addEventListener('loadedmetadata', () => {
-            audioDuration = audio.duration;
-          });
+          audioUrl = base64ToAudioObjectUrl(audioContent, outputAudioFormat);
+          pipelineAudioUrlRef.current = audioUrl;
         }
 
         const pipelineResult: PipelineResult = {
           sourceText,
           targetText,
-          audio: audioContent ? `data:audio/wav;base64,${audioContent}` : '',
+          audio: audioUrl,
         };
 
         setResult(pipelineResult);
@@ -528,8 +573,8 @@ export const usePipeline = () => {
     } catch (error: any) {
       console.error('Pipeline error:', error);
       
-      // Use centralized error handler
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
+      // Use centralized error handler (pipeline context so backend message shown as default when no specific mapping)
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error, 'pipeline');
       
       toast({
         title: showOnlyMessage ? undefined : errorTitle,
@@ -546,64 +591,23 @@ export const usePipeline = () => {
   /**
    * Process recorded audio through pipeline (internal version that takes base64)
    */
-  const processRecordedAudioInternal = useCallback(async (
-    base64Audio: string,
-    sourceLanguage: string,
-    targetLanguage: string,
-    asrServiceId: string,
-    nmtServiceId: string,
-    ttsServiceId: string
-  ) => {
-    const request: PipelineInferenceRequest = {
-      pipelineTasks: [
-        {
-          taskType: 'asr',
-          config: {
-            serviceId: asrServiceId,
-            language: { sourceLanguage },
-            audioFormat: 'wav',
-            preProcessors: ['vad', 'denoiser'],
-            postProcessors: ['lm', 'punctuation'],
-            transcriptionFormat: 'transcript',
-          },
-        },
-        {
-          taskType: 'translation',
-          config: {
-            serviceId: nmtServiceId,
-            language: { sourceLanguage, targetLanguage },
-          },
-        },
-        {
-          taskType: 'tts',
-          config: {
-            serviceId: ttsServiceId,
-            language: { sourceLanguage: targetLanguage },
-            gender: 'male',
-          },
-        },
-      ],
-      inputData: {
-        audio: [{ audioContent: base64Audio }],
-      },
-      controlConfig: {
-        dataTracking: false,
-      },
-    };
-
-    await executePipeline(request);
-  }, [executePipeline]);
+  const processRecordedAudioInternal = useCallback(async (base64Audio: string) => {
+    // Store audio for later execution when user clicks the Run Pipeline button
+    setPendingAudio(base64Audio);
+    setPendingAudioFormat('wav');
+  }, []);
 
   // Expose a function to set the processing callback with config
   const setProcessRecordedAudioCallback = useCallback((
-    sourceLanguage: string,
-    targetLanguage: string,
-    asrServiceId: string,
-    nmtServiceId: string,
-    ttsServiceId: string
+    _sourceLanguage: string,
+    _targetLanguage: string,
+    _asrServiceId: string,
+    _nmtServiceId: string,
+    _ttsServiceId: string
   ) => {
+    // For recorded audio, just capture the base64 for later execution
     processRecordedAudioRef.current = async (base64Audio: string) => {
-      await processRecordedAudioInternal(base64Audio, sourceLanguage, targetLanguage, asrServiceId, nmtServiceId, ttsServiceId);
+      await processRecordedAudioInternal(base64Audio);
     };
   }, [processRecordedAudioInternal]);
 
@@ -629,7 +633,7 @@ export const usePipeline = () => {
     }
 
     const base64Audio = await blobToBase64(audioBlob);
-    await processRecordedAudioInternal(base64Audio, sourceLanguage, targetLanguage, asrServiceId, nmtServiceId, ttsServiceId);
+    await processRecordedAudioInternal(base64Audio);
   }, [audioBlob, processRecordedAudioInternal, toast]);
 
   /**
@@ -643,7 +647,166 @@ export const usePipeline = () => {
     nmtServiceId: string,
     ttsServiceId: string
   ) => {
-    const base64Audio = await processAudioFile(file);
+    // Validate file exists
+    if (!file) {
+      const err = UPLOAD_ERRORS.NO_FILE_SELECTED;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    // Validate file size
+    if (file.size > MAX_AUDIO_FILE_SIZE) {
+      const err = UPLOAD_ERRORS.FILE_TOO_LARGE;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    // Validate file type
+    const isMP3 = file.type === 'audio/mpeg' || file.type === 'audio/mp3' || file.name.toLowerCase().endsWith('.mp3');
+    const isWAV = file.type === 'audio/wav' || file.type === 'audio/wave' || file.type === 'audio/x-wav' || file.name.toLowerCase().endsWith('.wav');
+    if (!isMP3 && !isWAV) {
+      const err = UPLOAD_ERRORS.UNSUPPORTED_FORMAT;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    // Validate audio duration
+    const validateAudioDuration = (file: File): Promise<{ isValid: boolean; duration: number; error?: string }> => {
+      return new Promise((resolve) => {
+        const audio = new Audio();
+        const url = URL.createObjectURL(file);
+        
+        const timeout = setTimeout(() => {
+          URL.revokeObjectURL(url);
+          resolve({ isValid: false, duration: 0, error: 'UPLOAD_TIMEOUT' });
+        }, 10000);
+        
+        audio.addEventListener('loadedmetadata', () => {
+          clearTimeout(timeout);
+          URL.revokeObjectURL(url);
+          const duration = audio.duration;
+          
+          if (duration < MIN_RECORDING_DURATION) {
+            resolve({ isValid: false, duration, error: 'AUDIO_TOO_SHORT' });
+          } else if (duration > MAX_RECORDING_DURATION) {
+            resolve({ isValid: false, duration, error: 'AUDIO_TOO_LONG' });
+          } else if (isNaN(duration) || duration === 0) {
+            resolve({ isValid: false, duration, error: 'EMPTY_AUDIO_FILE' });
+          } else {
+            resolve({ isValid: true, duration });
+          }
+        });
+        
+        audio.addEventListener('error', () => {
+          clearTimeout(timeout);
+          URL.revokeObjectURL(url);
+          resolve({ isValid: false, duration: 0, error: 'INVALID_FILE' });
+        });
+        
+        audio.src = url;
+      });
+    };
+
+    try {
+      const durationResult = await validateAudioDuration(file);
+      if (!durationResult.isValid) {
+        let err;
+        switch (durationResult.error) {
+          case 'AUDIO_TOO_SHORT':
+            err = UPLOAD_ERRORS.AUDIO_TOO_SHORT;
+            break;
+          case 'AUDIO_TOO_LONG':
+            err = UPLOAD_ERRORS.AUDIO_TOO_LONG;
+            break;
+          case 'EMPTY_AUDIO_FILE':
+            err = UPLOAD_ERRORS.EMPTY_AUDIO_FILE;
+            break;
+          case 'UPLOAD_TIMEOUT':
+            err = UPLOAD_ERRORS.UPLOAD_TIMEOUT;
+            break;
+          case 'INVALID_FILE':
+          default:
+            err = UPLOAD_ERRORS.INVALID_FILE;
+            break;
+        }
+        toast({
+          title: err.title,
+          description: err.description,
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        });
+        return;
+      }
+
+      let fileToEncode: Blob = file;
+      let formatToUse = inferAudioFormatFromFile(file);
+      try {
+        const normalizedWav = await convertWebmToWav(file, 16000);
+        if (normalizedWav && normalizedWav.size > 0) {
+          fileToEncode = normalizedWav;
+          formatToUse = 'wav';
+        }
+      } catch (conversionError) {
+        console.warn('Pipeline upload WAV conversion failed, using original format:', conversionError);
+      }
+
+      const base64Audio = await blobToBase64(fileToEncode);
+      // Store audio for later execution when user clicks the Run Pipeline button
+      setPendingAudio(base64Audio);
+      setPendingAudioFormat(formatToUse);
+    } catch (error: any) {
+      console.error('Error processing uploaded audio:', error);
+      const err = error?.message === 'UPLOAD_TIMEOUT' 
+        ? UPLOAD_ERRORS.UPLOAD_TIMEOUT
+        : error?.message === 'INVALID_FILE'
+        ? UPLOAD_ERRORS.INVALID_FILE
+        : UPLOAD_ERRORS.UPLOAD_FAILED;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+    }
+  }, [toast]);
+
+  const runPipeline = useCallback(async (
+    sourceLanguage: string,
+    targetLanguage: string,
+    asrServiceId: string,
+    nmtServiceId: string,
+    ttsServiceId: string
+  ) => {
+    if (!pendingAudio) {
+      toast({
+        title: 'Audio Required',
+        description: 'Please record or upload an audio file before running the pipeline.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
 
     const request: PipelineInferenceRequest = {
       pipelineTasks: [
@@ -652,7 +815,7 @@ export const usePipeline = () => {
           config: {
             serviceId: asrServiceId,
             language: { sourceLanguage },
-            audioFormat: 'wav',
+            audioFormat: pendingAudioFormat,
             preProcessors: ['vad', 'denoiser'],
             postProcessors: ['lm', 'punctuation'],
             transcriptionFormat: 'transcript',
@@ -675,7 +838,7 @@ export const usePipeline = () => {
         },
       ],
       inputData: {
-        audio: [{ audioContent: base64Audio }],
+        audio: [{ audioContent: pendingAudio }],
       },
       controlConfig: {
         dataTracking: false,
@@ -683,7 +846,25 @@ export const usePipeline = () => {
     };
 
     await executePipeline(request);
-  }, [executePipeline]);
+    setPendingAudio(null);
+  }, [executePipeline, pendingAudio, pendingAudioFormat, toast]);
+
+  /**
+   * Clear the uploaded/recorded input (and any pipeline output).
+   * Used for "delete/clear" UX next to the preview.
+   */
+  const clearInput = useCallback(() => {
+    if (pipelineAudioUrlRef.current) {
+      URL.revokeObjectURL(pipelineAudioUrlRef.current);
+      pipelineAudioUrlRef.current = null;
+    }
+
+    setPendingAudio(null);
+    setPendingAudioFormat('wav');
+    setAudioBlob(null);
+    setResult(null);
+    setTimer(0);
+  }, []);
 
   return {
     isLoading,
@@ -691,11 +872,14 @@ export const usePipeline = () => {
     isRecording,
     audioBlob,
     timer,
+    pendingAudio,
+    clearInput,
     startRecording,
     stopRecording,
     executePipeline,
     processRecordedAudio,
     processUploadedAudio,
     setProcessRecordedAudioCallback,
+    runPipeline,
   };
 };

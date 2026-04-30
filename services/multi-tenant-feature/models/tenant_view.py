@@ -6,19 +6,23 @@ from typing import Dict , Any, Optional, List
 class TenantViewResponse(BaseModel):
     id: UUID
     tenant_id: str
-    user_id: int
+    user_id: int | None = None
     organization_name: str
     email: EmailStr
+    phone_number: Optional[str] = None
     domain: str
     schema_name: str = Field(..., alias="schema")
     subscriptions: list[str]
     status: str
-    quotas: Dict[str, Any]
+    quotas: Dict[str, Any] = None
     usage_quota: Optional[Dict[str, Any]] = None
     created_at: str
     updated_at: str
+    role: str = Field(
+        "",
+        description="Role for tenant admin (key-value: {'role': 'ADMIN'}). One of: ADMIN, USER, GUEST, MODERATOR.",
+    )
 
-    
     model_config = {
         "populate_by_name": True
     }

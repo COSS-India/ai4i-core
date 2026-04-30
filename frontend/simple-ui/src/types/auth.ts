@@ -13,12 +13,15 @@ export interface User {
   is_active: boolean;
   is_verified: boolean;
   is_superuser: boolean;
+  is_tenant?: boolean;
   created_at: string;
   updated_at?: string;
   last_login?: string;
   avatar_url?: string;
   preferences?: Record<string, any>;
   roles?: string[];
+  /** Tenant identifier from /api/v1/auth/me when user is a tenant admin or tenant user */
+  tenant_id?: string | null;
 }
 
 export interface UserUpdateRequest {
@@ -48,6 +51,11 @@ export interface RegisterRequest {
   username: string;
   password: string;
   confirm_password: string;
+  full_name?: string;
+  phone_number?: string;
+  timezone?: string;
+  language?: string;
+  is_tenant?: boolean;
 }
 
 export interface TokenRefreshRequest {
@@ -64,7 +72,11 @@ export interface TokenValidationResponse {
   valid: boolean;
   user_id?: number;
   username?: string;
+  tenant_id?: string;
+  permission_ids: number[];
   permissions: string[];
+  roles: string[];
+  token_type?: string;
 }
 
 export interface PasswordChangeRequest {
@@ -94,17 +106,19 @@ export interface LogoutResponse {
 
 export interface APIKeyCreate {
   key_name: string;
-  permissions: string[];
+  permissions: number[]; // Permission IDs
   expires_days?: number;
   user_id?: number; // Optional: for admin creating keys for other users
 }
 
 export interface APIKeyResponse {
   id: number;
+  key_id?: number;  // Alias for id, returned by create endpoint
   key_name: string;
-  key_value?: string; // Only returned on creation
+  api_key?: string; // JWT token, only returned on creation
   permissions: string[];
   is_active: boolean;
+  is_revoked: boolean;
   created_at: string;
   expires_at?: string;
   last_used?: string;
@@ -120,7 +134,6 @@ export interface APIKeyUpdate {
   key_name?: string;
   permissions?: string[];
   is_active?: boolean;
-  expires_days?: number;
 }
 
 /** Response from GET /api/v1/auth/api-keys */
@@ -155,5 +168,9 @@ export interface AuthState {
   refreshToken: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  // Separate loading states so "Sign in" and "Sign in as Guest" buttons
+  // can show their spinners independently.
+  isLoginLoading: boolean;
+  isGuestLoginLoading: boolean;
   error: string | null;
 }

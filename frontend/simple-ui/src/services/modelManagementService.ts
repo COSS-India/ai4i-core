@@ -2,6 +2,22 @@
 
 import { apiClient } from './api';
 
+export interface ModelDetails {
+  modelId?: string;
+  model_id?: string;
+  name?: string;
+  versionStatus?: string;
+  version_status?: string;
+  task?: { type?: string };
+  task_type?: string;
+  taskType?: string;
+  version?: string;
+  modelVersion?: string;
+  submittedOn?: string | number;
+  submitted_on?: string | number;
+  [key: string]: any;
+}
+
 export interface UnpublishModelResponse {
   message: string;
   modelId: string;
@@ -33,9 +49,9 @@ export const unpublishModel = async (
  * Get all models
  * @returns Promise with list of models
  */
-export const getAllModels = async (): Promise<any[]> => {
+export const getAllModels = async (): Promise<ModelDetails[]> => {
   try {
-    const response = await apiClient.get<any[]>('/api/v1/model-management/models');
+    const response = await apiClient.get<ModelDetails[]>('/api/v1/model-management/models');
     return response.data;
   } catch (error: any) {
     console.error('Get models error:', error);
@@ -54,7 +70,7 @@ export const createModel = async (modelData: any): Promise<any> => {
     const response = await apiClient.post<any>('/api/v1/model-management/models', modelData);
     return response.data;
   } catch (error: any) {
-    console.error('Create model error:', error);
+    console.error('Register model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
     throw error;
   }
@@ -65,10 +81,10 @@ export const createModel = async (modelData: any): Promise<any> => {
  * @param modelId - The ID of the model to fetch
  * @returns Promise with model details
  */
-export const getModelById = async (modelId: string): Promise<any> => {
+export const getModelById = async (modelId: string): Promise<ModelDetails> => {
   try {
-    const response = await apiClient.post<any>(
-      `/api/v1/model-management/models/${modelId}`,
+    const response = await apiClient.post<ModelDetails>(
+      `/api/v1/model-management/models/${encodeURIComponent(modelId)}`,
       { modelId }
     );
     return response.data;
@@ -116,12 +132,18 @@ export const publishModel = async (modelId: string): Promise<any> => {
 /**
  * List services by task type
  * @param taskType - The task type to filter by (e.g., 'nmt', 'asr', 'tts')
+ * @param publishedOnly - If true, return only published services (for logged-in users)
  * @returns Promise with list of services
  */
-export const listServices = async (taskType?: string): Promise<any[]> => {
+export const listServices = async (
+  taskType?: string,
+  publishedOnly?: boolean
+): Promise<any[]> => {
   try {
-    const url = '/api/v1/model-management/services/';
-    const params = taskType ? { task_type: taskType } : {};
+    const url = '/api/v1/model-management/services';
+    const params: Record<string, string> = {};
+    if (taskType) params.task_type = taskType;
+    if (publishedOnly === true) params.is_published = 'true';
     const response = await apiClient.get<any[]>(url, { params });
     return response.data;
   } catch (error: any) {

@@ -80,7 +80,7 @@ export interface ASRHookState {
   language: string;
   sampleRate: number;
   serviceId: string;
-  inferenceMode: 'rest' | 'streaming';
+  inferenceMode: '' | 'rest' | 'streaming';
   recording: boolean;
   fetching: boolean;
   fetched: boolean;
@@ -91,6 +91,8 @@ export interface ASRHookState {
   audioStream: MediaStream | null;
   timer: number;
   error: string | null;
+  /** Pending audio (base64) from record or upload; inference runs when user clicks Transcribe */
+  pendingAudio: string | null;
 }
 
 // ASR Hook Methods
@@ -99,10 +101,12 @@ export interface ASRHookMethods {
   stopRecording: () => void;
   handleFileUpload: (file: File) => void;
   performInference: (audioContent: string) => Promise<void>;
+  setPendingAudio: (audio: string | null) => void;
+  runTranscribe: () => void;
   setLanguage: (language: string) => void;
   setSampleRate: (sampleRate: number) => void;
   setServiceId: (serviceId: string) => void;
-  setInferenceMode: (mode: 'rest' | 'streaming') => void;
+  setInferenceMode: (mode: '' | 'rest' | 'streaming') => void;
   clearResults: () => void;
   resetTimer: () => void;
 }
@@ -113,6 +117,13 @@ export type UseASRReturn = ASRHookState & ASRHookMethods;
 // ASR Component Props
 export interface AudioRecorderProps {
   onAudioReady: (audioBase64: string) => void;
+  /** Called when the user clicks clear/delete for an already uploaded audio file */
+  onClear?: () => void;
+  /**
+   * Token used to reset the internal uploaded-file display when parent clears input.
+   * Increment this value to force a reset.
+   */
+  clearToken?: number;
   isRecording: boolean;
   onRecordingChange: (recording: boolean) => void;
   sampleRate: number;
@@ -122,6 +133,7 @@ export interface AudioRecorderProps {
 
 export interface AudioPlayerProps {
   audioSrc: string;
+  downloadExtension?: string;
   showVisualization?: boolean;
   onPlay?: () => void;
   onPause?: () => void;

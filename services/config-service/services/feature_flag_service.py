@@ -4,11 +4,11 @@ Business logic service for feature flags - Redis and Unleash only
 import hashlib
 import json
 import logging
-import os
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timezone
 
 import aiohttp
+from ai4icore_env import app_env
 from aiokafka import AIOKafkaProducer
 from openfeature import api as openfeature_api
 from openfeature.evaluation_context import EvaluationContext
@@ -44,7 +44,7 @@ class FeatureFlagService:
         # Evaluation cache TTL should be very short to ensure accuracy
         # OpenFeature SDK refreshes every 15s, so set cache to 5s to ensure we get fresh data
         # This means cache expires 3x before SDK refresh, ensuring accuracy
-        sync_interval = int(os.getenv("UNLEASH_SYNC_INTERVAL", "30"))
+        sync_interval = app_env.unleash_sync_interval
         # Use 5 seconds for evaluation cache - ensures fresh data, sync will also invalidate every 30s
         self.evaluation_cache_ttl = 5
         logger.info(f"Evaluation cache TTL set to {self.evaluation_cache_ttl} seconds (sync interval: {sync_interval}s, OpenFeature refresh: 15s)")

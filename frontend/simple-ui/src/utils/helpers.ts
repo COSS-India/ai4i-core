@@ -1,4 +1,48 @@
 // Utility helper functions for Simple UI
+import { getStoredAccessToken } from './tokenStorage';
+
+/**
+ * Masks phone for view mode: only last 4 digits visible, e.g. "+91 xxxxxx1234"
+ * Used consistently across user profile and tenant/contact views.
+ */
+export function maskPhoneForDisplay(phone: string | undefined): string {
+  if (!phone || !phone.trim()) return "—";
+  const digits = phone.replace(/\D/g, "");
+  const last4 = digits.slice(-4);
+  if (last4.length === 0) return "—";
+  return `+91 xxxxxx${last4}`;
+}
+
+/**
+ * Decode JWT token and extract tenant_id
+ * @returns tenant_id from JWT token or null if not found
+ */
+export const getTenantIdFromToken = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  
+  try {
+    const token = getStoredAccessToken();
+    if (!token || token.trim() === '') {
+      return null;
+    }
+    
+    // Decode JWT payload
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      return null;
+    }
+    
+    const payload = parts[1];
+    const decoded = atob(payload);
+    const payloadObj = JSON.parse(decoded);
+    
+    // Extract tenant_id from JWT payload
+    return payloadObj.tenant_id || null;
+  } catch (error) {
+    console.error('Failed to extract tenant_id from token:', error);
+    return null;
+  }
+};
 
 /**
  * Get word count from text
@@ -50,6 +94,32 @@ export const formatFileSize = (bytes: number): string => {
   }
   
   return `${bytes} B`;
+};
+
+/**
+ * Map audio format (e.g. "wav", "mp3") to MIME type for playback.
+ * Used so <audio src> and CSP media-src work (blob URLs with correct type).
+ */
+export const audioFormatToMime = (format: string): string => {
+  const f = (format || 'wav').toLowerCase();
+  // If the format is already a valid MIME type (like audio/webm), just return it
+  if (f.startsWith('audio/')) return f;
+  if (f === 'mp3') return 'audio/mpeg';
+  return 'audio/wav';
+};
+
+/**
+ * Create a blob URL from base64-encoded audio. Use this for playback so CSP
+ * allows it (media-src allows blob:, not data:). Caller must revoke the URL
+ * when done (e.g. when replacing with new audio or on unmount).
+ * @param base64 - Base64 encoded audio
+ * @param format - Audio format e.g. "wav" or "mp3" (default "wav")
+ * @returns Object URL string (blob:...)
+ */
+export const base64ToAudioObjectUrl = (base64: string, format: string = 'wav'): string => {
+  const mime = audioFormatToMime(format);
+  const blob = base64ToBlob(base64, mime);
+  return URL.createObjectURL(blob);
 };
 
 /**

@@ -10,6 +10,7 @@ import os
 import re
 import sys
 from datetime import datetime
+from ai4icore_env import app_env
 from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -25,8 +26,8 @@ load_dotenv()
 async def restore_from_backup(backup_file: str):
     """Restore database from backup SQL file"""
     # Use localhost and port 5434 for restore (override .env if needed)
-    restore_host = os.getenv("RESTORE_DB_HOST", "localhost")
-    restore_port = int(os.getenv("RESTORE_DB_PORT", "5434"))
+    restore_host = app_env.restore_db_host
+    restore_port = app_env.restore_db_port
     connection_string = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{restore_host}:{restore_port}/{DB_NAME}"
     engine = create_async_engine(connection_string, echo=False)
     async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

@@ -270,11 +270,11 @@ All configuration is done via environment variables. See `env.template` for the 
 
 #### Redis Configuration
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `REDIS_HOST` | Redis hostname | `redis` |
-| `REDIS_PORT` | Redis port | `6379` |
-| `REDIS_PASSWORD` | Redis password | `redis_secure_password_2024` |
+| Variable | Description |
+|----------|-------------|
+| `REDIS_HOST` | Redis hostname |
+| `REDIS_PORT` | Redis port |
+| `REDIS_PASSWORD` | Redis password | 
 
 #### Triton Configuration
 

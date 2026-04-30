@@ -19,6 +19,9 @@ _trace_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('t
 # Context variable for organization (async-safe)
 _organization_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('organization', default=None)
 
+# Context variable for tenant_id (async-safe)
+_tenant_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('tenant_id', default=None)
+
 
 def set_trace_id(trace_id: str) -> None:
     """
@@ -82,6 +85,33 @@ def clear_organization() -> None:
     Clear the organization for the current async context.
     """
     _organization_var.set(None)
+
+
+def set_tenant_id(tenant_id: str) -> None:
+    """
+    Set the tenant_id for the current async context.
+    
+    Args:
+        tenant_id: The tenant ID to set
+    """
+    _tenant_id_var.set(tenant_id)
+
+
+def get_tenant_id() -> Optional[str]:
+    """
+    Get the tenant_id for the current async context.
+    
+    Returns:
+        The tenant ID if set, None otherwise
+    """
+    return _tenant_id_var.get()
+
+
+def clear_tenant_id() -> None:
+    """
+    Clear the tenant_id for the current async context.
+    """
+    _tenant_id_var.set(None)
 
 
 @contextmanager

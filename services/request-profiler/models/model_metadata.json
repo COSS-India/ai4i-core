@@ -1,0 +1,63 @@
+{
+  "model_version": "2.0.0-indian-languages",
+  "training_date": "2026-02-10T07:39:31.009233+00:00",
+  "dataset": {
+    "name": "indian_languages_dataset",
+    "total_samples": 935,
+    "languages": [
+      "hi",
+      "bn",
+      "ta",
+      "te",
+      "kn",
+      "as"
+    ],
+    "domains": [
+      "medical",
+      "legal",
+      "technical",
+      "finance",
+      "casual",
+      "general"
+    ],
+    "source": "synthetic_indian_languages"
+  },
+  "domain_classifier": {
+    "model_type": "TfidfVectorizer + LogisticRegression",
+    "test_accuracy": 0.9751243781094527,
+    "test_f1_macro": 0.9776566578408729,
+    "classes": [
+      "medical",
+      "legal",
+      "technical",
+      "finance",
+      "casual",
+      "general"
+    ]
+  },
+  "complexity_regressor": {
+    "model_type": "RandomForestRegressor",
+    "test_r2": 0.05258780814423991,
+    "test_mae": 0.050631329624758525,
+    "test_rmse": 0.060172208273159625,
+    "features": [
+      "char_count",
+      "word_count",
+      "sentence_count",
+      "avg_sentence_len",
+      "punctuation_ratio",
+      "special_char_ratio",
+      "digit_ratio",
+      "uppercase_ratio",
+      "avg_word_length",
+      "unique_ratio",
+      "rare_word_ratio",
+      "long_word_ratio",
+      "entity_count",
+      "entity_density",
+      "num_languages",
+      "mix_ratio",
+      "language_switches"
+    ]
+  }
+}

@@ -120,7 +120,7 @@ REDIS_PORT=6379
 REDIS_PASSWORD=your_redis_password
 
 # Triton
-TRITON_ENDPOINT=13.200.133.97:8000
+TRITON_ENDPOINT=
 TRITON_API_KEY=your_triton_api_key
 
 # Rate Limiting

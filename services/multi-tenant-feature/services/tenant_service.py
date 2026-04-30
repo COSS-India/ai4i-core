@@ -1,13 +1,14 @@
 from fastapi import BackgroundTasks, HTTPException, status
 from datetime import datetime, timezone , timedelta , date
 
-from typing import Optional
-from sqlalchemy import insert , select , update
+from typing import Optional, List, Tuple
+from sqlalchemy import insert , select , update , delete , text , MetaData , func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError , NoResultFound
 
-import os
 import httpx
+from pydantic import BaseModel, EmailStr
+from ai4icore_env import app_env
 
 from utils.utils import (
     generate_tenant_id,
@@ -19,6 +20,10 @@ from utils.utils import (
     generate_service_id,
     generate_random_password,
     hash_password,
+    hash_email,
+    encrypt_sensitive_data,
+    decrypt_sensitive_data,
+    DecryptionError,
 )
 from models.db_models import (
     Tenant, 
@@ -29,27 +34,42 @@ from models.db_models import (
     TenantUser,
     UserBillingRecord,
 )
-from models.auth_models import UserDB
-from models.enum_tenant import  SubscriptionType, TenantStatus, AuditAction , BillingStatus , AuditActorType , TenantUserStatus
+from models.auth_models import Role, UserRole, UserDB
+
+from models.enum_tenant import  (
+    SubscriptionType, 
+    TenantStatus, 
+    AuditAction , 
+    BillingStatus , 
+    AuditActorType , 
+    TenantUserStatus
+    )
+
 from models.tenant_create import TenantRegisterRequest, TenantRegisterResponse
-from models.service_create import ServiceCreateRequest , ServiceResponse , ListServicesResponse
-from models.user_create import UserRegisterRequest, UserRegisterResponse
-from models.services_update import ServiceUpdateRequest , FieldChange , ServiceUpdateResponse
-from models.billing_update import BillingUpdateRequest, BillingUpdateResponse
-from models.tenant_email import TenantResendEmailVerificationResponse
 from models.tenant_subscription import TenantSubscriptionResponse
 from models.tenant_status import TenantStatusUpdateRequest , TenantStatusUpdateResponse
-from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
 from models.tenant_view import TenantViewResponse, ListTenantsResponse
-from models.user_view import TenantUserViewResponse, ListUsersResponse
-from models.user_subscription import UserSubscriptionResponse
 from models.tenant_update import TenantUpdateRequest, TenantUpdateResponse
 
+from models.service_create import ServiceCreateRequest , ServiceResponse , ListServicesResponse
+from models.service_update import ServiceUpdateRequest , FieldChange , ServiceUpdateResponse
+from models.service_delete import  ServiceDeleteRequest , ServiceDeleteResponse
+
+from models.user_create import UserRegisterRequest, UserRegisterResponse
+from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
+from models.user_view import TenantUserViewResponse, ListUsersResponse
+from models.user_subscription import UserSubscriptionResponse
+from models.user_update import TenantUserUpdateRequest, TenantUserUpdateResponse
+from models.user_delete import TenantUserDeleteRequest,TenantUserDeleteResponse
+
+from models.tenant_email import TenantSendEmailVerificationResponse, TenantResendEmailVerificationResponse, EmailVerificationPayload
 from services.email_service import send_welcome_email, send_verification_email , send_user_welcome_email
+from models.billing_update import BillingUpdateRequest, BillingUpdateResponse
 
 from logger import logger
 from uuid import UUID
 from dotenv import load_dotenv
+from cache.app_cache import get_async_cache_connection
 
 load_dotenv()
 
@@ -60,10 +80,323 @@ DEFAULT_QUOTAS = {
 
 
 
-EMAIL_VERIFICATION_LINK = str(os.getenv("EMAIL_VERIFICATION_LINK",""))
-DB_NAME                 = str(os.getenv("APP_DB_NAME", "multi_tenant_db"))
-API_GATEWAY_URL        = str(os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080"))
-API_GATEWAY_TIMEOUT       = float(os.getenv("API_GATEWAY_TIMEOUT", "10"))
+EMAIL_VERIFICATION_LINK = app_env.email_verification_link
+EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES = app_env.email_verification_token_expire_minutes
+EMAIL_VERIFICATION_RESEND_MIN_INTERVAL_SECONDS = app_env.email_verification_resend_min_interval_seconds
+EMAIL_VERIFICATION_RESEND_MAX_PER_HOUR = app_env.email_verification_resend_max_per_hour
+EMAIL_VERIFICATION_RESEND_MAX_PER_DAY = app_env.email_verification_resend_max_per_day
+DB_NAME                 = str(app_env.app_db_name)
+API_GATEWAY_URL        = app_env.api_gateway_url
+API_GATEWAY_TIMEOUT       = app_env.api_gateway_timeout
+_AUTH_TENANT_STATUS_PREFIX = "auth:tenant_status:"
+_AUTH_TENANT_USER_STATUS_PREFIX = "auth:tenant_user_status:"
+_auth_cache_client = get_async_cache_connection()
+
+
+async def _invalidate_auth_tenant_status_cache(tenant_id: str) -> None:
+    """Invalidate auth-service tenant status cache key after status changes."""
+    if not _auth_cache_client:
+        return
+    tenant_id_norm = (tenant_id or "").strip().lower()
+    if not tenant_id_norm:
+        return
+    try:
+        await _auth_cache_client.delete(f"{_AUTH_TENANT_STATUS_PREFIX}{tenant_id_norm}")
+    except Exception as exc:
+        logger.warning(
+            "Failed to invalidate auth tenant status cache (tenant_id=%s): %s",
+            tenant_id_norm,
+            exc,
+        )
+
+
+async def _invalidate_auth_tenant_user_status_cache(tenant_id: str, user_id: int) -> None:
+    """Invalidate auth-service tenant-user status cache key after status changes."""
+    if not _auth_cache_client:
+        return
+    tenant_id_norm = (tenant_id or "").strip().lower()
+    if not tenant_id_norm:
+        return
+    try:
+        await _auth_cache_client.delete(
+            f"{_AUTH_TENANT_USER_STATUS_PREFIX}{tenant_id_norm}:{user_id}"
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to invalidate auth tenant-user status cache (tenant_id=%s user_id=%s): %s",
+            tenant_id_norm,
+            user_id,
+            exc,
+        )
+
+
+async def invalidate_pending_verification_tokens(
+    tenant_id: UUID,
+    db: AsyncSession,
+    *,
+    invalidated_at: Optional[datetime] = None,
+    exclude_verification_id: Optional[UUID] = None,
+):
+    """
+    Expire every unverified token for a tenant so that only a newly issued one can be used.
+
+    When invalidating around a successful verify, pass exclude_verification_id so the row
+    being verified is not given a backdated expires_at (bulk updates do not see pending ORM state).
+    """
+    invalidated_at = invalidated_at or now_utc()
+
+    stmt = (
+        update(TenantEmailVerification)
+        .where(
+            TenantEmailVerification.tenant_id == tenant_id,
+            TenantEmailVerification.verified_at.is_(None),
+            TenantEmailVerification.expires_at >= invalidated_at,
+        )
+        .values(expires_at=invalidated_at - timedelta(seconds=1))
+    )
+    if exclude_verification_id is not None:
+        stmt = stmt.where(TenantEmailVerification.id != exclude_verification_id)
+    await db.execute(stmt)
+
+
+async def _count_verification_resends_since(
+    tenant_uuid: UUID,
+    db: AsyncSession,
+    *,
+    since: datetime,
+) -> int:
+    """
+    Count resend attempts since the provided timestamp.
+
+    The first-ever verification email is treated as the initial send.
+    Every later verification token issued for the tenant is treated as a resend.
+    """
+    total_sent = await db.scalar(
+        select(func.count(TenantEmailVerification.id)).where(
+            TenantEmailVerification.tenant_id == tenant_uuid,
+            TenantEmailVerification.created_at >= since,
+        )
+    )
+    total_sent = int(total_sent or 0)
+
+    first_sent_at = await db.scalar(
+        select(TenantEmailVerification.created_at)
+        .where(TenantEmailVerification.tenant_id == tenant_uuid)
+        .order_by(TenantEmailVerification.created_at.asc())
+        .limit(1)
+    )
+
+    if first_sent_at and first_sent_at >= since:
+        return max(0, total_sent - 1)
+    return total_sent
+
+
+async def enforce_verification_send_policy(
+    tenant_uuid: UUID,
+    db: AsyncSession,
+    *,
+    current_time: Optional[datetime] = None,
+):
+    """
+    Apply resend controls for every verification email after the initial send.
+    """
+    current_time = current_time or now_utc()
+
+    # Lock the tenant row so concurrent resends cannot both pass rate checks before either
+    # inserts a new verification row (child inserts do not lock the parent).
+    locked_id = await db.scalar(
+        select(Tenant.id)
+        .where(Tenant.id == tenant_uuid)
+        .with_for_update()
+    )
+    if locked_id is None:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    latest_sent_at = await db.scalar(
+        select(TenantEmailVerification.created_at)
+        .where(TenantEmailVerification.tenant_id == tenant_uuid)
+        .order_by(TenantEmailVerification.created_at.desc())
+        .limit(1)
+    )
+
+    # No prior verification email means this is the initial send, not a resend.
+    if not latest_sent_at:
+        return
+
+    next_allowed_at = latest_sent_at + timedelta(
+        seconds=EMAIL_VERIFICATION_RESEND_MIN_INTERVAL_SECONDS
+    )
+    if current_time < next_allowed_at:
+        retry_after_seconds = max(
+            1, int((next_allowed_at - current_time).total_seconds())
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Please wait before requesting another verification email. "
+                f"Try again in {retry_after_seconds} seconds."
+            ),
+        )
+
+    resends_last_hour = await _count_verification_resends_since(
+        tenant_uuid,
+        db,
+        since=current_time - timedelta(hours=1),
+    )
+    if resends_last_hour >= EMAIL_VERIFICATION_RESEND_MAX_PER_HOUR:
+        raise HTTPException(
+            status_code=429,
+            detail="Verification email resend limit reached for the last hour.",
+        )
+
+    resends_last_day = await _count_verification_resends_since(
+        tenant_uuid,
+        db,
+        since=current_time - timedelta(days=1),
+    )
+    if resends_last_day >= EMAIL_VERIFICATION_RESEND_MAX_PER_DAY:
+        raise HTTPException(
+            status_code=429,
+            detail="Verification email resend limit reached for the last 24 hours.",
+        )
+
+# Status transition rules
+TENANT_STATUS_TRANSITIONS = {
+    TenantStatus.PENDING: [TenantStatus.ACTIVE, TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED],
+    TenantStatus.ACTIVE: [TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED],
+    TenantStatus.SUSPENDED: [TenantStatus.ACTIVE, TenantStatus.DEACTIVATED],
+    TenantStatus.DEACTIVATED: [TenantStatus.ACTIVE],  # No transitions allowed from DEACTIVATED,
+}
+
+TENANT_USER_STATUS_TRANSITIONS = {
+    TenantUserStatus.ACTIVE: [TenantUserStatus.SUSPENDED],
+    TenantUserStatus.SUSPENDED: [TenantUserStatus.ACTIVE],
+}
+
+def validate_status_transition(old_status, new_status, allowed_transitions: dict, entity_type: str = "Entity"):
+    """
+    Validate if a status transition is allowed.
+    
+    Args:
+        old_status: Current status (TenantStatus or TenantUserStatus)
+        new_status: Desired new status (TenantStatus or TenantUserStatus)
+        allowed_transitions: Dictionary mapping old status to list of allowed new statuses
+        entity_type: Type of entity for error messages (e.g., "Tenant" or "User")
+    
+    Raises:
+        HTTPException: If transition is not allowed
+    """
+    if old_status not in allowed_transitions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{entity_type} status {old_status.value} is not configured for status transitions"
+        )
+    
+    # Check if DEACTIVATED status cannot be changed
+    if not allowed_transitions[old_status]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot update {entity_type.lower()} status from {old_status.value}. Deactivated entities cannot be modified."
+        )
+    
+    # Check if the desired transition is allowed
+    if new_status not in allowed_transitions[old_status]:
+        allowed = [s.value for s in allowed_transitions[old_status]]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {entity_type.lower()} status transition from {old_status.value} to {new_status.value}. Allowed transitions: {allowed}"
+        )
+
+
+async def _get_roles_from_auth(user_id: int, auth_header: Optional[str]) -> List[str]:
+    """Fetch role names for a user from auth service. Returns empty list on failure or if no header.
+
+    Auth now exposes a single role per user but may return either:
+    - {"role": "USER"}
+    - {"roles": ["USER"]}
+    This helper normalizes that into a list with at most one element.
+    """
+    if not auth_header:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
+            r = await client.get(
+                f"{API_GATEWAY_URL}/api/v1/auth/roles/user/{user_id}",
+                headers={"Authorization": auth_header},
+            )
+            if r.status_code == 200:
+                payload = r.json()
+                # auth-service currently returns: {"success": true, "data": {"user_id": ..., "roles": [...]}}
+                # but older/alternate versions may return {"role": "..."} / {"roles": [...]}
+                role_payload = payload.get("data") if isinstance(payload, dict) else None
+                if not isinstance(role_payload, dict):
+                    role_payload = payload if isinstance(payload, dict) else {}
+
+                # Prefer single role field if present
+                if isinstance(role_payload.get("role"), str):
+                    role = role_payload["role"].strip()
+                    return [role] if role else []
+
+                roles = role_payload.get("roles") or []
+                if isinstance(roles, list):
+                    return [str(x).strip() for x in roles if str(x).strip()]
+                return []
+            logger.warning(f"Auth roles/user/{user_id} returned {r.status_code}: {r.text}")
+            return []
+    except Exception as e:
+        logger.warning(f"Failed to fetch roles from auth for user_id={user_id}: {e}")
+        return []
+
+
+async def _assign_role_in_auth(user_id: int, role_name: str, auth_header: Optional[str]) -> bool:
+    """Assign a single role to user in auth service (auth allows one role per user). Returns True on success."""
+    if not auth_header or not role_name:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
+            r = await client.post(
+                f"{API_GATEWAY_URL}/api/v1/auth/roles/assign",
+                json={"user_id": user_id, "role_name": role_name},
+                headers={"Authorization": auth_header},
+            )
+            if r.status_code in (200, 201):
+                return True
+            logger.warning(f"Auth roles/assign for user_id={user_id} role={role_name} returned {r.status_code}: {r.text}")
+            return False
+    except Exception as e:
+        logger.warning(f"Failed to assign role in auth for user_id={user_id} role={role_name}: {e}")
+        return False
+
+
+async def _revoke_tenant_sessions_in_auth(user_ids: list[int], auth_header: Optional[str]) -> bool:
+    """
+    Best-effort call to auth-service to revoke all active sessions for a tenant.
+    Returns True when auth-service confirms success, otherwise False.
+    """
+    if not auth_header:
+        logger.warning("Skipping tenant session revocation: missing Authorization header")
+        return False
+    if not user_ids:
+        logger.info("Skipping tenant session revocation: no user IDs to revoke")
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
+            r = await client.post(
+                f"{API_GATEWAY_URL}/api/v1/auth/sessions/revoke-by-users",
+                json={"user_ids": user_ids},
+                headers={"Authorization": auth_header},
+            )
+            if r.status_code in (200, 201):
+                return True
+            logger.warning(
+                "Auth session revocation by users failed status=%s body=%s",
+                r.status_code,
+                r.text,
+            )
+            return False
+    except Exception as e:
+        logger.warning("Failed to revoke tenant sessions in auth: %s", e)
+        return False
 
 
 # Service to table mapping - maps service names to their corresponding table names (__tablename__)
@@ -99,7 +432,6 @@ async def create_service_tables_for_subscriptions(schema_name: str, subscription
         db: Optional AsyncSession to use. If provided, uses existing transaction.
             If None, creates its own session.
     """
-    from sqlalchemy import text, MetaData
     from db_connection import TenantDBSessionLocal, ServiceSchemaBase
     from models.service_schema_models import (
         NMTRequestDB, NMTResultDB,
@@ -196,7 +528,6 @@ async def drop_service_tables_for_subscriptions(schema_name: str, subscriptions:
         db: Optional AsyncSession to use. If provided, uses existing transaction.
             If None, creates its own session.
     """
-    from sqlalchemy import text
     from db_connection import TenantDBSessionLocal, ServiceSchemaBase
     from models.service_schema_models import (
         NMTRequestDB, NMTResultDB,
@@ -276,7 +607,6 @@ async def provision_tenant_schema(schema_name: str, subscriptions: list[str]):
         schema_name: The schema name for the tenant (e.g., 'tenant_acme_corp_5d448a')
         subscriptions: List of service names to create tables for (e.g., ['asr', 'tts'])
     """
-    from sqlalchemy import text , MetaData
     from db_connection import TenantDBSessionLocal, ServiceSchemaBase
     # Import all models to ensure they're registered with metadata
     from models.service_schema_models import (
@@ -383,8 +713,6 @@ async def list_tenant_schemas(db: AsyncSession) -> list[dict]:
             ...
         ]
     """
-    from sqlalchemy import text
-    
     try:
         # 1. Verify we're in the correct database
         db_name_query = text("SELECT current_database()")
@@ -454,7 +782,6 @@ async def verify_tenant_schema(schema_name: str, db: AsyncSession) -> dict:
             "tables": [...]
         }
     """
-    from sqlalchemy import text
     from db_connection import ServiceSchemaBase
     from models.service_schema_models import (
         NMTRequestDB, NMTResultDB,  # Import to register with metadata
@@ -528,7 +855,18 @@ async def send_verification_link(
         ):
     """
     Generate and send email verification link to the tenant's contact email.
-    
+
+    Transaction contract:
+        This helper runs its work inside ``async with db.begin()``. If the caller already
+        has an open transaction, it must not hold uncommitted ORM changes: this function
+        ends a read-only implicit transaction (e.g. after a SELECT) with ``rollback()`` so
+        the verification token work runs in one explicit transaction. If the session has
+        pending inserts/updates/deletes, it raises instead of discarding them.
+
+        **WARNING:** If there is an open transaction with no pending ORM state, this
+        function calls ``rollback()`` solely to close that implicit transaction before
+        starting its own—never to discard uncommitted writes.
+
     Args:
         created: The created Tenant object
         payload: The TenantRegisterRequest payload
@@ -537,28 +875,47 @@ async def send_verification_link(
         background_tasks: BackgroundTasks to send email asynchronously
     """
 
-    token = generate_email_verification_token()
-    expiry = now_utc() + timedelta(minutes=15)
+    # Snapshot attributes before rollback(): rollback expires mapped instances; touching
+    # created.id afterward can lazy-load and raise MissingGreenlet on AsyncSession.
+    tenant_uuid = created.id
+    tenant_id_for_email = created.tenant_id
 
-    verification = TenantEmailVerification(
-        tenant_id=created.id,
-        token=token,
-        expires_at=expiry,
-    )
-    db.add(verification)
+    if db.in_transaction():
+        if db.new or db.dirty or db.deleted:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Cannot send verification link while the database session has uncommitted "
+                    "changes; commit or roll back before sending verification email."
+                ),
+            )
+        # End implicit read transaction from the caller (e.g. SELECT tenant) so invalidation
+        # and the new token row run in a single explicit transaction via db.begin().
+        await db.rollback()
 
+    invalidated_at = now_utc()
     try:
-        await db.commit()
-    except IntegrityError as e:
-        await db.rollback()
-        logger.error(f"Integrity error while creating verification token for tenant {created.id}: {e}")
-        raise HTTPException(status_code=409,detail="Verification token creation failed")
-    except Exception as e:
-        await db.rollback()
-        logger.exception(f"Error committing verification token to database: {e}")
-        raise HTTPException(status_code=500,detail="Failed to create verification token")
+        async with db.begin():
+            await enforce_verification_send_policy(tenant_uuid, db, current_time=invalidated_at)
+            await invalidate_pending_verification_tokens(tenant_uuid, db, invalidated_at=invalidated_at)
 
-    # verification_link = f"https://{subdomain}/tenant/verify/email?token={token}" TODO : add subdomain if required
+            token = generate_email_verification_token()
+            expiry = invalidated_at + timedelta(minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES)
+
+            verification = TenantEmailVerification(
+                tenant_id=tenant_uuid,
+                token=token,
+                expires_at=expiry,
+            )
+            db.add(verification)
+    except HTTPException:
+        raise
+    except IntegrityError as e:
+        logger.error(f"Integrity error while creating verification token for tenant {tenant_uuid}: {e}")
+        raise HTTPException(status_code=409, detail="Verification token creation failed")
+    except Exception as e:
+        logger.exception(f"Error committing verification token to database: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create verification token")
 
     verification_link = f"{EMAIL_VERIFICATION_LINK}/api/v1/multi-tenant/email/verify?token={token}"
 
@@ -566,7 +923,8 @@ async def send_verification_link(
         send_verification_email,
         payload.contact_email,
         verification_link,
-        tenant_id=created.tenant_id,  # Pass tenant_id for resend reference
+        tenant_id=tenant_id_for_email,  # Pass tenant_id for resend reference
+        expires_in_minutes=EMAIL_VERIFICATION_TOKEN_EXPIRE_MINUTES,
     )
     return token
 
@@ -578,8 +936,7 @@ async def create_new_tenant(
         background_tasks: BackgroundTasks
         ) -> TenantRegisterResponse:
     """
-    Create a new tenant with ACTIVE status by default (auto-verified).
-    Creates admin user and provisions schema immediately.
+    Create a new tenant with PENDING status.
     
     Args:
         payload: Tenant registration request payload
@@ -588,44 +945,43 @@ async def create_new_tenant(
         background_tasks: BackgroundTasks to send email and provision schema asynchronously
     
     Returns:
-        TenantRegisterResponse with tenant details
+        TenantRegisterResponse with tenant details. Verification email is sent automatically after creation.
     """
 
     if payload.contact_email:
-        stmt = select(Tenant).where(
-            Tenant.contact_email == payload.contact_email,
-            Tenant.domain == payload.domain,
-        )
-        result = await db.execute(stmt)
-        existing = result.scalar_one_or_none()
-        
-        if existing:
-            # Check status
-            if existing.status == TenantStatus.PENDING:
-                resend = await resend_verification_email(
-                    tenant_id=existing.tenant_id,  # Use string tenant_id, not UUID
-                    db=db,
-                    background_tasks=background_tasks,
-                )
+        # Use hashed email (normalized + SHA256) for fast, indexed duplicate detection.
+        email_hash_value = hash_email(payload.contact_email)
 
-                return TenantRegisterResponse(
-                    id=existing.id,
-                    tenant_id=existing.tenant_id,
-                    schema_name=existing.schema_name,
-                    subscriptions=existing.subscriptions or [],
-                    quotas=existing.quotas or {},
-                    usage_quota=existing.usage or {},
-                    status=existing.status.value,
-                    token=resend.token,
-                    message="Email verification pending. Link resent , please check your inbox.",
-                )
-            elif existing.status in [TenantStatus.IN_PROGRESS]:
-                raise ValueError("Email already verified")
+        existing = await db.scalar(
+            select(Tenant).where(Tenant.email_hash == email_hash_value)
+        )
+
+        if existing:
+            # Check status and raise appropriate errors
+            if existing.status == TenantStatus.PENDING:
+                # Tenant already exists and is pending verification.
+                # Do NOT automatically resend verification email here to avoid confusion.
+                raise ValueError("Tenant is already registered in pending state. Need email verification")
             elif existing.status == TenantStatus.ACTIVE:
                 raise ValueError("Tenant already active")
             elif existing.status == TenantStatus.SUSPENDED:
-                raise ValueError("Tenant is suspended. Contact support.")
+                raise ValueError("Tenant is suspended. Contact your platform administrator.")
+            elif existing.status == TenantStatus.DEACTIVATED:
+                raise ValueError("Tenant is deactivated. Contact your platform administrator.")
             
+    from utils.utils import _normalize_domain , _domains_similar
+
+    requested_domain_norm = _normalize_domain(payload.domain) if payload.domain else ""
+    if requested_domain_norm:
+        existing_domain_norm = await db.scalars(select(Tenant).where(Tenant.domain == requested_domain_norm))
+        existing_domain_norm = existing_domain_norm.first()
+
+        if existing_domain_norm:
+            if existing_domain_norm.domain == requested_domain_norm:
+                raise ValueError("Domain already registered")
+            if _domains_similar(existing_domain_norm.domain, requested_domain_norm):
+                raise ValueError(f"Domain '{payload.domain}' is too similar to existing registered domain '{tenant.domain}'")
+
     if not payload.requested_subscriptions:
         raise HTTPException(
             status_code=400,
@@ -651,27 +1007,27 @@ async def create_new_tenant(
     # Convert SubscriptionType enums to strings for storage
     subscription_strings = [s.value if hasattr(s, "value") else str(s) for s in payload.requested_subscriptions]
     
-    # Generate admin username and password immediately (auto-verified)
-    admin_username = f"admin@{tenant_id}"
-    plain_password = generate_random_password(length=8)
-    hashed_password = hash_password(plain_password)
-    
-    logger.debug(f"Password generated for Tenant:-{tenant_id} | password:- {plain_password}")
+    # Encrypt sensitive data before saving
+    encrypted_email = encrypt_sensitive_data(payload.contact_email) if payload.contact_email else None
+    encrypted_phone = encrypt_sensitive_data(payload.phone_number) if payload.phone_number else None
 
     tenant_data = {
         "tenant_id": tenant_id,
         "organization_name": payload.organization_name,
-        "contact_email": payload.contact_email,
+        "contact_email": encrypted_email,
+        # Store hash of normalized email for fast uniqueness checks
+        "email_hash": hash_email(payload.contact_email) if payload.contact_email else None,
+        "phone_number": encrypted_phone,
         "domain": payload.domain,
         # "subdomain": subdomain,
         "schema_name": schema_name,
         "subscriptions": subscription_strings,
         "quotas": quotas_dict,
         "usage": usage_dict,
-        "status": TenantStatus.ACTIVE,  # Set to ACTIVE by default
-        "temp_admin_username": admin_username,
-        "temp_admin_password_hash": hashed_password,
-        "user_id": None,  # Will be set after creating auth user
+        "status": TenantStatus.PENDING,
+        "temp_admin_username": "",                 # Will be set upon email verification
+        "temp_admin_password_hash": "",            # No password at registration; generated on verification if needed
+        "user_id": None,                           # Will be set upon email verification
     }
 
     # Validate services are active
@@ -701,55 +1057,7 @@ async def create_new_tenant(
     result = await db.execute(stmt)
     created: Tenant = result.scalar_one()
 
-    # Create tenant admin user in auth-service immediately (auto-verified)
-    try:
-        async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
-            auth_response = await client.post(
-                f"{API_GATEWAY_URL}/api/v1/auth/register",
-                json={
-                    "email": payload.contact_email,
-                    "username": admin_username,
-                    "password": plain_password,
-                    "confirm_password": plain_password,
-                    "full_name": payload.organization_name,
-                    "phone_number": None,
-                    "timezone": "UTC",
-                    "language": "en",
-                    "is_tenant": True,
-                },
-            )
-    except httpx.RequestError as e:
-        logger.error(f"Failed to call auth-service for tenant admin registration: {e}")
-        await db.rollback()
-        raise HTTPException(
-            status_code=503,
-            detail="Authentication service unavailable while creating tenant admin user",
-        )
 
-    if auth_response.status_code != 201:
-        logger.error(
-            f"Auth-service /api/v1/auth/register failed for tenant {tenant_id}: "
-            f"status={auth_response.status_code}, body={auth_response.text}"
-        )
-        await db.rollback()
-        raise HTTPException(
-            status_code=auth_response.status_code,
-            detail=auth_response.json() if auth_response.headers.get("content-type", "").startswith("application/json") else auth_response.text,
-        )
-
-    auth_user = auth_response.json()
-    admin_user_id = auth_user.get("id")
-    if not admin_user_id:
-        logger.error(f"Auth-service did not return user id for tenant admin {tenant_id}: {auth_user}")
-        await db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Authentication service response missing user id for tenant admin",
-        )
-
-    # Update tenant with user_id
-    created.user_id = admin_user_id
-    
     billing = BillingRecord(
         tenant_id=created.id,
         # billing_plan=payload.billing_plan, # TODO : add billing plan if required
@@ -784,46 +1092,91 @@ async def create_new_tenant(
         await db.rollback()
         raise HTTPException(status_code=500,detail="Failed to create tenant")
 
-    await db.refresh(created)
-
-    # Extract values before adding background task to avoid detached object issues
-    tenant_id_str = str(created.tenant_id)
-    contact_email_str = str(created.contact_email)
-    admin_username_str = str(admin_username)
-    password_str = str(plain_password)
-
-    logger.info(f"Tenant created and activated: {tenant_id_str}")
-
-    # Send welcome email with admin credentials
-    background_tasks.add_task(
-        send_welcome_email,
-        tenant_id_str,
-        contact_email_str,
-        None,  # use subdomain if required
-        admin_username_str,
-        password_str,
+    # Snapshot ORM fields before verification send: it rolls back the session and expires instances.
+    register_id = created.id
+    register_tenant_id = created.tenant_id
+    register_schema_name = created.schema_name
+    register_subscriptions = created.subscriptions or []
+    register_quotas = created.quotas or {}
+    register_usage = created.usage or {}
+    register_status = (
+        created.status.value if hasattr(created.status, "value") else str(created.status)
     )
 
-    # Provision tenant schema immediately
-    background_tasks.add_task(
-        provision_tenant_schema,
-        created.schema_name,
-        created.subscriptions or [],
+    # Automatically send initial verification email to the tenant contact email.
+    # This creates the verification token and schedules the actual email via background tasks.
+    await send_initial_verification_email(
+        tenant_id=register_tenant_id,
+        db=db,
+        background_tasks=background_tasks,
     )
 
-    resposne = TenantRegisterResponse(
-        id=created.id,
-        tenant_id=created.tenant_id,
-        schema_name=created.schema_name,
-        subscriptions=created.subscriptions or [],
-        quotas=created.quotas or {},
-        usage_quota=created.usage or {},
-        status=created.status.value if hasattr(created.status, "value") else str(created.status),
-        token=None,  # No token needed for auto-verified tenants
+    response = TenantRegisterResponse(
+        id=register_id,
+        tenant_id=register_tenant_id,
+        schema_name=register_schema_name,
+        subscriptions=register_subscriptions,
+        quotas=register_quotas,
+        usage_quota=register_usage,
+        status=register_status,
+        message="Tenant successfully created. A verification email has been sent.",
     )
 
-    return resposne
+    return response
 
+
+async def send_initial_verification_email(
+    tenant_id: str,
+    db: AsyncSession,
+    background_tasks: BackgroundTasks,
+) -> TenantSendEmailVerificationResponse:
+    """
+    Generate and send the initial email verification link for a tenant.
+
+    This is intended for the first-time send after registration.
+    """
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    
+    if tenant.status == TenantStatus.ACTIVE:
+        raise ValueError("Tenant already verified and active")
+    
+    if tenant.status == TenantStatus.SUSPENDED:
+        raise ValueError("Tenant is suspended. Contact support.")
+    
+    if tenant.status == TenantStatus.DEACTIVATED:
+        raise ValueError("Tenant is deactivated. Contact support.")
+
+    # Decrypt email before using it
+    decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+    if not decrypted_email:
+        raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
+    
+    # Construct a minimal payload-like object for email helper
+
+    payload = EmailVerificationPayload(contact_email=decrypted_email)
+
+    # Snapshot before send_verification_link: it may rollback the session and expire tenant.
+    tenant_uuid = tenant.id
+    tenant_id_str = tenant.tenant_id
+
+    # Reuse the existing token creation + email send helper
+    token = await send_verification_link(
+        created=tenant,
+        payload=payload,  # only contact_email is used
+        db=db,
+        subdomain=None,
+        background_tasks=background_tasks,
+    )
+
+    return TenantSendEmailVerificationResponse(
+        tenant_uuid=tenant_uuid,
+        tenant_id=tenant_id_str,
+        token=token,
+        message="Verification email sent successfully",
+    )
 
 
 async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: AsyncSession, background_tasks: BackgroundTasks):
@@ -846,7 +1199,9 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     if not verification:
         raise ValueError("Invalid or expired token")
 
-    if verification.expires_at < now_utc():
+    # Ensure this token is still within its validity window
+    current_time = now_utc()
+    if verification.expires_at <= current_time:
         raise ValueError("Token expired")
 
     tenant = await tenant_db.get(Tenant, verification.tenant_id)
@@ -860,37 +1215,55 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     if tenant.status == TenantStatus.SUSPENDED:
         raise ValueError("Tenant is suspended. Contact support.")
 
+    await invalidate_pending_verification_tokens(
+        tenant.id,
+        tenant_db,
+        invalidated_at=current_time,
+        exclude_verification_id=verification.id,
+    )
     verification.verified_at = now_utc()
     tenant.status = TenantStatus.ACTIVE
 
-    #generate username and password
-
+    # Use password from registration request instead of generating one
+    # Decrypt the password that was stored during tenant registration
     admin_username = f"admin@{tenant.tenant_id}"
     plain_password = generate_random_password(length = 8)
 
-    # TODO: Add logging for password generation , Remove once done testing
-    logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
-
-    # Store temp credentials on tenant for email / audit purposes
     hashed_password = hash_password(plain_password)
 
     tenant.temp_admin_username = admin_username
     tenant.temp_admin_password_hash = hashed_password
 
     # Create tenant admin user in auth-service via /api/v1/auth/register
+    # Store the password provided during registration so tenant admin can login with it
     try:
         async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
+            # Decrypt email and phone_number before sending to auth service
+            try:
+                decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+                decrypted_phone = decrypt_sensitive_data(tenant.phone_number) if tenant.phone_number else None
+            except DecryptionError as e:
+                logger.error(f"Decryption failed for tenant {tenant.tenant_id}: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to decrypt tenant contact data. Ensure API_KEY_ENCRYPTION_KEY / JWT_SECRET_KEY matches the key used to encrypt stored data."
+                )
+            
+            if not decrypted_email:
+                raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
+
             auth_response = await client.post(
                 f"{API_GATEWAY_URL}/api/v1/auth/register",
                 json={
-                    "email": tenant.contact_email,
+                    "email": decrypted_email,
                     "username": admin_username,
-                    "password": plain_password,
+                    "password": plain_password,  # Password from registration request
                     "confirm_password": plain_password,
                     "full_name": tenant.organization_name,
-                    "phone_number": None,
+                    "phone_number": decrypted_phone,
                     "timezone": "UTC",
                     "language": "en",
+                    "tenant_id": tenant.tenant_id,
                     "is_tenant": True,
                 },
             )
@@ -901,7 +1274,9 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
             detail="Authentication service unavailable while creating tenant admin user",
         )
 
-    if auth_response.status_code != 201:
+    # auth-service /auth/register returns HTTP 200 (not 201) on success.
+    # Treat both 200 and 201 as success to avoid surfacing the upstream payload.
+    if auth_response.status_code not in (200, 201):
         logger.error(
             f"Auth-service /api/v1/auth/register failed for tenant {tenant.tenant_id}: "
             f"status={auth_response.status_code}, body={auth_response.text}"
@@ -912,14 +1287,51 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
             detail=auth_response.json() if auth_response.headers.get("content-type", "").startswith("application/json") else auth_response.text,
         )
 
-    auth_user = auth_response.json()
-    admin_user_id = auth_user.get("id")
+    auth_user_payload = auth_response.json()
+    # auth-service responses are wrapped like: {"success": true, "data": {...}}
+    auth_data = auth_user_payload.get("data") if isinstance(auth_user_payload, dict) else None
+    admin_user_id = auth_data.get("id") if isinstance(auth_data, dict) else None
     if not admin_user_id:
-        logger.error(f"Auth-service did not return user id for tenant admin {tenant.tenant_id}: {auth_user}")
+        logger.error(
+            f"Auth-service did not return user id for tenant admin {tenant.tenant_id}: {auth_user_payload}"
+        )
         raise HTTPException(
             status_code=500,
             detail="Authentication service response missing user id for tenant admin",
         )
+
+
+
+    # Assign TENANT ADMIN role to the tenant admin user
+    # The register endpoint assigns USER role by default, so we need to replace it with TENANT ADMIN
+    try:
+        # Get TENANT ADMIN role ID from auth_db using ORM
+        role_result = await auth_db.execute(
+            select(Role.id).where(Role.name == "TENANT ADMIN")
+        )
+        tenant_admin_role_id = role_result.scalar_one_or_none()
+
+        if tenant_admin_role_id is not None:
+            # Delete any existing role assignments (auth-service only allows one role per user)
+            await auth_db.execute(
+                delete(UserRole).where(UserRole.user_id == admin_user_id)
+            )
+
+            # Insert TENANT ADMIN role assignment
+            auth_db.add(
+                UserRole(
+                    user_id=admin_user_id,
+                    role_id=tenant_admin_role_id,
+                )
+            )
+            await auth_db.commit()
+            logger.info(f"Assigned TENANT ADMIN role to tenant admin user_id={admin_user_id} for tenant {tenant.tenant_id}")
+        else:
+            logger.warning(f"TENANT ADMIN role not found in auth_db. Tenant admin user_id={admin_user_id} will have default USER role.")
+    except Exception as e:
+        logger.error(f"Failed to assign TENANT ADMIN role to tenant admin user_id={admin_user_id} for tenant {tenant.tenant_id}: {e}")
+        # Don't fail the tenant registration if role assignment fails - user can still be assigned role later
+        await auth_db.rollback()
 
     audit = AuditLog(
         tenant_id=tenant.id,
@@ -951,12 +1363,17 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     await tenant_db.refresh(tenant)
 
     # Extract values before adding background task to avoid detached object issues
+    # Decrypt email before using it
+    decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+    if not decrypted_email:
+        raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
+    
+    logger.info(f"Tenant verified and activated: {tenant.tenant_id}")
+
     tenant_id_str = str(tenant.tenant_id)
-    contact_email_str = str(tenant.contact_email)
+    contact_email_str = decrypted_email
     admin_username_str = str(tenant.temp_admin_username) if tenant.temp_admin_username else admin_username
     password_str = str(plain_password)
-
-    logger.info(f"Tenant verified and activated: {tenant_id_str}")
 
     background_tasks.add_task(
         send_welcome_email,
@@ -1004,50 +1421,44 @@ async def resend_verification_email(
     if tenant.status == TenantStatus.SUSPENDED:
         raise ValueError("Tenant is suspended. Contact support.")
     
-    # if tenant.status == TenantStatus.ARCHIVED:
-    #     raise ValueError("Tenant is archived. Contact support.")
+    # Reuse the same send path so expiry, rate limits, and token invalidation stay consistent.
 
-    token = generate_email_verification_token()
-    expiry = now_utc() + timedelta(minutes=15)  # Match the expiry time from initial verification
-
-    verification = TenantEmailVerification(
-        tenant_id=tenant.id,
-        token=token,
-        expires_at=expiry,
-    )
-    db.add(verification)
-    
     try:
-        await db.commit()
-    except IntegrityError as e:
-        logger.error(f"Integrity error while resending verification email for tenant {tenant.tenant_id}: {e}")
-        await db.rollback()
-        raise HTTPException(status_code=409, detail="Failed to create verification token")
-    except Exception as e:
-        logger.exception(f"Error committing verification token resend to database: {e}")
-        await db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to resend verification email")
+        decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+    except DecryptionError as e:
+        logger.error(f"Decryption failed while preparing resend for tenant {tenant.tenant_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to decrypt tenant contact data for resend. Ensure API_KEY_ENCRYPTION_KEY / JWT_SECRET_KEY matches the key used to encrypt stored data."
+        )
 
-    # verification_link = f"https://{tenant.subdomain}/verify-email?token={token}" # TODO : add subdomain if required
+    if not decrypted_email:
+        raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
 
-    verification_link = f"{EMAIL_VERIFICATION_LINK}/api/v1/multi-tenant/email/verify?token={token}"
-   
-    # Extract values before adding background task to avoid detached object issues
-    contact_email_str = str(tenant.contact_email)
-    tenant_id_str = str(tenant.tenant_id)
+    payload = EmailVerificationPayload(contact_email=decrypted_email)
 
-    background_tasks.add_task(
-        send_verification_email,
-        contact_email_str,
-        verification_link,
-        tenant_id=tenant_id_str,  # Pass tenant_id for resend reference
+    # Snapshot before send_verification_link: it may rollback the session and expire tenant.
+    tenant_uuid = tenant.id
+    tenant_id_str = tenant.tenant_id
+    tenant_status_value = (
+        tenant.status.value if hasattr(tenant.status, "value") else str(tenant.status)
     )
 
-    logger.info(f"Verification email resent for tenant {tenant.tenant_id} (status: {tenant.status.value})")
+    token = await send_verification_link(
+        created=tenant,
+        payload=payload,
+        db=db,
+        subdomain=None,
+        background_tasks=background_tasks,
+    )
+
+    logger.info(
+        f"Verification email resent for tenant {tenant_id_str} (status: {tenant_status_value})"
+    )
 
     response = TenantResendEmailVerificationResponse(
-        tenant_uuid=tenant.id,
-        tenant_id=tenant.tenant_id,
+        tenant_uuid=tenant_uuid,
+        tenant_id=tenant_id_str,
         token=token,
         message="Verification email resent successfully",
     )
@@ -1181,7 +1592,7 @@ async def update_service(payload: ServiceUpdateRequest,db: AsyncSession,) -> Ser
     logger.info(f"Service pricing updated. Service ID={service.id}, Changes={changes}")
 
     return ServiceUpdateResponse(
-        message="Service pricing updated successfully",
+        message="Service updated successfully",
         service=ServiceResponse(
             id=service.id,
             service_name=service.service_name,
@@ -1196,6 +1607,52 @@ async def update_service(payload: ServiceUpdateRequest,db: AsyncSession,) -> Ser
     )
 
 
+async def delete_service(
+    payload: ServiceDeleteRequest,
+    db: AsyncSession,
+) -> ServiceDeleteResponse:
+    """
+    Delete a service configuration by its ID.
+
+    Args:
+        payload: Service delete request payload
+        db: Database session
+
+    Returns:
+        ServiceDeleteResponse: Deletion confirmation
+    """
+
+    service = await db.get(ServiceConfig, payload.service_id)
+
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+
+    try:
+        await db.delete(service)
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(
+            f"Integrity error while deleting service | service_id={payload.service_id}: {e}"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Service deletion failed due to integrity constraint violation",
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.exception(
+            f"Error committing service deletion to database | service_id={payload.service_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to delete service")
+
+    logger.info(f"Service deleted successfully | service_id={payload.service_id}")
+
+    return ServiceDeleteResponse(
+        service_id=payload.service_id,
+        message="Service deleted successfully",
+    )
+
 
 async def list_service(db: AsyncSession) -> ListServicesResponse:
     """
@@ -1208,7 +1665,7 @@ async def list_service(db: AsyncSession) -> ListServicesResponse:
     """
 
     result = await db.execute(
-        select(ServiceConfig).where(ServiceConfig.is_active.is_(True))
+        select(ServiceConfig)
     )
 
     services = result.scalars().all()
@@ -1232,10 +1689,14 @@ async def list_service(db: AsyncSession) -> ListServicesResponse:
 
 
 
-async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSession,) -> TenantSubscriptionResponse:
+async def add_subscriptions(
+    tenant_id: str,
+    subscriptions: list[str],
+    db: AsyncSession,
+) -> Tuple[TenantSubscriptionResponse, bool]:
     """
     Add subscriptions to a tenant.
-    Fails if subscription already exists.
+    Performs partial add: if some subscriptions already exist, it will still add the rest.
 
     Args:
         tenant_id: The tenant identifier
@@ -1265,38 +1726,51 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
             detail=f"Invalid subscriptions: {normalize_to_strings(invalid)}",
         )
 
+    requested = set(subscriptions)
     current = set(tenant.subscriptions or [])
-    duplicates = current & set(subscriptions)
+    duplicates = current & requested
+    to_add = requested - current
 
+    message = None
     if duplicates:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Subscription(s) already exist: {normalize_to_strings(duplicates)}",
+        # Keep exact message format expected by callers.
+        message = f"Subscription(s) already exist: {normalize_to_strings(duplicates)}"
+
+    if not to_add:
+        return (
+            TenantSubscriptionResponse(
+                tenant_id=tenant.tenant_id,
+                subscriptions=list(tenant.subscriptions or []),
+                message=message,
+            ),
+            False,
         )
 
-    updated = list(current | set(subscriptions))
+    updated = list(current | to_add)
     tenant.subscriptions = updated
 
-    # Audit log
+    # Audit log only when something was actually added
     db.add(
         AuditLog(
             tenant_id=tenant.id,
             action=AuditAction.subscription_added,
-            details={"added": subscriptions},
+            details={"added": list(to_add)},
         )
     )
 
     # Create tables for newly added services in tenant schema
-    if tenant.status == TenantStatus.ACTIVE and tenant.schema_name:
+    if to_add and tenant.status == TenantStatus.ACTIVE and tenant.schema_name:
         try:
             await create_service_tables_for_subscriptions(
                 schema_name=tenant.schema_name,
-                subscriptions=subscriptions,
+                subscriptions=list(to_add),
                 db=db,  # Pass existing session to use same transaction
             )
-            logger.info(f"Created tables for new subscriptions {subscriptions} in schema '{tenant.schema_name}'")
+            logger.info(
+                f"Created tables for new subscriptions {list(to_add)} in schema '{tenant.schema_name}'"
+            )
         except Exception as e:
-            logger.error(f"Failed to create tables for new subscriptions {subscriptions}: {e}")
+            logger.error(f"Failed to create tables for new subscriptions {list(to_add)}: {e}")
             logger.exception(f"Error details: {e}")
             raise
     try:
@@ -1311,16 +1785,24 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to add subscriptions")
 
-    return TenantSubscriptionResponse(
-        tenant_id=tenant.tenant_id,
-        subscriptions=tenant.subscriptions,
+    return (
+        TenantSubscriptionResponse(
+            tenant_id=tenant.tenant_id,
+            subscriptions=tenant.subscriptions,
+            message=message,
+        ),
+        True,
     )
 
 
 
 
 
-async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSession,) -> TenantSubscriptionResponse:
+async def remove_subscriptions(
+    tenant_id: str,
+    subscriptions: list[str],
+    db: AsyncSession,
+) -> Tuple[TenantSubscriptionResponse, bool]:
     """
     Remove subscriptions from a tenant and drop corresponding tables from tenant schema.
     
@@ -1341,38 +1823,34 @@ async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: Async
     current = set(tenant.subscriptions or [])
     to_remove = set(subscriptions)
 
-    # Validate: subscriptions must exist
     missing = to_remove - current
+    to_remove_existing = to_remove & current
+
+    message = None
     if missing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Subscriptions not present for tenant: {normalize_to_strings(missing)}",
+        # Keep message format expected by callers.
+        message = f"Subscriptions not present for tenant: {normalize_to_strings(missing)}"
+
+    if not to_remove_existing:
+        return (
+            TenantSubscriptionResponse(
+                tenant_id=tenant.tenant_id,
+                subscriptions=list(tenant.subscriptions or []),
+                message=message,
+            ),
+            False,
         )
-    
-    updated = list(current - set(subscriptions))
+
+    updated = list(current - to_remove_existing)
     tenant.subscriptions = updated
 
     db.add(
         AuditLog(
             tenant_id=tenant.id,
             action=AuditAction.subscription_removed,
-            details={"removed": subscriptions},
+            details={"removed": list(to_remove_existing)},
         )
     )
-
-    # Drop tables for removed services in tenant schema
-    if tenant.status == TenantStatus.ACTIVE and tenant.schema_name:
-        try:
-            await drop_service_tables_for_subscriptions(
-                schema_name=tenant.schema_name,
-                subscriptions=subscriptions,
-                db=db,  # Pass existing session to use same transaction
-            )
-            logger.info(f"Dropped tables for removed subscriptions {subscriptions} in schema '{tenant.schema_name}'")
-        except Exception as e:
-            logger.error(f"Failed to drop tables for removed subscriptions {subscriptions}: {e}")
-            logger.exception(f"Error details: {e}")
-            raise
 
     try:
         await db.commit()
@@ -1386,9 +1864,13 @@ async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: Async
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to remove subscriptions")
 
-    return TenantSubscriptionResponse(
-        tenant_id=tenant.tenant_id,
-        subscriptions=tenant.subscriptions,
+    return (
+        TenantSubscriptionResponse(
+            tenant_id=tenant.tenant_id,
+            subscriptions=tenant.subscriptions,
+            message=message,
+        ),
+        True,
     )
 
 
@@ -1400,6 +1882,7 @@ async def register_user(
     tenant_db: AsyncSession,
     auth_db: AsyncSession,
     background_tasks: BackgroundTasks,
+    auth_header: Optional[str] = None,
 ) -> UserRegisterResponse:
     """
     Register a user under a tenant, create auth account, billing records, and send welcome email.
@@ -1465,14 +1948,28 @@ async def register_user(
         )
     
     # Check if user already exists under this tenant
-    existing_tenant_user = await tenant_db.scalar(
-    select(TenantUser).where(TenantUser.email == payload.email))
+    # Decrypt stored emails to compare (Note: Consider adding email_hash for efficient searching)
+    tenant_users = await tenant_db.scalars(
+        select(TenantUser).where(TenantUser.tenant_id == tenant.tenant_id)
+    )
+    existing_tenant_user = None
+    for tu in tenant_users:
+        try:
+            decrypted_email = decrypt_sensitive_data(tu.email)
+            if decrypted_email == payload.email:
+                existing_tenant_user = tu
+                break
+        except Exception:
+            # If decryption fails, compare directly (backward compatibility)
+            if tu.email == payload.email:
+                existing_tenant_user = tu
+                break
 
     if existing_tenant_user:
         raise HTTPException(status_code=409,detail="Email already registered , please use a different email")
-
-    # Generate password (if not provided). Hashing is handled by auth-service.
-    plain_password = generate_random_password(length=12)
+    
+    # No password collected in create-user flow; generate one so user can set password later (e.g. via reset)
+    user_password = generate_random_password(length=12)
 
     # Create user in AUTH-SERVICE via /api/v1/auth/register
     try:
@@ -1482,12 +1979,13 @@ async def register_user(
                 json={
                     "email": payload.email,
                     "username": payload.username,
-                    "password": plain_password,
-                    "confirm_password": plain_password,
+                    "password": user_password,
+                    "confirm_password": user_password,
                     "full_name": payload.full_name,
-                    "phone_number": None,
+                    "phone_number": payload.phone_number,
                     "timezone": "UTC",
                     "language": "en",
+                    "tenant_id": tenant.tenant_id,
                     "is_tenant": False,
                 },
             )
@@ -1498,7 +1996,9 @@ async def register_user(
             detail="Authentication service unavailable while creating tenant user",
         )
 
-    if auth_response.status_code != 201:
+    # auth-service /auth/register returns HTTP 200 (not 201) on success.
+    # Treat both 200 and 201 as success.
+    if auth_response.status_code not in (200, 201):
         logger.error(
             f"Auth-service /api/v1/auth/register failed for tenant user {payload.username} "
             f"under tenant {tenant.tenant_id}: status={auth_response.status_code}, body={auth_response.text}"
@@ -1508,32 +2008,45 @@ async def register_user(
             detail=auth_response.json() if auth_response.headers.get("content-type", "").startswith("application/json") else auth_response.text,
         )
 
-    auth_user = auth_response.json()
-    user_id = auth_user.get("id")
+    auth_user_payload = auth_response.json()
+    # auth-service responses are wrapped like: {"success": true, "data": {...}}
+    auth_data = auth_user_payload.get("data") if isinstance(auth_user_payload, dict) else None
+    user_id = auth_data.get("id") if isinstance(auth_data, dict) else None
     if not user_id:
-        logger.error(f"Auth-service did not return user id for tenant user {payload.username}: {auth_user}")
+        logger.error(
+            f"Auth-service did not return user id for tenant user {payload.username}: {auth_user_payload}"
+        )
         raise HTTPException(
             status_code=500,
             detail="Authentication service response missing user id for tenant user",
         )
+
+    # Assign role in auth service (one role per user). Auth register already sets USER by default.
+    # Role is validated by UserRegisterRequest (ADMIN, USER, GUEST, MODERATOR)
+    role_name = (payload.role or "").strip().upper() if getattr(payload, "role", None) else ""
+    if role_name and auth_header:
+        assigned = await _assign_role_in_auth(user_id, role_name, auth_header)
+        if not assigned:
+            logger.warning(f"Could not assign role {role_name} to user_id={user_id}; auth may use default.")
     
-    # TODO: Add logging for password generation , Remove once done testing
-    logger.debug(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+    # Password is stored in auth-service, user can login with the password they provided
+    # No need to log or send password via email
     
-    if payload.is_approved:
-        #Create TenantUser entry only if user is approved
-        tenant_user = TenantUser(
-                user_id=user_id,
-                tenant_uuid=tenant.id,
-                tenant_id=tenant.tenant_id,
-                username=payload.username,
-                email=payload.email,
-                subscriptions=list(requested_services),
-                status=TenantUserStatus.ACTIVE, 
-                is_approved=True,
-        )
-    else:
-        raise HTTPException(status_code=400, detail="User must be approved by tenant admin to register")
+    #Create TenantUser entry only if user is approved
+    # Encrypt sensitive data before saving
+    encrypted_user_email = encrypt_sensitive_data(payload.email) if payload.email else None
+    encrypted_user_phone = encrypt_sensitive_data(payload.phone_number) if payload.phone_number else None
+        
+    tenant_user = TenantUser(
+        user_id=user_id,
+        tenant_uuid=tenant.id,
+        tenant_id=tenant.tenant_id,
+        username=payload.username,
+        email=encrypted_user_email,
+        phone_number=encrypted_user_phone,
+        subscriptions=list(requested_services),
+        status=TenantUserStatus.ACTIVE,
+    )
 
     tenant_db.add(tenant_user)
     await tenant_db.flush()
@@ -1579,18 +2092,25 @@ async def register_user(
         raise HTTPException(status_code=500, detail="Failed to register user")
 
 
+    # Commented out: Sending generated password over email
+    # Instead, password is provided by user in request and stored in auth-service
+    # User can login with the password they provided via auth/login endpoint
     background_tasks.add_task(
         send_user_welcome_email,
         user_id,
         payload.email,
         None,  # add subdomain if required
         payload.username,
-        plain_password,
+        user_password,
     )
 
     logger.info(
         f"User registered successfully | tenant={tenant.tenant_id} | user={payload.username}"
     )
+
+    # Determine final role for response: prefer value from auth, fallback to requested or USER
+    auth_roles = await _get_roles_from_auth(user_id, auth_header)
+    final_role = auth_roles[0] if auth_roles else (role_name or "USER")
 
     response = UserRegisterResponse(
         user_id=user_id,
@@ -1600,12 +2120,17 @@ async def register_user(
         services=list(requested_services),
         schema=tenant.schema_name,
         created_at=datetime.utcnow(),
+        role=final_role,
     )
 
     return response
 
 
-async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSession) -> TenantStatusUpdateResponse:
+async def update_tenant_status(
+    payload: TenantStatusUpdateRequest,
+    db: AsyncSession,
+    auth_header: Optional[str] = None,
+) -> TenantStatusUpdateResponse:
     """
     Update tenant status and cascade status changes to tenant users and billing records.
     
@@ -1630,45 +2155,12 @@ async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
             detail=f"Tenant already in {new_status.value} state",
         )
 
+    # Validate status transition rules
+    validate_status_transition(old_status, new_status, TENANT_STATUS_TRANSITIONS, "Tenant")
+
     tenant.status = new_status
 
-    # Cascade user status for this tenant
-    if new_status == TenantStatus.SUSPENDED:
-        await db.execute(
-            update(TenantUser)
-            .where(TenantUser.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.SUSPENDED)
-        )
-        # Mark all user billing records for this tenant as suspended
-        await db.execute(
-            update(UserBillingRecord)
-            .where(UserBillingRecord.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.SUSPENDED)
-        )
-    elif new_status == TenantStatus.ACTIVE:
-        await db.execute(
-            update(TenantUser)
-            .where(TenantUser.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.ACTIVE)
-        )
-        # Reactivate user billing records
-        await db.execute(
-            update(UserBillingRecord)
-            .where(UserBillingRecord.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.ACTIVE)
-        )
-    elif new_status == TenantStatus.DEACTIVATED:
-        await db.execute(
-            update(TenantUser)
-            .where(TenantUser.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.DEACTIVATED)
-        )
-        # Deactivate user billing records
-        await db.execute(
-            update(UserBillingRecord)
-            .where(UserBillingRecord.tenant_id == payload.tenant_id)
-            .values(status=TenantUserStatus.DEACTIVATED)
-        )
+    # Removing user status as tenant status and user status is independent of each other 
 
     # Update tenant-level billing record status if it exists
     billing_record = await db.scalar(select(BillingRecord).where(BillingRecord.tenant_id == tenant.id))
@@ -1730,7 +2222,22 @@ async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
         await db.rollback()
         logger.exception(f"Error committing tenant status update to database | tenant={payload.tenant_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to update tenant status")
+
+    await _invalidate_auth_tenant_status_cache(tenant.tenant_id)
     
+    # Immediately revoke active auth sessions when tenant is suspended/deactivated.
+    # This is best-effort; auth enforcement on subsequent requests still blocks access.
+    if new_status in {TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED}:
+        tenant_user_ids_result = await db.execute(
+            select(TenantUser.user_id).where(
+                TenantUser.tenant_id == tenant.tenant_id,
+                TenantUser.user_id.is_not(None),
+            )
+        )
+        tenant_user_ids = [row[0] for row in tenant_user_ids_result.all() if row[0] is not None]
+        affected_user_ids = list(set([tenant.user_id] + tenant_user_ids)) if tenant.user_id else tenant_user_ids
+        await _revoke_tenant_sessions_in_auth(affected_user_ids, auth_header)
+
     response = TenantStatusUpdateResponse(
         tenant_id=tenant.tenant_id,
         old_status=old_status,
@@ -1778,6 +2285,10 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
         )
 
     old_status = tenant_user.status
+    
+    # Validate status transition rules
+    validate_status_transition(old_status, payload.status, TENANT_USER_STATUS_TRANSITIONS, "User")
+    
     tenant_user.status = payload.status
 
     # Cascade status to this user's billing records
@@ -1814,6 +2325,8 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
         logger.exception(f"Error committing tenant user status update to database | tenant={tenant_id} user_id={user_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to update tenant user status")
 
+    await _invalidate_auth_tenant_user_status_cache(tenant_id, user_id)
+
     response = TenantUserStatusUpdateResponse(
         tenant_id=tenant_id,
         user_id=user_id,
@@ -1824,15 +2337,277 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
     return response
 
 
-async def view_tenant_details(tenant_id: str, db: AsyncSession) -> TenantViewResponse:
+async def update_tenant_user(
+    payload: TenantUserUpdateRequest,
+    db: AsyncSession,
+    auth_header: Optional[str] = None,
+) -> TenantUserUpdateResponse:
     """
-    View tenant details by tenant_id (human-readable tenant identifier).
+    Update tenant user information (username, email, approval flag, roles).
+    Supports partial updates - only provided fields will be updated.
+    Roles are updated in auth service by user_id.
+    """
+
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == payload.tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    tenant_user = await db.scalar(
+        select(TenantUser).where(
+            TenantUser.tenant_id == payload.tenant_id,
+            TenantUser.user_id == payload.user_id,
+        )
+    )
+
+    if tenant_user and tenant_user.status == TenantUserStatus.SUSPENDED:
+        raise HTTPException(status_code=400, detail="Cannot update suspended tenant user")
     
+    if tenant.status == TenantStatus.SUSPENDED or tenant.status == TenantStatus.DEACTIVATED:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot update tenant user while tenant is suspended",
+        )
+
+    if not tenant_user:
+        raise HTTPException(status_code=404, detail="Tenant user not found")
+
+    update_data = payload.model_dump(
+        exclude_unset=True,
+        exclude={"tenant_id", "user_id"},
+    )
+
+    if not update_data:
+        raise HTTPException(
+            status_code=400,
+            detail="No fields provided for update",
+        )
+
+    changes: dict[str, FieldChange] = {}
+    updated_fields: list[str] = []
+
+    # Handle role update (auth service: one role per user)
+    # Role is validated by TenantUserUpdateRequest (ADMIN, USER, GUEST, MODERATOR)
+    if "role" in update_data:
+        new_role = (update_data.pop("role") or "").strip().upper()
+        if new_role and auth_header:
+            assigned = await _assign_role_in_auth(payload.user_id, new_role, auth_header)
+            if assigned:
+                updated_fields.append("role")
+                changes["role"] = FieldChange(old="(from auth)", new=new_role)
+
+    # Handle username update
+    if "username" in update_data:
+        old_value = tenant_user.username
+        new_value = update_data["username"]
+        if old_value != new_value:
+            changes["username"] = FieldChange(old=old_value, new=new_value)
+            tenant_user.username = new_value
+            updated_fields.append("username")
+
+    if "email" in update_data:
+        old_value = decrypt_sensitive_data(tenant_user.email)
+        new_value = update_data["email"]
+        if old_value != new_value:
+            changes["email"] = FieldChange(old=old_value, new=new_value)
+            tenant_user.email = encrypt_sensitive_data(new_value) if new_value else None
+            updated_fields.append("email")
+
+    # Handle phone_number update (store encrypted)
+    if "phone_number" in update_data:
+        old_value = decrypt_sensitive_data(tenant_user.phone_number)
+        new_value = update_data["phone_number"]
+        if old_value != new_value:
+            changes["phone_number"] = FieldChange(old=old_value, new=new_value)
+            tenant_user.phone_number = encrypt_sensitive_data(new_value) if new_value else None
+            updated_fields.append("phone_number")
+
+    if not changes:
+        raise HTTPException(
+            status_code=400,
+            detail="No changes detected. All provided values are the same as current values.",
+        )
+
+    # Audit log
+    audit = AuditLog(
+        tenant_id=tenant.id,
+        action=AuditAction.user_updated,
+        actor=AuditActorType.USER,
+        details={
+            "user_id": payload.user_id,
+            "updated_fields": updated_fields,
+            "changes": {
+                field: {"old": str(change.old), "new": str(change.new)}
+                for field, change in changes.items()
+            },
+        },
+    )
+    db.add(audit)
+
+    try:
+        await db.commit()
+        await db.refresh(tenant_user)
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(
+            f"Integrity error while updating tenant user | tenant={payload.tenant_id} user_id={payload.user_id}: {e}"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Tenant user update failed due to integrity constraint violation (e.g., email already exists)",
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.exception(
+            f"Error committing tenant user update to database | tenant={payload.tenant_id} user_id={payload.user_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to update tenant user")
+
+    logger.info(
+        f"Tenant user updated successfully | tenant_id={payload.tenant_id} | "
+        f"user_id={payload.user_id} | updated_fields={updated_fields}"
+    )
+
+    role_value: Optional[str] = None
+    if "role" in updated_fields or auth_header:
+        auth_roles = await _get_roles_from_auth(payload.user_id, auth_header)
+        role_value = auth_roles[0] if auth_roles else None
+
+    return TenantUserUpdateResponse(
+        tenant_id=payload.tenant_id,
+        user_id=payload.user_id,
+        message=f"Tenant user updated successfully. {len(updated_fields)} field(s) modified.",
+        changes=changes,
+        updated_fields=updated_fields,
+        role=role_value,
+    )
+
+
+async def delete_tenant_user(
+    payload: TenantUserDeleteRequest,
+    db: AsyncSession,
+    auth_db: AsyncSession,
+) -> TenantUserDeleteResponse:
+    """
+    Delete a tenant user and cascade deletions to related records (e.g., billing).
+
     Args:
-        tenant_id: The tenant identifier
+        payload: Tenant user delete request payload
         db: Database session
     Returns:
-        TenantViewResponse: Details of the tenant
+        TenantUserDeleteResponse: Deletion confirmation
+    """
+
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == payload.tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    tenant_user = await db.scalar(
+        select(TenantUser).where(
+            TenantUser.tenant_id == payload.tenant_id,
+            TenantUser.user_id == payload.user_id,
+        )
+    )
+
+    if not tenant_user:
+        raise HTTPException(status_code=404, detail="Tenant user not found")
+
+    # If the user has no other tenant memberships, also delete from auth_db.
+    # This prevents deleted tenant users from still being able to login.
+    try:
+        tenant_memberships = await db.scalar(
+            select(func.count()).select_from(TenantUser).where(TenantUser.user_id == payload.user_id)
+        )
+    except Exception as e:
+        logger.exception(
+            f"Error counting tenant memberships for deletion | tenant_id={payload.tenant_id} user_id={payload.user_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to validate tenant user memberships")
+
+    if tenant_memberships == 1:
+        # Delete auth user first so login is blocked immediately (tenant DB update happens next).
+        try:
+            await auth_db.execute(delete(UserDB).where(UserDB.id == payload.user_id))
+            await auth_db.commit()
+        except IntegrityError as e:
+            await auth_db.rollback()
+            logger.error(
+                f"Integrity error while deleting auth user | user_id={payload.user_id}: {e}"
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="Auth user deletion failed due to integrity constraint violation",
+            )
+        except Exception as e:
+            await auth_db.rollback()
+            logger.exception(
+                f"Error committing auth user deletion | tenant_id={payload.tenant_id} user_id={payload.user_id}: {e}"
+            )
+            raise HTTPException(status_code=500, detail="Failed to delete auth user")
+    else:
+        logger.info(
+            f"Skipping auth user deletion because user has other tenant memberships | tenant_id={payload.tenant_id} user_id={payload.user_id} memberships={tenant_memberships}"
+        )
+
+    # If the deleted user was the tenant admin, clear the foreign reference in tenant DB.
+    if tenant.user_id == payload.user_id:
+        tenant.user_id = None
+
+    # Delete the tenant user (will cascade to related records via FK constraints)
+    await db.delete(tenant_user)
+
+    # Audit log for deletion
+    db.add(
+        AuditLog(
+            tenant_id=tenant.id,
+            action=AuditAction.user_deleted,
+            actor=AuditActorType.ADMIN,
+            details={
+                "user_id": payload.user_id,
+                "username": tenant_user.username,
+                "email": tenant_user.email,
+            },
+        )
+    )
+
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(
+            f"Integrity error while deleting tenant user | tenant={payload.tenant_id} user_id={payload.user_id}: {e}"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Tenant user deletion failed due to integrity constraint violation",
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.exception(
+            f"Error committing tenant user deletion to database | tenant={payload.tenant_id} user_id={payload.user_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to delete tenant user")
+
+    logger.info(
+        f"Tenant user deleted successfully | tenant_id={payload.tenant_id} | user_id={payload.user_id}"
+    )
+
+    return TenantUserDeleteResponse(
+        tenant_id=payload.tenant_id,
+        user_id=payload.user_id,
+        message="Tenant user deleted successfully",
+    )
+
+
+async def view_tenant_details(
+    tenant_id: str,
+    db: AsyncSession,
+    auth_header: Optional[str] = None,
+) -> TenantViewResponse:
+    """
+    View tenant details by tenant_id (human-readable tenant identifier).
+    Includes tenant admin role from auth service when auth_header is provided.
     """
 
     tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
@@ -1840,12 +2615,40 @@ async def view_tenant_details(tenant_id: str, db: AsyncSession) -> TenantViewRes
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
+    role = ""
+    if tenant.user_id and auth_header:
+        auth_roles = await _get_roles_from_auth(tenant.user_id, auth_header)
+        role = auth_roles[0] if auth_roles else ""
+
+    # Decrypt sensitive data for display
+    decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+    decrypted_phone = decrypt_sensitive_data(tenant.phone_number) if tenant.phone_number else None
+    
+    # Validate email - ensure it's a valid email format for Pydantic
+    if not decrypted_email:
+        decrypted_email = "unknown@example.com"
+    elif decrypted_email.startswith('gAAAAA'):
+        # Still encrypted - decryption failed
+        logger.error(
+            f"CRITICAL: Failed to decrypt email for tenant {tenant.tenant_id}. "
+            f"This usually means the encryption key changed. "
+            f"Encrypted value starts with: {decrypted_email[:20]}..."
+        )
+        decrypted_email = "encrypted@example.com"
+    elif '@' not in decrypted_email:
+        # Invalid email format (no @ sign)
+        logger.warning(
+            f"Invalid email format for tenant {tenant.tenant_id}: {decrypted_email[:20]}..."
+        )
+        decrypted_email = "invalid@example.com"
+    
     response = TenantViewResponse(
         id=tenant.id,
         tenant_id=tenant.tenant_id,
-        user_id=tenant.user_id,
+        user_id=tenant.user_id or None,
         organization_name=tenant.organization_name,
-        email=tenant.contact_email,
+        email=decrypted_email,  # Validated above
+        phone_number=decrypted_phone,
         domain=tenant.domain,
         schema=tenant.schema_name,
         subscriptions=tenant.subscriptions or [],
@@ -1854,28 +2657,35 @@ async def view_tenant_details(tenant_id: str, db: AsyncSession) -> TenantViewRes
         usage_quota=tenant.usage or {},
         created_at=tenant.created_at.isoformat(),
         updated_at=tenant.updated_at.isoformat(),
+        role=role,
     )
 
     return response
 
 
-async def update_tenant(payload: TenantUpdateRequest, db: AsyncSession, user_id: Optional[int] = None) -> TenantUpdateResponse:
+async def update_tenant(
+    payload: TenantUpdateRequest,
+    db: AsyncSession,
+    user_id: Optional[int] = None,
+    auth_header: Optional[str] = None,
+) -> TenantUpdateResponse:
     """
-    Update tenant information including quotas and usage_quota.
+    Update tenant information including quotas, usage_quota, and tenant admin role.
     Supports partial updates - only provided fields will be updated.
-    
-    Args:
-        payload: Tenant update request payload with optional fields
-        db: Database session
-        user_id: Optional user_id to verify adopter admin ownership. If provided, only the tenant owner can update.
-    Returns:
-        TenantUpdateResponse: Details of the updated tenant and changes made
+    Role is updated in auth service via tenant.user_id.
+    If user_id is provided, only the tenant owner (adopter admin) can update.
     """
     tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == payload.tenant_id))
     
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    
+
+    if tenant.status == TenantStatus.PENDING:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot update tenant while status is PENDING",
+        )
+
     # If user_id is provided, verify that the user is the adopter admin (owner) of this tenant
     if user_id is not None and tenant.user_id != user_id:
         raise HTTPException(
@@ -1895,6 +2705,15 @@ async def update_tenant(payload: TenantUpdateRequest, db: AsyncSession, user_id:
     changes = {}
     updated_fields = []
     
+    # Handle role update (tenant admin's role in auth service)
+    if "role" in update_data:
+        new_role = (update_data.pop("role") or "").strip().upper()
+        if new_role and tenant.user_id and auth_header:
+            assigned = await _assign_role_in_auth(tenant.user_id, new_role, auth_header)
+            if assigned:
+                updated_fields.append("role")
+                changes["role"] = FieldChange(old="(from auth)", new=new_role)
+    
     # Handle organization_name update
     if "organization_name" in update_data:
         old_value = tenant.organization_name
@@ -1904,14 +2723,14 @@ async def update_tenant(payload: TenantUpdateRequest, db: AsyncSession, user_id:
             tenant.organization_name = new_value
             updated_fields.append("organization_name")
     
-    # Handle contact_email update
-    if "contact_email" in update_data:
-        old_value = tenant.contact_email
-        new_value = update_data["contact_email"]
+    # Handle phone_number update (store encrypted)
+    if "phone_number" in update_data:
+        old_value = decrypt_sensitive_data(tenant.phone_number)
+        new_value = update_data["phone_number"]
         if old_value != new_value:
-            changes["contact_email"] = FieldChange(old=old_value, new=new_value)
-            tenant.contact_email = new_value
-            updated_fields.append("contact_email")
+            changes["phone_number"] = FieldChange(old=old_value, new=new_value)
+            tenant.phone_number = encrypt_sensitive_data(new_value) if new_value else None
+            updated_fields.append("phone_number")
     
     # Handle domain update
     if "domain" in update_data:
@@ -2009,12 +2828,18 @@ async def update_tenant(payload: TenantUpdateRequest, db: AsyncSession, user_id:
         raise HTTPException(status_code=500, detail="Failed to update tenant")
     
     logger.info(f"Tenant updated successfully | tenant_id={payload.tenant_id} | updated_fields={updated_fields}")
-    
+
+    role_value: Optional[str] = None
+    if tenant.user_id and auth_header:
+        auth_roles = await _get_roles_from_auth(tenant.user_id, auth_header)
+        role_value = auth_roles[0] if auth_roles else None
+
     return TenantUpdateResponse(
         tenant_id=tenant.tenant_id,
         message=f"Tenant updated successfully. {len(updated_fields)} field(s) modified.",
         changes=changes,
         updated_fields=updated_fields,
+        role=role_value,
     )
 
 
@@ -2078,69 +2903,123 @@ async def increment_tenant_usage(
         raise HTTPException(status_code=500, detail="Failed to increment usage")
 
 
-async def view_tenant_user_details(user_id: str, db: AsyncSession) -> TenantUserViewResponse:
+async def view_tenant_user_details(
+    user_id: int,
+    db: AsyncSession,
+    auth_header: Optional[str] = None,
+) -> TenantUserViewResponse:
     """
-    View tenant user details by tenant_id and user_id.
-    
-    Args:
-        tenant_id: The tenant identifier
-        user_id: The user identifier
-        db: Database session
-    Returns:
-        TenantUserViewResponse: Details of the tenant user
+    View tenant user details by auth user_id. Optionally includes roles from auth service.
     """
     tenant_user = await db.scalar(select(TenantUser).where(TenantUser.user_id == user_id))
 
     if not tenant_user:
         raise HTTPException(status_code=404, detail="Tenant user not found")
 
+    role_names = await _get_roles_from_auth(tenant_user.user_id, auth_header)
+    role = role_names[0] if role_names else ""
+
+    # Decrypt sensitive data for display
+    decrypted_email = decrypt_sensitive_data(tenant_user.email) if tenant_user.email else None
+    decrypted_phone = decrypt_sensitive_data(tenant_user.phone_number) if tenant_user.phone_number else None
+    
+    # Validate email - ensure it's a valid email format for Pydantic
+    if not decrypted_email:
+        decrypted_email = "unknown@example.com"
+    elif decrypted_email.startswith('gAAAAA'):
+        # Still encrypted - decryption failed
+        logger.error(
+            f"CRITICAL: Failed to decrypt email for tenant user {tenant_user.user_id}. "
+            f"This usually means the encryption key changed. "
+            f"Encrypted value starts with: {decrypted_email[:20]}..."
+        )
+        decrypted_email = "encrypted@example.com"
+    elif '@' not in decrypted_email:
+        # Invalid email format (no @ sign)
+        logger.warning(
+            f"Invalid email format for tenant user {tenant_user.user_id}: {decrypted_email[:20]}..."
+        )
+        decrypted_email = "invalid@example.com"
+    
     response = TenantUserViewResponse(
         id=tenant_user.id,
         tenant_id=tenant_user.tenant_id,
         user_id=tenant_user.user_id,
         username=tenant_user.username,
-        email=tenant_user.email,
+        email=decrypted_email,  # Validated above
+        phone_number=decrypted_phone,
         subscriptions=tenant_user.subscriptions or [],
-        status=tenant_user.status,
+        status=tenant_user.status.value if hasattr(tenant_user.status, "value") else str(tenant_user.status),
         is_approved=tenant_user.is_approved,
         created_at=tenant_user.created_at.isoformat(),
         updated_at=tenant_user.updated_at.isoformat(),
+        role=role,
     )
 
     return response
 
 
-async def list_all_tenants(db: AsyncSession) -> ListTenantsResponse:
+async def list_all_tenants(
+    db: AsyncSession,
+    auth_header: Optional[str] = None,
+) -> ListTenantsResponse:
     """
     List all tenants with their details.
-    
-    Args:
-        db: Database session
-    Returns:
-        ListTenantsResponse: List of all tenants and their details
+    Includes tenant admin role from auth service when auth_header is provided.
     """
     result = await db.execute(select(Tenant).order_by(Tenant.created_at.desc()))
     tenants = result.scalars().all()
-    
-    tenant_list = [
-        TenantViewResponse(
-            id=tenant.id,
-            tenant_id=tenant.tenant_id,
-            user_id=tenant.user_id or 0,
-            organization_name=tenant.organization_name,
-            email=tenant.contact_email,
-            domain=tenant.domain,
-            schema=tenant.schema_name,
-            subscriptions=tenant.subscriptions or [],
-            status=tenant.status.value if hasattr(tenant.status, "value") else str(tenant.status),
-            quotas=tenant.quotas or {},
-            usage_quota=tenant.usage or {},
-            created_at=tenant.created_at.isoformat(),
-            updated_at=tenant.updated_at.isoformat(),
+
+    tenant_list = []
+    for tenant in tenants:
+        role = ""
+        if tenant.user_id and auth_header:
+            auth_roles = await _get_roles_from_auth(tenant.user_id, auth_header)
+            role = auth_roles[0] if auth_roles else ""
+        
+        # Decrypt sensitive data for display
+        decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+        decrypted_phone = decrypt_sensitive_data(tenant.phone_number) if tenant.phone_number else None
+        
+        # Validate email - ensure it's a valid email format for Pydantic
+        # Check multiple conditions to catch all failure cases
+        if not decrypted_email:
+            decrypted_email = "unknown@example.com"
+        elif decrypted_email.startswith('gAAAAA'):
+            # Still encrypted - decryption failed
+            logger.error(
+                f"CRITICAL: Failed to decrypt email for tenant {tenant.tenant_id}. "
+                f"This usually means the encryption key changed. "
+                f"Encrypted value starts with: {decrypted_email[:20]}..."
+            )
+            decrypted_email = "encrypted@example.com"
+        elif '@' not in decrypted_email:
+            # Invalid email format (no @ sign)
+            logger.warning(
+                f"Invalid email format for tenant {tenant.tenant_id}: {decrypted_email[:20]}..."
+            )
+            decrypted_email = "invalid@example.com"
+        
+        tenant_list.append(
+            TenantViewResponse(
+                id=tenant.id,
+                tenant_id=tenant.tenant_id,
+                user_id=tenant.user_id or 0,
+                organization_name=tenant.organization_name,
+                email=decrypted_email,  # Validated above
+                phone_number=decrypted_phone,
+                domain=tenant.domain,
+                schema=tenant.schema_name,
+                subscriptions=tenant.subscriptions or [],
+                status=tenant.status.value if hasattr(tenant.status, "value") else str(tenant.status),
+                quotas=tenant.quotas or {},
+                usage_quota=tenant.usage or {},
+                created_at=tenant.created_at.isoformat(),
+                updated_at=tenant.updated_at.isoformat(),
+                role=role,
+            )
         )
-        for tenant in tenants
-    ]
-    
+
     return ListTenantsResponse(
         count=len(tenant_list),
         tenants=tenant_list,
@@ -2189,34 +3068,68 @@ async def list_tenants_by_adopter_admin(user_id: int, db: AsyncSession) -> ListT
     )
 
 
-async def list_all_users(db: AsyncSession) -> ListUsersResponse:
+async def list_all_users(
+    db: AsyncSession,
+    tenant_id: Optional[str] = None,
+    auth_header: Optional[str] = None,
+) -> ListUsersResponse:
     """
-    List all tenant users across all tenants.
-    
-    Args:
-        db: Database session
-    Returns:
-        ListUsersResponse: List of all tenant users and their details
+    List tenant users. If tenant_id is provided, only users for that tenant are returned.
+    Roles are fetched from auth service when auth_header is provided.
     """
-    result = await db.execute(select(TenantUser).order_by(TenantUser.created_at.desc()))
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id is required")
+
+    stmt = select(TenantUser).where(TenantUser.tenant_id == tenant_id)
+    stmt = stmt.order_by(func.lower(TenantUser.username).asc(), TenantUser.id.asc())
+
+    result = await db.execute(stmt)
     users = result.scalars().all()
-    
-    user_list = [
-        TenantUserViewResponse(
-            id=user.id,
-            tenant_id=user.tenant_id,
-            user_id=user.user_id,
-            username=user.username,
-            email=user.email,
-            subscriptions=user.subscriptions or [],
-            status=user.status.value if hasattr(user.status, "value") else str(user.status),
-            is_approved=user.is_approved,
-            created_at=user.created_at.isoformat(),
-            updated_at=user.updated_at.isoformat(),
+
+    user_list = []
+    for user in users:
+        role_names = await _get_roles_from_auth(user.user_id, auth_header)
+        role = role_names[0] if role_names else ""
+        
+        # Decrypt sensitive data for display
+        decrypted_email = decrypt_sensitive_data(user.email) if user.email else None
+        decrypted_phone = decrypt_sensitive_data(user.phone_number) if user.phone_number else None
+        
+        # Validate email - ensure it's a valid email format for Pydantic
+        if not decrypted_email:
+            decrypted_email = "unknown@example.com"
+        elif decrypted_email.startswith('gAAAAA'):
+            # Still encrypted - decryption failed
+            logger.error(
+                f"CRITICAL: Failed to decrypt email for tenant user {user.user_id}. "
+                f"This usually means the encryption key changed. "
+                f"Encrypted value starts with: {decrypted_email[:20]}..."
+            )
+            decrypted_email = "encrypted@example.com"
+        elif '@' not in decrypted_email:
+            # Invalid email format (no @ sign)
+            logger.warning(
+                f"Invalid email format for tenant user {user.user_id}: {decrypted_email[:20]}..."
+            )
+            decrypted_email = "invalid@example.com"
+        
+        user_list.append(
+            TenantUserViewResponse(
+                id=user.id,
+                tenant_id=user.tenant_id,
+                user_id=user.user_id,
+                username=user.username,
+                email=decrypted_email,  # Validated above
+                phone_number=decrypted_phone,
+                subscriptions=user.subscriptions or [],
+                status=user.status.value if hasattr(user.status, "value") else str(user.status),
+                is_approved=user.is_approved,
+                created_at=user.created_at.isoformat(),
+                updated_at=user.updated_at.isoformat(),
+                role=role,
+            )
         )
-        for user in users
-    ]
-    
+
     return ListUsersResponse(
         count=len(user_list),
         users=user_list,
@@ -2228,7 +3141,7 @@ async def add_user_subscriptions(
     user_id: int,
     subscriptions: list[str],
     db: AsyncSession,
-) -> UserSubscriptionResponse:
+) -> Tuple[UserSubscriptionResponse, bool]:
     """
     Add subscriptions to a tenant user.
     Validates tenant, tenant user, and that requested services are enabled and active.
@@ -2284,16 +3197,28 @@ async def add_user_subscriptions(
 
     current = set(tenant_user.subscriptions or [])
     duplicates = current & requested_services
+    to_add = requested_services - current
+
+    message = None
     if duplicates:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Subscription(s) already exist for user: {normalize_to_strings(duplicates)}",
+        # Keep exact message format expected by callers.
+        message = f"Subscription(s) already exist for user: {normalize_to_strings(duplicates)}"
+
+    if not to_add:
+        return (
+            UserSubscriptionResponse(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                subscriptions=list(tenant_user.subscriptions or []),
+                message=message,
+            ),
+            False,
         )
 
-    updated = list(current | requested_services)
+    updated = list(current | to_add)
     tenant_user.subscriptions = updated
 
-    # Audit log for user subscription add
+    # Audit log for user subscription add (only when something was added)
     db.add(
         AuditLog(
             tenant_id=tenant.id,
@@ -2301,7 +3226,7 @@ async def add_user_subscriptions(
             actor=AuditActorType.ADMIN,
             details={
                 "user_id": user_id,
-                "added_subscriptions": list(requested_services),
+                "added_subscriptions": list(to_add),
             },
         )
     )
@@ -2322,10 +3247,14 @@ async def add_user_subscriptions(
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to add user subscriptions")
 
-    return UserSubscriptionResponse(
-        tenant_id=tenant_id,
-        user_id=user_id,
-        subscriptions=tenant_user.subscriptions or [],
+    return (
+        UserSubscriptionResponse(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            subscriptions=tenant_user.subscriptions or [],
+            message=message,
+        ),
+        True,
     )
 
 
@@ -2334,7 +3263,7 @@ async def remove_user_subscriptions(
     user_id: int,
     subscriptions: list[str],
     db: AsyncSession,
-) -> UserSubscriptionResponse:
+) -> Tuple[UserSubscriptionResponse, bool]:
     """
     Remove subscriptions from a tenant user.
     Validates that subscriptions exist for the user.
@@ -2362,16 +3291,27 @@ async def remove_user_subscriptions(
     to_remove = set(subscriptions)
 
     missing = to_remove - current
+    to_remove_existing = to_remove & current
+
+    message = None
     if missing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Subscriptions not present for user: {list(missing)}",
+        message = f"Subscriptions not present for user: {list(missing)}"
+
+    if not to_remove_existing:
+        return (
+            UserSubscriptionResponse(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                subscriptions=list(tenant_user.subscriptions or []),
+                message=message,
+            ),
+            False,
         )
 
-    updated = list(current - to_remove)
+    updated = list(current - to_remove_existing)
     tenant_user.subscriptions = updated
 
-    # Audit log for user subscription removal
+    # Audit log for user subscription removal (only when something was removed)
     db.add(
         AuditLog(
             tenant_id=tenant.id,
@@ -2379,7 +3319,7 @@ async def remove_user_subscriptions(
             actor=AuditActorType.ADMIN,
             details={
                 "user_id": user_id,
-                "removed_subscriptions": list(to_remove),
+                "removed_subscriptions": list(to_remove_existing),
             },
         )
     )
@@ -2400,10 +3340,14 @@ async def remove_user_subscriptions(
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to remove user subscriptions")
 
-    return UserSubscriptionResponse(
-        tenant_id=tenant_id,
-        user_id=user_id,
-        subscriptions=tenant_user.subscriptions or [],
+    return (
+        UserSubscriptionResponse(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            subscriptions=tenant_user.subscriptions or [],
+            message=message,
+        ),
+        True,
     )
 
 async def update_billing_plan(db: AsyncSession,payload: BillingUpdateRequest) -> BillingUpdateResponse:

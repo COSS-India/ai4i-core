@@ -1,0 +1,24 @@
+# Development image for hot-reload: full node_modules + Next.js dev server
+FROM node:18-alpine
+WORKDIR /app
+
+RUN apk add --no-cache libc6-compat curl
+
+COPY package.json package-lock.json ./
+# Install all deps (including devDependencies) so `next dev` works
+RUN npm ci
+# Keep a copy for entrypoint (bind mount overwrites /app so we restore node_modules if missing)
+RUN cp -a /app/node_modules /node_modules_image
+
+COPY entrypoint.dev.sh /entrypoint.dev.sh
+RUN chmod +x /entrypoint.dev.sh
+
+COPY . .
+
+EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+ENTRYPOINT ["/entrypoint.dev.sh"]
+# Dev server for hot-reload; -H 0.0.0.0 required for Docker
+CMD ["npx", "next", "dev", "-p", "3000", "-H", "0.0.0.0"]

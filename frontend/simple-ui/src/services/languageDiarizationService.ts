@@ -41,7 +41,7 @@ export interface LanguageDiarizationInferenceResponse {
 export const listLanguageDiarizationServices = async (): Promise<LanguageDiarizationServiceDetailsResponse[]> => {
   try {
     // Fetch services from model management service filtered by task_type='language-diarization'
-    const services = await listServices('language-diarization');
+    const services = await listServices('language-diarization', true);
     const seen = new Set<string>();
 
     // Transform model management service response to LanguageDiarizationServiceDetailsResponse format
@@ -123,7 +123,7 @@ export const performLanguageDiarizationInference = async (
     };
   } catch (error) {
     console.error('Language diarization inference error:', error);
-    throw new Error('Failed to perform language diarization inference');
+    throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
 
