@@ -2,8 +2,7 @@
 // Allows users to try NMT service without authentication
 // Rate limited to 5 requests per hour per user/IP
 
-import axios, { AxiosInstance } from 'axios';
-import { API_BASE_URL } from './api';
+import { apiClient } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import { NMTInferenceRequest, NMTInferenceResponse } from '../types/nmt';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
@@ -14,44 +13,9 @@ type ApiEnvelope<T> = {
   meta?: Record<string, any>;
 };
 
-// Create a dedicated axios instance for try-it (no auth required)
-const tryItClient: AxiosInstance = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 300000, // 5 minutes
-  headers: {
-    'Content-Type': 'application/json',
-  },
+const getTryItHeaders = () => ({
+  'X-Anonymous-Session-Id': getAnonymousSessionId(),
 });
-
-// Add request interceptor to add anonymous session ID
-tryItClient.interceptors.request.use(
-  (config) => {
-    // Add anonymous session ID for rate limiting
-    const sessionId = getAnonymousSessionId();
-    config.headers['X-Anonymous-Session-Id'] = sessionId;
-    // Add request start time for timing calculation
-    config.headers['request-startTime'] = new Date().getTime().toString();
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
-
-// Add response interceptor for timing
-tryItClient.interceptors.response.use(
-  (response) => {
-    const startTime = response.config.headers['request-startTime'];
-    if (startTime) {
-      const duration = new Date().getTime() - parseInt(startTime);
-      response.headers['request-duration'] = duration.toString();
-    }
-    return response;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
 
 /**
  * Try-It request payload structure
@@ -67,10 +31,11 @@ export interface TryItRequest {
  * @returns Promise with raw list of services from the API
  */
 export const listTryItNMTServices = async (): Promise<any[]> => {
-  const response = await tryItClient.get<any[] | ApiEnvelope<any[]>>(
+  const response = await apiClient.get<any[] | ApiEnvelope<any[]>>(
     apiEndpoints.platform.services.tryItList,
     {
       params: { task_type: 'nmt' },
+      headers: getTryItHeaders(),
     }
   );
   const payload = response.data as any;
@@ -116,9 +81,10 @@ export const performTryItNMTInference = async (
       payload: nmtPayload,
     };
 
-    const response = await tryItClient.post<NMTInferenceResponse>(
+    const response = await apiClient.post<NMTInferenceResponse>(
       apiEndpoints.platform.tryIt.execute,
-      tryItPayload
+      tryItPayload,
+      { headers: getTryItHeaders() }
     );
 
     // Extract response time from headers

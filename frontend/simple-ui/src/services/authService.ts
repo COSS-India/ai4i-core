@@ -26,7 +26,8 @@ import {
   OAuth2Provider,
   Permission,
 } from '../types/auth';
-import { API_BASE_URL } from './api';
+import { AxiosRequestConfig } from 'axios';
+import { API_BASE_URL, apiClient } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import {
   getStoredAccessToken,
@@ -70,102 +71,81 @@ class AuthService {
 
     // Add timeout to prevent hanging (10 seconds)
     const timeoutMs = 10000;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const response = await fetch(url, {
-        ...config,
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        let errorData: any = {};
-        try {
-          const text = await response.text();
-          if (text) {
-            errorData = JSON.parse(text);
-          }
-        } catch (e) {
-          // If JSON parsing fails, use empty object
-          errorData = {};
-        }
-
-        if (
-          typeof window !== 'undefined' &&
-          responseIndicatesTenantSuspendedOrInactive(response.status, errorData)
-        ) {
-          try {
-            const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
-            forceFrontendSessionEnd();
-          } catch {
-            this.clearAuthTokens();
-            this.clearStoredUser();
-            window.location.assign('/auth');
-          }
-          throw new Error('Your organization account is no longer active. Please sign in again.');
-        }
-
-        // Extract error message from various possible formats (avoid [object Object] when detail is an object)
-        let errorMessage = `HTTP error! status: ${response.status}`;
-        if (errorData?.detail) {
-          const d = errorData.detail;
-          if (typeof d === 'string') {
-            errorMessage = d;
-          } else if (typeof d === 'object' && d !== null && typeof (d as any).message === 'string') {
-            errorMessage = (d as any).message;
-          } else if (typeof d === 'object' && d !== null) {
-            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
-          } else {
-            errorMessage = String(d);
-          }
-        } else if (errorData?.message) {
-          errorMessage = String(errorData.message);
-        } else if (typeof errorData === 'string') {
-          errorMessage = errorData;
-        } else if (Array.isArray(errorData) && errorData.length > 0) {
-          errorMessage = errorData.map((err: any) => err.detail?.message ?? err.detail ?? err.message ?? String(err)).join(', ');
-        }
-
-        // Check if error is "Invalid authentication credentials" (session expiry)
-        const errorMessageLower = errorMessage.toLowerCase();
-        const isInvalidAuth = errorMessageLower.includes('invalid authentication credentials') ||
-                            (response.status === 401 && errorMessageLower.includes('invalid'));
-
-        if (isInvalidAuth && typeof window !== 'undefined') {
-          // Clear tokens and redirect to login
-          this.clearAuthTokens();
-          this.clearStoredUser();
-          window.location.href = '/';
-          throw new Error('Session expired. Please sign in again.');
-        }
-
-        // Add status code to error message for debugging
-        const error = new Error(errorMessage);
-        (error as any).status = response.status;
-        throw error;
-      }
-
-      const json = await response.json();
+      const axiosConfig: AxiosRequestConfig = {
+        url,
+        method: (config.method || 'GET') as AxiosRequestConfig['method'],
+        headers: config.headers as Record<string, string>,
+        data: config.body,
+        timeout: timeoutMs,
+      };
+      const response = await apiClient.request(axiosConfig);
+      const json = response.data;
       // Unwrap v2 response envelope: { success: true, data: {...} }
       if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
         return json.data as T;
       }
       return json as T;
     } catch (error: any) {
-      clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
+      if (error?.code === 'ECONNABORTED') {
         console.error('Auth service request timed out:', url);
         throw new Error('Request timeout: Auth service is not responding');
       }
-      console.error('Auth service request failed:', error);
-      // Preserve the original error message and status if available
-      if (error.status) {
-        (error as any).status = error.status;
+
+      const status = error?.response?.status;
+      const errorData = error?.response?.data ?? {};
+      if (
+        typeof window !== 'undefined' &&
+        typeof status === 'number' &&
+        responseIndicatesTenantSuspendedOrInactive(status, errorData)
+      ) {
+        try {
+          const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+          forceFrontendSessionEnd();
+        } catch {
+          this.clearAuthTokens();
+          this.clearStoredUser();
+          window.location.assign('/auth');
+        }
+        throw new Error('Your organization account is no longer active. Please sign in again.');
       }
-      throw error;
+
+      let errorMessage = status ? `HTTP error! status: ${status}` : 'Request failed';
+      if (errorData?.detail) {
+        const d = errorData.detail;
+        if (typeof d === 'string') {
+          errorMessage = d;
+        } else if (typeof d === 'object' && d !== null && typeof (d as any).message === 'string') {
+          errorMessage = (d as any).message;
+        } else if (typeof d === 'object' && d !== null) {
+          errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
+        } else {
+          errorMessage = String(d);
+        }
+      } else if (errorData?.message) {
+        errorMessage = String(errorData.message);
+      } else if (typeof errorData === 'string') {
+        errorMessage = errorData;
+      } else if (Array.isArray(errorData) && errorData.length > 0) {
+        errorMessage = errorData.map((err: any) => err.detail?.message ?? err.detail ?? err.message ?? String(err)).join(', ');
+      }
+
+      const errorMessageLower = errorMessage.toLowerCase();
+      const isInvalidAuth = errorMessageLower.includes('invalid authentication credentials') ||
+        (status === 401 && errorMessageLower.includes('invalid'));
+
+      if (isInvalidAuth && typeof window !== 'undefined') {
+        this.clearAuthTokens();
+        this.clearStoredUser();
+        window.location.href = '/';
+        throw new Error('Session expired. Please sign in again.');
+      }
+
+      console.error('Auth service request failed:', error);
+      const normalizedError = new Error(errorMessage);
+      (normalizedError as any).status = status ?? (error as any)?.status;
+      throw normalizedError;
     }
   }
 
@@ -257,88 +237,53 @@ class AuthService {
     };
 
     try {
-      const response = await fetch(url, config);
-
-      if (!response.ok) {
-        let errorData: any = {};
-        try {
-          const text = await response.text();
-          if (text) {
-            try {
-              errorData = JSON.parse(text);
-            } catch (e) {
-              // If JSON parsing fails, use text as error message
-              errorData = { detail: text };
-            }
-          }
-        } catch (textError) {
-          console.error('Failed to parse error response:', textError);
-          errorData = {};
-        }
-
-        // Handle different error response formats (avoid [object Object] when detail is an object)
-        let errorMessage = `HTTP error! status: ${response.status}`;
-        if (typeof errorData === 'string') {
-          errorMessage = errorData;
-        } else if (errorData?.detail) {
-          const d = errorData.detail;
-          if (typeof d === 'string') {
-            errorMessage = d;
-          } else if (typeof d === 'object' && d !== null && typeof d.message === 'string') {
-            errorMessage = d.message;
-          } else if (typeof d === 'object' && d !== null) {
-            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
-          } else {
-            errorMessage = String(d);
-          }
-        } else if (errorData?.message) {
-          errorMessage = String(errorData.message);
-        } else if (Array.isArray(errorData)) {
-          // Handle array of errors
-          errorMessage = errorData.map((err: any) =>
-            err.detail?.message ?? err.detail ?? err.message ?? String(err)
-          ).join(', ');
-        } else if (typeof errorData === 'object' && Object.keys(errorData).length > 0) {
-          const d = errorData.detail ?? errorData.message ?? errorData.error;
-          errorMessage = typeof d === 'object' && d !== null && (d as any).message != null
-            ? String((d as any).message)
-            : d != null ? String(d) : JSON.stringify(errorData);
-        }
-
-        // Add status code to error for better debugging
-        const error = new Error(errorMessage);
-        (error as any).status = response.status;
-        throw error;
-      }
-
-      const json = await response.json();
+      const axiosConfig: AxiosRequestConfig = {
+        url,
+        method: (config.method || 'GET') as AxiosRequestConfig['method'],
+        headers: config.headers as Record<string, string>,
+        data: config.body,
+      };
+      const response = await apiClient.request(axiosConfig);
+      const json = response.data;
       // Unwrap v2 response envelope: { success: true, data: {...} }
       if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
         return json.data as T;
       }
       return json as T;
-    } catch (error) {
-      console.error('Auth service request failed:', error);
-      // Re-throw as Error if it's not already one, with proper message
-      if (error instanceof Error) {
-        // If error message is "[object Object]", try to extract meaningful info
-        if (error.message === '[object Object]' || error.message.includes('[object Object]')) {
-          // Try to get more info from the error object
-          const errorInfo = (error as any).response?.data || (error as any).data || error;
-          if (typeof errorInfo === 'object' && errorInfo !== null) {
-            const extractedMsg = errorInfo.detail || errorInfo.message || errorInfo.error || JSON.stringify(errorInfo);
-            throw new Error(typeof extractedMsg === 'string' ? extractedMsg : JSON.stringify(extractedMsg));
-          }
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const errorData = error?.response?.data ?? {};
+      let errorMessage = status ? `HTTP error! status: ${status}` : 'Request failed';
+      if (typeof errorData === 'string') {
+        errorMessage = errorData;
+      } else if (errorData?.detail) {
+        const d = errorData.detail;
+        if (typeof d === 'string') {
+          errorMessage = d;
+        } else if (typeof d === 'object' && d !== null && typeof d.message === 'string') {
+          errorMessage = d.message;
+        } else if (typeof d === 'object' && d !== null) {
+          errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
+        } else {
+          errorMessage = String(d);
         }
-        throw error;
-      } else {
-        // If it's not an Error instance, try to extract meaningful message
-        if (typeof error === 'object' && error !== null) {
-          const extractedMsg = (error as any).detail || (error as any).message || (error as any).error || JSON.stringify(error);
-          throw new Error(typeof extractedMsg === 'string' ? extractedMsg : JSON.stringify(extractedMsg));
-        }
-        throw new Error(String(error));
+      } else if (errorData?.message) {
+        errorMessage = String(errorData.message);
+      } else if (Array.isArray(errorData)) {
+        errorMessage = errorData.map((err: any) =>
+          err.detail?.message ?? err.detail ?? err.message ?? String(err)
+        ).join(', ');
+      } else if (typeof errorData === 'object' && Object.keys(errorData).length > 0) {
+        const d = errorData.detail ?? errorData.message ?? errorData.error;
+        errorMessage = typeof d === 'object' && d !== null && (d as any).message != null
+          ? String((d as any).message)
+          : d != null ? String(d) : JSON.stringify(errorData);
       }
+
+      console.error('Auth service request failed:', error);
+      const normalizedError = new Error(errorMessage);
+      (normalizedError as any).status = status ?? (error as any)?.status;
+      throw normalizedError;
     }
   }
 
@@ -445,66 +390,44 @@ class AuthService {
       },
     };
 
-    // Use custom timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
     try {
-      const response = await fetch(url, {
-        ...config,
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        let errorData: any = {};
-        try {
-          const text = await response.text();
-          if (text) {
-            errorData = JSON.parse(text);
-          }
-        } catch (e) {
-          // If JSON parsing fails, use empty object
-          errorData = {};
-        }
-
-        // Extract error message from various possible formats
-        let errorMessage = `HTTP error! status: ${response.status}`;
-        if (errorData?.detail) {
-          errorMessage = String(errorData.detail);
-        } else if (errorData?.message) {
-          errorMessage = String(errorData.message);
-        } else if (typeof errorData === 'string') {
-          errorMessage = errorData;
-        } else if (Array.isArray(errorData) && errorData.length > 0) {
-          errorMessage = errorData.map((err: any) => err.detail || err.message || String(err)).join(', ');
-        }
-
-        // Add status code to error for better debugging
-        const error = new Error(errorMessage);
-        (error as any).status = response.status;
-        throw error;
-      }
-
-      const json = await response.json();
+      const axiosConfig: AxiosRequestConfig = {
+        url,
+        method: (config.method || 'GET') as AxiosRequestConfig['method'],
+        headers: config.headers as Record<string, string>,
+        data: config.body,
+        timeout: timeoutMs,
+      };
+      const response = await apiClient.request(axiosConfig);
+      const json = response.data;
       // Unwrap v2 response envelope: { success: true, data: {...} }
       if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
         return json.data as T;
       }
       return json as T;
     } catch (error: any) {
-      clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
+      if (error?.code === 'ECONNABORTED') {
         console.error('Auth service request timed out:', url);
         throw new Error(`Request timeout: Auth service is not responding (timeout: ${timeoutMs}ms)`);
       }
-      console.error('Auth service request failed:', error);
-      // Preserve the original error message and status if available
-      if (error.status) {
-        (error as any).status = error.status;
+
+      const status = error?.response?.status;
+      const errorData = error?.response?.data ?? {};
+      let errorMessage = status ? `HTTP error! status: ${status}` : 'Request failed';
+      if (errorData?.detail) {
+        errorMessage = String(errorData.detail);
+      } else if (errorData?.message) {
+        errorMessage = String(errorData.message);
+      } else if (typeof errorData === 'string') {
+        errorMessage = errorData;
+      } else if (Array.isArray(errorData) && errorData.length > 0) {
+        errorMessage = errorData.map((err: any) => err.detail || err.message || String(err)).join(', ');
       }
-      throw error;
+
+      console.error('Auth service request failed:', error);
+      const normalizedError = new Error(errorMessage);
+      (normalizedError as any).status = status ?? (error as any)?.status;
+      throw normalizedError;
     }
   }
 
@@ -548,12 +471,16 @@ class AuthService {
     // return the v2 {success, data} envelope (route uses response_model=
     // SetPasswordStatusResponse), so the helper's auto-unwrap would mangle it.
     const url = `${this.baseUrl}/set-password/status?token=${encodeURIComponent(token)}`;
-    const res = await fetch(url, { method: 'GET' });
-    if (!res.ok) {
-      // Backend always returns 200 for valid/expired/used; HTTP error == network/CORS.
-      return { valid: false, status: 'invalid', message: `HTTP ${res.status}` };
+    try {
+      const res = await apiClient.request<SetPasswordStatusResponse>({
+        url,
+        method: 'GET',
+      });
+      return res.data;
+    } catch (error: any) {
+      const status = error?.response?.status;
+      return { valid: false, status: 'invalid', message: status ? `HTTP ${status}` : 'Network error' };
     }
-    return res.json();
   }
 
   async setPasswordWithToken(data: SetPasswordRequest): Promise<{ message: string }> {

@@ -1,69 +1,12 @@
 // Observability service API client for logs and traces
 
-import axios, { AxiosInstance } from 'axios';
-import { getJwtToken } from './api';
-import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
+import { apiClient } from './api';
 import { apiEndpoints } from './apiEndpoints';
 
 // Telemetry service runs on port 8084 (different from API gateway on 8080)
 const TELEMETRY_SERVICE_URL = process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL ;
 
-// Create dedicated axios instance for observability endpoints
-const observabilityClient: AxiosInstance = axios.create({
-  baseURL: TELEMETRY_SERVICE_URL,
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
-
-// Add request interceptor to inject JWT token
-observabilityClient.interceptors.request.use(
-  (config: any) => {
-    const jwtToken = getJwtToken();
-    if (jwtToken) {
-      config.headers['Authorization'] = `Bearer ${jwtToken}`;
-    }
-    return config;
-  },
-  (error: any) => {
-    return Promise.reject(error);
-  }
-);
-
-// Add response interceptor for error logging
-observabilityClient.interceptors.response.use(
-  (response: any) => response,
-  async (error: any) => {
-    console.error('Observability API error:', {
-      url: error.config?.url,
-      status: error.response?.status,
-      statusText: error.response?.statusText,
-      data: error.response?.data,
-      message: error.message,
-    });
-    const status = error.response?.status;
-    const data = error.response?.data;
-    const tenantLifecycle =
-      typeof status === 'number' &&
-      responseIndicatesTenantSuspendedOrInactive(status, data);
-    if (
-      typeof window !== 'undefined' &&
-      (tenantLifecycle || status === 401 || status === 403)
-    ) {
-      try {
-        const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
-        forceFrontendSessionEnd();
-      } catch {
-        const { default: authService } = await import('./authService');
-        authService.clearAuthTokens();
-        authService.clearStoredUser();
-        window.location.assign('/auth');
-      }
-    }
-    return Promise.reject(error);
-  }
-);
+const telemetryUrl = (path: string): string => `${TELEMETRY_SERVICE_URL}${path}`;
 
 // Types
 export interface LogEntry {
@@ -141,12 +84,6 @@ export const searchLogs = async (
   }
 ): Promise<LogSearchResponse> => {
   try {
-    // Debug: Check token before making request
-    const token = getJwtToken();
-    if (!token) {
-      throw new Error('Authentication required. Please log in.');
-    }
-
     const queryParams = new URLSearchParams();
     if (params.service) queryParams.append('service', params.service);
     if (params.level) queryParams.append('level', params.level);
@@ -157,8 +94,9 @@ export const searchLogs = async (
     queryParams.append('page', String(params.page || 1));
     queryParams.append('size', String(params.size || 50));
 
-    const response = await observabilityClient.get<LogSearchResponse>(
-      `${apiEndpoints.telemetry.logsSearch}?${queryParams.toString()}`
+    const response = await apiClient.get<LogSearchResponse>(
+      telemetryUrl(`${apiEndpoints.telemetry.logsSearch}?${queryParams.toString()}`),
+      { timeout: 30000 }
     );
 
     console.log('searchLogs: Response received:', {
@@ -218,7 +156,7 @@ export const getLogAggregations = async (
     if (params?.end_time) queryParams.append('end_time', params.end_time);
 
     const url = `${apiEndpoints.telemetry.logsAggregate}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
-    const response = await observabilityClient.get<LogAggregationResponse>(url);
+    const response = await apiClient.get<LogAggregationResponse>(telemetryUrl(url), { timeout: 30000 });
 
     return response.data;
   } catch (error: any) {
@@ -246,8 +184,9 @@ export const getLogAggregations = async (
  */
 export const getServicesWithLogs = async (): Promise<string[]> => {
   try {
-    const response = await observabilityClient.get<{services: string[]} | string[]>(
-      apiEndpoints.telemetry.logsServices
+    const response = await apiClient.get<{services: string[]} | string[]>(
+      telemetryUrl(apiEndpoints.telemetry.logsServices),
+      { timeout: 30000 }
     );
 
     console.log('getServicesWithLogs: Response received:', {
@@ -320,8 +259,9 @@ export const searchTraces = async (
       });
     }
 
-    const response = await observabilityClient.get<TraceSearchResponse>(
-      `${apiEndpoints.telemetry.tracesSearch}?${queryParams.toString()}`
+    const response = await apiClient.get<TraceSearchResponse>(
+      telemetryUrl(`${apiEndpoints.telemetry.tracesSearch}?${queryParams.toString()}`),
+      { timeout: 30000 }
     );
 
     return response.data;
@@ -350,8 +290,9 @@ export const searchTraces = async (
  */
 export const getTraceById = async (traceId: string): Promise<Trace> => {
   try {
-    const response = await observabilityClient.get<Trace>(
-      apiEndpoints.telemetry.traceById(traceId)
+    const response = await apiClient.get<Trace>(
+      telemetryUrl(apiEndpoints.telemetry.traceById(traceId)),
+      { timeout: 30000 }
     );
 
     return response.data;
@@ -380,8 +321,9 @@ export const getTraceById = async (traceId: string): Promise<Trace> => {
  */
 export const getServicesWithTraces = async (): Promise<string[]> => {
   try {
-    const response = await observabilityClient.get<{services: string[]} | string[]>(
-      apiEndpoints.telemetry.tracesServices
+    const response = await apiClient.get<{services: string[]} | string[]>(
+      telemetryUrl(apiEndpoints.telemetry.tracesServices),
+      { timeout: 30000 }
     );
 
     // Handle both response formats: {"services": [...]} or [...]
@@ -419,8 +361,9 @@ export const getServicesWithTraces = async (): Promise<string[]> => {
  */
 export const getOperationsForService = async (serviceName: string): Promise<string[]> => {
   try {
-    const response = await observabilityClient.get<string[]>(
-      apiEndpoints.telemetry.traceServiceOperations(serviceName)
+    const response = await apiClient.get<string[]>(
+      telemetryUrl(apiEndpoints.telemetry.traceServiceOperations(serviceName)),
+      { timeout: 30000 }
     );
 
     return response.data;
