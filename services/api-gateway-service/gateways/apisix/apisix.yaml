@@ -480,6 +480,261 @@
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
+# --- Public token-bearing flows (no JWT yet — token in body/query) ---
+# These users do NOT have a session JWT yet (newly registered, locked out,
+# or onboarding via setup link). They must bypass forward-auth.
+- uri: /api/v1/auth/verify-email
+  name: auth-verify-email-route
+  priority: 20
+  methods:
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: POST,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      key: remote_addr
+      count: 30
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
+- uri: /api/v1/auth/resend-verification
+  name: auth-resend-verification-route
+  priority: 20
+  methods:
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: POST,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      key: remote_addr
+      count: 5
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
+- uri: /api/v1/auth/forgot-password
+  name: auth-forgot-password-route
+  priority: 20
+  methods:
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: POST,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      key: remote_addr
+      count: 5
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
+- uri: /api/v1/auth/reset-password
+  name: auth-reset-password-route
+  priority: 20
+  methods:
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: POST,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      key: remote_addr
+      count: 10
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
+- uri: /api/v1/auth/set-password
+  name: auth-set-password-route
+  priority: 20
+  methods:
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: POST,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      key: remote_addr
+      count: 10
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
+- uri: /api/v1/auth/set-password/status
+  name: auth-set-password-status-route
+  priority: 20
+  methods:
+  - GET
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: GET,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      key: remote_addr
+      count: 30
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
+- uri: /api/v1/auth/resend-setup-link
+  name: auth-resend-setup-link-route
+  priority: 20
+  methods:
+  - POST
+  - OPTIONS
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      auth-service${APISIX_UPSTREAM_SUFFIX}:8081: 1
+    pass_host: pass
+    type: roundrobin
+  plugins:
+    cors:
+      allow_origins: ${APISIX_PUBLIC_ORIGIN}
+      allow_methods: POST,OPTIONS
+      max_age: 3600
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      expose_headers: X-Auth-Token,X-Correlation-ID
+      allow_credential: true
+    proxy-rewrite:
+      headers:
+        add:
+          X-Correlation-ID: $request_id
+          X-Gateway: apisix
+      use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      key: remote_addr
+      count: 5
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
 # --- Protected auth routes (forward-auth required, catch-all) ---
 - uri: /api/v1/auth/*
   name: auth-route
