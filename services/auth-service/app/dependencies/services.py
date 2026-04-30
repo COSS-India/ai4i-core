@@ -27,6 +27,7 @@ from app.repositories.verification_repository import VerificationRepository
 from app.services.api_key_service import APIKeyService
 from app.services.auth_service import AuthService
 from app.services.cache_service import CacheService
+from app.services.oauth_service import OAuthService
 from app.services.password_service import PasswordService
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
@@ -84,5 +85,19 @@ async def get_api_key_service(
     cache: CacheService = Depends(get_cache_service),
 ) -> APIKeyService:
     return APIKeyService(APIKeyRepository(db), cache)
+
+
+async def get_oauth_service(
+    db: AsyncSession = Depends(get_db),
+    cache: CacheService = Depends(get_cache_service),
+    email_client: EmailClient = Depends(get_email_client),
+) -> OAuthService:
+    return OAuthService(
+        user_repo=UserRepository(db),
+        refresh_token_repo=RefreshTokenRepository(db),
+        role_service=RoleService(RoleRepository(db), cache),
+        token_service=TokenService(),
+        email_client=email_client,
+    )
 
 
