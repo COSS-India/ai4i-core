@@ -1,6 +1,6 @@
 // NER service API client
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
 import { listServices } from './modelManagementService';
 
 export interface NERServiceDetailsResponse {
@@ -106,7 +106,7 @@ export const performNERInference = async (
       config,
     };
 
-    const response = await apiClient.post<NERInferenceResponse>(
+    const response = await apiService.post<NERInferenceResponse>(
       apiEndpoints.ner.inference,
       payload
     );

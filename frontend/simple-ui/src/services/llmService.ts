@@ -1,6 +1,6 @@
 // LLM service API client with typed methods
 
-import { llmApiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
 import { 
   LLMInferenceRequest, 
   LLMInferenceResponse, 
@@ -47,11 +47,7 @@ export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> =>
         });
       }
       
-      // Extract endpoint and clean it
-      let endpoint = service.endpoint || '';
-      if (endpoint) {
-        endpoint = endpoint.replace('http://', '').replace('https://', '');
-      }
+      const endpoint = service.endpoint || '';
       
       return {
         service_id: service.serviceId || service.service_id,
@@ -99,7 +95,7 @@ export const performLLMInference = async (
       },
     };
 
-    const response = await llmApiClient.post<LLMInferenceResponse>(
+    const response = await apiService.post<LLMInferenceResponse>(
       apiEndpoints.llm.inference,
       payload
     );
@@ -123,7 +119,7 @@ export const performLLMInference = async (
  */
 export const listLLMModels = async (): Promise<LLMModel[]> => {
   try {
-    const response = await llmApiClient.get<{ models: LLMModel[]; total_models: number }>(
+    const response = await apiService.get<{ models: LLMModel[]; total_models: number }>(
       apiEndpoints.llm.models
     );
 
@@ -140,7 +136,7 @@ export const listLLMModels = async (): Promise<LLMModel[]> => {
  */
 export const checkLLMHealth = async (): Promise<LLMHealthResponse> => {
   try {
-    const response = await llmApiClient.get<LLMHealthResponse>(
+    const response = await apiService.get<LLMHealthResponse>(
       apiEndpoints.llm.health
     );
 

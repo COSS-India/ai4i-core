@@ -1,6 +1,6 @@
 // ASR service API client with typed methods
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
 import { 
   ASRInferenceRequest, 
   ASRInferenceResponse, 
@@ -42,7 +42,7 @@ export const performASRInference = async (
       },
     };
 
-    const response = await apiClient.post<ASRInferenceResponse>(
+    const response = await apiService.post<ASRInferenceResponse>(
       apiEndpoints.asr.inference,
       payload
     );
@@ -88,7 +88,7 @@ export const transcribeAudio = async (
       audio: [{ audioContent: `${audioContent.substring(0, 50)}... (truncated)` }]
     });
 
-    const response = await apiClient.post<ASRInferenceResponse>(
+    const response = await apiService.post<ASRInferenceResponse>(
       apiEndpoints.asr.inference,
       payload
     );
@@ -117,7 +117,7 @@ export const transcribeAudio = async (
  */
 export const listASRModels = async (): Promise<ASRModelsResponse> => {
   try {
-    const response = await apiClient.get<ASRModelsResponse>(
+    const response = await apiService.get<ASRModelsResponse>(
       apiEndpoints.asr.models
     );
 
@@ -193,7 +193,7 @@ export const listASRServices = async (): Promise<ASRServiceDetails[]> => {
  */
 export const checkASRHealth = async (): Promise<ASRHealthResponse> => {
   try {
-    const response = await apiClient.get<ASRHealthResponse>(
+    const response = await apiService.get<ASRHealthResponse>(
       apiEndpoints.asr.health
     );
 
@@ -210,7 +210,7 @@ export const checkASRHealth = async (): Promise<ASRHealthResponse> => {
  */
 export const getASRConfig = async () => {
   try {
-    const response = await apiClient.get(apiEndpoints.asr.config);
+    const response = await apiService.get(apiEndpoints.asr.config);
     return response.data;
   } catch (error) {
     console.error('Failed to fetch ASR config:', error);

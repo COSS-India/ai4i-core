@@ -1,6 +1,6 @@
 // Observability service API client for logs and traces
 
-import { apiClient } from './api';
+import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 
 // Telemetry service runs on port 8084 (different from API gateway on 8080)
@@ -94,7 +94,7 @@ export const searchLogs = async (
     queryParams.append('page', String(params.page || 1));
     queryParams.append('size', String(params.size || 50));
 
-    const response = await apiClient.get<LogSearchResponse>(
+    const response = await apiService.get<LogSearchResponse>(
       telemetryUrl(`${apiEndpoints.telemetry.logsSearch}?${queryParams.toString()}`),
       { timeout: 30000 }
     );
@@ -156,7 +156,7 @@ export const getLogAggregations = async (
     if (params?.end_time) queryParams.append('end_time', params.end_time);
 
     const url = `${apiEndpoints.telemetry.logsAggregate}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
-    const response = await apiClient.get<LogAggregationResponse>(telemetryUrl(url), { timeout: 30000 });
+    const response = await apiService.get<LogAggregationResponse>(telemetryUrl(url), { timeout: 30000 });
 
     return response.data;
   } catch (error: any) {
@@ -184,7 +184,7 @@ export const getLogAggregations = async (
  */
 export const getServicesWithLogs = async (): Promise<string[]> => {
   try {
-    const response = await apiClient.get<{services: string[]} | string[]>(
+    const response = await apiService.get<{services: string[]} | string[]>(
       telemetryUrl(apiEndpoints.telemetry.logsServices),
       { timeout: 30000 }
     );
@@ -259,7 +259,7 @@ export const searchTraces = async (
       });
     }
 
-    const response = await apiClient.get<TraceSearchResponse>(
+    const response = await apiService.get<TraceSearchResponse>(
       telemetryUrl(`${apiEndpoints.telemetry.tracesSearch}?${queryParams.toString()}`),
       { timeout: 30000 }
     );
@@ -290,7 +290,7 @@ export const searchTraces = async (
  */
 export const getTraceById = async (traceId: string): Promise<Trace> => {
   try {
-    const response = await apiClient.get<Trace>(
+    const response = await apiService.get<Trace>(
       telemetryUrl(apiEndpoints.telemetry.traceById(traceId)),
       { timeout: 30000 }
     );
@@ -321,7 +321,7 @@ export const getTraceById = async (traceId: string): Promise<Trace> => {
  */
 export const getServicesWithTraces = async (): Promise<string[]> => {
   try {
-    const response = await apiClient.get<{services: string[]} | string[]>(
+    const response = await apiService.get<{services: string[]} | string[]>(
       telemetryUrl(apiEndpoints.telemetry.tracesServices),
       { timeout: 30000 }
     );
@@ -361,7 +361,7 @@ export const getServicesWithTraces = async (): Promise<string[]> => {
  */
 export const getOperationsForService = async (serviceName: string): Promise<string[]> => {
   try {
-    const response = await apiClient.get<string[]>(
+    const response = await apiService.get<string[]>(
       telemetryUrl(apiEndpoints.telemetry.traceServiceOperations(serviceName)),
       { timeout: 30000 }
     );

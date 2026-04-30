@@ -1,6 +1,6 @@
 // Transliteration service API client
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
 import { listServices } from './modelManagementService';
 
 export interface TransliterationServiceDetailsResponse {
@@ -119,7 +119,7 @@ export const performTransliterationInference = async (
       },
     };
 
-    const response = await apiClient.post<TransliterationInferenceResponse>(
+    const response = await apiService.post<TransliterationInferenceResponse>(
       apiEndpoints.transliteration.inference,
       payload
     );

@@ -1,6 +1,6 @@
 // Pipeline Service API client
 
-import apiClient from './api';
+import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import { 
   PipelineInferenceRequest, 
@@ -16,7 +16,7 @@ export const runPipelineInference = async (
   request: PipelineInferenceRequest
 ): Promise<PipelineInferenceResponse> => {
   try {
-    const response = await apiClient.post(
+    const response = await apiService.post(
       PIPELINE_ENDPOINTS.inference,
       request
     );
@@ -31,7 +31,7 @@ export const runPipelineInference = async (
  * Get pipeline service information
  */
 export const getPipelineInfo = async (): Promise<any> => {
-  const response = await apiClient.get(PIPELINE_ENDPOINTS.info);
+  const response = await apiService.get(PIPELINE_ENDPOINTS.info);
   return response.data;
 };
 
@@ -39,7 +39,7 @@ export const getPipelineInfo = async (): Promise<any> => {
  * Check pipeline service health
  */
 export const checkPipelineHealth = async (): Promise<any> => {
-  const response = await apiClient.get(PIPELINE_ENDPOINTS.health);
+  const response = await apiService.get(PIPELINE_ENDPOINTS.health);
   return response.data;
 };
 

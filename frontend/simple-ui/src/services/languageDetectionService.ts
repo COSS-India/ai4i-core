@@ -1,6 +1,6 @@
 // Language Detection service API client
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
 import { listServices } from './modelManagementService';
 
 export interface LanguageDetectionServiceDetailsResponse {
@@ -113,7 +113,7 @@ export const performLanguageDetectionInference = async (
       },
     };
 
-    const response = await apiClient.post<LanguageDetectionInferenceResponse>(
+    const response = await apiService.post<LanguageDetectionInferenceResponse>(
       apiEndpoints['language-detection'].inference,
       payload
     );

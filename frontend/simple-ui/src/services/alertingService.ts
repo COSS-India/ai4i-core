@@ -2,8 +2,7 @@
  * Alerting service — Alert Definitions, Receivers, Routing Rules, and read-only Alert History.
  * Follows the same request pattern as authService (fetch + Bearer token).
  */
-import { AxiosRequestConfig } from 'axios';
-import { API_BASE_URL, apiClient } from './api';
+import { API_BASE_URL, apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import authService from './authService';
 import type {
@@ -57,14 +56,15 @@ class AlertingService {
     const timeoutMs = 15000;
 
     try {
-      const axiosConfig: AxiosRequestConfig = {
+      const response = await apiService.request(
+        (config.method || 'GET') as any,
         url,
-        method: (config.method || 'GET') as AxiosRequestConfig['method'],
-        headers: config.headers as Record<string, string>,
-        data: config.body,
-        timeout: timeoutMs,
-      };
-      const response = await apiClient.request(axiosConfig);
+        config.body,
+        {
+          headers: config.headers as Record<string, string>,
+          timeout: timeoutMs,
+        }
+      );
       return response.data as T;
     } catch (error: any) {
       if (error?.code === 'ECONNABORTED') {
