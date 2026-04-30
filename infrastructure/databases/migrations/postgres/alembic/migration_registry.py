@@ -67,7 +67,6 @@ class DatabaseSpec:
 DATABASE_ORDER = [
     "alerting_db",
     "ai4iplatform_auth",
-    "auth_service_v2_db",
     "config_db",
     "dashboard_db",
     "ai4i_platform_db",
@@ -152,81 +151,6 @@ def _load_auth_service_metadata():
     if auth_path not in sys.path:
         sys.path.insert(0, auth_path)
     # Purge any previously imported `app.*` modules to avoid cross-service collisions.
-    for module_name in list(sys.modules.keys()):
-        if module_name == "app" or module_name.startswith("app."):
-            sys.modules.pop(module_name, None)
-
-    module = importlib.import_module("app.models")
-    return module.Base.metadata
-
-
-def _load_auth_metadata():
-    # Start from auth-service-v2 core metadata (users/sessions/roles/api keys/oauth)
-    module_metadata = _load_auth_service_v2_metadata()
-    combined_metadata = MetaData()
-    for table in module_metadata.tables.values():
-        table.to_metadata(combined_metadata)
-
-    service_model_files = [
-        ("asr", PROJECT_ROOT / "services" / "asr-service" / "app" / "models" / "asr.py"),
-        ("nmt", PROJECT_ROOT / "services" / "nmt-service" / "app" / "models" / "nmt.py"),
-        ("tts", PROJECT_ROOT / "services" / "tts-service" / "app" / "models" / "tts.py"),
-        ("ner", PROJECT_ROOT / "services" / "ner-service" / "app" / "models" / "ner.py"),
-        ("ocr", PROJECT_ROOT / "services" / "ocr-service" / "app" / "models" / "ocr.py"),
-        (
-            "language_detection",
-            PROJECT_ROOT / "services" / "language-detection-service" / "app" / "models" / "language_detection.py",
-        ),
-        (
-            "language_diarization",
-            PROJECT_ROOT / "services" / "language-diarization-service" / "app" / "models" / "language_diarization.py",
-        ),
-        ("llm", PROJECT_ROOT / "services" / "llm-service" / "app" / "models" / "llm.py"),
-        (
-            "speaker_diarization",
-            PROJECT_ROOT / "services" / "speaker-diarization-service" / "app" / "models" / "speaker_diarization.py",
-        ),
-        (
-            "transliteration",
-            PROJECT_ROOT / "services" / "transliteration-service" / "app" / "models" / "transliteration.py",
-        ),
-        (
-            "audio_lang_detection",
-            PROJECT_ROOT / "services" / "audio-lang-detection-service" / "app" / "models" / "audio_lang_detection.py",
-        ),
-    ]
-
-    replacements = [
-        ('ForeignKey("sessions.id"', 'ForeignKey("user_sessions.id"'),
-        ("ForeignKey('sessions.id'", "ForeignKey('user_sessions.id'"),
-    ]
-
-    # Tables already managed by auth-service-v2; skip stubs/duplicates from
-    # service model files so autogenerate doesn't create spurious tables
-    # (e.g. a "sessions" stub when auth-service-v2 uses "user_sessions").
-    auth_table_names = set(combined_metadata.tables.keys()) | {"sessions"}
-
-    for service_name, file_path in service_model_files:
-        service_module = _load_module_with_replacements(
-            f"ai4i_alembic_dynamic.{service_name}_database_models",
-            file_path,
-            replacements=replacements,
-        )
-        for table in service_module.Base.metadata.tables.values():
-            if table.name in auth_table_names:
-                continue
-            table.to_metadata(combined_metadata)
-
-    return combined_metadata
-
-
-def _load_auth_service_v2_metadata():
-    """Load auth-service-v2 ORM metadata (users/sessions/roles/api keys/oauth)."""
-    auth_v2_root = PROJECT_ROOT / "services" / "auth-service-v2"
-    v2_path = str(auth_v2_root)
-    if v2_path not in sys.path:
-        sys.path.insert(0, v2_path)
-    # Ensure we import auth-service-v2's `app.models` package, not another service's `app`.
     for module_name in list(sys.modules.keys()):
         if module_name == "app" or module_name.startswith("app."):
             sys.modules.pop(module_name, None)
@@ -407,15 +331,6 @@ DATABASE_SPECS = {
         database_name_key="AUTH_SERVICE_DB_NAME",
         metadata_loader=_load_auth_service_metadata,
     ),
-    "auth_service_v2_db": DatabaseSpec(
-        name="auth_service_v2_db",
-        user_key="AUTH_DB_USER",
-        password_key="AUTH_DB_PASSWORD",
-        host_key="AUTH_DB_HOST",
-        port_key="AUTH_DB_PORT",
-        database_name_key="AUTH_DB_NAME",
-        metadata_loader=_load_auth_metadata,
-    ),
     "config_db": DatabaseSpec(
         name="config_db",
         user_key="POSTGRES_USER",
@@ -553,9 +468,6 @@ def get_sync_url(name: str) -> str:
 
 
 def get_version_path(name: str) -> Path:
-    # Use the dedicated auth-service-v2 migration folder.
-    if name == "auth_service_v2_db":
-        return ALEMBIC_DIR / "versions" / "auth_service_v2_db"
     return ALEMBIC_DIR / "versions" / name
 
 
