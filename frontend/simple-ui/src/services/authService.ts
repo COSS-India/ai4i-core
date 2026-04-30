@@ -31,6 +31,19 @@ import {
   clearTokenStorage,
 } from '../utils/tokenStorage';
 
+/** ngrok free tier can serve an interstitial to browsers; without this header, fetch may fail (often POST/login). */
+function ngrokTunnelHeaders(url: string): Record<string, string> {
+  try {
+    const host = new URL(url).hostname;
+    if (host.endsWith('.ngrok-free.app') || host.endsWith('.ngrok.io')) {
+      return { 'ngrok-skip-browser-warning': 'true' };
+    }
+  } catch {
+    /* ignore invalid url */
+  }
+  return {};
+}
+
 class AuthService {
   private baseUrl: string;
 
@@ -46,6 +59,7 @@ class AuthService {
     
     const defaultHeaders: HeadersInit = {
       'Content-Type': 'application/json',
+      ...ngrokTunnelHeaders(url),
     };
 
     // Add authorization header if token exists
@@ -213,6 +227,7 @@ class AuthService {
     
     const defaultHeaders: HeadersInit = {
       'Content-Type': 'application/json',
+      ...ngrokTunnelHeaders(url),
     };
 
     const config: RequestInit = {
@@ -396,6 +411,7 @@ class AuthService {
     
     const defaultHeaders: HeadersInit = {
       'Content-Type': 'application/json',
+      ...ngrokTunnelHeaders(url),
     };
 
     // Add authorization header if token exists

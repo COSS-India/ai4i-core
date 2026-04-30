@@ -118,6 +118,13 @@ const asrApiClient: AxiosInstance = axios.create({
   },
 });
 
+if (/\.ngrok-free\.app|\.ngrok\.io/i.test(API_BASE_URL)) {
+  const h = { 'ngrok-skip-browser-warning': 'true' };
+  Object.assign(apiClient.defaults.headers.common, h);
+  Object.assign(llmApiClient.defaults.headers.common, h);
+  Object.assign(asrApiClient.defaults.headers.common, h);
+}
+
 // Apply same interceptors to LLM client
 llmApiClient.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {

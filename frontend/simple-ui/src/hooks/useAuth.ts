@@ -215,7 +215,8 @@ export const useAuth = () => {
       } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
         errorMessage = 'Request timeout. The server is taking too long to respond. Please try again.';
       } else if (errorMessage.includes('NetworkError') || errorMessage.includes('Failed to fetch')) {
-        errorMessage = 'Network error. Please check your internet connection and try again.';
+        errorMessage =
+          'Could not reach the API (network or CORS). Check: ngrok/tunnel is up and targets :8080; NEXT_PUBLIC_API_URL in repo .env matches the tunnel; then restart the API gateway (nginx) and simple-ui.';
       }
       
       setAuthState(prev => ({
