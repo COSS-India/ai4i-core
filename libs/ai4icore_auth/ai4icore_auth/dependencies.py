@@ -2,7 +2,8 @@
 Shared FastAPI dependencies for authentication and authorization.
 
 Permission checks use permission_ids (int) from JWT — zero DB round-trip.
-ADMIN role bypasses all checks.
+ADMIN role gets every permission in data (seeded), so no role-based bypass
+exists in code. Public endpoints are those absent from api_permissions.json.
 
 Usage::
 

@@ -105,7 +105,6 @@ def create_auth_providers(
         if PermissionChecker.check_endpoint_access(
             required=required,
             user_permission_ids=claims.permission_ids,
-            user_roles=claims.roles,
         ):
             return claims
 

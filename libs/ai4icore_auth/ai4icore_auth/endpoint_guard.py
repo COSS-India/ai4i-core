@@ -60,7 +60,6 @@ def create_endpoint_guard(
         if PermissionChecker.check_endpoint_access(
             required=required_code,
             user_permission_ids=claims.permission_ids,
-            user_roles=claims.roles,
         ):
             return claims
 

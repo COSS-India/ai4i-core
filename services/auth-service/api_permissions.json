@@ -1,385 +1,129 @@
 {
-  "description": "API endpoint -> permission mapping (single source of truth at runtime). permissionRequired is the permission name (resolved to its DB id at service startup). permissionRequired=null marks public endpoints. Permission and role seed data lives in infrastructure/databases/seeders, not here.",
+  "description": "API endpoint -> permission ID mapping (single source of truth at runtime). permissionRequired is the integer DB id of the permission, baked into JSON. IDs are owned by infrastructure/databases/seeders/postgres/auth_roles_permissions_seeder.py (id=1 'admin' sentinel; ids 2-10 reserved; ids 11+ feature permissions). Endpoints absent from this list are public (login/refresh/oauth/jwks/health/status/try-it).",
   "apiMappings": [
-    {
-      "endpoint": "POST:/api/v1/auth/login",
-      "permissionRequired": null,
-      "description": "Login (public)"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/guest/login",
-      "permissionRequired": null,
-      "description": "Guest login (public; GUEST_EMAIL and GUEST_PASSWORD env)"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/register",
-      "permissionRequired": null,
-      "description": "Register (public; sends verify-email)"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/verify-email",
-      "permissionRequired": null,
-      "description": "Verify email via token from registration email (public)"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/resend-verification",
-      "permissionRequired": null,
-      "description": "Re-issue a verify-email link for users who registered but never verified (public)"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/forgot-password",
-      "permissionRequired": null,
-      "description": "Request a password-reset email (public; rate-limited 3/hour/email)"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/reset-password",
-      "permissionRequired": null,
-      "description": "Consume a reset token and set new password (public; revokes other sessions)"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/refresh",
-      "permissionRequired": null,
-      "description": "Refresh token (public)"
-    },
-    {
-      "endpoint": "GET:/api/v1/auth/validate",
-      "permissionRequired": null,
-      "description": "APISIX validation (internal)"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/validate",
-      "permissionRequired": null,
-      "description": "APISIX validation (internal)"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/validate-api-key",
-      "permissionRequired": null,
-      "description": "API key validation (internal)"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/change-password",
-      "permissionRequired": "users.update",
-      "description": "Change password (requires users.update)"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/sessions/revoke-by-tenant/{tenant_id}",
-      "permissionRequired": null,
-      "description": "Admin-only: revoke all sessions for a tenant"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/sessions/revoke-by-users",
-      "permissionRequired": null,
-      "description": "Admin-only: revoke all sessions for selected users"
-    },
-    {
-      "endpoint": "GET:/api/v1/auth/me",
-      "permissionRequired": "users.read",
-      "description": "Get own profile"
-    },
-    {
-      "endpoint": "PUT:/api/v1/auth/me",
-      "permissionRequired": "users.update",
-      "description": "Update own profile"
-    },
-    {
-      "endpoint": "GET:/api/v1/auth/users",
-      "permissionRequired": "users.read",
-      "description": "List users"
-    },
-    {
-      "endpoint": "POST:/api/v1/users/create",
-      "permissionRequired": "users.create",
-      "description": "Create user (admin)"
-    },
-    {
-      "endpoint": "DELETE:/api/v1/users/delete",
-      "permissionRequired": "users.delete",
-      "description": "Delete user (admin)"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/roles/assign",
-      "permissionRequired": "roles.assign",
-      "description": "Assign role"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/roles/remove",
-      "permissionRequired": "roles.remove",
-      "description": "Remove role"
-    },
-    {
-      "endpoint": "GET:/api/v1/auth/roles/list",
-      "permissionRequired": "roles.read",
-      "description": "List roles"
-    },
-    {
-      "endpoint": "GET:/api/v1/auth/roles/user/{user_id}",
-      "permissionRequired": "roles.read",
-      "description": "Get roles for a user"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/roles/assign/guest/services",
-      "permissionRequired": "roles.assign",
-      "description": "Assign inference services to the GUEST role"
-    },
-    {
-      "endpoint": "GET:/api/v1/auth/roles/list/guest/services",
-      "permissionRequired": "roles.read",
-      "description": "List inference services assigned to the GUEST role"
-    },
-    {
-      "endpoint": "GET:/api/v1/auth/inference/permissions",
-      "permissionRequired": "roles.read",
-      "description": "List inference permissions"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/api-keys",
-      "permissionRequired": "apiKey.create",
-      "description": "Create API key"
-    },
-    {
-      "endpoint": "GET:/api/v1/auth/api-keys",
-      "permissionRequired": "apiKey.read",
-      "description": "List own API keys"
-    },
-    {
-      "endpoint": "DELETE:/api/v1/auth/api-keys/{key_id}",
-      "permissionRequired": "apiKey.delete",
-      "description": "Revoke API key"
-    },
-    {
-      "endpoint": "PATCH:/api/v1/auth/api-keys/{key_id}",
-      "permissionRequired": "apiKey.update",
-      "description": "Update API key"
-    },
-    {
-      "endpoint": "GET:/api/v1/auth/oauth2/providers",
-      "permissionRequired": null,
-      "description": "List configured OAuth providers"
-    },
-    {
-      "endpoint": "GET:/api/v1/auth/oauth2/{provider}/authorize",
-      "permissionRequired": null,
-      "description": "Begin OAuth login (provider redirect)"
-    },
-    {
-      "endpoint": "GET:/api/v1/auth/oauth2/{provider}/callback",
-      "permissionRequired": null,
-      "description": "OAuth provider redirect target"
-    },
-    {
-      "endpoint": "POST:/api/v1/auth/oauth2/exchange",
-      "permissionRequired": null,
-      "description": "Exchange one-time code for JWT pair"
-    },
-    {
-      "endpoint": "POST:/api/v1/asr/inference",
-      "permissionRequired": "asr.inference",
-      "description": "ASR inference"
-    },
-    {
-      "endpoint": "POST:/api/v1/tts/inference",
-      "permissionRequired": "tts.inference",
-      "description": "TTS inference"
-    },
-    {
-      "endpoint": "POST:/api/v1/nmt/inference",
-      "permissionRequired": "nmt.inference",
-      "description": "NMT inference"
-    },
-    {
-      "endpoint": "POST:/api/v1/pipeline/inference",
-      "permissionRequired": "pipeline.inference",
-      "description": "Pipeline inference"
-    },
-    {
-      "endpoint": "POST:/api/v1/llm/inference",
-      "permissionRequired": "llm.inference",
-      "description": "LLM inference"
-    },
-    {
-      "endpoint": "POST:/api/v1/ocr/inference",
-      "permissionRequired": "ocr.inference",
-      "description": "OCR inference"
-    },
-    {
-      "endpoint": "POST:/api/v1/ner/inference",
-      "permissionRequired": "ner.inference",
-      "description": "NER inference"
-    },
-    {
-      "endpoint": "POST:/api/v1/transliteration/inference",
-      "permissionRequired": "transliteration.inference",
-      "description": "Transliteration inference"
-    },
-    {
-      "endpoint": "POST:/api/v1/audio-lang-detection/inference",
-      "permissionRequired": "audio-lang-detection.inference",
-      "description": "Audio lang detection inference"
-    },
-    {
-      "endpoint": "POST:/api/v1/language-detection/inference",
-      "permissionRequired": "language-detection.inference",
-      "description": "Language detection inference"
-    },
-    {
-      "endpoint": "POST:/api/v1/language-diarization/inference",
-      "permissionRequired": "language-diarization.inference",
-      "description": "Language diarization inference"
-    },
-    {
-      "endpoint": "POST:/api/v1/speaker-diarization/inference",
-      "permissionRequired": "speaker-diarization.inference",
-      "description": "Speaker diarization inference"
-    },
-    {
-      "endpoint": "POST:/redact",
-      "permissionRequired": "pii_guard.inference",
-      "description": "PII redaction inference"
-    },
-    {
-      "endpoint": "GET:/admin/all-domains",
-      "permissionRequired": "pii_guard.admin",
-      "description": "List PII domains"
-    },
-    {
-      "endpoint": "POST:/admin/deploy",
-      "permissionRequired": "pii_guard.admin",
-      "description": "Deploy PII policy"
-    },
-    {
-      "endpoint": "POST:/admin/activate-domains",
-      "permissionRequired": "pii_guard.admin",
-      "description": "Activate PII domains"
-    },
-    {
-      "endpoint": "POST:/admin/domain",
-      "permissionRequired": "pii_guard.admin",
-      "description": "Create PII domain"
-    },
-    {
-      "endpoint": "POST:/admin/generate-regex",
-      "permissionRequired": "pii_guard.admin",
-      "description": "Generate regex for PII policy"
-    },
-    {
-      "endpoint": "GET:/admin/tenant-domains",
-      "permissionRequired": "pii_guard.admin",
-      "description": "List tenant_id to PII domain mappings"
-    },
-    {
-      "endpoint": "POST:/admin/tenant-domain",
-      "permissionRequired": "pii_guard.admin",
-      "description": "Upsert tenant_id to PII domain mapping"
-    },
-    {
-      "endpoint": "POST:/admin/tenant-domain/delete",
-      "permissionRequired": "pii_guard.admin",
-      "description": "Delete tenant_id PII domain mapping"
-    },
-    {
-      "endpoint": "GET:/api/v1/tenants",
-      "permissionRequired": "tenant.read",
-      "description": "List tenants"
-    },
-    {
-      "endpoint": "POST:/api/v1/tenants",
-      "permissionRequired": "tenant.create",
-      "description": "Create a tenant (system admin)"
-    },
-    {
-      "endpoint": "GET:/api/v1/tenants/{tenant_id}",
-      "permissionRequired": "tenant.read",
-      "description": "View tenant by id"
-    },
-    {
-      "endpoint": "PATCH:/api/v1/tenants/{tenant_id}",
-      "permissionRequired": "tenant.update",
-      "description": "Update tenant (system admin)"
-    },
-    {
-      "endpoint": "PATCH:/api/v1/tenants/{tenant_id}/status",
-      "permissionRequired": "tenant.update",
-      "description": "Change tenant status (activated/deactivated/suspended)"
-    },
-    {
-      "endpoint": "GET:/api/v1/tenants/{tenant_id}/users",
-      "permissionRequired": "tenant.users.read",
-      "description": "List users within a tenant"
-    },
-    {
-      "endpoint": "POST:/api/v1/tenants/{tenant_id}/users",
-      "permissionRequired": "tenant.users.update",
-      "description": "Provision a user under a tenant"
-    },
-    {
-      "endpoint": "PATCH:/api/v1/tenants/{tenant_id}/users/{user_id}/status",
-      "permissionRequired": "tenant.users.update",
-      "description": "Toggle a tenant user's activation status"
-    },
-    {
-      "endpoint": "PATCH:/api/v1/tenants/{tenant_id}/users/{user_id}",
-      "permissionRequired": "tenant.users.update",
-      "description": "Update a tenant user's profile fields"
-    },
-    {
-      "endpoint": "DELETE:/api/v1/tenants/{tenant_id}/users/{user_id}",
-      "permissionRequired": "tenant.users.update",
-      "description": "Soft-delete a tenant user"
-    },
-    {
-      "endpoint": "GET:/api/v1/models",
-      "permissionRequired": "model.read",
-      "description": "List all models"
-    },
-    {
-      "endpoint": "GET:/api/v1/models/{model_id}",
-      "permissionRequired": "model.read",
-      "description": "Get model by ID"
-    },
-    {
-      "endpoint": "POST:/api/v1/models",
-      "permissionRequired": "model.create",
-      "description": "Create a new model"
-    },
-    {
-      "endpoint": "PATCH:/api/v1/models",
-      "permissionRequired": "model.update",
-      "description": "Update a model"
-    },
-    {
-      "endpoint": "DELETE:/api/v1/models/{model_id}",
-      "permissionRequired": "model.delete",
-      "description": "Delete a model by ID"
-    },
-    {
-      "endpoint": "GET:/api/v1/services",
-      "permissionRequired": "service.read",
-      "description": "List all services"
-    },
-    {
-      "endpoint": "GET:/api/v1/services/try-it-service-list",
-      "permissionRequired": null,
-      "description": "Public try-it service list"
-    },
-    {
-      "endpoint": "GET:/api/v1/services/{service_id}",
-      "permissionRequired": "service.read",
-      "description": "Get service detail by ID"
-    },
-    {
-      "endpoint": "POST:/api/v1/services",
-      "permissionRequired": "service.create",
-      "description": "Create a new service"
-    },
-    {
-      "endpoint": "PATCH:/api/v1/services",
-      "permissionRequired": "service.update",
-      "description": "Update a service"
-    },
-    {
-      "endpoint": "DELETE:/api/v1/services/{service_id}",
-      "permissionRequired": "service.delete",
-      "description": "Delete a service by ID"
-    }
+
+    { "endpoint": "POST:/api/v1/auth/change-password",                     "permissionRequired": 17, "description": "Change own password (users.password.change)" },
+    { "endpoint": "GET:/api/v1/auth/me",                                   "permissionRequired": 15, "description": "Get own profile (users.profile.read)" },
+    { "endpoint": "PUT:/api/v1/auth/me",                                   "permissionRequired": 16, "description": "Update own profile (users.profile.update)" },
+    { "endpoint": "GET:/api/v1/auth/users",                                "permissionRequired": 12, "description": "List users (users.read)" },
+    { "endpoint": "GET:/api/v1/auth/users/{user_id}",                      "permissionRequired": 12, "description": "Get user by ID (users.read)" },
+
+    { "endpoint": "POST:/api/v1/auth/api-keys",                            "permissionRequired": 30, "description": "Create API key (apiKey.create)" },
+    { "endpoint": "GET:/api/v1/auth/api-keys",                             "permissionRequired": 31, "description": "List own API keys (apiKey.read)" },
+    { "endpoint": "PATCH:/api/v1/auth/api-keys/{api_key}",                 "permissionRequired": 32, "description": "Update API key (apiKey.update)" },
+    { "endpoint": "DELETE:/api/v1/auth/api-keys/{api_key}",                "permissionRequired": 33, "description": "Revoke API key (apiKey.delete)" },
+    { "endpoint": "GET:/api/v1/auth/api-keys/all",                         "permissionRequired": 34, "description": "Admin: list all API keys (apiKey.read.all)" },
+
+    { "endpoint": "GET:/api/v1/auth/roles/list",                           "permissionRequired": 20, "description": "List roles (roles.read)" },
+    { "endpoint": "POST:/api/v1/auth/roles/assign",                        "permissionRequired": 21, "description": "Assign role to user (roles.assign)" },
+    { "endpoint": "POST:/api/v1/auth/roles/remove",                        "permissionRequired": 22, "description": "Remove role from user (roles.remove)" },
+    { "endpoint": "GET:/api/v1/auth/roles/user/{user_id}",                 "permissionRequired": 20, "description": "Get roles for a user (roles.read)" },
+    { "endpoint": "POST:/api/v1/auth/roles/assign/guest/services",         "permissionRequired": 21, "description": "Assign inference services to GUEST role (roles.assign)" },
+    { "endpoint": "GET:/api/v1/auth/roles/list/guest/services",            "permissionRequired": 20, "description": "List inference services on GUEST role (roles.read)" },
+
+    { "endpoint": "GET:/api/v1/auth/permissions/",                         "permissionRequired": 23, "description": "List all permissions (permissions.read)" },
+    { "endpoint": "GET:/api/v1/auth/inference/permissions",                "permissionRequired": 23, "description": "List inference permissions (permissions.read)" },
+
+    { "endpoint": "POST:/api/v1/tenants",                                  "permissionRequired": 40, "description": "Create tenant (tenant.create)" },
+    { "endpoint": "GET:/api/v1/tenants",                                   "permissionRequired": 41, "description": "List tenants (tenant.read)" },
+    { "endpoint": "GET:/api/v1/tenants/{tenant_id}",                       "permissionRequired": 41, "description": "Get tenant by ID (tenant.read)" },
+    { "endpoint": "PATCH:/api/v1/tenants/{tenant_id}",                     "permissionRequired": 42, "description": "Update tenant (tenant.update)" },
+    { "endpoint": "PATCH:/api/v1/tenants/{tenant_id}/status",              "permissionRequired": 42, "description": "Change tenant status (tenant.update)" },
+    { "endpoint": "GET:/api/v1/tenants/{tenant_id}/users",                 "permissionRequired": 44, "description": "List tenant users (tenant.users.read)" },
+    { "endpoint": "POST:/api/v1/tenants/{tenant_id}/users",                "permissionRequired": 45, "description": "Provision tenant user (tenant.users.create)" },
+    { "endpoint": "PATCH:/api/v1/tenants/{tenant_id}/users/{user_id}/status", "permissionRequired": 46, "description": "Toggle tenant user status (tenant.users.update)" },
+    { "endpoint": "PATCH:/api/v1/tenants/{tenant_id}/users/{user_id}",     "permissionRequired": 46, "description": "Update tenant user profile (tenant.users.update)" },
+    { "endpoint": "DELETE:/api/v1/tenants/{tenant_id}/users/{user_id}",    "permissionRequired": 47, "description": "Soft-delete tenant user (tenant.users.delete)" },
+
+    { "endpoint": "GET:/api/v1/services",                                  "permissionRequired": 51, "description": "List all services (service.read)" },
+    { "endpoint": "GET:/api/v1/services/{service_id}",                     "permissionRequired": 51, "description": "Get service by ID (service.read)" },
+    { "endpoint": "POST:/api/v1/services",                                 "permissionRequired": 50, "description": "Create service (service.create)" },
+    { "endpoint": "PATCH:/api/v1/services",                                "permissionRequired": 52, "description": "Update service (service.update)" },
+    { "endpoint": "DELETE:/api/v1/services/{service_id}",                  "permissionRequired": 53, "description": "Delete service (service.delete)" },
+    { "endpoint": "GET:/api/v1/models",                                    "permissionRequired": 55, "description": "List all models (model.read)" },
+    { "endpoint": "GET:/api/v1/models/{model_id}",                         "permissionRequired": 55, "description": "Get model by ID (model.read)" },
+    { "endpoint": "POST:/api/v1/models",                                   "permissionRequired": 54, "description": "Create model (model.create)" },
+    { "endpoint": "PATCH:/api/v1/models",                                  "permissionRequired": 56, "description": "Update model (model.update)" },
+    { "endpoint": "DELETE:/api/v1/models/{model_id}",                      "permissionRequired": 57, "description": "Delete model (model.delete)" },
+
+    { "endpoint": "POST:/api/v1/nmt/inference",                            "permissionRequired": 60, "description": "NMT inference (nmt.inference)" },
+    { "endpoint": "POST:/api/v1/asr/inference",                            "permissionRequired": 61, "description": "ASR inference (asr.inference)" },
+    { "endpoint": "GET:/api/v1/asr/models",                                "permissionRequired": 81, "description": "List ASR models (asr.read)" },
+    { "endpoint": "POST:/api/v1/tts/inference",                            "permissionRequired": 62, "description": "TTS inference (tts.inference)" },
+    { "endpoint": "GET:/api/v1/tts/voices",                                "permissionRequired": 82, "description": "List TTS voices (tts.read)" },
+    { "endpoint": "GET:/api/v1/tts/voices/{voice_id}",                     "permissionRequired": 82, "description": "Get TTS voice (tts.read)" },
+    { "endpoint": "GET:/api/v1/tts/voices/language/{language}",            "permissionRequired": 82, "description": "List TTS voices by language (tts.read)" },
+    { "endpoint": "POST:/api/v1/llm/inference",                            "permissionRequired": 63, "description": "LLM inference (llm.inference)" },
+    { "endpoint": "GET:/api/v1/llm/models",                                "permissionRequired": 83, "description": "List LLM models (llm.read)" },
+    { "endpoint": "POST:/api/v1/ner/inference",                            "permissionRequired": 64, "description": "NER inference (ner.inference)" },
+    { "endpoint": "POST:/api/v1/ocr/inference",                            "permissionRequired": 65, "description": "OCR inference (ocr.inference)" },
+    { "endpoint": "POST:/api/v1/transliteration/inference",                "permissionRequired": 66, "description": "Transliteration inference (transliteration.inference)" },
+    { "endpoint": "GET:/api/v1/transliteration/models",                    "permissionRequired": 84, "description": "List transliteration models (transliteration.read)" },
+    { "endpoint": "GET:/api/v1/transliteration/services",                  "permissionRequired": 84, "description": "List transliteration services (transliteration.read)" },
+    { "endpoint": "GET:/api/v1/transliteration/languages",                 "permissionRequired": 84, "description": "List transliteration languages (transliteration.read)" },
+    { "endpoint": "POST:/api/v1/language-detection/inference",             "permissionRequired": 67, "description": "Language-detection inference (language-detection.inference)" },
+    { "endpoint": "GET:/api/v1/language-detection/languages",              "permissionRequired": 85, "description": "List language-detection languages (language-detection.read)" },
+    { "endpoint": "GET:/api/v1/language-detection/models",                 "permissionRequired": 85, "description": "List language-detection models (language-detection.read)" },
+    { "endpoint": "POST:/api/v1/language-diarization/inference",           "permissionRequired": 68, "description": "Language-diarization inference (language-diarization.inference)" },
+    { "endpoint": "POST:/api/v1/speaker-diarization/inference",            "permissionRequired": 69, "description": "Speaker-diarization inference (speaker-diarization.inference)" },
+    { "endpoint": "POST:/api/v1/audio-lang-detection/inference",           "permissionRequired": 70, "description": "Audio-lang-detection inference (audio-lang-detection.inference)" },
+    { "endpoint": "POST:/api/v1/pipeline/inference",                       "permissionRequired": 71, "description": "Pipeline inference (pipeline.inference)" },
+
+    { "endpoint": "POST:/api/v1/pii/redact",                               "permissionRequired": 90, "description": "PII redaction (pii_guard.inference)" },
+    { "endpoint": "GET:/api/v1/pii/admin/all-domains",                     "permissionRequired": 91, "description": "List PII domains (pii_guard.admin)" },
+    { "endpoint": "POST:/api/v1/pii/admin/deploy",                         "permissionRequired": 91, "description": "Deploy PII policy (pii_guard.admin)" },
+    { "endpoint": "POST:/api/v1/pii/admin/activate-domains",               "permissionRequired": 91, "description": "Activate PII domains (pii_guard.admin)" },
+    { "endpoint": "POST:/api/v1/pii/admin/domain",                         "permissionRequired": 91, "description": "Create PII domain (pii_guard.admin)" },
+    { "endpoint": "POST:/api/v1/pii/admin/generate-regex",                 "permissionRequired": 91, "description": "Generate regex for PII policy (pii_guard.admin)" },
+    { "endpoint": "GET:/api/v1/pii/admin/tenant-domains",                  "permissionRequired": 91, "description": "List tenant→PII-domain mappings (pii_guard.admin)" },
+    { "endpoint": "POST:/api/v1/pii/admin/tenant-domain",                  "permissionRequired": 91, "description": "Upsert tenant→PII-domain mapping (pii_guard.admin)" },
+    { "endpoint": "POST:/api/v1/pii/admin/tenant-domain/delete",           "permissionRequired": 91, "description": "Delete tenant→PII-domain mapping (pii_guard.admin)" },
+    { "endpoint": "GET:/api/v1/pii/admin/audit-logs",                      "permissionRequired": 92, "description": "List PII audit logs (pii_guard.audit.read)" },
+
+    { "endpoint": "GET:/api/v1/policy-service/pii-types",                  "permissionRequired": 105, "description": "List PII types (pii_types.read)" },
+    { "endpoint": "POST:/api/v1/policy-service/pii-types",                 "permissionRequired": 106, "description": "Create PII type (pii_types.create)" },
+    { "endpoint": "GET:/api/v1/policy-service/pii-types/{pii_type_id}",    "permissionRequired": 105, "description": "Get PII type (pii_types.read)" },
+    { "endpoint": "PUT:/api/v1/policy-service/pii-types/{pii_type_id}",    "permissionRequired": 107, "description": "Update PII type (pii_types.update)" },
+    { "endpoint": "DELETE:/api/v1/policy-service/pii-types/{pii_type_id}", "permissionRequired": 108, "description": "Delete PII type (pii_types.delete)" },
+    { "endpoint": "GET:/api/v1/policy-service/policies",                   "permissionRequired": 100, "description": "List policies (policies.read)" },
+    { "endpoint": "POST:/api/v1/policy-service/policies",                  "permissionRequired": 101, "description": "Create policy (policies.create)" },
+    { "endpoint": "GET:/api/v1/policy-service/policies/{policy_id}",       "permissionRequired": 100, "description": "Get policy (policies.read)" },
+    { "endpoint": "PUT:/api/v1/policy-service/policies/{policy_id}",       "permissionRequired": 102, "description": "Update policy (policies.update)" },
+    { "endpoint": "DELETE:/api/v1/policy-service/policies/{policy_id}",    "permissionRequired": 103, "description": "Delete policy (policies.delete)" },
+    { "endpoint": "PATCH:/api/v1/policy-service/policies/{policy_id}/status", "permissionRequired": 102, "description": "Toggle policy status (policies.update)" },
+    { "endpoint": "POST:/api/v1/policy-service/tenants/{tenant_id}/policies", "permissionRequired": 104, "description": "Assign policy to tenant (policies.assign)" },
+    { "endpoint": "GET:/api/v1/policy-service/tenants/{tenant_id}/policies", "permissionRequired": 100, "description": "List policies for tenant (policies.read)" },
+    { "endpoint": "DELETE:/api/v1/policy-service/tenants/{tenant_id}/policies/{policy_id}", "permissionRequired": 104, "description": "Unassign policy from tenant (policies.assign)" },
+    { "endpoint": "GET:/api/v1/policy-service/audit-logs",                 "permissionRequired": 109, "description": "List policy audit logs (audit_logs.read)" },
+    { "endpoint": "GET:/api/v1/policy-service/audit-logs/{log_id}",        "permissionRequired": 109, "description": "Get policy audit log (audit_logs.read)" },
+
+    { "endpoint": "GET:/api/v1/dashboard/metrics/{metric_name}",           "permissionRequired": 110, "description": "Get dashboard metric (metrics.read)" },
+    { "endpoint": "GET:/api/v1/dashboard/export",                          "permissionRequired": 112, "description": "Export dashboard data (dashboards.read)" },
+
+    { "endpoint": "GET:/api/v1/metrics/system",                            "permissionRequired": 110, "description": "System metrics (metrics.read)" },
+    { "endpoint": "GET:/api/v1/metrics/aggregated",                        "permissionRequired": 110, "description": "Aggregated metrics (metrics.read)" },
+    { "endpoint": "POST:/api/v1/metrics",                                  "permissionRequired": 111, "description": "Record metrics (metrics.export)" },
+
+    { "endpoint": "POST:/api/v1/telemetry/logs",                           "permissionRequired": 132, "description": "Record logs (telemetry.write)" },
+    { "endpoint": "POST:/api/v1/telemetry/traces",                         "permissionRequired": 132, "description": "Record traces (telemetry.write)" },
+
+    { "endpoint": "POST:/api/v1/alerts/definitions",                       "permissionRequired": 117, "description": "Create alert definition (alerts.create)" },
+    { "endpoint": "GET:/api/v1/alerts/definitions",                        "permissionRequired": 116, "description": "List alert definitions (alerts.read)" },
+    { "endpoint": "GET:/api/v1/alerts/definitions/{alert_id}",             "permissionRequired": 116, "description": "Get alert definition (alerts.read)" },
+    { "endpoint": "PUT:/api/v1/alerts/definitions/{alert_id}",             "permissionRequired": 118, "description": "Update alert definition (alerts.update)" },
+    { "endpoint": "DELETE:/api/v1/alerts/definitions/{alert_id}",          "permissionRequired": 119, "description": "Delete alert definition (alerts.delete)" },
+    { "endpoint": "PATCH:/api/v1/alerts/definitions/{alert_id}/enabled",   "permissionRequired": 118, "description": "Toggle alert definition enabled (alerts.update)" },
+    { "endpoint": "POST:/api/v1/alerts/receivers",                         "permissionRequired": 117, "description": "Create notification receiver (alerts.create)" },
+    { "endpoint": "GET:/api/v1/alerts/receivers",                          "permissionRequired": 116, "description": "List notification receivers (alerts.read)" },
+    { "endpoint": "GET:/api/v1/alerts/receivers/{receiver_id}",            "permissionRequired": 116, "description": "Get notification receiver (alerts.read)" },
+    { "endpoint": "PUT:/api/v1/alerts/receivers/{receiver_id}",            "permissionRequired": 118, "description": "Update notification receiver (alerts.update)" },
+    { "endpoint": "DELETE:/api/v1/alerts/receivers/{receiver_id}",         "permissionRequired": 119, "description": "Delete notification receiver (alerts.delete)" },
+    { "endpoint": "POST:/api/v1/alerts/routing-rules",                     "permissionRequired": 117, "description": "Create routing rule (alerts.create)" },
+    { "endpoint": "GET:/api/v1/alerts/routing-rules",                      "permissionRequired": 116, "description": "List routing rules (alerts.read)" },
+    { "endpoint": "GET:/api/v1/alerts/routing-rules/{rule_id}",            "permissionRequired": 116, "description": "Get routing rule (alerts.read)" },
+    { "endpoint": "PUT:/api/v1/alerts/routing-rules/{rule_id}",            "permissionRequired": 118, "description": "Update routing rule (alerts.update)" },
+    { "endpoint": "DELETE:/api/v1/alerts/routing-rules/{rule_id}",         "permissionRequired": 119, "description": "Delete routing rule (alerts.delete)" },
+    { "endpoint": "PATCH:/api/v1/alerts/routing-rules/timing",             "permissionRequired": 118, "description": "Update routing rule timing (alerts.update)" },
+    { "endpoint": "GET:/api/v1/alerts/history",                            "permissionRequired": 116, "description": "List alert history (alerts.read)" }
   ]
 }

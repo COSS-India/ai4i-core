@@ -4,73 +4,59 @@ Shared permission checking — NO service-local permission logic allowed.
 This is the single enforcement point for permission checks across all services.
 """
 
-import json
-import logging
 from typing import Optional
 
-logger = logging.getLogger(__name__)
-
-# Process-wide fallback map (endpoint key → permission id str). Auth-service and
+# Process-wide fallback map (endpoint key → permission id int). Auth-service and
 # inference apps populate this once at startup after resolving names → DB IDs.
-_GLOBAL_ENDPOINT_PERMISSION_MAP: dict[str, str] = {}
+_GLOBAL_ENDPOINT_PERMISSION_MAP: dict[str, int] = {}
 
 
-def set_global_endpoint_permission_map(mapping: dict[str, str]) -> None:
+def set_global_endpoint_permission_map(mapping: dict[str, int]) -> None:
     """Replace the process-wide endpoint → permission_id map."""
     _GLOBAL_ENDPOINT_PERMISSION_MAP.clear()
     _GLOBAL_ENDPOINT_PERMISSION_MAP.update(mapping)
 
 
-def get_global_endpoint_permission_map() -> dict[str, str]:
+def get_global_endpoint_permission_map() -> dict[str, int]:
     """Return a copy of the process-wide endpoint → permission_id map."""
     return dict(_GLOBAL_ENDPOINT_PERMISSION_MAP)
 
 
 class PermissionChecker:
-    """
-    Checks if a user/API key has the required permission for an endpoint.
+    """Checks if a user/API key has the required permission for an endpoint."""
 
-    Usage::
+    def __init__(self) -> None:
+        self._api_permission_map: dict[str, int] = {}
+        # Bucket index for path-template fallback: method -> seg_count -> [(seg_specs, perm)]
+        # where seg_specs is a pre-built list of (segment, is_placeholder) tuples.
+        # Lazily built and invalidated by (id, len) fingerprint of the source mapping.
+        self._template_index: dict[str, dict[int, list]] = {}
+        self._template_index_fp: tuple[int, int] = (0, 0)
 
-        checker = PermissionChecker()
-        await checker.load_api_permission_map("/path/to/api_permissions.json")
+    def _get_template_index(self, mapping: dict[str, str]) -> dict[str, dict[int, list]]:
+        fp = (id(mapping), len(mapping))
+        if fp == self._template_index_fp and self._template_index:
+            return self._template_index
 
-        # Check if user has permission for this endpoint
-        allowed = await checker.check(
-            method="POST",
-            path="/api/v1/asr/inference",
-            user_permission_ids=[1, 5, 12],
-        )
+        index: dict[str, dict[int, list]] = {}
+        for pattern, perm in mapping.items():
+            method, sep, path = pattern.partition(":")
+            if not sep:
+                continue
+            segs = path.rstrip("/").split("/")
+            seg_specs = [
+                (s, s.startswith("{") and s.endswith("}"))
+                for s in segs
+            ]
+            index.setdefault(method.upper(), {}) \
+                 .setdefault(len(segs), []) \
+                 .append((seg_specs, perm))
 
-        # Or check by permission name
-        allowed = checker.has_permission("asr.inference", user_permissions=["asr.inference", "tts.read"])
-    """
+        self._template_index = index
+        self._template_index_fp = fp
+        return index
 
-    def __init__(self, redis_client=None) -> None:
-        # redis_client retained for backward compatibility; endpoint maps are in-memory only.
-        self._redis = redis_client
-        self._api_permission_map: dict[str, str] = {}
-
-    async def load_api_permission_map(self, json_path: Optional[str] = None) -> None:
-        """
-        Load endpoint → required permission code mapping from JSON file (permission names).
-        Entries with null permissionRequired are public endpoints (skipped).
-
-        Does not persist to Redis — services that need numeric IDs must resolve via DB at startup.
-        """
-        if json_path:
-            import pathlib
-
-            data = json.loads(pathlib.Path(json_path).read_text())
-            mappings = data.get("apiMappings", [])
-            self._api_permission_map = {
-                m["endpoint"]: m["permissionRequired"]
-                for m in mappings
-                if "endpoint" in m and m.get("permissionRequired") is not None
-            }
-            logger.info("Loaded %d API permission mappings.", len(self._api_permission_map))
-
-    async def get_required_permission(self, method: str, path: str) -> Optional[str]:
+    async def get_required_permission(self, method: str, path: str) -> Optional[int]:
         """
         Look up the required permission for an endpoint.
         Supports exact match and path templates (e.g., /api-keys/{key_id}).
@@ -87,18 +73,16 @@ class PermissionChecker:
             return mapping[endpoint_key]
 
         # 2. Template match (for paths like /api-keys/{key_id})
+        # Bucketed by (method, seg_count) to avoid scanning the whole map.
         method_upper = method.upper()
         path_segments = path.rstrip("/").split("/")
-        for pattern, perm in mapping.items():
-            if not pattern.startswith(f"{method_upper}:"):
-                continue
-            pattern_path = pattern.split(":", 1)[1]
-            pattern_segments = pattern_path.rstrip("/").split("/")
-            if len(pattern_segments) != len(path_segments):
-                continue
+        candidates = self._get_template_index(mapping) \
+            .get(method_upper, {}) \
+            .get(len(path_segments), [])
+        for seg_specs, perm in candidates:
             if all(
-                ps == rs or (ps.startswith("{") and ps.endswith("}"))
-                for ps, rs in zip(pattern_segments, path_segments)
+                is_placeholder or ps == rs
+                for (ps, is_placeholder), rs in zip(seg_specs, path_segments)
             ):
                 return perm
 
@@ -108,28 +92,22 @@ class PermissionChecker:
     def check_endpoint_access(
         required: int | str | None,
         user_permission_ids: list[int] | None = None,
-        user_roles: list[str] | None = None,
     ) -> bool:
         """
         Shared endpoint permission check. Single source of truth.
 
-        Checks permission_id (int) from JWT against required endpoint permission.
-        ADMIN role bypasses all checks.
-
-        Returns True if access should be granted, False if denied.
+        Compares the required permission_id (int) against the caller's
+        permission_ids from their JWT claims. Endpoints without a required
+        permission are public. ADMIN role gets all permissions in data
+        (seeded), so no role-based bypass is needed here.
         """
         if required is None:
             return True
 
-        # Check by permission ID
         if isinstance(required, int) or (isinstance(required, str) and required.isdigit()):
             req_id = int(required)
             if user_permission_ids and req_id in user_permission_ids:
                 return True
-
-        # ADMIN bypass
-        if user_roles and "ADMIN" in user_roles:
-            return True
 
         return False
 
@@ -141,20 +119,6 @@ class PermissionChecker:
         return required in user_permissions
 
     @staticmethod
-    def has_permission_id(required_id: int, user_permission_ids: list[int]) -> bool:
-        """Check if the required permission ID is in the user's list."""
-        if not required_id:
-            return True
-        return required_id in user_permission_ids
-
-    @staticmethod
     def has_any_role(required_roles: list[str], user_roles: list[str]) -> bool:
         """Check if the user has any of the required roles."""
         return bool(set(required_roles) & set(user_roles))
-
-    @staticmethod
-    def is_superuser(claims) -> bool:
-        """Check if claims indicate a superuser (convention: 'ADMIN' role or superuser flag)."""
-        if hasattr(claims, "roles"):
-            return "ADMIN" in claims.roles
-        return False

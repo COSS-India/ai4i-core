@@ -1,314 +1,208 @@
 """
 Auth Roles and Permissions Seeder
-Seeds default roles and permissions for the auth system
+
+Fresh-seed semantics: TRUNCATE roles, permissions, role_permission CASCADE,
+then insert with explicit IDs and bump the sequence past the last id.
+
+ID convention (stable across services — api_permissions.json embeds these IDs):
+    1       'admin' sentinel — granted only to ADMIN role
+    2-10    reserved for future system-level permissions
+    11+     feature permissions, grouped in 10-wide buckets per resource family
+
+Roles (ADMIN, USER, GUEST, MODERATOR, TENANT ADMIN) are reseeded too. ADMIN
+gets every permission via CROSS JOIN; the other roles get explicit lists.
 """
 from infrastructure.databases.core.base_seeder import BaseSeeder
 
 
 class AuthRolesPermissionsSeeder(BaseSeeder):
-    """Seed default roles and permissions for auth_db"""
-    
-    database = 'auth_db'  # Target database
-    
+    """Seed roles and permissions for auth_db."""
+
+    database = 'auth_db'
+
     def run(self, adapter):
-        """
-        Run seeder - ensures only seeded data exists, removes external data.
-        
-        This seeder is IDEMPOTENT - safe to run multiple times:
-        - Preserves existing seeded roles/permissions (updates if changed)
-        - Only deletes roles/permissions NOT in the seed list (external data)
-        - Recreates role_permissions to match seed definitions exactly
-        
-        Running multiple times will:
-        - Keep all seeded roles/permissions intact
-        - Remove any external roles/permissions added outside this seeder
-        - Ensure role_permissions match the seed definitions
-        """
-        # Define roles to keep
         roles = [
-            ('ADMIN', 'Administrator with full system access'),
-            ('USER', 'Regular user with standard permissions'),
-            ('GUEST', 'Guest: own profile read (users.read) + ASR/NMT/TTS inference'),
-            ('MODERATOR', 'Moderator with elevated permissions'),
-            # Tenant administrator for a specific tenant. Has read access to
-            # services/models, can manage API keys, and assign roles, but
-            # cannot create/update/delete models or services.
+            ('ADMIN',        'Administrator with full system access'),
+            ('USER',         'Regular user with standard permissions'),
+            ('GUEST',        'Guest: own profile read + ASR/NMT/TTS inference'),
+            ('MODERATOR',    'Moderator with elevated management permissions'),
             ('TENANT ADMIN', 'Tenant administrator with tenant-scoped management permissions'),
         ]
-        role_names = [r[0] for r in roles]
-        
-        # Step 1: Delete role_permissions for roles not in our seed data
-        # (This must happen before deleting roles/permissions due to foreign key constraints)
-        # SAFE: Only deletes role_permissions for external roles, not seeded roles
-        role_names_quoted = "', '".join(role_names)
+
+        # (id, name, resource, action)
+        permissions = [
+            # System sentinel
+            (1,   'admin',                          'admin',              'admin'),
+
+            # Users (11-19)
+            (11,  'users.create',                   'users',              'create'),
+            (12,  'users.read',                     'users',              'read'),
+            (13,  'users.update',                   'users',              'update'),
+            (14,  'users.delete',                   'users',              'delete'),
+            (15,  'users.profile.read',             'users.profile',      'read'),
+            (16,  'users.profile.update',           'users.profile',      'update'),
+            (17,  'users.password.change',          'users.password',     'change'),
+
+            # Roles & permissions (20-29)
+            (20,  'roles.read',                     'roles',              'read'),
+            (21,  'roles.assign',                   'roles',              'assign'),
+            (22,  'roles.remove',                   'roles',              'remove'),
+            (23,  'permissions.read',               'permissions',        'read'),
+
+            # API keys (30-39)
+            (30,  'apiKey.create',                  'apiKey',             'create'),
+            (31,  'apiKey.read',                    'apiKey',             'read'),
+            (32,  'apiKey.update',                  'apiKey',             'update'),
+            (33,  'apiKey.delete',                  'apiKey',             'delete'),
+            (34,  'apiKey.read.all',                'apiKey',             'read.all'),
+
+            # Tenants (40-49)
+            (40,  'tenant.create',                  'tenant',             'create'),
+            (41,  'tenant.read',                    'tenant',             'read'),
+            (42,  'tenant.update',                  'tenant',             'update'),
+            (44,  'tenant.users.read',              'tenant.users',       'read'),
+            (45,  'tenant.users.create',            'tenant.users',       'create'),
+            (46,  'tenant.users.update',            'tenant.users',       'update'),
+            (47,  'tenant.users.delete',            'tenant.users',       'delete'),
+
+            # Services & models (50-59)
+            (50,  'service.create',                 'service',            'create'),
+            (51,  'service.read',                   'service',            'read'),
+            (52,  'service.update',                 'service',            'update'),
+            (53,  'service.delete',                 'service',            'delete'),
+            (54,  'model.create',                   'model',              'create'),
+            (55,  'model.read',                     'model',              'read'),
+            (56,  'model.update',                   'model',              'update'),
+            (57,  'model.delete',                   'model',              'delete'),
+
+            # Inference (60-71) — one per service
+            (60,  'nmt.inference',                  'nmt',                  'inference'),
+            (61,  'asr.inference',                  'asr',                  'inference'),
+            (62,  'tts.inference',                  'tts',                  'inference'),
+            (63,  'llm.inference',                  'llm',                  'inference'),
+            (64,  'ner.inference',                  'ner',                  'inference'),
+            (65,  'ocr.inference',                  'ocr',                  'inference'),
+            (66,  'transliteration.inference',      'transliteration',      'inference'),
+            (67,  'language-detection.inference',   'language-detection',   'inference'),
+            (68,  'language-diarization.inference', 'language-diarization', 'inference'),
+            (69,  'speaker-diarization.inference',  'speaker-diarization',  'inference'),
+            (70,  'audio-lang-detection.inference', 'audio-lang-detection', 'inference'),
+            (71,  'pipeline.inference',             'pipeline',             'inference'),
+
+            # Inference list/metadata (80-85) — voices/models/languages endpoints
+            (80,  'nmt.read',                       'nmt',                  'read'),
+            (81,  'asr.read',                       'asr',                  'read'),
+            (82,  'tts.read',                       'tts',                  'read'),
+            (83,  'llm.read',                       'llm',                  'read'),
+            (84,  'transliteration.read',           'transliteration',      'read'),
+            (85,  'language-detection.read',        'language-detection',   'read'),
+
+            # PII Guard (90-99)
+            (90,  'pii_guard.inference',            'pii_guard',            'inference'),
+            (91,  'pii_guard.admin',                'pii_guard',            'admin'),
+            (92,  'pii_guard.audit.read',           'pii_guard.audit',      'read'),
+
+            # Policies / PII types / audit (100-109)
+            (100, 'policies.read',                  'policies',             'read'),
+            (101, 'policies.create',                'policies',             'create'),
+            (102, 'policies.update',                'policies',             'update'),
+            (103, 'policies.delete',                'policies',             'delete'),
+            (104, 'policies.assign',                'policies',             'assign'),
+            (105, 'pii_types.read',                 'pii_types',            'read'),
+            (106, 'pii_types.create',               'pii_types',            'create'),
+            (107, 'pii_types.update',               'pii_types',            'update'),
+            (108, 'pii_types.delete',               'pii_types',            'delete'),
+            (109, 'audit_logs.read',                'audit_logs',           'read'),
+
+            # Dashboards / alerts / metrics (110-119)
+            (110, 'metrics.read',                   'metrics',              'read'),
+            (111, 'metrics.export',                 'metrics',              'export'),
+            (112, 'dashboards.read',                'dashboards',           'read'),
+            (113, 'dashboards.create',              'dashboards',           'create'),
+            (114, 'dashboards.update',              'dashboards',           'update'),
+            (115, 'dashboards.delete',              'dashboards',           'delete'),
+            (116, 'alerts.read',                    'alerts',               'read'),
+            (117, 'alerts.create',                  'alerts',               'create'),
+            (118, 'alerts.update',                  'alerts',               'update'),
+            (119, 'alerts.delete',                  'alerts',               'delete'),
+
+            # Configs (120-129)
+            (120, 'configs.read',                   'configs',              'read'),
+            (121, 'configs.create',                 'configs',              'create'),
+            (122, 'configs.update',                 'configs',              'update'),
+            (123, 'configs.delete',                 'configs',              'delete'),
+
+            # Telemetry / logs / traces (130-139)
+            (130, 'logs.read',                      'logs',                 'read'),
+            (131, 'traces.read',                    'traces',               'read'),
+            (132, 'telemetry.write',                'telemetry',            'write'),
+        ]
+
+        # 1) Wipe roles, permissions, role_permission (and anything FK-cascading off them).
         adapter.execute(
-            f"""
-            DELETE FROM role_permissions
-            WHERE role_id NOT IN (SELECT id FROM roles WHERE name IN ('{role_names_quoted}'))
-            """
+            "TRUNCATE TABLE role_permission, permissions, roles RESTART IDENTITY CASCADE;"
         )
-        
-        # Step 2: Delete roles that are NOT in our seed list (external roles only)
-        # SAFE: Only deletes roles not in seed list. Seeded roles are preserved in Step 3.
-        adapter.execute(
-            f"""
-            DELETE FROM roles
-            WHERE name NOT IN ('{role_names_quoted}')
-            """
-        )
-        
-        # Step 3: Insert/update roles (preserves existing seeded roles, updates if changed)
-        # SAFE: ON CONFLICT DO UPDATE ensures seeded roles are never deleted, only updated
+
+        # 2) Insert roles.
         for name, description in roles:
             adapter.execute(
-                """
-                INSERT INTO roles (name, description)
-                VALUES (:name, :description)
-                ON CONFLICT (name) DO UPDATE
-                  SET description = EXCLUDED.description
-                """,
-                {'name': name, 'description': description}
+                "INSERT INTO roles (name, description) VALUES (:name, :description)",
+                {'name': name, 'description': description},
             )
-        print(f"    ✓ Seeded {len(roles)} roles (removed external roles)")
-        
-        # Define permissions to keep - mirror infrastructure/postgres/load-seed-data.sh
-        permissions = [
-            # User management
-            ('users.create', 'users', 'create'),
-            ('users.read', 'users', 'read'),
-            ('users.update', 'users', 'update'),
-            ('users.delete', 'users', 'delete'),
+        print(f"    ✓ Seeded {len(roles)} roles")
 
-            # Configuration
-            ('configs.create', 'configs', 'create'),
-            ('configs.read', 'configs', 'read'),
-            ('configs.update', 'configs', 'update'),
-            ('configs.delete', 'configs', 'delete'),
-
-            # Metrics
-            ('metrics.read', 'metrics', 'read'),
-            ('metrics.export', 'metrics', 'export'),
-
-            # Alerts
-            ('alerts.create', 'alerts', 'create'),
-            ('alerts.read', 'alerts', 'read'),
-            ('alerts.update', 'alerts', 'update'),
-            ('alerts.delete', 'alerts', 'delete'),
-
-            # Dashboards
-            ('dashboards.create', 'dashboards', 'create'),
-            ('dashboards.read', 'dashboards', 'read'),
-            ('dashboards.update', 'dashboards', 'update'),
-            ('dashboards.delete', 'dashboards', 'delete'),
-
-            # API Key Management
-            ('apiKey.create', 'apiKey', 'create'),
-            ('apiKey.read', 'apiKey', 'read'),
-            ('apiKey.delete', 'apiKey', 'delete'),
-            ('apiKey.update', 'apiKey', 'update'),
-
-            # Service Management
-            ('service.create', 'service', 'create'),
-            ('service.delete', 'service', 'delete'),
-            ('service.update', 'service', 'update'),
-            ('service.read', 'service', 'read'),
-
-            # Model Management
-            ('model.create', 'model', 'create'),
-            ('model.read', 'model', 'read'),
-            ('model.update', 'model', 'update'),
-            ('model.delete', 'model', 'delete'),
-
-            # Role Management
-            ('roles.assign', 'roles', 'assign'),
-            ('roles.remove', 'roles', 'remove'),
-            ('roles.read', 'roles', 'read'),
-
-            # AI Services (task permissions)
-            ('asr.inference', 'asr', 'inference'),
-            ('asr.read', 'asr', 'read'),
-            ('tts.inference', 'tts', 'inference'),
-            ('tts.read', 'tts', 'read'),
-            ('nmt.inference', 'nmt', 'inference'),
-            ('nmt.read', 'nmt', 'read'),
-
-            ('audio-lang-detection.read', 'audio-lang-detection', 'read'),
-            ('audio-lang-detection.inference', 'audio-lang-detection', 'inference'),
-
-            ('language-detection.read', 'language-detection', 'read'),
-            ('language-detection.inference', 'language-detection', 'inference'),
-
-            ('language-diarization.read', 'language-diarization', 'read'),
-            ('language-diarization.inference', 'language-diarization', 'inference'),
-
-            ('ner.inference', 'ner', 'inference'),
-
-            ('ocr.read', 'ocr', 'read'),
-            ('ocr.inference', 'ocr', 'inference'),
-
-            ('speaker-diarization.read', 'speaker-diarization', 'read'),
-            ('speaker-diarization.inference', 'speaker-diarization', 'inference'),
-
-            ('transliteration.read', 'transliteration', 'read'),
-            ('transliteration.inference', 'transliteration', 'inference'),
-
-            ('pipeline.read', 'pipeline', 'read'),
-            ('pipeline.inference', 'pipeline', 'inference'),
-
-            ('llm.read', 'llm', 'read'),
-            ('llm.inference', 'llm', 'inference'),
-
-           ('model-management.read', 'model-management', 'read'),
-           ('model-management.inference', 'model-management', 'inference'),
-
-            # Observability
-            ('logs.read', 'logs', 'read'),
-            ('traces.read', 'traces', 'read'),
-
-            # Tenant management (consolidated into auth-service)
-            ('tenant.create',       'tenant',       'create'),
-            ('tenant.read',         'tenant',       'read'),
-            ('tenant.update',       'tenant',       'update'),
-            ('tenant.users.read',   'tenant.users', 'read'),
-            ('tenant.users.update', 'tenant.users', 'update'),
-
-            # PII Guard
-            ('pii_guard.inference', 'pii_guard', 'inference'),
-            ('pii_guard.admin', 'pii_guard', 'admin')
-
-        ]
-        permission_names = [p[0] for p in permissions]
-        
-        # Step 4: Delete permissions that are NOT in our seed list (external permissions only)
-        # SAFE: Only deletes permissions not in seed list. Seeded permissions are preserved in Step 5.
-        permission_names_quoted = "', '".join(permission_names)
-        adapter.execute(
-            f"""
-            DELETE FROM permissions
-            WHERE name NOT IN ('{permission_names_quoted}')
-            """
-        )
-        
-        # Step 5: Insert/update permissions (preserves existing seeded permissions, updates if changed)
-        # SAFE: ON CONFLICT DO UPDATE ensures seeded permissions are never deleted, only updated
-        for name, resource, action in permissions:
+        # 3) Insert permissions with explicit IDs, then bump sequence past max id.
+        for pid, name, resource, action in permissions:
             adapter.execute(
                 """
-                INSERT INTO permissions (name, resource, action)
-                VALUES (:name, :resource, :action)
-                ON CONFLICT (name) DO UPDATE
-                  SET resource = EXCLUDED.resource,
-                      action   = EXCLUDED.action
+                INSERT INTO permissions (id, name, resource, action)
+                VALUES (:id, :name, :resource, :action)
                 """,
-                {'name': name, 'resource': resource, 'action': action}
+                {'id': pid, 'name': name, 'resource': resource, 'action': action},
             )
-        print(f"    ✓ Seeded {len(permissions)} permissions (removed external permissions)")
-        
-        # Step 6: Delete role_permissions for permissions not in our seed data
-        # SAFE: Only deletes role_permissions referencing external permissions
-        permission_names_quoted = "', '".join(permission_names)
+        max_id = max(p[0] for p in permissions)
+        # Use pg_get_serial_sequence so this works regardless of how the
+        # column was created (SERIAL, IDENTITY, or autoincrement Integer).
         adapter.execute(
-            f"""
-            DELETE FROM role_permissions
-            WHERE permission_id NOT IN (
-                SELECT id FROM permissions WHERE name IN ('{permission_names_quoted}')
-            )
+            f"SELECT setval(pg_get_serial_sequence('permissions', 'id'), {max_id});"
+        )
+        print(f"    ✓ Seeded {len(permissions)} permissions (max id = {max_id})")
+
+        # 4) Role grants.
+
+        # ADMIN: every permission (including the `admin` sentinel id=1).
+        adapter.execute(
+            """
+            INSERT INTO role_permission (role_id, permission_id)
+            SELECT r.id, p.id
+            FROM roles r CROSS JOIN permissions p
+            WHERE r.name = 'ADMIN'
+            ON CONFLICT (role_id, permission_id) DO NOTHING
             """
         )
-        
-        # ------------------------------------------------------------------
-        # ROLE_PERMISSIONS: mirror the logic from load-seed-data.sh
-        # Step 7: Delete all existing role_permissions for our roles (clean slate for reseeding)
-        # SAFE: This ensures role_permissions match seed definitions exactly.
-        #       Seeded roles/permissions are preserved, only role_permissions are reset.
-        # ------------------------------------------------------------------
-        role_names_quoted = "', '".join(role_names)
-        adapter.execute(
-            f"""
-            DELETE FROM role_permissions
-            WHERE role_id IN (SELECT id FROM roles WHERE name IN ('{role_names_quoted}'))
-            """
-        )
-        
-        # Step 8: Insert role_permissions for our roles
-        # ADMIN: explicit list of permissions
+        print("    ✓ ADMIN: granted all permissions")
+
+        # USER: own-profile management + inference access.
         adapter.execute(
             """
-            INSERT INTO role_permissions (role_id, permission_id)
+            INSERT INTO role_permission (role_id, permission_id)
             SELECT r.id, p.id
             FROM roles r
             JOIN permissions p ON p.name IN (
-              'users.create',
-              'users.read',
-              'users.update',
-              'users.delete',
-              'configs.create',
-              'configs.read',
-              'configs.update',
-              'configs.delete',
-              'metrics.read',
-              'metrics.export',
-              'alerts.create',
-              'alerts.read',
-              'alerts.update',
-              'alerts.delete',
-              'dashboards.create',
-              'dashboards.read',
-              'dashboards.update',
-              'dashboards.delete',
+              'users.profile.read',
+              'users.profile.update',
+              'users.password.change',
               'apiKey.create',
               'apiKey.read',
-              'apiKey.delete',
               'apiKey.update',
-              'service.create',
-              'service.delete',
-              'service.update',
-              'service.read',
-              'model.create',
-              'model.read',
-              'model.update',
-              'model.delete',
-              'roles.assign',
-              'roles.remove',
-              'roles.read',
-              'pii_guard.admin',
-              'pii_guard.inference',
-              'tenant.create',
-              'tenant.read',
-              'tenant.update',
-              'tenant.users.read',
-              'tenant.users.update'
-            )
-            WHERE r.name = 'ADMIN'
-            ON CONFLICT (role_id, permission_id) DO NOTHING;
-            """
-        )
-        print("    ✓ Assigned permissions to ADMIN role (from seed script)")
-
-        # USER: same as load-seed-data.sh (users.read, users.update)
-        adapter.execute(
-            """
-            DELETE FROM role_permissions
-            WHERE role_id IN (SELECT id FROM roles WHERE name = 'USER');
-            """
-        )
-        adapter.execute(
-            """
-            INSERT INTO role_permissions (role_id, permission_id)
-            SELECT r.id, p.id
-            FROM roles r
-            JOIN permissions p ON p.name IN (
-              'users.read',
-              'users.update',
-              'service.read',
               'apiKey.delete',
+              'service.read',
+              'model.read',
               'asr.inference',
               'audio-lang-detection.inference',
               'language-detection.inference',
               'language-diarization.inference',
               'llm.inference',
-              'model-management.inference',
-              
               'ner.inference',
               'nmt.inference',
               'ocr.inference',
@@ -319,25 +213,19 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'tts.inference'
             )
             WHERE r.name = 'USER'
-            ON CONFLICT (role_id, permission_id) DO NOTHING;
+            ON CONFLICT (role_id, permission_id) DO NOTHING
             """
         )
-        print("    ✓ Assigned permissions to USER role (from seed script)")
+        print("    ✓ USER: granted profile + inference permissions")
 
-        # GUEST: users.read + roles.read + service.read (MM POST /services/{id} for inference) + ASR/NMT/TTS inference
+        # GUEST: minimal — own profile read + ASR/NMT/TTS inference only.
         adapter.execute(
             """
-            DELETE FROM role_permissions
-            WHERE role_id IN (SELECT id FROM roles WHERE name = 'GUEST');
-            """
-        )
-        adapter.execute(
-            """
-            INSERT INTO role_permissions (role_id, permission_id)
+            INSERT INTO role_permission (role_id, permission_id)
             SELECT r.id, p.id
             FROM roles r
             JOIN permissions p ON p.name IN (
-              'users.read',
+              'users.profile.read',
               'roles.read',
               'service.read',
               'asr.inference',
@@ -345,21 +233,15 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'tts.inference'
             )
             WHERE r.name = 'GUEST'
-            ON CONFLICT (role_id, permission_id) DO NOTHING;
+            ON CONFLICT (role_id, permission_id) DO NOTHING
             """
         )
-        print("    ✓ Assigned permissions to GUEST role (from seed script)")
+        print("    ✓ GUEST: granted minimal inference permissions")
 
-        # MODERATOR: explicit list from load-seed-data.sh
+        # MODERATOR: full management except tenant-level ops and policy admin.
         adapter.execute(
             """
-            DELETE FROM role_permissions
-            WHERE role_id IN (SELECT id FROM roles WHERE name = 'MODERATOR');
-            """
-        )
-        adapter.execute(
-            """
-            INSERT INTO role_permissions (role_id, permission_id)
+            INSERT INTO role_permission (role_id, permission_id)
             SELECT r.id, p.id
             FROM roles r
             JOIN permissions p ON p.name IN (
@@ -367,25 +249,19 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'users.read',
               'users.update',
               'users.delete',
-              'configs.create',
-              'configs.read',
-              'configs.update',
-              'configs.delete',
-              'metrics.read',
-              'metrics.export',
-              'alerts.create',
-              'alerts.read',
-              'alerts.update',
-              'alerts.delete',
-              'dashboards.create',
-              'dashboards.read',
-              'dashboards.update',
-              'dashboards.delete',
+              'users.profile.read',
+              'users.profile.update',
+              'users.password.change',
+              'roles.read',
+              'permissions.read',
+              'apiKey.create',
+              'apiKey.read',
+              'apiKey.update',
               'apiKey.delete',
               'service.create',
-              'service.delete',
-              'service.update',
               'service.read',
+              'service.update',
+              'service.delete',
               'model.create',
               'model.read',
               'model.update',
@@ -395,8 +271,6 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'language-detection.inference',
               'language-diarization.inference',
               'llm.inference',
-              'model-management.inference',
-              
               'ner.inference',
               'nmt.inference',
               'ocr.inference',
@@ -405,52 +279,57 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'speaker-diarization.inference',
               'transliteration.inference',
               'tts.inference',
+              'configs.read',
+              'configs.create',
+              'configs.update',
+              'configs.delete',
+              'metrics.read',
+              'metrics.export',
+              'alerts.read',
+              'alerts.create',
+              'alerts.update',
+              'alerts.delete',
+              'dashboards.read',
+              'dashboards.create',
+              'dashboards.update',
+              'dashboards.delete',
               'tenant.read',
               'tenant.users.read',
               'tenant.users.update'
             )
             WHERE r.name = 'MODERATOR'
-            ON CONFLICT (role_id, permission_id) DO NOTHING;
+            ON CONFLICT (role_id, permission_id) DO NOTHING
             """
         )
-        print("    ✓ Assigned permissions to MODERATOR role (from seed script)")
+        print("    ✓ MODERATOR: granted management permissions")
 
-        # TENANT ADMIN: tenant-scoped management permissions + inference access.
-        # - Can create/read/update users, read services and models
-        # - Can create/read/update/delete API keys
-        # - Can assign roles (but not remove)
-        # - Cannot create/update/delete/publish/unpublish models or services
+        # TENANT ADMIN: tenant-scoped management + inference.
         adapter.execute(
             """
-            DELETE FROM role_permissions
-            WHERE role_id IN (SELECT id FROM roles WHERE name = 'TENANT ADMIN');
-            """
-        )
-        adapter.execute(
-            """
-            INSERT INTO role_permissions (role_id, permission_id)
+            INSERT INTO role_permission (role_id, permission_id)
             SELECT r.id, p.id
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.create',
               'users.read',
               'users.update',
-              'service.read',
-              'model.read',
+              'users.profile.read',
+              'users.profile.update',
+              'users.password.change',
+              'roles.read',
+              'roles.assign',
               'apiKey.create',
               'apiKey.read',
               'apiKey.update',
               'apiKey.delete',
-              'roles.assign',
-              'roles.read',
+              'service.read',
+              'model.read',
               'pii_guard.admin',
               'asr.inference',
               'audio-lang-detection.inference',
               'language-detection.inference',
               'language-diarization.inference',
               'llm.inference',
-              'model-management.inference',
-              
               'ner.inference',
               'nmt.inference',
               'ocr.inference',
@@ -463,7 +342,7 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
               'tenant.users.update'
             )
             WHERE r.name = 'TENANT ADMIN'
-            ON CONFLICT (role_id, permission_id) DO NOTHING;
+            ON CONFLICT (role_id, permission_id) DO NOTHING
             """
         )
-        print("    ✓ Assigned permissions to TENANT ADMIN role (from seed script)")
+        print("    ✓ TENANT ADMIN: granted tenant-scoped management + inference")
