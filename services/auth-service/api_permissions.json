@@ -772,6 +772,26 @@
       "description": "Update API key"
     },
     {
+      "endpoint": "GET:/api/v1/auth/oauth2/providers",
+      "permissionRequired": null,
+      "description": "List configured OAuth providers"
+    },
+    {
+      "endpoint": "GET:/api/v1/auth/oauth2/{provider}/authorize",
+      "permissionRequired": null,
+      "description": "Begin OAuth login (provider redirect)"
+    },
+    {
+      "endpoint": "GET:/api/v1/auth/oauth2/{provider}/callback",
+      "permissionRequired": null,
+      "description": "OAuth provider redirect target"
+    },
+    {
+      "endpoint": "POST:/api/v1/auth/oauth2/exchange",
+      "permissionRequired": null,
+      "description": "Exchange one-time code for JWT pair"
+    },
+    {
       "endpoint": "POST:/api/v1/asr/inference",
       "permissionRequired": "asr.inference",
       "description": "ASR inference"
