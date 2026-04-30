@@ -63,8 +63,9 @@ class PlatformResponseMiddleware(BaseHTTPMiddleware):
             return response
 
         # Buffer the error body for transformation.
-        await response.render()
-        body = response.body
+        body = b""
+        async for chunk in response.body_iterator:
+            body += chunk
 
         try:
             content = json.loads(body)
