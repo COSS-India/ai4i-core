@@ -40,9 +40,8 @@ from ai4icore_core.auth.permission_checker import set_global_endpoint_permission
 from ai4icore_core.env import app_env
 from ai4icore_core.exceptions import register_exception_handlers
 from ai4icore_core.platform_core import (
-    AuthContextMiddleware,
-    ModelManagementConfig,
-    ModelManagementPlugin,
+    PlatformCoreConfig,
+    PlatformCorePlugin,
 )
 
 from .rate_limit import RateLimitMiddleware
@@ -419,11 +418,10 @@ def create_inference_app(
     except Exception:
         redis_sync_client = None
 
-    # ── Model Management Plugin ──
+    # ── Platform Core Plugin ──
     try:
-        mm_config = ModelManagementConfig(
-            model_management_service_url=app_env.model_management_service_url,
-            model_management_api_key=app_env.model_management_service_api_key,
+        mm_config = PlatformCoreConfig(
+            platform_core_service_url=app_env.model_management_service_url,
             cache_ttl_seconds=300,
             triton_endpoint_cache_ttl=300,
             default_triton_endpoint="",
@@ -432,14 +430,11 @@ def create_inference_app(
             middleware_paths=[config.api_prefix],
             request_timeout=10.0,
         )
-        ModelManagementPlugin(config=mm_config).register_plugin(
+        PlatformCorePlugin(config=mm_config).register_plugin(
             application, redis_client=redis_sync_client
         )
-        application.add_middleware(
-            AuthContextMiddleware, path_prefixes=[config.api_prefix]
-        )
     except Exception as e:
-        logger.warning("Model Management plugin failed: %s", e)
+        logger.warning("Platform Core plugin failed: %s", e)
 
     # ── CORS ──
     application.add_middleware(
