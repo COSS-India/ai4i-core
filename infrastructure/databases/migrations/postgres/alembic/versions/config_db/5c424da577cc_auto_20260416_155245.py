@@ -1,7 +1,7 @@
 """auto_20260416_155245
 
 Revision ID: 5c424da577cc
-Revises: 
+Revises:
 Create Date: 2026-04-16 15:52:45.955962
 
 """
@@ -53,6 +53,8 @@ def upgrade() -> None:
     sa.Column('rollout_percentage', sa.String(length=255), nullable=True),
     sa.Column('target_users', sa.JSON(), nullable=True),
     sa.Column('environment', sa.String(length=50), nullable=False),
+    sa.Column('unleash_flag_name', sa.String(length=255), nullable=True),
+    sa.Column('last_synced_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('evaluation_count', sa.Integer(), nullable=True),
     sa.Column('last_evaluated_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
