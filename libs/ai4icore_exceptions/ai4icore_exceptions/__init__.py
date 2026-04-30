@@ -60,7 +60,13 @@ from .exceptions import (
 )
 
 from .handlers import register_exception_handlers
-from .responses import success_response, error_response
+from .responses import (
+    success_response,
+    error_response,
+    generate_request_id,
+    platform_success_response,
+    platform_error_response,
+)
 
 __all__ = [
     # Base
@@ -108,7 +114,11 @@ __all__ = [
     "ErrorResponse",
     # Handlers
     "register_exception_handlers",
-    # Response envelope
+    # Response envelope (inference / legacy format)
     "success_response",
     "error_response",
+    # Platform management format (user/tenant/model/service routes)
+    "generate_request_id",
+    "platform_success_response",
+    "platform_error_response",
 ]

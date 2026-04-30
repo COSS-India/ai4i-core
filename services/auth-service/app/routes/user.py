@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import UserNotFoundError
-from app.core.responses import success_response
+from app.core.responses import platform_success_response
 from app.dependencies.auth import get_current_active_user
 from app.dependencies.permissions import require_any_role
 from app.dependencies.tenant_scope import enforce_target_user_same_tenant
@@ -24,15 +24,18 @@ router = APIRouter(prefix="/auth", tags=["Users"])
 
 @router.get("/me")
 async def get_me(
+    request: Request,
     current_user: User = Depends(get_current_active_user),
     svc: UserService = Depends(get_user_service),
 ):
     profile = await svc.get_user_profile(current_user)
-    return success_response(data=profile)
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=profile, request_id=request_id)
 
 
 @router.put("/me")
 async def update_me(
+    request: Request,
     body: UserUpdate,
     current_user: User = Depends(get_current_active_user),
     svc: UserService = Depends(get_user_service),
@@ -45,7 +48,8 @@ async def update_me(
     refreshed_user = await svc.get_user_by_id(current_user.id)
     # Fallback to the original user object if for some reason the reload fails.
     profile = await svc.get_user_profile(refreshed_user or current_user)
-    return success_response(data=profile)
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=profile, request_id=request_id)
 
 
 @router.get("/users")
@@ -62,7 +66,8 @@ async def list_users(
         UserListResponse.model_validate(u, from_attributes=True).model_dump(mode="json")
         for u in users
     ]
-    return success_response(data=items)
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=items, request_id=request_id)
 
 
 @router.get("/users/{user_id}")
@@ -86,4 +91,5 @@ async def get_user(
     if not user:
         raise UserNotFoundError()
     profile = await svc.get_user_profile(user)
-    return success_response(data=profile)
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=profile, request_id=request_id)

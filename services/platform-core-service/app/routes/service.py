@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.core.exceptions import ValidationError
-from app.core.responses import success_response
+from app.core.responses import platform_success_response
 from app.dependencies.auth import get_user_id
 from app.dependencies.services import get_service_service
 from app.schemas.enums import TaskTypeEnum
@@ -41,6 +41,7 @@ def _resolve_task_type(task_type: Optional[str]) -> Optional[str]:
     summary="List Try-It Services",
 )
 async def list_try_it_services(
+    request: Request,
     task_type: str = Query(
         ...,
         description="Task type. Currently supports 'nmt'.",
@@ -53,14 +54,16 @@ async def list_try_it_services(
             message="Try-it is not available for this task type.",
             code="TRY_IT_UNSUPPORTED",
         )
-    items, total = await svc.list_services(
+    items, _ = await svc.list_services(
         task_type=TaskTypeEnum.nmt.value, is_published=True
     )
-    return success_response(data=items, meta={"total": total})
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=items, request_id=request_id)
 
 
 @router.get("")
 async def list_services(
+    request: Request,
     response: Response,
     task_type: Optional[str] = Query(
         None, description="Filter by task type."
@@ -94,20 +97,20 @@ async def list_services(
         limit=limit,
     )
     response.headers["X-Total-Count"] = str(total)
-    return success_response(
-        data=items,
-        meta={"total": total, "offset": offset, "limit": limit},
-    )
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=items, request_id=request_id)
 
 
 @router.get("/{service_id:path}", summary="Retrieve Service")
 async def view_service(
+    request: Request,
     service_id: str,
     svc: ServiceService = Depends(get_service_service),
 ):
     """Retrieve full service details."""
     data = await svc.get_service_detail(service_id)
-    return success_response(data=data)
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=data, request_id=request_id)
 
 
 @router.post("")
@@ -119,9 +122,11 @@ async def create_service(
     """Create a new service."""
     user_id = get_user_id(request)
     service_id = await svc.create_service(payload, created_by=user_id)
-    return success_response(
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(
         data={"serviceId": service_id, "name": payload.name},
-        meta={"message": f"Service '{payload.name}' created successfully."},
+        request_id=request_id,
+        message=f"Service '{payload.name}' created successfully.",
     )
 
 
@@ -134,20 +139,25 @@ async def update_service(
     """Update an existing service."""
     user_id = get_user_id(request)
     await svc.update_service(payload, updated_by=user_id)
-    return success_response(
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(
         data={"serviceId": payload.serviceId},
-        meta={"message": f"Service '{payload.serviceId}' updated successfully."},
+        request_id=request_id,
+        message=f"Service '{payload.serviceId}' updated successfully.",
     )
 
 
 @router.delete("/{service_id:path}")
 async def delete_service(
+    request: Request,
     service_id: str,
     svc: ServiceService = Depends(get_service_service),
 ):
     """Delete a service by its hash-generated service ID."""
     await svc.delete_service(service_id)
-    return success_response(
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(
         data={"serviceId": service_id},
-        meta={"message": f"Service '{service_id}' deleted successfully."},
+        request_id=request_id,
+        message=f"Service '{service_id}' deleted successfully.",
     )

@@ -35,6 +35,7 @@ from app.core.exceptions import register_exception_handlers
 from app.core.redis import close_redis, get_redis_client, init_redis
 from app.core.security import key_manager
 from app.dependencies.auth import get_jwt_verifier, init_jwt_verifier
+from app.middleware.platform_response import PlatformResponseMiddleware
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.models.role import Permission
 from app.routes import api_router
@@ -228,6 +229,9 @@ def create_app() -> FastAPI:
         jwt_verifier_factory=get_jwt_verifier,
         require_auth=False,  # Context extraction only — route deps enforce auth
     )
+    # Outermost: assigns platform_request_id to request.state for user/tenant
+    # routes and transforms error responses to the platform management format.
+    app.add_middleware(PlatformResponseMiddleware)
 
     # API versioning — shared middleware for version headers + deprecation
     from app.routes import versioning

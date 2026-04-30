@@ -24,6 +24,7 @@ from app.core.config import settings
 from app.core.database import close_database, init_database
 from app.core.exceptions import register_exception_handlers
 from app.core.redis import close_redis, init_redis
+from app.middleware.platform_response import PlatformResponseMiddleware
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.routes import api_router, versioning
 
@@ -104,6 +105,9 @@ def create_app() -> FastAPI:
 
     # ── Middleware ──
     app.add_middleware(RequestLoggingMiddleware)
+    # Outermost: assigns platform_request_id to request.state for model/service
+    # routes and transforms error responses to the platform management format.
+    app.add_middleware(PlatformResponseMiddleware)
 
     # ── API versioning headers ──
     versioning.register(app)

@@ -5,12 +5,12 @@ import re
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.exceptions import EntityNotFoundError
-from app.core.responses import success_response
+from app.core.responses import platform_success_response
 from app.dependencies.auth import get_current_active_user
 from app.core.roles import Roles
 from app.dependencies.services import get_auth_service
@@ -97,6 +97,7 @@ def _user_response(user: User) -> dict:
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_tenant(
+    request: Request,
     body: TenantCreate,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_active_user),
@@ -149,11 +150,13 @@ async def create_tenant(
     # (created_at, etc.) without re-querying.
     await db.refresh(tenant)
 
-    return success_response(data=_tenant_response(tenant))
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=_tenant_response(tenant), request_id=request_id, status_code=201)
 
 
 @router.get("")
 async def list_tenants(
+    request: Request,
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     status_filter: Optional[TenantStatus] = Query(None, alias="status"),
@@ -168,11 +171,13 @@ async def list_tenants(
         tenants = [own] if own and (status_filter is None or own.status == status_filter) else []
     else:
         tenants = []
-    return success_response(data=[_tenant_response(t) for t in tenants])
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=[_tenant_response(t) for t in tenants], request_id=request_id)
 
 
 @router.get("/{tenant_id}")
 async def get_tenant(
+    request: Request,
     tenant_id: int,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -181,11 +186,13 @@ async def get_tenant(
     tenant = await TenantRepository(db).get_by_id(tenant_id)
     if not tenant:
         raise EntityNotFoundError(f"Tenant {tenant_id}")
-    return success_response(data=_tenant_response(tenant))
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=_tenant_response(tenant), request_id=request_id)
 
 
 @router.patch("/{tenant_id}")
 async def update_tenant(
+    request: Request,
     tenant_id: int,
     body: TenantUpdate,
     current_user: User = Depends(get_current_active_user),
@@ -201,11 +208,13 @@ async def update_tenant(
     data["updated_by"] = current_user.id
     await repo.update(tenant, data)
     await repo.save_and_refresh(tenant)
-    return success_response(data=_tenant_response(tenant))
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=_tenant_response(tenant), request_id=request_id)
 
 
 @router.patch("/{tenant_id}/status")
 async def update_tenant_status(
+    request: Request,
     tenant_id: int,
     body: TenantStatusUpdate,
     current_user: User = Depends(get_current_active_user),
@@ -220,11 +229,13 @@ async def update_tenant_status(
         {"status": body.status, "updated_by": current_user.id},
     )
     await repo.save_and_refresh(tenant)
-    return success_response(data=_tenant_response(tenant))
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=_tenant_response(tenant), request_id=request_id)
 
 
 @router.get("/{tenant_id}/users")
 async def list_tenant_users(
+    request: Request,
     tenant_id: int,
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
@@ -233,11 +244,13 @@ async def list_tenant_users(
 ):
     await _enforce_tenant_scope(current_user, tenant_id, db)
     users = await UserRepository(db).list_by_tenant(tenant_id, offset=offset, limit=limit)
-    return success_response(data=[_user_response(u) for u in users])
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=[_user_response(u) for u in users], request_id=request_id)
 
 
 @router.post("/{tenant_id}/users", status_code=status.HTTP_201_CREATED)
 async def create_tenant_user(
+    request: Request,
     tenant_id: int,
     body: TenantUserCreate,
     background_tasks: BackgroundTasks,
@@ -259,13 +272,17 @@ async def create_tenant_user(
         creation_type="tenant",
         background_tasks=background_tasks,
     )
-    return success_response(
-        data=TenantUserCreateResponse(user_id=user_id_str, setup_token=setup_token).model_dump()
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(
+        data=TenantUserCreateResponse(user_id=user_id_str, setup_token=setup_token).model_dump(),
+        request_id=request_id,
+        status_code=201,
     )
 
 
 @router.patch("/{tenant_id}/users/{user_id}/status")
 async def update_tenant_user_status(
+    request: Request,
     tenant_id: int,
     user_id: UUID,
     body: TenantUserStatusUpdate,
@@ -280,11 +297,13 @@ async def update_tenant_user_status(
     user_repo = UserRepository(db)
     await user_repo.update(target, payload)
     await user_repo.save_and_refresh(target)
-    return success_response(data=_user_response(target))
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=_user_response(target), request_id=request_id)
 
 
 @router.patch("/{tenant_id}/users/{user_id}")
 async def update_tenant_user(
+    request: Request,
     tenant_id: int,
     user_id: UUID,
     body: TenantUserUpdate,
@@ -299,11 +318,13 @@ async def update_tenant_user(
     user_repo = UserRepository(db)
     await user_repo.update(target, payload)
     await user_repo.save_and_refresh(target)
-    return success_response(data=_user_response(target))
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data=_user_response(target), request_id=request_id)
 
 
 @router.delete("/{tenant_id}/users/{user_id}")
 async def delete_tenant_user(
+    request: Request,
     tenant_id: int,
     user_id: UUID,
     current_user: User = Depends(get_current_active_user),
@@ -323,4 +344,5 @@ async def delete_tenant_user(
         },
     )
     await user_repo.commit()
-    return success_response(data={"user_id": str(user_id), "deleted": True})
+    request_id = getattr(request.state, "platform_request_id", None)
+    return platform_success_response(data={"user_id": str(user_id), "deleted": True}, request_id=request_id)
