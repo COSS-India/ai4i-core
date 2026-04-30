@@ -18,16 +18,21 @@ __author__ = "AI4X Team"
 __email__ = "team@ai4x.com"
 
 from .client import ModelManagementClient
-from .triton_client import TritonClient
+from .triton_client import TritonClient, _current_scope, _accumulate_inference_time, SCOPE_KEY
 from .middleware import ModelResolutionMiddleware
 from .config import ModelManagementConfig
 from .plugin import ModelManagementPlugin
+from .auth_context_middleware import AuthContextMiddleware
 
 __all__ = [
     "ModelManagementClient",
     "TritonClient",
+    "_current_scope",
+    "_accumulate_inference_time",
+    "SCOPE_KEY",
     "ModelResolutionMiddleware",
     "ModelManagementConfig",
     "ModelManagementPlugin",
+    "AuthContextMiddleware",
 ]
 

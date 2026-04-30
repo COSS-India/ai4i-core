@@ -1,6 +1,6 @@
 // Custom Pipeline Builder Page - Configure and test custom pipelines
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Head from 'next/head';
 import {
   Grid,
@@ -14,7 +14,6 @@ import {
   Textarea,
   VStack,
   Box,
-  useToast,
   Alert,
   AlertIcon,
   AlertDescription,
@@ -30,12 +29,23 @@ import { ArrowBackIcon } from '@chakra-ui/icons';
 import ContentLayout from '../components/common/ContentLayout';
 import { PipelineInferenceRequest } from '../types/pipeline';
 import { runPipelineInference } from '../services/pipelineService';
+import { base64ToAudioObjectUrl } from '../utils/helpers';
 import { ASR_SUPPORTED_LANGUAGES, TTS_SUPPORTED_LANGUAGES } from '../config/constants';
+import { useToastWithDeduplication } from '../hooks/useToastWithDeduplication';
+
+type BuilderPipelineType = 'translation' | 'translation-tts';
+
+type BuilderResult = {
+  sourceText: string;
+  targetText: string;
+  audio: string;
+};
 
 const PipelineBuilderPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const router = useRouter();
-  
+  const builderAudioUrlRef = useRef<string | null>(null);
+
   // Pipeline configuration
   const [sourceLanguage, setSourceLanguage] = useState('hi');
   const [targetLanguage, setTargetLanguage] = useState('hi'); // Start with 'hi' (Hindi) which is TTS-supported
@@ -47,12 +57,33 @@ const PipelineBuilderPage: React.FC = () => {
   const [pipelineType, setPipelineType] = useState<'translation' | 'translation-tts'>('translation-tts');
   
   // Results
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<BuilderResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [rawResponse, setRawResponse] = useState<string>('');
+  const targetLanguageOptions = useMemo(
+    () => TTS_SUPPORTED_LANGUAGES.filter((lang) => lang.code !== sourceLanguage),
+    [sourceLanguage]
+  );
+
+  useEffect(() => () => {
+    if (builderAudioUrlRef.current) {
+      URL.revokeObjectURL(builderAudioUrlRef.current);
+      builderAudioUrlRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (targetLanguage && targetLanguage === sourceLanguage) {
+      setTargetLanguage('');
+    }
+  }, [sourceLanguage, targetLanguage]);
 
   const handleRunPipeline = async () => {
     setIsLoading(true);
+    if (builderAudioUrlRef.current) {
+      URL.revokeObjectURL(builderAudioUrlRef.current);
+      builderAudioUrlRef.current = null;
+    }
     setResult(null);
     setRawResponse('');
 
@@ -102,7 +133,7 @@ const PipelineBuilderPage: React.FC = () => {
       const response = await runPipelineInference(request);
       
       // Handle different response formats based on pipeline type
-      let displayResult: any = {};
+      let displayResult: BuilderResult;
       
       if (pipelineType === 'translation') {
         // Translation only
@@ -117,20 +148,22 @@ const PipelineBuilderPage: React.FC = () => {
         const translationOutput = response.pipelineResponse?.[0]?.output?.[0];
         const ttsOutput = response.pipelineResponse?.[1];
         
-        // Handle audio from TTS response
+        // Handle audio from TTS response (use blob URL so CSP media-src allows playback)
         let audioContent = '';
         if (ttsOutput?.output && ttsOutput.output.length > 0) {
-          // Audio is in output array
           audioContent = ttsOutput.output[0]?.audioContent || '';
         } else if (ttsOutput?.audio && ttsOutput.audio.length > 0) {
-          // Audio is in audio array
           audioContent = ttsOutput.audio[0]?.audioContent || '';
         }
-        
+        let audioUrl = '';
+        if (audioContent) {
+          audioUrl = base64ToAudioObjectUrl(audioContent, 'wav');
+          builderAudioUrlRef.current = audioUrl;
+        }
         displayResult = {
           sourceText: translationOutput?.source || inputText,
           targetText: translationOutput?.target || '',
-          audio: audioContent ? `data:audio/wav;base64,${audioContent}` : '',
+          audio: audioUrl,
         };
       }
       
@@ -209,7 +242,10 @@ const PipelineBuilderPage: React.FC = () => {
                 {/* Image Type Selection */}
                 <FormControl>
                   <FormLabel>Pipeline Type</FormLabel>
-                  <Select value={pipelineType} onChange={(e) => setPipelineType(e.target.value as any)}>
+                  <Select
+                    value={pipelineType}
+                    onChange={(e) => setPipelineType(e.target.value as BuilderPipelineType)}
+                  >
                     <option value="translation">Translation Only</option>
                     <option value="translation-tts">Translation → TTS</option>
                   </Select>
@@ -231,7 +267,7 @@ const PipelineBuilderPage: React.FC = () => {
                 <FormControl>
                   <FormLabel>Target Language</FormLabel>
                   <Select value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)}>
-                    {TTS_SUPPORTED_LANGUAGES.map((lang) => (
+                    {targetLanguageOptions.map((lang) => (
                       <option key={lang.code} value={lang.code}>
                         {lang.label}
                       </option>

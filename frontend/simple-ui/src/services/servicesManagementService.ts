@@ -15,6 +15,7 @@ export interface Service {
   model_id?: string; // For backward compatibility
   modelVersion?: string;
   model_version?: string; // For backward compatibility
+  modelSubmissionDate?: string;
   endpoint?: string;
   endpoint_url?: string; // For backward compatibility
   api_key?: string;
@@ -35,8 +36,14 @@ export interface Service {
     lastUpdated: string;
   };
   isPublished?: boolean;
+  /** ISO timestamp when service was published; used for list ordering */
+  publishedAt?: string | null;
+  /** ISO timestamp when service was unpublished; used for list ordering */
+  unpublishedAt?: string | null;
   created_at?: string;
   updated_at?: string;
+  /** ISO timestamp when status was last updated; used for list ordering */
+  versionStatusUpdatedAt?: string;
   [key: string]: any;
 }
 
@@ -52,7 +59,7 @@ export const listServices = async (): Promise<Service[]> => {
     // - Authorization: Bearer <token>
     // - X-API-Key: <api_key> (if available)
     // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
-    const response = await apiClient.get<Service[]>('/api/v1/model-management/services/');
+    const response = await apiClient.get<Service[]>('/api/v1/model-management/services');
     return response.data;
   } catch (error: any) {
     console.error('List services error:', error);

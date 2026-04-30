@@ -4,7 +4,7 @@ Named Entity Recognition microservice for AI4ICore.
 
 This service:
 - Exposes a ULCA-style NER endpoint at `/api/v1/ner/inference`
-- Forwards requests to a Dhruva NER Triton deployment (model name: `ner`)
+- Forwards requests to a NER Triton deployment (model name: `ner`)
 - Integrates with the AI4ICore Observability plugin for metrics and dashboards
 
 ## API Overview
@@ -22,7 +22,7 @@ This service:
 
 ## Triton Integration
 
-The service calls a Triton server (default: `65.1.35.3:8300`) with:
+The service calls a Triton server (default: `<your-triton-host>:8300`) with:
 
 - Input tensors:
   - `INPUT_TEXT`: `[[text1], [text2], ...]`
@@ -36,7 +36,7 @@ Key environment variables (see `env.template`):
 
 - `SERVICE_NAME` (default: `ner-service`)
 - `SERVICE_PORT` (default: `8091`)
-- `TRITON_ENDPOINT` (default: `65.1.35.3:8300`)
+- `TRITON_ENDPOINT` (default: `<your-triton-host>:8300`)
 - `TRITON_API_KEY` (optional)
 
 

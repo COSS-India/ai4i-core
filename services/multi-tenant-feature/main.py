@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from logger import logger
-from db_connection import create_tables , auth_db_engine, AuthDBSessionLocal , tenant_db_engine , TenantDBSessionLocal
+import db_connection
+
 import uvicorn
 
 from routers.admin_router import router as admin_router
@@ -11,6 +12,7 @@ from routers.tenant_router import router as tenant_router, tenant_resolve_router
 from routers.service_router import router as service_router
 from routers.user_router import router as user_router
 from routers.adopter_router import router as adopter_router
+from routers.internal_router import router as internal_router
 
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -20,12 +22,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
+from ai4icore_exceptions import register_exception_handlers
 from cache.app_cache import get_async_cache_connection
 
-import os
+from ai4icore_env import app_env
 
-RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-RATE_LIMIT_PER_HOUR = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+RATE_LIMIT_PER_MINUTE = app_env.rate_limit_per_minute
+RATE_LIMIT_PER_HOUR = app_env.rate_limit_per_hour
 
 # Sync Redis client for redis_om (model/service caching)
 # redis_cache_client = get_cache_connection()
@@ -38,15 +41,18 @@ redis_client = get_async_cache_connection()
 async def lifespan(app: FastAPI):
     logger.info("Starting FastAPI app initialization...")
 
-    # 1. Create APP DB (sync) tables
-    await create_tables()
+    # Initialize DB connections (with retry for Postgres startup)
+    await db_connection.init_postgresql_connections()
+    logger.info("Database connections initialized.")
+
+    # Create tables
+    await db_connection.create_tables()
     logger.info("Tenant DB tables verified or created.")
 
-
-    app.state.auth_db_engine = auth_db_engine
-    app.state.app_db_engine = tenant_db_engine
-    app.state.auth_session_factory = AuthDBSessionLocal
-    app.state.app_session_factory = TenantDBSessionLocal
+    app.state.auth_db_engine = db_connection.auth_db_engine
+    app.state.app_db_engine = db_connection.tenant_db_engine
+    app.state.auth_session_factory = db_connection.AuthDBSessionLocal
+    app.state.app_session_factory = db_connection.TenantDBSessionLocal
 
     yield   # everything before this runs at startup; everything after runs at shutdown
     logger.info("Shutting down FastAPI app...")
@@ -75,13 +81,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error disposing Auth DB: {e}")
 
-    # Dispose async auth engine
+    # Dispose tenant DB engine
     try:
         if app.state.app_db_engine:
             await app.state.app_db_engine.dispose()
-            logger.info("Model management DB engine disposed.")
+            logger.info("Multi-tenant DB engine disposed.")
     except Exception as e:
-        logger.error(f"Error disposing Model management DB: {e}")
+        logger.error("Error disposing multi-tenant DB: %s", e)
 
     logger.info("Shutdown complete.")
 
@@ -122,6 +128,7 @@ else:
     logger.warning("Rate limiting middleware skipped - Redis not available")
 
 # Register error handlers
+register_exception_handlers(app)
 add_error_handlers(app)
 
 # Register routers
@@ -133,6 +140,7 @@ app.include_router(tenant_resolve_router)  # Tenant resolution endpoint for serv
 app.include_router(service_router)
 app.include_router(user_router)
 app.include_router(adopter_router)  # Adopter admin tenant management endpoints
+app.include_router(internal_router)
 
 @app.get("/")
 async def root():

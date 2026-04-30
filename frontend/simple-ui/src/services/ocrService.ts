@@ -45,7 +45,7 @@ export interface OCRServiceDetailsResponse {
 export const listOCRServices = async (): Promise<OCRServiceDetailsResponse[]> => {
   try {
     // Fetch services from model management service filtered by task_type='ocr'
-    const services = await listServices('ocr');
+    const services = await listServices('ocr', true);
     const seen = new Set<string>();
 
     // Transform model management service response to OCRServiceDetailsResponse format
@@ -135,7 +135,7 @@ export const performOCRInference = async (
     };
   } catch (error) {
     console.error('OCR inference error:', error);
-    throw new Error('Failed to perform OCR inference');
+    throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
 

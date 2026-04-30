@@ -133,7 +133,7 @@ After registration, the following endpoints are available:
 
 ## Integration Guide
 
-See [INTEGRATION_GUIDE.md](../../docs/DHRUVA_OBSERVABILITY_INTEGRATION.md) for detailed integration steps.
+See [INTEGRATION_GUIDE.md](../../docs/AI4ICORE_OBSERVABILITY_INTEGRATION.md) for detailed integration steps.
 
 ## Version
 

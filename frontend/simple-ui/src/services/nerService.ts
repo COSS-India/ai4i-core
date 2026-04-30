@@ -43,7 +43,7 @@ export interface NERInferenceResponse {
  */
 export const listNERServices = async (): Promise<NERServiceDetailsResponse[]> => {
   try {
-    const services = await listServices('ner');
+    const services = await listServices('ner', true);
     
     // Transform to NERServiceDetailsResponse format
     const transformedServices = services.map((service: any) => {
@@ -119,7 +119,7 @@ export const performNERInference = async (
     };
   } catch (error) {
     console.error('NER inference error:', error);
-    throw new Error('Failed to perform NER inference');
+    throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
 

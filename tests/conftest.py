@@ -3,19 +3,19 @@ Pytest configuration and shared fixtures for all integration tests.
 """
 import asyncio
 import base64
-import os
 from typing import AsyncGenerator, Generator
 
 import httpx
 import pytest
 import pytest_asyncio
 import redis.asyncio as redis
+from ai4icore_env import app_env
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 # Test database URL - should be different from production
-TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_password@localhost:5432/auth_db")
-TEST_REDIS_URL = os.getenv("TEST_REDIS_URL", "redis://localhost:6379/1")
+TEST_DATABASE_URL = app_env.test_database_url
+TEST_REDIS_URL = app_env.test_redis_url
 
 # Create async engine for testing
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)

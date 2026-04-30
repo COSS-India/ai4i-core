@@ -23,6 +23,14 @@ import {
   Permission,
 } from '../types/auth';
 import { API_BASE_URL } from './api';
+import {
+  getStoredAccessToken,
+  getStoredRefreshToken,
+  setStoredAccessToken,
+  setStoredRefreshToken,
+  clearTokenStorage,
+} from '../utils/tokenStorage';
+import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 
 class AuthService {
   private baseUrl: string;
@@ -79,17 +87,41 @@ class AuthService {
           // If JSON parsing fails, use empty object
           errorData = {};
         }
+
+        if (
+          typeof window !== 'undefined' &&
+          responseIndicatesTenantSuspendedOrInactive(response.status, errorData)
+        ) {
+          try {
+            const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+            forceFrontendSessionEnd();
+          } catch {
+            this.clearAuthTokens();
+            this.clearStoredUser();
+            window.location.assign('/auth');
+          }
+          throw new Error('Your organization account is no longer active. Please sign in again.');
+        }
         
-        // Extract error message from various possible formats
+        // Extract error message from various possible formats (avoid [object Object] when detail is an object)
         let errorMessage = `HTTP error! status: ${response.status}`;
         if (errorData?.detail) {
-          errorMessage = String(errorData.detail);
+          const d = errorData.detail;
+          if (typeof d === 'string') {
+            errorMessage = d;
+          } else if (typeof d === 'object' && d !== null && typeof (d as any).message === 'string') {
+            errorMessage = (d as any).message;
+          } else if (typeof d === 'object' && d !== null) {
+            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
+          } else {
+            errorMessage = String(d);
+          }
         } else if (errorData?.message) {
           errorMessage = String(errorData.message);
         } else if (typeof errorData === 'string') {
           errorMessage = errorData;
         } else if (Array.isArray(errorData) && errorData.length > 0) {
-          errorMessage = errorData.map((err: any) => err.detail || err.message || String(err)).join(', ');
+          errorMessage = errorData.map((err: any) => err.detail?.message ?? err.detail ?? err.message ?? String(err)).join(', ');
         }
         
         // Check if error is "Invalid authentication credentials" (session expiry)
@@ -111,7 +143,12 @@ class AuthService {
         throw error;
       }
 
-      return await response.json();
+      const json = await response.json();
+      // Unwrap v2 response envelope: { success: true, data: {...} }
+      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
+        return json.data as T;
+      }
+      return json as T;
     } catch (error: any) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
@@ -127,67 +164,28 @@ class AuthService {
     }
   }
 
-  // Token management with remember me support
-  private getStorage(): Storage {
-    if (typeof window === 'undefined') return localStorage;
-    // Check if remember_me preference is stored
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
-    return rememberMe ? localStorage : sessionStorage;
-  }
-
+  // Token management with remember me support (encrypted at rest via tokenStorage)
   public getAccessToken(): string | null {
-    if (typeof window === 'undefined') return null;
-    // Check both storages (for backward compatibility and migration)
-    return localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    return getStoredAccessToken();
   }
 
   public setAccessToken(token: string, rememberMe: boolean = true): void {
     if (typeof window === 'undefined') return;
-    // Store remember_me preference
-    localStorage.setItem('remember_me', rememberMe ? 'true' : 'false');
-    // Clear from both storages first
-    localStorage.removeItem('access_token');
-    sessionStorage.removeItem('access_token');
-    // Store in appropriate storage
-    if (rememberMe) {
-      localStorage.setItem('access_token', token);
-    } else {
-      sessionStorage.setItem('access_token', token);
-    }
-    // Store login timestamp for session expiry tracking (7 days if remember_me, else 24 hours)
+    setStoredAccessToken(token, rememberMe);
     this.setLoginTimestamp();
   }
 
   public getRefreshToken(): string | null {
-    if (typeof window === 'undefined') return null;
-    // Check both storages (for backward compatibility and migration)
-    return localStorage.getItem('refresh_token') || sessionStorage.getItem('refresh_token');
+    return getStoredRefreshToken();
   }
 
   public setRefreshToken(token: string, rememberMe: boolean = true): void {
     if (typeof window === 'undefined') return;
-    // Store remember_me preference
-    localStorage.setItem('remember_me', rememberMe ? 'true' : 'false');
-    // Clear from both storages first
-    localStorage.removeItem('refresh_token');
-    sessionStorage.removeItem('refresh_token');
-    // Store in appropriate storage
-    if (rememberMe) {
-      localStorage.setItem('refresh_token', token);
-    } else {
-      sessionStorage.setItem('refresh_token', token);
-    }
+    setStoredRefreshToken(token, rememberMe);
   }
 
   private clearTokens(): void {
-    if (typeof window === 'undefined') return;
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    sessionStorage.removeItem('access_token');
-    sessionStorage.removeItem('refresh_token');
-    localStorage.removeItem('remember_me');
-    localStorage.removeItem('login_timestamp');
-    sessionStorage.removeItem('login_timestamp');
+    clearTokenStorage();
   }
 
   public clearAuthTokens(): void {
@@ -195,9 +193,9 @@ class AuthService {
   }
 
   // Authentication methods
-  async register(data: RegisterRequest): Promise<User> {
+  async register(data: RegisterRequest): Promise<{ id: number; email: string; username: string; message: string }> {
     // Register endpoint doesn't require authentication
-    return this.requestWithoutAuth<User>('/register', {
+    return this.requestWithoutAuth<{ id: number; email: string; username: string; message: string }>('/register', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -215,13 +213,23 @@ class AuthService {
     this.setAccessToken(response.access_token, rememberMe);
     this.setRefreshToken(response.refresh_token, rememberMe);
 
-    // Clear any previous user's API key so this user starts with no key until they set/select one
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('api_key');
-      localStorage.removeItem('selected_api_key_id');
-    }
+    return response;
+  }
+
+  async guestLogin(): Promise<LoginResponse> {
+    const response = await this.requestWithoutAuth<LoginResponse>('/guest/login', {
+      method: 'POST',
+    });
+
+    // Guest sessions should stay in session storage by default.
+    this.setAccessToken(response.access_token, false);
+    this.setRefreshToken(response.refresh_token, false);
 
     return response;
+  }
+
+  async getGuestEnabledServices(): Promise<any> {
+    return this.request<any>('/roles/list/guest/services');
   }
 
   // Request method without authentication header (for login/register)
@@ -263,24 +271,33 @@ class AuthService {
           errorData = {};
         }
         
-        // Handle different error response formats
+        // Handle different error response formats (avoid [object Object] when detail is an object)
         let errorMessage = `HTTP error! status: ${response.status}`;
         if (typeof errorData === 'string') {
           errorMessage = errorData;
         } else if (errorData?.detail) {
-          // Extract the detail field which contains the error message
-          errorMessage = String(errorData.detail);
+          const d = errorData.detail;
+          if (typeof d === 'string') {
+            errorMessage = d;
+          } else if (typeof d === 'object' && d !== null && typeof d.message === 'string') {
+            errorMessage = d.message;
+          } else if (typeof d === 'object' && d !== null) {
+            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
+          } else {
+            errorMessage = String(d);
+          }
         } else if (errorData?.message) {
           errorMessage = String(errorData.message);
         } else if (Array.isArray(errorData)) {
           // Handle array of errors
-          errorMessage = errorData.map((err: any) => 
-            err.detail || err.message || String(err)
+          errorMessage = errorData.map((err: any) =>
+            err.detail?.message ?? err.detail ?? err.message ?? String(err)
           ).join(', ');
         } else if (typeof errorData === 'object' && Object.keys(errorData).length > 0) {
-          // Try to extract meaningful error from object
-          const errorText = errorData.detail || errorData.message || errorData.error;
-          errorMessage = errorText ? String(errorText) : JSON.stringify(errorData);
+          const d = errorData.detail ?? errorData.message ?? errorData.error;
+          errorMessage = typeof d === 'object' && d !== null && (d as any).message != null
+            ? String((d as any).message)
+            : d != null ? String(d) : JSON.stringify(errorData);
         }
         
         // Add status code to error for better debugging
@@ -289,13 +306,32 @@ class AuthService {
         throw error;
       }
 
-      return await response.json();
+      const json = await response.json();
+      // Unwrap v2 response envelope: { success: true, data: {...} }
+      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
+        return json.data as T;
+      }
+      return json as T;
     } catch (error) {
       console.error('Auth service request failed:', error);
       // Re-throw as Error if it's not already one, with proper message
       if (error instanceof Error) {
+        // If error message is "[object Object]", try to extract meaningful info
+        if (error.message === '[object Object]' || error.message.includes('[object Object]')) {
+          // Try to get more info from the error object
+          const errorInfo = (error as any).response?.data || (error as any).data || error;
+          if (typeof errorInfo === 'object' && errorInfo !== null) {
+            const extractedMsg = errorInfo.detail || errorInfo.message || errorInfo.error || JSON.stringify(errorInfo);
+            throw new Error(typeof extractedMsg === 'string' ? extractedMsg : JSON.stringify(extractedMsg));
+          }
+        }
         throw error;
       } else {
+        // If it's not an Error instance, try to extract meaningful message
+        if (typeof error === 'object' && error !== null) {
+          const extractedMsg = (error as any).detail || (error as any).message || (error as any).error || JSON.stringify(error);
+          throw new Error(typeof extractedMsg === 'string' ? extractedMsg : JSON.stringify(extractedMsg));
+        }
         throw new Error(String(error));
       }
     }
@@ -309,11 +345,6 @@ class AuthService {
     const clearLocalState = () => {
       this.clearTokens();
       this.clearStoredUser();
-      // Clear API key so next user doesn't inherit previous user's key
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('api_key');
-        localStorage.removeItem('selected_api_key_id');
-      }
     };
 
     if (!refreshToken) {
@@ -325,9 +356,6 @@ class AuthService {
     try {
       const response = await this.request<LogoutResponse>('/logout', {
         method: 'POST',
-        headers: {
-          'x-auth-source': 'AUTH_TOKEN',
-        },
         body: JSON.stringify({
           refresh_token: data.refresh_token || refreshToken,
         }),
@@ -345,41 +373,45 @@ class AuthService {
     }
   }
 
+  // Single-flight: only one POST /auth/refresh at a time; concurrent callers wait for the same result.
+  private refreshPromise: Promise<TokenRefreshResponse> | null = null;
+
   async refreshToken(): Promise<TokenRefreshResponse> {
     const refreshToken = this.getRefreshToken();
     if (!refreshToken) {
       throw new Error('No refresh token available');
     }
 
-    // Use requestWithoutAuth for refresh endpoint - it doesn't need Authorization header
-    // The refresh_token in the body is sufficient
-    const response = await this.requestWithoutAuth<TokenRefreshResponse>('/refresh', {
-      method: 'POST',
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
+    if (this.refreshPromise !== null) {
+      return this.refreshPromise;
+    }
 
-    // Update access token with same remember_me preference
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
-    this.setAccessToken(response.access_token, rememberMe);
+    this.refreshPromise = (async () => {
+      try {
+        const response = await this.requestWithoutAuth<TokenRefreshResponse>('/refresh', {
+          method: 'POST',
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
 
-    return response;
+        const rememberMe = typeof window !== 'undefined' && localStorage.getItem('remember_me') === 'true';
+        this.setAccessToken(response.access_token, rememberMe);
+
+        return response;
+      } finally {
+        this.refreshPromise = null;
+      }
+    })();
+
+    return this.refreshPromise;
   }
 
   async validateToken(): Promise<TokenValidationResponse> {
-    return this.request<TokenValidationResponse>('/validate', {
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
-    });
+    return this.request<TokenValidationResponse>('/validate');
   }
 
   async getCurrentUser(): Promise<User> {
     // Use a longer timeout for /me endpoint as it's critical for auth validation
-    return this.requestWithTimeout<User>('/me', {
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
-    }, 20000); // 20 seconds timeout for /me endpoint
+    return this.requestWithTimeout<User>('/me', {}, 20000);
   }
 
   // Request method with custom timeout
@@ -450,7 +482,12 @@ class AuthService {
         throw error;
       }
 
-      return await response.json();
+      const json = await response.json();
+      // Unwrap v2 response envelope: { success: true, data: {...} }
+      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
+        return json.data as T;
+      }
+      return json as T;
     } catch (error: any) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
@@ -513,9 +550,6 @@ class AuthService {
     return this.request<APIKeyResponse>('/api-keys', {
       method: 'POST',
       body: JSON.stringify(payload),
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
     });
   }
 
@@ -532,31 +566,13 @@ class AuthService {
     };
   }
 
-  /** Persist the selected API key for the current user (used to restore selection on next login). */
-  async selectApiKey(apiKeyId: number): Promise<{ selected_api_key_id: number }> {
-    return this.request<{ selected_api_key_id: number }>('/api-keys/select', {
-      method: 'POST',
-      body: JSON.stringify({ api_key_id: apiKeyId }),
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
-    });
-  }
-
   async listAllApiKeys(): Promise<AdminAPIKeyWithUserResponse[]> {
-    return this.request<AdminAPIKeyWithUserResponse[]>('/api-keys/all', {
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
-    });
+    return this.request<AdminAPIKeyWithUserResponse[]>('/api-keys/all');
   }
 
   async revokeApiKey(keyId: number): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/api-keys/${keyId}`, {
       method: 'DELETE',
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
     });
   }
 
@@ -564,9 +580,6 @@ class AuthService {
     return this.request<APIKeyResponse>(`/api-keys/${keyId}`, {
       method: 'PATCH',
       body: JSON.stringify(updateData),
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
     });
   }
 
@@ -575,30 +588,30 @@ class AuthService {
     return this.request<OAuth2Provider[]>('/oauth2/providers');
   }
 
-  // User management (Admin only)
-  async getAllUsers(): Promise<User[]> {
-    return this.request<User[]>('/users', {
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
+  async exchangeOAuthCode(code: string): Promise<LoginResponse> {
+    return this.requestWithoutAuth<LoginResponse>('/oauth2/exchange', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
     });
+  }
+
+  // User management (Admin / Mod / Tenant Admin)
+  async getAllUsers(): Promise<User[]> {
+    return this.request<User[]>('/users?limit=500&offset=0');
+  }
+
+  /** Paginated user list (same endpoint as getAllUsers; for infinite-scroll pickers). */
+  async listUsersPage(offset: number, limit: number = 100): Promise<User[]> {
+    return this.request<User[]>(`/users?limit=${limit}&offset=${offset}`);
   }
 
   async getUserById(userId: number): Promise<User> {
-    return this.request<User>(`/users/${userId}`, {
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
-    });
+    return this.request<User>(`/users/${userId}`);
   }
 
-  // Permissions management (Admin only)
-  async getAllPermissions(): Promise<string[]> {
-    return this.request<string[]>('/permission/list', {
-      headers: {
-        'x-auth-source': 'AUTH_TOKEN',
-      },
-    });
+  // Permissions management (inference-only)
+  async getAllPermissions(): Promise<Permission[]> {
+    return this.request<Permission[]>('/inference/permissions');
   }
 
   // Utility methods
@@ -723,22 +736,17 @@ class AuthService {
       return false;
     }
 
-    // Check if token is expiring soon
+    // Check if token is expiring soon (no API call)
     if (!this.isTokenExpiringSoon(thresholdMinutes)) {
-      // Token is still valid for a while
       return true;
     }
 
-    // Token is expiring soon or expired, try to refresh
-    console.log('Token is expiring soon, attempting proactive refresh...');
-    
+    // Token is expiring soon or expired; refreshToken() is single-flight so many callers = one POST /refresh
     try {
       await this.refreshToken();
-      console.log('Token refreshed successfully');
       return true;
     } catch (error) {
       console.error('Failed to refresh token:', error);
-      // Don't clear tokens here - let the 401 handler deal with it
       return false;
     }
   }

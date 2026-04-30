@@ -1,4 +1,4 @@
-# Contributing to Dhruva AI/ML Microservices Platform
+# Contributing to AI4ICore Microservices Platform
 
 Thank you for your interest in contributing! This document provides guidelines for contributing to the project.
 

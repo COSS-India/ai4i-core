@@ -42,7 +42,7 @@ export interface SpeakerDiarizationInferenceResponse {
 export const listSpeakerDiarizationServices = async (): Promise<SpeakerDiarizationServiceDetailsResponse[]> => {
   try {
     // Fetch services from model management service filtered by task_type='speaker-diarization'
-    const services = await listServices('speaker-diarization');
+    const services = await listServices('speaker-diarization', true);
     const seen = new Set<string>();
 
     // Transform model management service response to SpeakerDiarizationServiceDetailsResponse format
@@ -124,7 +124,7 @@ export const performSpeakerDiarizationInference = async (
     };
   } catch (error) {
     console.error('Speaker diarization inference error:', error);
-    throw new Error('Failed to perform speaker diarization inference');
+    throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
 

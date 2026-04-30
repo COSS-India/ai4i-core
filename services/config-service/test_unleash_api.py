@@ -4,15 +4,15 @@ Test script to inspect Unleash API response structure
 """
 import asyncio
 import json
-import os
 import sys
 import aiohttp
+from ai4icore_env import app_env
 
 async def test_unleash_api():
     """Test Unleash API and print response structure"""
-    unleash_url = os.getenv('UNLEASH_URL', 'http://unleash:4242/feature-flags/api')
-    unleash_api_token = os.getenv('UNLEASH_API_TOKEN', '*:*.unleash-insecure-api-token')
-    environment = os.getenv('UNLEASH_ENVIRONMENT', 'development')
+    unleash_url = app_env.unleash_url or 'http://unleash:4242/feature-flags/api'
+    unleash_api_token = app_env.unleash_api_token
+    environment = app_env.unleash_environment
     
     # Construct Unleash Admin API URL
     base_url = unleash_url.rstrip('/api')

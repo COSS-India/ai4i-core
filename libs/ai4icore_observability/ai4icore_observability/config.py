@@ -1,35 +1,36 @@
 """
-Configuration system for Dhruva Observability Plugin
+Configuration system for AI4ICore Observability Plugin
 
 Handles environment variables, defaults, and plugin configuration.
 """
-import os
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+
+from ai4icore_env import app_env
 
 
 @dataclass
 class PluginConfig:
-    """Configuration for Dhruva Observability Plugin."""
-    
+    """Configuration for AI4ICore Observability Plugin."""
+
     # Core settings
     enabled: bool = False
     debug: bool = False
-    
+
     # Endpoint settings
     metrics_path: str = "/enterprise/metrics"
     health_path: str = "/enterprise/health"
-    
+
     # Monitoring settings
     collect_system_metrics: bool = True
     collect_gpu_metrics: bool = True
     collect_db_metrics: bool = True
-    
+
     # SLA settings
     availability_target: float = 100.0
     response_time_target: float = 1.0
     throughput_target: float = 20.0
-    
+
     # Advanced settings
     max_completed_requests: int = 1000
     metrics_update_interval: int = 10
@@ -37,39 +38,35 @@ class PluginConfig:
     # Customer / app defaults
     customers: list = None
     apps: list = None
-    
+
     def __post_init__(self):
-        """Initialize configuration from environment variables."""
-        # Override with environment variables if set
-        if os.getenv("OBSERVE_UTIL_ENABLED") is not None:
-            self.enabled = os.getenv("OBSERVE_UTIL_ENABLED", "false").lower() == "true"
-        if os.getenv("OBSERVE_UTIL_DEBUG") is not None:
-            self.debug = os.getenv("OBSERVE_UTIL_DEBUG", "false").lower() == "true"
-        
-        self.metrics_path = os.getenv("OBSERVE_UTIL_METRICS_PATH", self.metrics_path)
-        self.health_path = os.getenv("OBSERVE_UTIL_HEALTH_PATH", self.health_path)
-        
-        self.collect_system_metrics = os.getenv("OBSERVE_UTIL_COLLECT_SYSTEM_METRICS", "true").lower() == "true"                                                                                                
-        self.collect_gpu_metrics = os.getenv("OBSERVE_UTIL_COLLECT_GPU_METRICS", "true").lower() == "true"                                                                                                      
-        self.collect_db_metrics = os.getenv("OBSERVE_UTIL_COLLECT_DB_METRICS", "true").lower() == "true"                                                                                                        
-        
+        """Initialize configuration from app_env."""
+        self.enabled = app_env.observe_util_enabled
+        self.debug = app_env.observe_util_debug
+
+        self.metrics_path = app_env.observe_util_metrics_path or self.metrics_path
+        self.health_path = app_env.observe_util_health_path or self.health_path
+
+        self.collect_system_metrics = app_env.observe_util_collect_system_metrics
+        self.collect_gpu_metrics = app_env.observe_util_collect_gpu_metrics
+        self.collect_db_metrics = app_env.observe_util_collect_db_metrics
+
         # SLA targets
-        self.availability_target = float(os.getenv("OBSERVE_UTIL_AVAILABILITY_TARGET", self.availability_target))                                                                                               
-        self.response_time_target = float(os.getenv("OBSERVE_UTIL_RESPONSE_TIME_TARGET", self.response_time_target))                                                                                            
-        self.throughput_target = float(os.getenv("OBSERVE_UTIL_THROUGHPUT_TARGET", self.throughput_target))                                                                                                     
-        
+        self.availability_target = app_env.observe_util_availability_target
+        self.response_time_target = app_env.observe_util_response_time_target
+        self.throughput_target = app_env.observe_util_throughput_target
+
         # Advanced settings
-        self.max_completed_requests = int(os.getenv("OBSERVE_UTIL_MAX_COMPLETED_REQUESTS", self.max_completed_requests))                                                                                        
-        self.metrics_update_interval = int(os.getenv("OBSERVE_UTIL_METRICS_UPDATE_INTERVAL", self.metrics_update_interval))                                                                                     
-        self.system_metrics_interval = int(os.getenv("OBSERVE_UTIL_SYSTEM_METRICS_INTERVAL", self.system_metrics_interval))                                                                                     
+        self.max_completed_requests = app_env.observe_util_max_completed_requests
+        self.metrics_update_interval = app_env.observe_util_metrics_update_interval
+        self.system_metrics_interval = app_env.observe_util_system_metrics_interval
 
         # Defaults for customers/apps
         if self.customers is None:
-            # try to read from env var (comma separated) or fallback to empty list
-            customers_env = os.getenv("OBSERVE_UTIL_CUSTOMERS", "")
+            customers_env = app_env.observe_util_customers
             self.customers = [c.strip() for c in customers_env.split(",") if c.strip()] if customers_env else []
         if self.apps is None:
-            apps_env = os.getenv("OBSERVE_UTIL_APPS", "")
+            apps_env = app_env.observe_util_apps
             self.apps = [a.strip() for a in apps_env.split(",") if a.strip()] if apps_env else []
     
     def to_dict(self) -> Dict[str, Any]:

@@ -13,21 +13,25 @@ import {
   Select,
   Spinner,
   Text,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
+import AudioInputPreview from "../components/common/AudioInputPreview";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performAudioLanguageDetectionInference, listAudioLanguageDetectionServices } from "../services/audioLanguageDetectionService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { extractErrorInfo } from "../utils/errorHandler";
+import { AUDIO_LANGUAGE_DETECTION_ERRORS } from "../config/constants";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const AudioLanguageDetectionPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [audioData, setAudioData] = useState<string | null>(null);
+  const [audioClearToken, setAudioClearToken] = useState(0);
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -45,13 +49,6 @@ const AudioLanguageDetectionPage: React.FC = () => {
     queryFn: listAudioLanguageDetectionServices,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
-
-  // Auto-select first service when services are loaded
-  useEffect(() => {
-    if (services.length > 0 && !selectedServiceId) {
-      setSelectedServiceId(services[0].service_id);
-    }
-  }, [services, selectedServiceId]);
 
   const {
     isRecording,
@@ -94,10 +91,11 @@ const AudioLanguageDetectionPage: React.FC = () => {
 
   const handleSubmit = async () => {
     if (!audioData) {
+      const err = AUDIO_LANGUAGE_DETECTION_ERRORS.FILE_REQUIRED;
       toast({
-        title: "No Audio",
-        description: "Please record or upload audio first.",
-        status: "warning",
+        title: err.title,
+        description: err.description,
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -132,8 +130,8 @@ const AudioLanguageDetectionPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Use centralized error handler
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err);
+      // Use centralized error handler (audio-language-detection context so backend message shown as default when no specific mapping)
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'audio-language-detection');
       
       setError(errorMessage);
       toast({
@@ -155,6 +153,11 @@ const AudioLanguageDetectionPage: React.FC = () => {
     setError(null);
   };
 
+  const handleClearAudioInput = () => {
+    clearResults();
+    setAudioClearToken((t) => t + 1);
+  };
+
   return (
     <>
       <Head>
@@ -170,10 +173,10 @@ const AudioLanguageDetectionPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Audio Language Detection
+              {getServiceTitle("audio-language-detection")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Detect the spoken language directly from an audio file. Identify which language is being spoken in audio recordings.
+              {getServiceDescription("audio-language-detection")}
             </Text>
           </Box>
 
@@ -185,13 +188,14 @@ const AudioLanguageDetectionPage: React.FC = () => {
           mx="auto"
         >
             {/* Configuration Panel */}
-          <GridItem>
-            <VStack spacing={6} align="stretch">
+          <GridItem pt={0} mt={0} alignSelf="flex-start">
+            <VStack spacing={6} align="stretch" pt={0} mt={0}>
 
               {/* Service Selection */}
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  Audio Language Detection Service:
+                  Audio Language Detection Service{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 {isLoadingServices ? (
                   <HStack spacing={2} p={2}>
@@ -210,7 +214,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
                   <Select
                     value={selectedServiceId}
                     onChange={(e) => setSelectedServiceId(e.target.value)}
-                    placeholder="Select a Audio Language Detection service"
+                    placeholder={isLoadingServices ? "Loading..." : "Select"}
                     disabled={fetching}
                     size="md"
                     borderColor="gray.300"
@@ -227,24 +231,28 @@ const AudioLanguageDetectionPage: React.FC = () => {
                   </Select>
                 )}
                 {selectedServiceId && services.length > 0 && (
-                  <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                  <Box
+                    mt={2}
+                    p={3}
+                    bg="orange.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="orange.200"
+                  >
                     {(() => {
-                      const selectedService = services.find((s) => s.service_id === selectedServiceId);
+                      const selectedService = services.find(
+                        (s) => s.service_id === selectedServiceId
+                      );
                       return selectedService ? (
                         <>
                           <Text fontSize="sm" color="gray.700" mb={1}>
-                            <strong>Service ID:</strong> {selectedService.service_id}
+                            <strong>Service Name:</strong>{" "}
+                            {selectedService.name || selectedService.service_id}
                           </Text>
-                          {selectedService.serviceDescription && (
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Description:</strong> {selectedService.serviceDescription}
-                            </Text>
-                          )}
-                          {selectedService.supported_languages.length > 0 && (
-                            <Text fontSize="sm" color="gray.700">
-                              <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
-                            </Text>
-                          )}
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Service Description:</strong>{" "}
+                            {selectedService.serviceDescription || "No description available"}
+                          </Text>
                         </>
                       ) : null;
                     })()}
@@ -254,32 +262,47 @@ const AudioLanguageDetectionPage: React.FC = () => {
 
               <Box>
                 <Text mb={4} fontSize="sm" fontWeight="semibold">
-                  Audio Input:
+                  Audio Input{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </Text>
                 <AudioRecorder
                   onAudioReady={handleAudioReady}
                   isRecording={isRecording}
                   onRecordingChange={handleRecordingChange}
                   sampleRate={16000}
-                  disabled={fetching}
+                  disabled={fetching || !selectedServiceId}
                   timer={timer}
+                  onClear={handleClearAudioInput}
+                  clearToken={audioClearToken}
                 />
               </Box>
 
-              {/* Audio Status */}
+              {/* Audio Status + Review/play */}
               {audioData && (
-                <Box
-                  p={3}
-                  bg="green.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="green.200"
-                >
-                  <Text fontSize="sm" color="green.700" fontWeight="semibold">
-                    ✓ Audio ready for processing
-                  </Text>
-                </Box>
+                <>
+                  <Box
+                    p={3}
+                    bg="green.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="green.200"
+                  >
+                    <Text fontSize="sm" color="green.700" fontWeight="semibold">
+                      ✓ Audio ready for processing
+                    </Text>
+                  </Box>
+                  <AudioInputPreview
+                    audioBase64OrDataUrl={audioData}
+                    label="Review your audio"
+                    onClear={handleClearAudioInput}
+                  />
+                </>
               )}
+
+              {/* Instruction above Submit (consistent with other services) */}
+              <Text fontSize="sm" color="gray.600">
+                Record audio or upload a file above, then click &quot;Submit for Detection&quot; to identify the spoken language.
+              </Text>
 
               {/* Submit Button */}
               <Button
@@ -289,7 +312,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
                 loadingText="Processing..."
                 size="md"
                 w="full"
-                isDisabled={!audioData || fetching}
+                isDisabled={!audioData || !selectedServiceId || fetching}
               >
                 Submit for Detection
               </Button>
@@ -297,8 +320,8 @@ const AudioLanguageDetectionPage: React.FC = () => {
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Progress Indicator */}
                 {fetching && (
                   <Box>
@@ -346,100 +369,8 @@ const AudioLanguageDetectionPage: React.FC = () => {
                 </Box>
               )}
 
-              {fetched && result && (() => {
-                console.log("res",result,result.output[0],result.output[0].all_scores.predicted_language);
-                
-                // Extract data - handle both result.output[0] and direct result structure
-                const data = result.output && result.output[0] ? result.output[0] : result;
-                
-                // If we have multiple outputs, use the first one
-                const outputItem = result.output && result.output.length > 0 
-                  ? result.output[0] 
-                  : data;
-
-                // Extract language - handle predicted_language format "ml: Malayalam"
-                let language = "Unknown";
-                const predictedLanguage = outputItem.all_scores?.predicted_language || data?.all_scores?.predicted_language;
-                
-                if (predictedLanguage) {
-                  // Parse format like "ml: Malayalam" to extract "Malayalam"
-                  const parts = predictedLanguage.split(":");
-                  if (parts.length > 1) {
-                    language = parts.slice(1).join(":").trim(); // Join in case language name contains ":"
-                  } else {
-                    language = predictedLanguage.trim();
-                  }
-                } else {
-                  // Fallback to other possible fields
-                  language = outputItem.detectedLanguage || outputItem.language || data.detectedLanguage || data.language || "Unknown";
-                }
-                
-                const conf = outputItem.confidence !== undefined ? outputItem.confidence : (data.confidence !== undefined ? data.confidence : null);
-
-                return (
-                  <Box
-                    p={4}
-                    bg="gray.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="gray.200"
-                  >
-                    <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
-                      Audio Language Detection Results:
-                    </Text>
-                    
-                    <Box
-                      p={4}
-                      bg="white"
-                      borderRadius="md"
-                      border="2px solid"
-                      borderColor="orange.300"
-                    >
-                      <VStack align="start" spacing={3}>
-                        <Box>
-                          <Text fontSize="xs" color="gray.600" mb={1}>
-                            Detected Language
-                          </Text>
-                          <Text fontSize="2xl" fontWeight="bold" color="orange.700">
-                            {language}
-                          </Text>
-                        </Box>
-                        {conf !== null && (
-                          <Box>
-                            <Text fontSize="xs" color="gray.600" mb={1}>
-                              Confidence Score
-                            </Text>
-                            <HStack spacing={2} align="center">
-                              <Text fontSize="lg" fontWeight="semibold" color="gray.800">
-                                {(conf * 100).toFixed(2)}%
-                              </Text>
-                              <Box
-                                flex={1}
-                                h="8px"
-                                bg="gray.200"
-                                borderRadius="full"
-                                overflow="hidden"
-                              >
-                                <Box
-                                  h="100%"
-                                  bg="orange.500"
-                                  w={`${conf * 100}%`}
-                                  transition="width 0.3s"
-                                />
-                              </Box>
-                            </HStack>
-                          </Box>
-                        )}
-                      </VStack>
-                    </Box>
-                  </Box>
-                );
-              })()}
-
                 {/* Audio Language Detection Results */}
                 {fetched && result && (() => {
-                  console.log("res",result,result.output[0],result.output[0].all_scores.predicted_language);
-                  
                   // Extract data - handle both result.output[0] and direct result structure
                   const data = result.output && result.output[0] ? result.output[0] : result;
                   
@@ -529,7 +460,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
                       {/* Clear Results Button */}
                       <Box textAlign="center">
                         <button
-                  onClick={clearResults}
+                  onClick={handleClearAudioInput}
                           style={{
                             padding: "8px 16px",
                             backgroundColor: "#f7fafc",

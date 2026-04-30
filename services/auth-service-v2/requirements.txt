@@ -1,0 +1,50 @@
+# ── Shared platform libraries ──
+# Install from local paths: pip install -e ../../libs/<name>
+# In Docker: COPY libs/ /tmp/libs/ && pip install /tmp/libs/ai4icore_*
+ai4icore-exceptions>=1.0.0
+ai4icore-auth>=2.0.0
+ai4icore-constants>=1.0.0
+ai4icore-logging>=1.0.0
+ai4icore-env>=1.0.0
+ai4icore-bootstrap>=1.0.0
+ai4icore-multi-tenant>=1.0.0
+
+# ── Core ──
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+pydantic[email]>=2.5.0
+
+# ── Database ──
+sqlalchemy[asyncio]>=2.0.0
+asyncpg>=0.29.0
+alembic>=1.13.0
+
+# ── Redis ──
+redis>=5.0.0
+
+# ── JWT & Security ──
+python-jose[cryptography]>=3.3.0
+cryptography>=41.0.0
+passlib[argon2]>=1.7.4
+
+# ── OAuth ──
+authlib>=1.2.0
+httpx>=0.25.0
+
+# ── RBAC ──
+casbin>=1.33.0
+
+# ── Observability (optional) ──
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+opentelemetry-exporter-otlp-proto-grpc>=1.20.0
+opentelemetry-instrumentation-fastapi>=0.41b0
+opentelemetry-instrumentation-sqlalchemy>=0.41b0
+opentelemetry-instrumentation-redis>=0.41b0
+
+# ── Testing ──
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+httpx>=0.25.0

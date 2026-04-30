@@ -11,12 +11,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy shared constants lib
+COPY libs/ai4icore_constants /app/libs/ai4icore_constants
 # Copy AI4ICore plugins from monorepo
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
-
+COPY libs/ai4icore_env /app/libs/ai4icore_env
+COPY libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
+COPY libs/ai4icore_auth /app/libs/ai4icore_auth
+COPY libs/ai4icore_service_base /app/libs/ai4icore_service_base
 # Copy requirements and install Python dependencies
 COPY services/audio-lang-detection-service/requirements.txt .
 # Set pip timeout via environment variable (default is 15 seconds, increase to 300)
@@ -24,10 +30,15 @@ ENV PIP_DEFAULT_TIMEOUT=300
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir --user -r requirements.txt
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_multi_tenant
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
-
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_constants
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_exceptions
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_service_base
 # Verify packaging is installed (for debugging)
 RUN python -c "import packaging; print(f'packaging version: {packaging.__version__}')" || (echo "ERROR: packaging not found!" && exit 1)
 
@@ -63,12 +74,17 @@ RUN pip install --no-cache-dir packaging>=21.0 && \
 
 # Copy AI4ICore plugins
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY --from=builder /app/libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
-
-# Copy application code
+COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
+COPY --from=builder /app/libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
+COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
+COPY --from=builder /app/libs/ai4icore_service_base /app/libs/ai4icore_service_base
+# Copy application code and shared constants
 COPY services/audio-lang-detection-service .
+COPY --from=builder /app/libs/ai4icore_constants /app/libs/ai4icore_constants
 
 # Adjust ownership and permissions
 RUN chown -R app:app /app /home/app/.local \
@@ -86,5 +102,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 
 # Run the application
 # Disable uvicorn access logs since we use RequestLoggingMiddleware with trace_id
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8096", "--no-access-log"]
+ENTRYPOINT ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8096", "--no-access-log"]
 

@@ -1,7 +1,11 @@
 from typing import Dict, List, Optional
-from pydantic import BaseModel , Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
 import re
+
+from models.inference_server_type import InferenceServerType
+
+_INFERENCE_SERVER_VALUES = {e.value for e in InferenceServerType}
 
 
 class BenchmarkEntry(BaseModel):
@@ -25,7 +29,7 @@ class ServiceStatus(BaseModel):
     lastUpdated: str = None
 
 class ServiceCreateRequest(BaseModel):
-    # Note: serviceId is auto-generated as hash of (model_name, model_version, service_name)
+    # Note: serviceId is auto-generated as hash of service name only.
     name: str
     serviceDescription: str
     hardwareDescription: str
@@ -34,9 +38,23 @@ class ServiceCreateRequest(BaseModel):
     modelVersion: str
     endpoint: str
     api_key: str
+    inferenceServerType: str = Field(default=InferenceServerType.triton.value)
+    sslVerify: bool = True
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = False
+
+    @field_validator("inferenceServerType", mode="before")
+    @classmethod
+    def validate_inference_server_type(cls, v):
+        if v is None:
+            return InferenceServerType.triton.value
+        s = str(v).strip().lower()
+        if s not in _INFERENCE_SERVER_VALUES:
+            raise ValueError(
+                f"inferenceServerType must be one of {sorted(_INFERENCE_SERVER_VALUES)}, got {v!r}"
+            )
+        return s
 
     @field_validator("name")
     def validate_name(cls, v):

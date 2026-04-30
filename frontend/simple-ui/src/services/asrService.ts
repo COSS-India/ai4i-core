@@ -126,7 +126,7 @@ export const performASRInference = async (
     return response.data;
   } catch (error) {
     console.error('ASR inference error:', error);
-    throw new Error('Failed to perform ASR inference');
+    throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
 
@@ -141,48 +141,13 @@ export const transcribeAudio = async (
   config: ASRInferenceRequest['config']
 ): Promise<{ data: ASRInferenceResponse; responseTime: number }> => {
   try {
-    // Check quota before making inference call (for logged-in users)
-    const jwtToken = authService.getAccessToken();
-    if (jwtToken && audioContent) {
-      try {
-        const parts = jwtToken.split('.');
-        if (parts.length === 3) {
-          const tokenPayload = JSON.parse(atob(parts[1]));
-          const tenantId = tokenPayload.tenant_id;
-          
-          if (tenantId) {
-            // Estimate audio duration in minutes
-            const sampleRate = config.samplingRate || 16000;
-            const estimatedBytes = (audioContent.length * 3) / 4;
-            const headerSize = 44;
-            const audioDataSize = Math.max(0, estimatedBytes - headerSize);
-            const estimatedSamples = audioDataSize / 2;
-            const estimatedDurationSeconds = estimatedSamples / sampleRate;
-            const audioLengthMinutes = Math.round(Math.max(0.01, estimatedDurationSeconds / 60) * 100) / 100;
-            
-            const quotaCheck = await checkTenantQuota(tenantId, 0, audioLengthMinutes);
-            
-            if (!quotaCheck.hasQuota) {
-              throw new Error(quotaCheck.error || 'Quota exceeded. Please contact your administrator.');
-            }
-          }
-        }
-      } catch (quotaError: any) {
-        // If quota check fails with an error message, throw it
-        if (quotaError.message && quotaError.message.includes('quota')) {
-          throw quotaError;
-        }
-        // Otherwise, log and continue (fail open if quota check fails)
-        console.warn('Quota check failed, allowing request:', quotaError);
-      }
-    }
+    // AI4ICore ASR request schema
 
-    // Dhruva Platform ASR request schema
     const payload: ASRInferenceRequest = {
       audio: [{ audioContent }],
       config: {
         ...config,
-        encoding: 'base64', // Required for Dhruva Platform
+        encoding: 'base64', // Required for AI4ICore
         preProcessors: ['vad', 'denoise'], // Voice Activity Detection and denoising
         postProcessors: ['lm', 'punctuation'], // Language model and punctuation
       },
@@ -257,16 +222,7 @@ export const transcribeAudio = async (
     };
   } catch (error: any) {
     console.error('ASR transcription error:', error);
-    // Preserve backend error message for display in UI
-    const data = error?.response?.data;
-    const detail = data?.detail;
-    const message =
-      (typeof detail === 'object' && detail?.message && String(detail.message)) ||
-      (typeof detail === 'string' && detail) ||
-      data?.message ||
-      error?.message ||
-      'Failed to transcribe audio';
-    throw new Error(message);
+    throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
 
@@ -294,7 +250,7 @@ export const listASRModels = async (): Promise<ASRModelsResponse> => {
 export const listASRServices = async (): Promise<ASRServiceDetails[]> => {
   try {
     // Fetch services from model management service filtered by task_type='asr'
-    const services = await listServices('asr');
+    const services = await listServices('asr', true);
     const seen = new Set<string>();
 
     // Transform model management service response to ASRServiceDetails format
@@ -445,8 +401,8 @@ export class ASRStreamingService {
           serviceId: config.serviceId,
           language: config.language,
           samplingRate: config.samplingRate.toString(),
-          ...(config.apiKey && { apiKey: config.apiKey }),
         },
+        ...(config.apiKey && { auth: { token: config.apiKey } }),
       });
 
       this.socket.on('connect', () => {
