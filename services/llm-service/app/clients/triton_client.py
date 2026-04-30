@@ -13,7 +13,7 @@ import httpx
 
 from ai4icore_exceptions import TritonInferenceError
 from ai4icore_env import app_env
-from ai4icore_model_management.triton_client import (
+from ai4icore_platform_core.triton_client import (
     _accumulate_inference_time,
     resolve_inference_ssl_verify,
 )

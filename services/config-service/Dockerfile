@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy shared libs
+COPY libs/ai4icore_core /app/libs/ai4icore_core
 COPY libs/ai4icore_constants /app/libs/ai4icore_constants
 COPY libs/ai4icore_env /app/libs/ai4icore_env
 COPY libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
@@ -22,6 +23,7 @@ COPY services/config-service/requirements.txt .
 
 # Install Python dependencies (NO --user)
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir /app/libs/ai4icore_core
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_constants
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_env
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_exceptions
@@ -49,6 +51,7 @@ COPY --from=builder /usr/local /usr/local
 # ENV PATH=/home/app/.local/bin:$PATH
 
 # Copy shared libs from builder
+COPY --from=builder /app/libs/ai4icore_core /app/libs/ai4icore_core
 COPY --from=builder /app/libs/ai4icore_constants /app/libs/ai4icore_constants
 COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
 COPY --from=builder /app/libs/ai4icore_exceptions /app/libs/ai4icore_exceptions

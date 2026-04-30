@@ -22,7 +22,7 @@ except ImportError:
     print("  pip install tritonclient[http]")
     sys.exit(1)
 
-from ai4icore_model_management import TritonClient, ModelManagementClient
+from ai4icore_platform_core import TritonClient, ModelManagementClient
 
 
 def test_triton_endpoint(endpoint: str, service_id: str = None, expected_model: str = None):

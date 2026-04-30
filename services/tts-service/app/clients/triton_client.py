@@ -6,7 +6,7 @@ import numpy as np
 from tritonclient.http import InferInput, InferRequestedOutput
 from tritonclient.utils import np_to_triton_dtype
 
-from ai4icore_model_management import TritonClient
+from ai4icore_platform_core import TritonClient
 
 
 class TTSTritonClient(TritonClient):

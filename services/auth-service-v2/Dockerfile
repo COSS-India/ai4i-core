@@ -9,6 +9,7 @@ RUN apt-get update && \
 
 # Install shared platform libraries (cacheable layer)
 # Order matters: exceptions first (no deps), then constants (depends on exceptions)
+COPY libs/ai4icore_core /tmp/ai4icore_core
 COPY libs/ai4icore_exceptions /tmp/ai4icore_exceptions
 COPY libs/ai4icore_constants /tmp/ai4icore_constants
 COPY libs/ai4icore_env /tmp/ai4icore_env
@@ -16,7 +17,10 @@ COPY libs/ai4icore_logging /tmp/ai4icore_logging
 COPY libs/ai4icore_auth /tmp/ai4icore_auth
 COPY libs/ai4icore_bootstrap /tmp/ai4icore_bootstrap
 COPY libs/ai4icore_multi_tenant /tmp/ai4icore_multi_tenant
+# Install ai4icore_core FIRST so the shim libs (which depend on ai4icore-core>=1.0.0)
+# can resolve their dependency.
 RUN pip install --no-cache-dir \
+    /tmp/ai4icore_core \
     /tmp/ai4icore_exceptions \
     /tmp/ai4icore_constants \
     /tmp/ai4icore_env \
