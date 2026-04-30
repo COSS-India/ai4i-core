@@ -8,6 +8,15 @@ global:
     cluster: 'ai4i-core'
     environment: 'production'
 
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - "alertmanager:9093"
+
+# Load alert rules
+rule_files:
+  - '/etc/prometheus/rules/*.yml'
 # -----------------------------
 # Scrape all microservices
 # -----------------------------
@@ -36,10 +45,10 @@ scrape_configs:
           - "llm-service:8090"
           - "pipeline-service:8090"
           - "speaker-diarization-service:8095"
-          - "language-diarization-service:9002"
+          - "language-diarization-service:8090"
           - "audio-lang-detection-service:8096"
           # Note: transliteration-service and language-detection-service only expose /enterprise/metrics
-          # They are included in the dhruva-enterprise job below
+          # They are included in the ai4icore-enterprise job below
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
@@ -49,9 +58,9 @@ scrape_configs:
         replacement: '${1}'
 
   # --------------------------------------------
-  # 2. Dhruva Enterprise Metrics – /enterprise/metrics
+  # 2. AI4ICore Enterprise Metrics – /enterprise/metrics
   # --------------------------------------------
-  - job_name: "dhruva-enterprise"
+  - job_name: "ai4icore-enterprise"
     scrape_interval: 5s
     metrics_path: /enterprise/metrics
     static_configs:
@@ -73,7 +82,7 @@ scrape_configs:
           - "transliteration-service:8090"
           - "language-detection-service:8090"
           - "speaker-diarization-service:8095"
-          - "language-diarization-service:9002"
+          - "language-diarization-service:8090"
           - "audio-lang-detection-service:8096"
     relabel_configs:
       - source_labels: [__address__]

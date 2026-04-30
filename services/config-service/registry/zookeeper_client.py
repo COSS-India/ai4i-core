@@ -1,10 +1,10 @@
 import asyncio
 import json
 import logging
-import os
 import uuid
 from typing import Any, Dict, List, Optional, Awaitable, Callable
 
+from ai4icore_env import app_env
 from registry.base import ServiceRegistryClient
 
 try:
@@ -22,10 +22,10 @@ logger = logging.getLogger(__name__)
 
 class ZooKeeperRegistryClient(ServiceRegistryClient):
     def __init__(self) -> None:
-        self._hosts = os.getenv("ZOOKEEPER_HOSTS", "zookeeper:2181")
-        self._base_path = os.getenv("ZOOKEEPER_BASE_PATH", "/services")
-        self._conn_timeout = float(os.getenv("ZOOKEEPER_CONNECTION_TIMEOUT", "10"))
-        self._session_timeout = float(os.getenv("ZOOKEEPER_SESSION_TIMEOUT", "30"))
+        self._hosts = app_env.zookeeper_hosts
+        self._base_path = app_env.zookeeper_base_path
+        self._conn_timeout = float(app_env.zookeeper_connection_timeout)
+        self._session_timeout = float(app_env.zookeeper_session_timeout)
         self._client: Optional[KazooClient] = None
         self._retry = KazooRetry(max_tries=3, delay=0.5) if KazooRetry else None
         self._instance_nodes: Dict[str, str] = {}

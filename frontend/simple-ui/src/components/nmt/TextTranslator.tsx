@@ -1,30 +1,22 @@
-// Text translator component with input and output textareas
+// Text translator component: source text input only (output shown on right panel)
 
 import React, { useState, useEffect } from 'react';
 import {
   VStack,
   Textarea,
-  Button,
-  HStack,
   Text,
   Box,
   FormControl,
   FormLabel,
   FormErrorMessage,
   useColorModeValue,
-  Spinner,
 } from '@chakra-ui/react';
-import { FaLanguage } from 'react-icons/fa';
 import { TextTranslatorProps } from '../../types/nmt';
 import { MAX_TEXT_LENGTH } from '../../config/constants';
 
 const TextTranslator: React.FC<TextTranslatorProps> = ({
   inputText,
-  translatedText,
   onInputChange,
-  onTranslate,
-  isLoading,
-  sourceLanguage,
   maxLength = MAX_TEXT_LENGTH,
   disabled = false,
 }) => {
@@ -35,21 +27,13 @@ const TextTranslator: React.FC<TextTranslatorProps> = ({
   const invalidBorderColor = useColorModeValue('red.300', 'red.500');
   const counterColor = useColorModeValue('gray.500', 'gray.400');
 
-  // Update character count when input changes
   useEffect(() => {
     setCharCount(inputText.length);
     setIsInvalid(inputText.length > maxLength);
   }, [inputText, maxLength]);
 
   const handleInputChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newValue = event.target.value;
-    onInputChange(newValue);
-  };
-
-  const handleTranslate = () => {
-    if (inputText.trim() && !isInvalid && !isLoading) {
-      onTranslate();
-    }
+    onInputChange(event.target.value);
   };
 
   const getCounterColor = () => {
@@ -60,10 +44,10 @@ const TextTranslator: React.FC<TextTranslatorProps> = ({
 
   return (
     <VStack spacing={5} w="full" align="stretch">
-      {/* Input Textarea */}
       <FormControl isInvalid={isInvalid}>
         <FormLabel fontSize="sm" fontWeight="semibold" color="gray.700">
-          Source Text
+          Source Text{" "}
+          <Text as="span" color="red.500">*</Text>
         </FormLabel>
         <Textarea
           value={inputText}
@@ -88,7 +72,6 @@ const TextTranslator: React.FC<TextTranslatorProps> = ({
         )}
       </FormControl>
 
-      {/* Character Counter */}
       <Box display="flex" justifyContent="flex-end">
         <Text
           fontSize="sm"
@@ -98,47 +81,6 @@ const TextTranslator: React.FC<TextTranslatorProps> = ({
           {charCount}/{maxLength}
         </Text>
       </Box>
-
-      {/* Translate Button */}
-      <Button
-        leftIcon={isLoading ? <Spinner size="sm" /> : <FaLanguage />}
-        colorScheme="orange"
-        onClick={handleTranslate}
-        isDisabled={!inputText.trim() || isInvalid || isLoading || disabled}
-        isLoading={isLoading}
-        loadingText="Translating..."
-        size="lg"
-        w="full"
-      >
-        Translate
-      </Button>
-
-      {/* Output Textarea */}
-      <FormControl>
-        <FormLabel fontSize="sm" fontWeight="semibold" color="gray.700">
-          Translation
-        </FormLabel>
-        <Textarea
-          value={translatedText}
-          readOnly
-          placeholder="View Translation Here..."
-          resize="none"
-          h="200px"
-          bg={useColorModeValue('gray.50', 'gray.700')}
-          borderColor={borderColor}
-          _focus={{
-            boxShadow: 'none',
-            borderColor: 'orange.300',
-          }}
-        />
-      </FormControl>
-
-      {/* Language Info */}
-      {sourceLanguage && (
-        <Text fontSize="xs" color="gray.500" textAlign="center">
-          Source Language: {sourceLanguage}
-        </Text>
-      )}
     </VStack>
   );
 };

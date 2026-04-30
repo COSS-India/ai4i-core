@@ -30,7 +30,7 @@ export interface TTSServiceDetailsResponse {
 export const listTTSServices = async (): Promise<TTSServiceDetailsResponse[]> => {
   try {
     // Fetch services from model management service filtered by task_type='tts'
-    const services = await listServices('tts');
+    const services = await listServices('tts', true);
     const seen = new Set<string>();
 
     // Transform model management service response to TTSServiceDetailsResponse format
@@ -170,7 +170,7 @@ export const performTTSInference = async (
     };
   } catch (error) {
     console.error('TTS inference error:', error);
-    throw new Error('Failed to perform TTS inference');
+    throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
 
@@ -198,7 +198,7 @@ export const listVoices = async (filters?: VoiceFilterOptions): Promise<VoiceLis
 
     const response = await apiClient.get<VoiceListResponse>(
       apiEndpoints.tts.voices,
-      { params }
+      { params, timeout: 15000 }
     );
 
     return response.data;

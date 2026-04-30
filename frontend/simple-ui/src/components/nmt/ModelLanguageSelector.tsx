@@ -1,6 +1,6 @@
 // Enhanced model and language selector component for NMT
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Stack,
   FormControl,
@@ -19,6 +19,8 @@ import { useQuery } from '@tanstack/react-query';
 import { LanguageSelectorProps } from '../../types/nmt';
 import { listNMTServices, getNMTLanguagesForService } from '../../services/nmtService';
 import { NMTServiceDetailsResponse, NMTLanguagesResponse } from '../../types/nmt';
+import { useAuth } from '../../hooks/useAuth';
+import { LANG_CODE_TO_LABEL } from '../../config/constants';
 
 interface ModelLanguageSelectorProps extends LanguageSelectorProps {
   selectedServiceId?: string;
@@ -26,6 +28,8 @@ interface ModelLanguageSelectorProps extends LanguageSelectorProps {
   hideServiceSelector?: boolean;
   /** When true, service dropdown is shown but disabled (e.g. anonymous users with fixed IndicTrans). */
   serviceDropdownDisabled?: boolean;
+  /** When true, lock service and language controls (e.g. while a translation request is in flight). */
+  inferenceInProgress?: boolean;
 }
 
 const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
@@ -37,14 +41,16 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   onServiceChange,
   hideServiceSelector = false,
   serviceDropdownDisabled = false,
+  inferenceInProgress = false,
 }) => {
   const [currentServiceId, setCurrentServiceId] = useState<string>(selectedServiceId || '');
   const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
   const [languageDetails, setLanguageDetails] = useState<Array<{code: string; name: string}>>([]);
+  const { isAuthenticated } = useAuth();
 
-  // Fetch available services
+  // Fetch available services (key includes auth so we refetch after login and get published list, not cached anonymous IndicTrans)
   const { data: services, isLoading: servicesLoading } = useQuery({
-    queryKey: ['nmt-services'],
+    queryKey: ['nmt-services', isAuthenticated],
     queryFn: listNMTServices,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
@@ -60,13 +66,61 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  // Update available languages when languages data changes
+  // Update available languages when languages data changes; clear when null (e.g. service not found) to avoid stale options
   useEffect(() => {
     if (languagesData) {
       setAvailableLanguages(languagesData.supported_languages || []);
       setLanguageDetails(languagesData.language_details || []);
+    } else if (currentServiceId) {
+      setAvailableLanguages([]);
+      setLanguageDetails([]);
     }
-  }, [languagesData]);
+  }, [languagesData, currentServiceId]);
+
+  // When current language pair is not in the new service's options, sync parent so state matches display and Translate uses correct languages
+  useEffect(() => {
+    if (!currentServiceId) return;
+    const sourceIsEmpty = !languagePair.sourceLanguage?.trim();
+    const targetIsEmpty = !languagePair.targetLanguage?.trim();
+
+    // Don't auto-pick the first languages on initial load; keep placeholders ("Select")
+    if (sourceIsEmpty && targetIsEmpty) return;
+
+    const defaultCodes = Object.keys(LANG_CODE_TO_LABEL).sort((a, b) =>
+      (LANG_CODE_TO_LABEL[a] || a).localeCompare(LANG_CODE_TO_LABEL[b] || b)
+    );
+    const options =
+      availableLanguages.length > 0
+        ? [...availableLanguages].sort((a, b) => {
+            const getLabel = (code: string) => {
+              const d = languageDetails.find((x) => x.code === code);
+              return d ? d.name : code;
+            };
+            return getLabel(a).localeCompare(getLabel(b));
+          })
+        : defaultCodes;
+    if (options.length === 0) return;
+    const sourceValid = options.includes(languagePair.sourceLanguage);
+    const targetValid = options.includes(languagePair.targetLanguage);
+    if (sourceValid && targetValid) return;
+    const newSource = sourceValid
+      ? languagePair.sourceLanguage
+      : sourceIsEmpty
+        ? ''
+        : (options[0] ?? '');
+    const newTarget = targetValid
+      ? languagePair.targetLanguage
+      : targetIsEmpty
+        ? ''
+        : (options[1] ?? options[0] ?? '');
+    onLanguagePairChange({
+      ...languagePair,
+      sourceLanguage: newSource,
+      targetLanguage: newTarget,
+      sourceScriptCode: '',
+      targetScriptCode: '',
+    });
+  }, [currentServiceId, availableLanguages.length, languagePair.sourceLanguage, languagePair.targetLanguage, languageDetails.length]);
 
   // Sync with parent when selectedServiceId is set (e.g. anonymous users with fixed IndicTrans)
   useEffect(() => {
@@ -133,31 +187,63 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   };
 
   const getLanguageLabel = (code: string) => {
+    // Prefer the shared constant mapping to keep UI consistent with LLM.
+    const mapped = LANG_CODE_TO_LABEL[code];
+    if (mapped) return String(mapped);
+
     const detail = languageDetails.find(d => d.code === code);
-    return detail ? detail.name : code;
+    return detail?.name ? String(detail.name) : String(code);
   };
 
   const isSwapAvailable = availableLanguages.includes(languagePair.sourceLanguage) &&
                           availableLanguages.includes(languagePair.targetLanguage) &&
                           languagePair.sourceLanguage !== languagePair.targetLanguage;
 
-  // Do not block UI on loading; show controls with placeholders instead
+  // When no service selected, show default language list (always visible). When service selected, use service languages.
+  const defaultLanguageCodes = Object.keys(LANG_CODE_TO_LABEL).sort((a, b) =>
+    String(LANG_CODE_TO_LABEL[a] || a).localeCompare(String(LANG_CODE_TO_LABEL[b] || b))
+  );
+  const languageOptionsForDisplay =
+    currentServiceId && availableLanguages.length > 0
+      ? [...availableLanguages].sort((a, b) =>
+          String(getLanguageLabel(a) || a).localeCompare(String(getLanguageLabel(b) || b))
+        )
+      : defaultLanguageCodes;
+
+  // Ensure Select value is always in the options list to avoid client-side crash when switching to a model with different languages
+  const safeSourceValue =
+    languagePair.sourceLanguage?.trim() && languageOptionsForDisplay.includes(languagePair.sourceLanguage)
+      ? languagePair.sourceLanguage
+      : '';
+  const targetLanguageOptionsForDisplay = useMemo(
+    () => languageOptionsForDisplay.filter((langCode) => langCode !== safeSourceValue),
+    [languageOptionsForDisplay, safeSourceValue]
+  );
+  const safeTargetValue =
+    languagePair.targetLanguage?.trim() && targetLanguageOptionsForDisplay.includes(languagePair.targetLanguage)
+      ? languagePair.targetLanguage
+      : '';
+
+  const languageConfigLocked =
+    inferenceInProgress ||
+    (!hideServiceSelector && !currentServiceId?.trim());
 
   return (
-    <Stack spacing={6}>
+    <Stack spacing={6} pt={0} mt={0}>
       {/* Service Selection - Hidden for anonymous users */}
       {!hideServiceSelector && (
         <>
-          <Box>
-            <FormControl>
-              <FormLabel className="dview-service-try-option-title">
-                Translation Service:
+          <Box pt={0} mt={0}>
+            <FormControl mt={0} pt={0}>
+              <FormLabel className="dview-service-try-option-title" mt={0}>
+                NMT Service{" "}
+                <Text as="span" color="red.500">*</Text>
               </FormLabel>
               <Select
                 value={currentServiceId}
                 onChange={handleServiceChange}
-                placeholder="Select a model"
-                disabled={servicesLoading || serviceDropdownDisabled}
+                placeholder="Select"
+                disabled={servicesLoading || serviceDropdownDisabled || inferenceInProgress}
               >
                 {services?.map((service) => {
                   const version = service.modelVersion || service.model_version;
@@ -172,15 +258,23 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
             </FormControl>
             
             {selectedService && (
-              <Box mt={2} p={3} bg="gray.50" borderRadius="md">
-                <Text fontSize="sm" color="gray.600" mb={1}>
-                  <strong>Service ID:</strong> {selectedService.service_id}
+              <Box
+                mt={2}
+                p={3}
+                bg="orange.50"
+                borderRadius="md"
+                border="1px"
+                borderColor="orange.200"
+              >
+                <Text fontSize="sm" color="gray.700" mb={1}>
+                  <strong>Service Name:</strong>{" "}
+                  {selectedService.name || selectedService.service_id}
                 </Text>
-                <Text fontSize="sm" color="gray.600" mb={1}>
-                  <strong>Name:</strong> {selectedService.name || selectedService.service_id}
-                </Text>
-                <Text fontSize="sm" color="gray.600" mb={1}>
-                  <strong>Description:</strong> {selectedService.serviceDescription || selectedService.description || 'No description available'}
+                <Text fontSize="sm" color="gray.700" mb={1}>
+                  <strong>Service Description:</strong>{" "}
+                  {selectedService.serviceDescription ||
+                    selectedService.description ||
+                    "No description available"}
                 </Text>
               </Box>
             )}
@@ -190,17 +284,12 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
         </>
       )}
 
-      {/* Language Selection */}
+      {/* Language Selection - always visible; options from service when selected, else default list */}
       <Box>
         <Text className="dview-service-try-option-title" mb={4}>
           Language Configuration
         </Text>
-        
-        {!currentServiceId ? (
-          <Box p={4} bg="gray.50" borderRadius="md" textAlign="center">
-            <Text fontSize="sm" color="gray.600">No model selected</Text>
-          </Box>
-        ) : languagesLoading ? (
+        {languagesLoading && currentServiceId ? (
           <Stack spacing={2} align="center" py={4}>
             <Spinner size="md" color="orange.500" />
             <Text fontSize="sm" color="gray.600">Loading languages...</Text>
@@ -210,17 +299,19 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
             <HStack spacing={4} align="end">
               {/* Source Language */}
               <FormControl flex={1}>
-                <FormLabel fontSize="sm" color="gray.600">
-                  From:
+                <FormLabel fontSize="sm" color="gray.600" className="dview-service-try-option-title">
+                  Source Language{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 <Select
-                  value={languagePair.sourceLanguage}
+                  value={safeSourceValue}
                   onChange={handleSourceLanguageChange}
-                  placeholder="Select source language"
+                  placeholder="Select"
+                  isDisabled={languageConfigLocked}
                 >
-                  {availableLanguages.map((langCode) => (
+                  {languageOptionsForDisplay.map((langCode) => (
                     <option key={langCode} value={langCode}>
-                      {getLanguageLabel(langCode)} ({langCode})
+                      {getLanguageLabel(langCode)}
                     </option>
                   ))}
                 </Select>
@@ -231,7 +322,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                 aria-label="Swap languages"
                 icon={<FaExchangeAlt />}
                 onClick={handleSwapLanguages}
-                isDisabled={!isSwapAvailable}
+                isDisabled={languageConfigLocked || !isSwapAvailable}
                 variant="outline"
                 size="md"
                 colorScheme="orange"
@@ -239,34 +330,24 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
 
               {/* Target Language */}
               <FormControl flex={1}>
-                <FormLabel fontSize="sm" color="gray.600">
-                  To:
+                <FormLabel fontSize="sm" color="gray.600" className="dview-service-try-option-title">
+                  Target Language{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 <Select
-                  value={languagePair.targetLanguage}
+                  value={safeTargetValue}
                   onChange={handleTargetLanguageChange}
-                  placeholder="Select target language"
+                  placeholder="Select"
+                  isDisabled={languageConfigLocked}
                 >
-                  {availableLanguages.map((langCode) => (
+                  {targetLanguageOptionsForDisplay.map((langCode) => (
                     <option key={langCode} value={langCode}>
-                      {getLanguageLabel(langCode)} ({langCode})
+                      {getLanguageLabel(langCode)}
                     </option>
                   ))}
                 </Select>
               </FormControl>
             </HStack>
-
-            {/* Current Selection Display */}
-            <Box textAlign="center" p={3} bg="orange.50" borderRadius="md">
-              <Text fontSize="sm" color="orange.700" fontWeight="medium">
-                {getLanguageLabel(languagePair.sourceLanguage)} → {getLanguageLabel(languagePair.targetLanguage)}
-              </Text>
-              <Text fontSize="xs" color="orange.600" mt={1}>
-                {languagePair.sourceLanguage} → {languagePair.targetLanguage}
-              </Text>
-            </Box>
-
-            {/* Language Count Info removed per requirements */}
           </Stack>
         )}
       </Box>

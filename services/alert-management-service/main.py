@@ -1,0 +1,123 @@
+"""
+Alert Management Service
+Provides CRUD operations for alert definitions, notification receivers, and routing rules.
+"""
+from ai4icore_env import app_env
+from ai4icore_exceptions import register_exception_handlers
+from ai4icore_logging import get_logger, LoggingConfig, register_logging_plugin
+from ai4icore_telemetry import setup_tracing
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+# Disable uvicorn access logger before uvicorn starts
+import logging
+uvicorn_access = logging.getLogger("uvicorn.access")
+uvicorn_access.handlers.clear()
+uvicorn_access.propagate = False
+uvicorn_access.disabled = True
+uvicorn_access.setLevel(logging.CRITICAL + 1)
+
+logger = get_logger(__name__)
+
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+
+from alert_management import init_db_pool, close_db_pool
+from routers.alert_definitions import router as alert_definitions_router
+from routers.receivers import router as receivers_router
+from routers.routing_rules import router as routing_rules_router
+from routers.alert_history import router as alert_history_router
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown"""
+    logger.info("Starting Alert Management Service...", extra={"context": {"event": "startup"}})
+
+    # Initialize database connection pool
+    try:
+        await init_db_pool()
+        logger.info("Database connection pool initialized", extra={"context": {"event": "db_pool_ready"}})
+    except Exception as e:
+        logger.error(f"Failed to initialize database pool: {e}", extra={"context": {"error": str(e)}})
+        raise
+
+    yield
+
+    # Shutdown
+    logger.info("Shutting down Alert Management Service...", extra={"context": {"event": "shutdown"}})
+    try:
+        await close_db_pool()
+        logger.info("Database connection pool closed", extra={"context": {"event": "db_pool_closed"}})
+    except Exception as e:
+        logger.warning(f"Error closing database pool: {e}", extra={"context": {"error": str(e)}})
+
+
+app = FastAPI(
+    title="Alert Management Service API",
+    version="1.0.0",
+    description="API for managing alert definitions, notification receivers, and routing rules",
+    lifespan=lifespan
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Shared exception handlers
+register_exception_handlers(app)
+
+# Initialize AI4ICore Logging Plugin
+logging_config = LoggingConfig.from_env()
+logging_config.service_name = app_env.service_name
+logging_config.use_kafka = app_env.use_kafka_logging
+register_logging_plugin(app, config=logging_config)
+logger.info("✅ AI4ICore Logging Plugin initialized for alert-management-service")
+
+# Distributed tracing (Jaeger) - same pattern as nmt-service, ocr-service
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+tracer = setup_tracing("alert-management-service")
+if tracer:
+    logger.info("✅ Distributed tracing initialized for alert-management-service")
+    FastAPIInstrumentor.instrument_app(app)
+    logger.info("✅ FastAPI instrumentation enabled for tracing")
+else:
+    logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
+
+# Register routers
+app.include_router(alert_definitions_router)
+app.include_router(receivers_router)
+app.include_router(routing_rules_router)
+app.include_router(alert_history_router)
+
+
+@app.get("/")
+async def root():
+    """Root endpoint"""
+    return {
+        "service": "alert-management-service",
+        "version": "1.0.0",
+        "status": "running",
+        "description": "Alert management API for dynamic alert configuration"
+    }
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy", "service": "alert-management-service"}
+
+
+if __name__ == "__main__":
+    port = app_env.port
+    logger.info(
+        f"Starting Alert Management Service on http://0.0.0.0:{port}...",
+        extra={"context": {"port": port}}
+    )
+    uvicorn.run("main:app", host="0.0.0.0", port=port, loop="asyncio", reload=True)
+

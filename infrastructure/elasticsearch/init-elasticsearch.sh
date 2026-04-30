@@ -9,7 +9,7 @@ echo "Starting Elasticsearch initialization..."
 
 # Wait for Elasticsearch to be ready
 echo "Waiting for Elasticsearch to be ready..."
-until curl -f -u "${ELASTIC_USERNAME:-elastic}:${ELASTIC_PASSWORD:-elastic_secure_password_2024}" http://localhost:9200/_cluster/health; do
+until curl -f -u "${ELASTIC_USERNAME}:${ELASTIC_PASSWORD}" http://localhost:9200/_cluster/health; do
     echo "Elasticsearch is not ready yet, waiting..."
     sleep 5
 done
@@ -18,8 +18,8 @@ echo "Elasticsearch is ready, starting initialization..."
 
 # Set environment variables
 ELASTICSEARCH_URL="http://localhost:9200"
-ELASTIC_USERNAME="${ELASTIC_USERNAME:-elastic}"
-ELASTIC_PASSWORD="${ELASTIC_PASSWORD:-elastic_secure_password_2024}"
+ELASTIC_USERNAME="${ELASTIC_USERNAME}"
+ELASTIC_PASSWORD="${ELASTIC_PASSWORD}"
 
 # Create index template for logs
 echo "Creating index template for logs..."

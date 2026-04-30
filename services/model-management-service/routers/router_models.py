@@ -1,0 +1,225 @@
+"""
+Standard RESTful API router for Models - aligned with API Gateway paths.
+Routes: /models (GET, POST, PATCH), /models/{model_id} (GET, POST), /models/{model_id} (DELETE)
+"""
+from fastapi import HTTPException, status, APIRouter, Depends, Query, Request, Body
+from sqlalchemy.ext.asyncio import AsyncSession
+from middleware.auth_provider import AuthProvider
+from models.model_view import ModelViewResponse, ModelViewRequestWithVersion
+from models.model_create import ModelCreateRequest
+from models.model_update import ModelUpdateRequest
+from db_operations import (
+    get_model_details,
+    list_all_models,
+    save_model_to_db,
+    update_model,
+    delete_model_by_uuid,
+)
+from db_connection import get_auth_db_session
+from utils.permission_checker import require_permission, require_permission_dependency
+from utils.request_helpers import get_user_id, validate_endpoint_or_raise
+from logger import logger
+from typing import List, Union, Optional
+from models.type_enum import TaskTypeEnum
+
+
+router_models = APIRouter(
+    prefix="/models",
+    tags=["Model Management"],
+    dependencies=[Depends(AuthProvider)]
+)
+
+
+def _ep_schema_params(ep_schema) -> dict:
+    """Extract request_schema and triton_schema from an endpoint schema object."""
+    if not ep_schema:
+        return {"request_schema": None, "triton_schema": None}
+    return {
+        "request_schema": ep_schema.request,
+        "triton_schema": ep_schema.response.get("triton") if ep_schema.response else None,
+    }
+
+
+@router_models.get("", response_model=List[ModelViewResponse])
+async def list_models(
+    request: Request,
+    task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
+    include_deprecated: bool = Query(True, description="Include deprecated versions. Set to false to show only ACTIVE versions."),
+    model_name: Optional[str] = Query(None, description="Filter by model name. Returns all versions of models matching this name."),
+    created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the model."),
+    db: AsyncSession = Depends(get_auth_db_session)
+):
+    """List all models - GET /models.
+    
+    Access: Any authenticated user role (ADMIN, MODERATOR, USER, GUEST)."""
+    try:
+        if not task_type or task_type.lower() == "none":
+            task_type_enum = None
+        else:
+            task_type_enum = TaskTypeEnum(task_type)
+
+        data = await list_all_models(task_type_enum, include_deprecated=include_deprecated, model_name=model_name, created_by=created_by)
+        if data is None:
+            return []
+
+        return data
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error while listing model details from DB.")
+        raise HTTPException(
+            status_code=500,
+            detail={"kind": "DBError", "message": "Error listing model details"}
+        )
+
+
+@router_models.get("/{model_id:path}", response_model=ModelViewResponse)
+async def get_model_by_id(
+    model_id: str,
+    request: Request,
+    version: Optional[str] = Query(None, description="Optional version to get specific version"),
+    db: AsyncSession = Depends(get_auth_db_session)
+):
+    """Get model by ID - GET /models/{model_id}.
+    
+    Access: Any authenticated user role (ADMIN, MODERATOR, USER, GUEST)."""
+    try:
+        data = await get_model_details(model_id, version=version)
+        if not data:
+            raise HTTPException(status_code=404, detail="Model not found")
+        return data
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error while fetching model details from DB.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"kind": "DBError", "message": "Error fetching model details"}
+        )
+
+
+@router_models.post("/{model_id:path}", response_model=ModelViewResponse)
+async def view_model_by_id(
+    model_id: str,
+    request: Request,
+    payload: Optional[ModelViewRequestWithVersion] = Body(None, description="Request body with optional version"),
+    db: AsyncSession = Depends(get_auth_db_session)
+):
+    """Get model by ID with optional version in body - POST /models/{model_id}. Requires 'model.read' permission (ADMIN or MODERATOR only)."""
+    await require_permission("model.read", request, db)
+    try:
+        version = payload.version if payload else None
+        data = await get_model_details(model_id, version=version)
+        if not data:
+            raise HTTPException(status_code=404, detail="Model not found")
+        return data
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error while fetching model details from DB.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"kind": "DBError", "message": "Error fetching model details"}
+        )
+
+
+@router_models.post("", response_model=str, dependencies=[Depends(require_permission_dependency("model.create"))])
+async def create_model(
+    payload: ModelCreateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_auth_db_session)
+):
+    """Create a new model - POST /models. Requires 'model.create' permission (ADMIN or MODERATOR only)."""
+    try:
+        # Endpoint validation on create is optional — skip so models can be
+        # registered before Triton is reachable. Endpoint will be validated
+        # on service creation
+        # endpoint_url = payload.inferenceEndPoint.endpoint
+        # if endpoint_url:
+        #     await validate_endpoint_or_raise(
+        #         endpoint=endpoint_url,
+        #         task_type=payload.task.type,
+        #         error_message="Inference endpoint URL is invalid.",
+        #         **_ep_schema_params(payload.inferenceEndPoint.schema),
+        #     )
+
+        user_id = get_user_id(request)
+        model_id = await save_model_to_db(payload, created_by=user_id)
+        logger.info(f"Model '{payload.name}' inserted successfully by user {user_id}.")
+        return f"Model '{payload.name}' (ID: {model_id}) created successfully."
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error while saving model to DB.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"kind": "DBError", "message": "Model insert not successful"}
+        )
+
+
+@router_models.patch("", response_model=str, dependencies=[Depends(require_permission_dependency("model.update"))])
+async def update_model_endpoint(
+    payload: ModelUpdateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_auth_db_session)
+):
+    """Update a model - PATCH /models. Requires 'model.update' permission (ADMIN or MODERATOR only)."""
+    try:
+        if payload.inferenceEndPoint and payload.inferenceEndPoint.endpoint:
+            task_type = payload.task.type if payload.task else None
+            await validate_endpoint_or_raise(
+                endpoint=payload.inferenceEndPoint.endpoint,
+                task_type=task_type,
+                error_message="Inference endpoint URL is invalid.",
+                **_ep_schema_params(payload.inferenceEndPoint.schema),
+            )
+
+        user_id = get_user_id(request)
+        result = await update_model(payload, updated_by=user_id)
+
+        if result == 0:
+            logger.warning(f"No DB record found for model {payload.modelId}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Model not found in database"
+            )
+
+        logger.info(f"Model '{payload.modelId}' updated successfully by user {user_id}.")
+        return f"Model '{payload.modelId}' updated successfully."
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error while updating model in DB.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"kind": "DBError", "message": "Model update not successful"}
+        )
+
+
+@router_models.delete("/{model_id:path}", response_model=str, dependencies=[Depends(require_permission_dependency("model.delete"))])
+async def delete_model(
+    model_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_auth_db_session)
+):
+    """Delete a model by ID - DELETE /models/{model_id}. Requires 'model.delete' permission (ADMIN or MODERATOR only)."""
+    try:
+        result = await delete_model_by_uuid(model_id)
+
+        if result == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"kind": "NotFound", "message": f"Model with id '{model_id}' not found"}
+            )
+
+        return f"Model '{model_id}' deleted successfully."
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error while deleting model from DB.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"kind": "DBError", "message": "Model delete not successful"}
+        )

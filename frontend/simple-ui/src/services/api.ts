@@ -1,12 +1,14 @@
 // Axios API client with interceptors for authentication and request tracking
 
 import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestConfig } from 'axios';
+import { getStoredAccessToken } from '../utils/tokenStorage';
+import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 
 // API Base URL from environment.
 // For production this should be set to the browser-facing API gateway URL
 // (for example, https://dev.ai4inclusion.org or a dedicated API domain).
-// Default to localhost:8080 for local development if not set.
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+// Default to localhost:9000 for local development (docker-compose-local.yml) if not set.
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ;
 
 // Debug: Log the API base URL in development
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
@@ -14,33 +16,16 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   console.log('NEXT_PUBLIC_API_URL from env:', process.env.NEXT_PUBLIC_API_URL);
 }
 
-// Get JWT access token from localStorage or sessionStorage (stored after login)
-// This is used for Authorization: Bearer header
+// Get JWT access token (decrypted from storage)
 const getAuthToken = (): string | null => {
   if (typeof window !== 'undefined') {
-    // Check both localStorage and sessionStorage (same logic as getJwtToken)
-    const accessToken = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    const accessToken = getStoredAccessToken();
     if (accessToken && accessToken.trim() !== '') {
       return accessToken.trim();
     }
   }
   return null;
 };
-
-// Get API key from localStorage only (user-provided via "manage API key")
-// Do not use env - API key must be set by the user
-const getApiKey = (): string | null => {
-  if (typeof window !== 'undefined') {
-    const storedApiKey = localStorage.getItem('api_key');
-    if (storedApiKey && storedApiKey.trim() !== '') {
-      return storedApiKey.trim();
-    }
-  }
-  return null;
-};
-
-// Note: X-API-Key is now injected by Kong automatically based on route
-// Frontend only needs to send Authorization: Bearer <token>
 
 // API Endpoints
 export const apiEndpoints = {
@@ -97,6 +82,15 @@ export const apiEndpoints = {
     inference: '/api/v1/ner/inference',
     health: '/api/v1/ner/health',
   },
+  pii: {
+    base: '/api/v1/pii',
+    redact: '/api/v1/pii/redact',
+    domains: '/api/v1/pii/domains',
+  },
+  policy: {
+    /** Gateway prefix; service mounts routes at /v1 (see policy-service main.py). */
+    base: '/api/v1/policy-service',
+ },
 } as const;
 
 // Create Axios instance with standard timeout
@@ -150,25 +144,9 @@ llmApiClient.interceptors.request.use(
     }
     
     if (isLLMEndpoint && !isAuthEndpoint) {
-      // LLM requires BOTH JWT token AND API key
       const jwtToken = getJwtToken();
       if (jwtToken) {
         config.headers['Authorization'] = `Bearer ${jwtToken}`;
-    }
-      
-      const apiKey = getApiKey();
-      if (apiKey) {
-        config.headers['X-API-Key'] = apiKey;
-        // Set X-Auth-Source to BOTH when both JWT and API key are present
-        if (jwtToken) {
-          config.headers['X-Auth-Source'] = 'BOTH';
-        }
-      }
-    } else if (!isAuthEndpoint) {
-      // For other endpoints (legacy), use API key if available
-      const apiKey = getApiKey();
-      if (apiKey) {
-        config.headers['Authorization'] = `Bearer ${apiKey}`;
       }
     }
     
@@ -188,15 +166,17 @@ llmApiClient.interceptors.response.use(
     }
     return response;
   },
-  (error: AxiosError) => {
-    // Don't automatically logout on 401 for service endpoints
-    // Let the UI handle the error and show appropriate messages
-    // This prevents users from being logged out when API key is missing/invalid
-    if (error.response) {
-      const { status } = error.response;
+  async (error: AxiosError) => {
+    if (error.response && typeof window !== 'undefined') {
+      const { status, data } = error.response;
+      if (responseIndicatesTenantSuspendedOrInactive(status, data)) {
+        console.warn('LLM: tenant/user inactive — ending session');
+        const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+        forceFrontendSessionEnd();
+        return Promise.reject(error);
+      }
       if (status === 401) {
-        // Log the error but don't logout - let UI handle it
-        console.warn('LLM service returned 401 - check API key and authentication');
+        console.warn('LLM service returned 401 - check authentication');
       }
     }
     return Promise.reject(error);
@@ -216,20 +196,9 @@ asrApiClient.interceptors.request.use(
       console.debug('Proactive token refresh check failed:', error);
     }
     
-    // ASR requires BOTH JWT token AND API key
     const authToken = getAuthToken();
     if (authToken) {
       config.headers['Authorization'] = `Bearer ${authToken}`;
-    }
-    // Also send API key for ASR service
-    const apiKey = getApiKey();
-    if (apiKey) {
-      config.headers['X-API-Key'] = apiKey;
-      // Set x-auth-source to BOTH when both JWT token and API key are present
-      if (authToken) {
-        config.headers['x-auth-source'] = 'BOTH';
-        config.headers['X-Auth-Source'] = 'BOTH'; // Also set uppercase for consistency
-      }
     }
     
     return config;
@@ -248,27 +217,27 @@ asrApiClient.interceptors.response.use(
     }
     return response;
   },
-  (error: AxiosError) => {
-    // Don't automatically logout on 401 for service endpoints
-    // Let the UI handle the error and show appropriate messages
-    // This prevents users from being logged out when API key is missing/invalid
-    if (error.response) {
-      const { status } = error.response;
+  async (error: AxiosError) => {
+    if (error.response && typeof window !== 'undefined') {
+      const { status, data } = error.response;
+      if (responseIndicatesTenantSuspendedOrInactive(status, data)) {
+        console.warn('ASR: tenant/user inactive — ending session');
+        const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+        forceFrontendSessionEnd();
+        return Promise.reject(error);
+      }
       if (status === 401) {
-        // Log the error but don't logout - let UI handle it
-        console.warn('ASR service returned 401 - check API key and authentication');
+        console.warn('ASR service returned 401 - check authentication');
       }
     }
     return Promise.reject(error);
   }
 );
 
-// Get JWT token from auth service
-const getJwtToken = (): string | null => {
+// Get JWT token (decrypted from storage)
+export const getJwtToken = (): string | null => {
   if (typeof window === 'undefined') return null;
-  // Check both localStorage and sessionStorage for token (same logic as authService)
-  const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
-  // Return null if token is empty or whitespace
+  const token = getStoredAccessToken();
   return token && token.trim() !== '' ? token.trim() : null;
 };
 
@@ -311,6 +280,12 @@ apiClient.interceptors.request.use(
     const isSpeakerDiarizationEndpoint = url.includes('/api/v1/speaker-diarization');
     const isLanguageDiarizationEndpoint = url.includes('/api/v1/language-diarization');
     const isAudioLangDetectionEndpoint = url.includes('/api/v1/audio-lang-detection');
+    const isObservabilityEndpoint = url.includes('/api/v1/telemetry');
+    const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
+    const isFeatureFlagsEndpoint = url.includes('/api/v1/feature-flags');
+    const isPolicyServiceEndpoint = url.includes('/api/v1/policy-service');
+    const pathNoQuery = (url.split('?')[0] || '').toLowerCase();
+    const isPolicyServiceHealthPath = pathNoQuery.endsWith('/api/v1/policy-service/health');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
     const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
@@ -321,7 +296,10 @@ apiClient.interceptors.request.use(
                         isAudioLangDetectionEndpoint || isLanguageDetectionEndpoint ||
                         isLanguageDiarizationEndpoint || isSpeakerDiarizationEndpoint ||
                         isNEREndpoint || isOCREndpoint || isTransliterationEndpoint ||
-                        isMultiTenantEndpoint;
+                        isObservabilityEndpoint ||
+                        isMultiTenantEndpoint ||
+                        isFeatureFlagsEndpoint ||
+                        (isPolicyServiceEndpoint && !isPolicyServiceHealthPath);
     
     // Proactively refresh token if it's expiring soon (skip for refresh and login endpoints)
     if ((requiresJWT || (isAuthEndpoint && !isAuthRefreshEndpoint)) && !isAuthRefreshEndpoint) {
@@ -337,75 +315,17 @@ apiClient.interceptors.request.use(
     }
     
     if (requiresJWT && !isAuthEndpoint) {
-      // For services that require JWT tokens, use JWT token
+      // All service endpoints use JWT Bearer token for authentication
       const jwtToken = getJwtToken();
-      const apiKey = getApiKey();
-      
-      // Model management endpoints support both JWT and API key authentication
-      if (isModelManagementEndpoint) {
-        if (jwtToken && apiKey) {
-          // Both JWT and API key present - use BOTH
-          config.headers['Authorization'] = `Bearer ${jwtToken}`;
-          config.headers['X-API-Key'] = apiKey;
-          config.headers['x-auth-source'] = 'BOTH';
-          config.headers['X-Auth-Source'] = 'BOTH';
-        } else if (jwtToken) {
-          // Only JWT token present - use AUTH_TOKEN
-          config.headers['Authorization'] = `Bearer ${jwtToken}`;
-          config.headers['x-auth-source'] = 'AUTH_TOKEN';
-        } else if (apiKey) {
-          // Only API key present - send as Bearer token with API_KEY auth source
-          // Some APIs expect API key as Bearer token when x-auth-source is API_KEY
-          config.headers['Authorization'] = `Bearer ${apiKey}`;
-          config.headers['X-API-Key'] = apiKey;
-          config.headers['x-auth-source'] = 'API_KEY';
-        } else {
-          // No authentication - will likely fail, but let API handle it
-          console.warn('No authentication token or API key found for model-management endpoint:', config.url);
-        }
+      if (jwtToken) {
+        config.headers['Authorization'] = `Bearer ${jwtToken}`;
       } else {
-        // For other service endpoints, require JWT token
-        if (jwtToken) {
-          config.headers['Authorization'] = `Bearer ${jwtToken}`;
-        }
-        
-        // Multi-tenant endpoints require JWT token with x-auth-source: AUTH_TOKEN
-        if (isMultiTenantEndpoint) {
-          if (jwtToken) {
-            config.headers['Authorization'] = `Bearer ${jwtToken}`;
-            config.headers['x-auth-source'] = 'AUTH_TOKEN';
-            config.headers['X-Auth-Source'] = 'AUTH_TOKEN';
-          } else {
-            console.warn('JWT token is missing for multi-tenant endpoint:', config.url);
-          }
-        } else if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint || isNEREndpoint ||
-            isOCREndpoint || isTransliterationEndpoint || isLanguageDetectionEndpoint || 
-            isSpeakerDiarizationEndpoint || isLanguageDiarizationEndpoint || isAudioLangDetectionEndpoint) {
-          // All other services require BOTH JWT token AND API key
-          if (apiKey) {
-            config.headers['X-API-Key'] = apiKey;
-            // Set X-Auth-Source to BOTH when both JWT and API key are present
-            // Use lowercase to match the model-management endpoint format
-            if (jwtToken) {
-              config.headers['x-auth-source'] = 'BOTH';
-              // Also set uppercase version for consistency
-              config.headers['X-Auth-Source'] = 'BOTH';
-            } else {
-              // If only API key is present (shouldn't happen for these endpoints, but handle it)
-              console.warn('API key present but JWT token missing for service endpoint:', config.url);
-            }
-          } else {
-            // Log warning if API key is missing
-            console.warn('API key is missing for service endpoint:', config.url);
-          }
-        }
-      }
-    } else if (!isAuthEndpoint) {
-      // For other endpoints (legacy), use API key if available
-      const apiKey = getApiKey();
-      if (apiKey) {
-        // Send API key in X-API-Key header (not as Bearer token)
-        config.headers['X-API-Key'] = apiKey;
+        // No token available — reject request before sending to avoid
+        // confusing "API key missing" errors from backend
+        console.warn('No JWT token available for service endpoint:', config.url);
+        return Promise.reject(new axios.Cancel(
+          'Authentication required. Please sign in to continue.'
+        ));
       }
     }
     
@@ -434,6 +354,18 @@ apiClient.interceptors.response.use(
     // Handle different error types
     if (error.response) {
       const { status, data } = error.response;
+
+      if (
+        typeof window !== 'undefined' &&
+        responseIndicatesTenantSuspendedOrInactive(status, data)
+      ) {
+        console.warn('API: tenant suspended/deactivated or user inactive — ending session');
+        const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+        forceFrontendSessionEnd();
+        return Promise.reject(
+          new Error('Your organization account is no longer active. Please sign in again.')
+        );
+      }
       
       switch (status) {
         case 401:
@@ -457,10 +389,12 @@ apiClient.interceptors.response.use(
                                      url.includes('/api/v1/speaker-diarization') ||
                                      url.includes('/api/v1/language-diarization') ||
                                      url.includes('/api/v1/audio-lang-detection') ||
+                                     url.includes('/api/v1/telemetry') ||
+                                     url.includes('/api/v1/policy-service') ||
                                      isModelManagementEndpoint ||
                                      isMultiTenantEndpoint;
             
-            if (isServiceEndpoint || isModelManagementEndpoint) {
+            if (isServiceEndpoint || isModelManagementEndpoint || isMultiTenantEndpoint) {
               // For service endpoints and model-management endpoints
               // Check if it's a token expiration issue - if so, redirect to sign-in
               
@@ -490,7 +424,6 @@ apiClient.interceptors.response.use(
               
               // Log detailed error information
               const jwtToken = getJwtToken();
-              const apiKey = getApiKey();
               const endpointType = isModelManagementEndpoint ? 'model-management' : 'service';
               console.warn(`${endpointType} endpoint 401 error:`, {
                 url,
@@ -498,9 +431,7 @@ apiClient.interceptors.response.use(
                 isTokenExpired,
                 isInvalidAuthCredentials,
                 hasJWT: !!jwtToken,
-                hasAPIKey: !!apiKey,
                 jwtLength: jwtToken?.length || 0,
-                apiKeyLength: apiKey?.length || 0,
                 responseData: data,
               });
               
@@ -572,16 +503,22 @@ apiClient.interceptors.response.use(
                 }
                 return Promise.reject(new Error('Session expired. Please sign in again.'));
               }
+
+              // Multi-tenant APIs back the app shell; any unresolved 401 should end the session
+              // instead of leaving the user on broken pages (e.g. logs, profile).
+              if (isMultiTenantEndpoint) {
+                console.warn('Multi-tenant API returned 401 — ending session');
+                const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+                forceFrontendSessionEnd();
+                return Promise.reject(new Error('Session expired. Please sign in again.'));
+              }
               
-              // For non-expiration errors (API key issues, validation errors, etc.)
-              // Don't redirect - let the UI handle the error
+              // For non-expiration errors, don't redirect - let the UI handle the error
               let enhancedErrorMessage = errorMessage;
               if (isModelManagementEndpoint) {
                 enhancedErrorMessage = `Model management error: ${errorMessage}. Please check your authentication and try again.`;
-              } else if (!apiKey) {
-                enhancedErrorMessage = `API key is required. Please set an API key in your profile or header.`;
               } else {
-                enhancedErrorMessage = `Authentication failed: ${errorMessage}. Please check your API key and login status.`;
+                enhancedErrorMessage = `Authentication failed: ${errorMessage}. Please check your login status.`;
               }
               
               const enhancedError = new Error(enhancedErrorMessage);

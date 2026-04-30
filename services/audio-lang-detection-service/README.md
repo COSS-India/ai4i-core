@@ -77,7 +77,7 @@ See `env.template` for all available environment variables.
 
 ### Key Configuration Variables
 
-- `TRITON_ENDPOINT`: Triton Inference Server endpoint (default: `65.1.35.3:8100`)
+- `TRITON_ENDPOINT`: Triton Inference Server endpoint (default: `<your-triton-host>:8100`)
 - `SERVICE_PORT`: Service port (default: `8096`)
 - `REDIS_HOST`: Redis host for rate limiting
 - `DATABASE_URL`: PostgreSQL connection string
@@ -100,7 +100,7 @@ pip install -r requirements.txt
 pip install -e ../../libs/ai4icore_observability
 
 # Set environment variables
-export TRITON_ENDPOINT=65.1.35.3:8100
+export TRITON_ENDPOINT=<your-triton-host>:8100
 export SERVICE_PORT=8096
 
 # Run the service

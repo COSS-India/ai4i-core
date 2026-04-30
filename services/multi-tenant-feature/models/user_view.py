@@ -1,6 +1,7 @@
-from pydantic import BaseModel , EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field
 from uuid import UUID
-from typing import List
+from typing import List, Optional
+
 
 class TenantUserViewResponse(BaseModel):
     id: UUID
@@ -8,10 +9,15 @@ class TenantUserViewResponse(BaseModel):
     tenant_id: str
     username: str
     email: EmailStr
+    phone_number: Optional[str] = None
     subscriptions: list[str]
     status: str
     created_at: str
     updated_at: str
+    role: str = Field(
+        "",
+        description="Single role for the user, e.g. 'USER' or 'ADMIN'. Only one role is allowed per user.",
+    )
 
 
 class ListUsersResponse(BaseModel):

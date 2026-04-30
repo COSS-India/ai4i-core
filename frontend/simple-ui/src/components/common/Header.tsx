@@ -16,10 +16,25 @@ import {
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
+import { getServiceTitle, type ServiceId } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import AuthModal from "../auth/AuthModal";
-import ApiKeyViewerModal from "./ApiKeyViewerModal";
+
+const PATH_TO_SERVICE: Record<string, ServiceId> = {
+  "/asr": "asr",
+  "/tts": "tts",
+  "/nmt": "nmt",
+  "/llm": "llm",
+  "/pipeline": "pipeline",
+  "/ocr": "ocr",
+  "/transliteration": "transliteration",
+  "/language-detection": "language-detection",
+  "/speaker-diarization": "speaker-diarization",
+  "/language-diarization": "language-diarization",
+  "/audio-language-detection": "audio-language-detection",
+  "/ner": "ner",
+};
 
 const Header: React.FC = () => {
   const router = useRouter();
@@ -31,9 +46,8 @@ const Header: React.FC = () => {
   } = useAuth();
   const { checkSessionExpiry } = useSessionExpiry();
 
-  const [isApiKeyViewerOpen, setIsApiKeyViewerOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [title, setTitle] = useState("Dashboard");
+  const [title, setTitle] = useState("");
 
   // Determine if we should show user menu or sign in button
   const showUserMenu =
@@ -59,25 +73,15 @@ const Header: React.FC = () => {
     return () => clearInterval(intervalId);
   }, [isUserAuthenticated, isAuthLoading, checkSessionExpiry]);
 
-  // Update title based on route
+  // Update title based on route (service pages use serviceMetadata; others use fixed labels)
   useEffect(() => {
     const pathname = router.pathname;
+    const serviceId = PATH_TO_SERVICE[pathname];
+    if (serviceId) {
+      setTitle(getServiceTitle(serviceId));
+      return;
+    }
     switch (pathname) {
-      case "/asr":
-        setTitle("ASR – Automatic Speech Recognition");
-        break;
-      case "/tts":
-        setTitle("TTS – Text-to-Speech");
-        break;
-      case "/nmt":
-        setTitle("Text Translation");
-        break;
-      case "/llm":
-        setTitle("Large Language Model");
-        break
-      case "/pipeline":
-        setTitle("Speech-to-Speech Pipeline");
-        break;
       case "/pipeline-builder":
         setTitle("Pipeline Builder");
         break;
@@ -86,6 +90,27 @@ const Header: React.FC = () => {
         break;
       case "/model-management":
         setTitle("Model Management");
+        break;
+      case "/services-management":
+        setTitle("Services Management");
+        break;
+      case "/tenant-management":
+        setTitle("Tenant Management");
+        break;
+      case "/api-key-management":
+        setTitle("API Key Management");
+        break;
+      case "/pii-management":
+        setTitle("PII Guardrail");
+        break;
+      case "/alerts-management":
+        setTitle("Alerts Management");
+        break;
+      case "/logs":
+        setTitle("Logs Dashboard");
+        break;
+      case "/policy-management":
+        setTitle("Policy Management");
         break;
       case "/auth":
         setTitle("Sign In");
@@ -103,11 +128,23 @@ const Header: React.FC = () => {
   const showBackButton = router.pathname !== "/";
 
   const handleBack = () => {
-    if (router.pathname === "/pipeline-builder") {
-      router.push("/");
-    } else {
-      router.back();
+    if (router.pathname === "/services-management" && router.query.tab === "2") {
+      router.push("/services-management");
+      return;
     }
+    if (router.pathname === "/api-key-management") {
+      router.push("/profile");
+      return;
+    }
+    if (router.pathname === "/tenant-management") {
+      router.push("/");
+      return;
+    }
+    if (router.pathname === "/model-management" && router.query.tab === "2") {
+      router.push("/model-management");
+      return;
+    }
+    router.push("/");
   };
 
   const handleAuthClick = () => {
@@ -202,13 +239,6 @@ const Header: React.FC = () => {
                   }}>
                     Profile
                   </MenuItem>
-                  {/* <MenuItem onClick={() => {
-                    // Check session expiry before opening API Key viewer
-                    if (!checkSessionExpiry()) return;
-                    setIsApiKeyViewerOpen(true);
-                  }}>
-                    API Key
-                  </MenuItem> */}
                   <MenuItem onClick={async () => {
                     // Check session expiry before logout
                     if (!checkSessionExpiry()) return;
@@ -220,12 +250,6 @@ const Header: React.FC = () => {
           </HStack>
         </HStack>
       </Box>
-
-      {/* API Key Viewer Modal */}
-      <ApiKeyViewerModal
-        isOpen={isApiKeyViewerOpen}
-        onClose={() => setIsApiKeyViewerOpen(false)}
-      />
 
       {/* Auth Modal */}
       <AuthModal

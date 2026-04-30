@@ -79,7 +79,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_request_duration_seconds_bucket{\r\n      organization=~\"$organization\", \r\n      app=~\"$app\", \r\n      service=~\"nmt-service|tts-service|asr-service\"\r\n    }[1d])\r\n  ) by (le)\r\n)\r\n",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_request_duration_seconds_bucket{\r\n      organization=~\"$organization\", \r\n      app=~\"$app\", \r\n      service=~\"nmt-service|tts-service|asr-service\", tenant=~\"$tenant\"}[1d])\r\n  ) by (le)\r\n)\r\n",
           "hide": false,
           "legendFormat": "Average Latency",
           "range": true,
@@ -176,7 +176,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_request_duration_seconds_bucket{\r\n      organization=~\"$organization\", \r\n      app=~\"$app\", \r\n      service=~\"nmt-service|tts-service|asr-service\"\r\n    }[1d])\r\n  ) by (le)\r\n)\r\n",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_request_duration_seconds_bucket{\r\n      organization=~\"$organization\", \r\n      app=~\"$app\", \r\n      service=~\"nmt-service|tts-service|asr-service\", tenant=~\"$tenant\"}[1d])\r\n  ) by (le)\r\n)\r\n",
           "hide": false,
           "legendFormat": "Median Latency",
           "range": true,
@@ -247,7 +247,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -255,7 +255,7 @@
         },
         {
           "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))",
+          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))",
           "hide": true,
           "legendFormat": "__auto",
           "range": true,
@@ -326,7 +326,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -334,7 +334,7 @@
         },
         {
           "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))",
+          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))",
           "hide": true,
           "legendFormat": "__auto",
           "range": true,
@@ -405,7 +405,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -413,7 +413,7 @@
         },
         {
           "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))",
+          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))",
           "hide": true,
           "legendFormat": "__auto",
           "range": true,
@@ -484,7 +484,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -492,7 +492,7 @@
         },
         {
           "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))",
+          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))",
           "hide": true,
           "legendFormat": "__auto",
           "range": true,
@@ -563,7 +563,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -571,7 +571,7 @@
         },
         {
           "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))",
+          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))",
           "hide": true,
           "legendFormat": "__auto",
           "range": true,
@@ -642,7 +642,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -650,7 +650,7 @@
         },
         {
           "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))",
+          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))",
           "hide": true,
           "legendFormat": "__auto",
           "range": true,
@@ -721,7 +721,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -729,7 +729,7 @@
         },
         {
           "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))",
+          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\", tenant=~\"$tenant\"}[5m]))",
           "hide": true,
           "legendFormat": "__auto",
           "range": true,
@@ -796,7 +796,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_asr_audio_seconds_processed_bucket{\r\n      organization=~\"$organization\"\r\n    }[1d])\r\n  ) by (le)\r\n)",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_asr_audio_seconds_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[1d])\r\n  ) by (le)\r\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
@@ -862,7 +862,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(telemetry_obsv_tts_characters_synthesized_sum{organization=~\"$organization\"}[5m]))\n/\nsum(rate(telemetry_obsv_tts_characters_synthesized_count{organization=~\"$organization\"}[5m]))",
+          "expr": "sum(rate(telemetry_obsv_tts_characters_synthesized_sum{organization=~\"$organization\", tenant=~\"$tenant\"}[5m]))\n/\nsum(rate(telemetry_obsv_tts_characters_synthesized_count{organization=~\"$organization\", tenant=~\"$tenant\"}[5m]))",
           "legendFormat": "Avg Chars/Request",
           "range": true,
           "refId": "A"
@@ -873,7 +873,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "telemetry_obsv_requests_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\"}",
+          "expr": "telemetry_obsv_requests_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\", tenant=~\"$tenant\"}",
           "hide": true,
           "instant": false,
           "legendFormat": "__auto",
@@ -941,7 +941,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(telemetry_obsv_nmt_characters_translated_sum{organization=~\"$organization\"}[5m]))\n/\nsum(rate(telemetry_obsv_nmt_characters_translated_count{organization=~\"$organization\"}[5m]))",
+          "expr": "sum(rate(telemetry_obsv_nmt_characters_translated_sum{organization=~\"$organization\", tenant=~\"$tenant\"}[5m]))\n/\nsum(rate(telemetry_obsv_nmt_characters_translated_count{organization=~\"$organization\", tenant=~\"$tenant\"}[5m]))",
           "legendFormat": "Avg Chars/Request",
           "range": true,
           "refId": "A"
@@ -1020,7 +1020,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_transliteration_characters_processed_bucket{\n      organization=~\"$organization\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_transliteration_characters_processed_bucket{\n      organization=~\"$organization\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
@@ -1086,7 +1086,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_language_detection_characters_processed_bucket{\n      organization=~\"$organization\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_language_detection_characters_processed_bucket{\n      organization=~\"$organization\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
@@ -1152,7 +1152,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_ocr_image_size_kb_bucket{\n      organization=~\"$organization\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_ocr_image_size_kb_bucket{\n      organization=~\"$organization\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
@@ -1218,7 +1218,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_ner_tokens_processed_bucket{\n      organization=~\"$organization\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_ner_tokens_processed_bucket{\n      organization=~\"$organization\", tenant=~\"$tenant\"}[1d])\n  ) by (le)\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
@@ -1288,7 +1288,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=~\"nmt-service|tts-service|asr-service\"})\r\n/\r\nsum(telemetry_obsv_requests_total{organization=~\"$organization\", service=~\"nmt-service|tts-service|asr-service\"})\r\n* 100",
+          "expr": "sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=~\"nmt-service|tts-service|asr-service\", tenant=~\"$tenant\"})\r\n/\r\nsum(telemetry_obsv_requests_total{organization=~\"$organization\", service=~\"nmt-service|tts-service|asr-service\", tenant=~\"$tenant\"})\r\n* 100",
           "hide": false,
           "instant": false,
           "legendFormat": "__auto",
@@ -1301,7 +1301,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "telemetry_obsv_errors_total{organization=~\"$organization\"}",
+          "expr": "telemetry_obsv_errors_total{organization=~\"$organization\", tenant=~\"$tenant\"}",
           "hide": true,
           "instant": false,
           "legendFormat": "__auto",
@@ -1367,7 +1367,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\"})\r\n)",
+          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\", tenant=~\"$tenant\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\", tenant=~\"$tenant\"})\r\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -1440,7 +1440,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\r\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\"}\r\n)\r\n/\r\nscalar(\r\n    sum(\r\n        telemetry_obsv_errors_total{organization=~\"$organization\", service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\"}\r\n    )\r\n)",
+          "expr": "100 * sum by(status_code) (\r\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\", tenant=~\"$tenant\"}\r\n)\r\n/\r\nscalar(\r\n    sum(\r\n        telemetry_obsv_errors_total{organization=~\"$organization\", service=\"asr-service\", endpoint=~\"/api/v1/asr/.*\", tenant=~\"$tenant\"}\r\n    )\r\n)",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -1509,7 +1509,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\"})\r\n)",
+          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\", tenant=~\"$tenant\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\", tenant=~\"$tenant\"})\r\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -1583,7 +1583,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 *\r\nsum by(status_code) (\r\n  telemetry_obsv_errors_total{organization=~\"$organization\", service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\"}\r\n)\r\n/\r\nscalar(\r\n  sum(\r\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\"}\r\n  )\r\n)\r\n",
+          "expr": "100 *\r\nsum by(status_code) (\r\n  telemetry_obsv_errors_total{organization=~\"$organization\", service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\", tenant=~\"$tenant\"}\r\n)\r\n/\r\nscalar(\r\n  sum(\r\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"nmt-service\", endpoint=~\"/api/v1/nmt/.*\", tenant=~\"$tenant\"}\r\n  )\r\n)\r\n",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -1652,7 +1652,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\"})\r\n)",
+          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\", tenant=~\"$tenant\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\", tenant=~\"$tenant\"})\r\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -1725,7 +1725,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\r\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\"}\r\n)\r\n/\r\nscalar(\r\n    sum(\r\n        telemetry_obsv_errors_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\"}\r\n    )\r\n)\r\n",
+          "expr": "100 * sum by(status_code) (\r\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\", tenant=~\"$tenant\"}\r\n)\r\n/\r\nscalar(\r\n    sum(\r\n        telemetry_obsv_errors_total{organization=~\"$organization\", service=\"tts-service\", endpoint=~\"/api/v1/tts/.*\", tenant=~\"$tenant\"}\r\n    )\r\n)\r\n",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -1794,7 +1794,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\"})\n)",
+          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\", tenant=~\"$tenant\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\", tenant=~\"$tenant\"})\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -1868,7 +1868,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\"}\n    )\n)",
+          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\", tenant=~\"$tenant\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ocr.*|/services/inference/pipeline/ocr\", tenant=~\"$tenant\"}\n    )\n)",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -1937,7 +1937,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\"})\n)",
+          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\", tenant=~\"$tenant\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\", tenant=~\"$tenant\"})\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -2010,7 +2010,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\"}\n    )\n)",
+          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\", tenant=~\"$tenant\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*ner.*|/services/inference/ner\", tenant=~\"$tenant\"}\n    )\n)",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -2079,7 +2079,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\"})\n)",
+          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\", tenant=~\"$tenant\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\", tenant=~\"$tenant\"})\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -2152,7 +2152,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\"}\n    )\n)",
+          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\", tenant=~\"$tenant\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\", tenant=~\"$tenant\"}\n    )\n)",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -2221,7 +2221,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\"})\n)",
+          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\", tenant=~\"$tenant\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\", tenant=~\"$tenant\"})\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -2294,7 +2294,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\"}\n    )\n)",
+          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\", tenant=~\"$tenant\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\", tenant=~\"$tenant\"}\n    )\n)",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -2369,7 +2369,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/speaker-diarization\"\n    }[$__range])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/speaker-diarization\", tenant=~\"$tenant\"}[$__range])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -2440,7 +2440,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/language-diarization\"\n    }[$__range])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/language-diarization\", tenant=~\"$tenant\"}[$__range])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -2511,7 +2511,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/audio-lang-detection\"\n    }[$__range])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/audio-lang-detection\", tenant=~\"$tenant\"}[$__range])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -2578,7 +2578,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_speaker_diarization_seconds_processed_bucket{\r\n      organization=~\"$organization\"\r\n    }[$__range])\r\n  ) by (le)\r\n)",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_speaker_diarization_seconds_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[$__range])\r\n  ) by (le)\r\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
@@ -2644,7 +2644,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_language_diarization_seconds_processed_bucket{\r\n      organization=~\"$organization\"\r\n    }[$__range])\r\n  ) by (le)\r\n)",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_language_diarization_seconds_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[$__range])\r\n  ) by (le)\r\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
@@ -2710,7 +2710,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_audio_lang_detection_seconds_processed_bucket{\r\n      organization=~\"$organization\"\r\n    }[$__range])\r\n  ) by (le)\r\n)",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_audio_lang_detection_seconds_processed_bucket{\r\n      organization=~\"$organization\", tenant=~\"$tenant\"}[$__range])\r\n  ) by (le)\r\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
@@ -2774,7 +2774,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 *\n(\nsum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/speaker-diarization\"})\n  /\nsum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/speaker-diarization\"})\n)",
+          "expr": "100 *\n(\nsum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/speaker-diarization\", tenant=~\"$tenant\"})\n  /\nsum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/speaker-diarization\", tenant=~\"$tenant\"})\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -2847,7 +2847,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 *\nsum by(status_code)(\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/speaker-diarization\"}\n)\n/\nscalar(\n  sum(\n      telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/speaker-diarization\"}\n  )\n)\n",
+          "expr": "100 *\nsum by(status_code)(\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/speaker-diarization\", tenant=~\"$tenant\"}\n)\n/\nscalar(\n  sum(\n      telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/speaker-diarization\", tenant=~\"$tenant\"}\n  )\n)\n",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -2916,7 +2916,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 *\n(\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/language-diarization\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/language-diarization\"})\n)",
+          "expr": "100 *\n(\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/language-diarization\", tenant=~\"$tenant\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/language-diarization\", tenant=~\"$tenant\"})\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -2989,7 +2989,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 *\nsum by(status_code)(\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/language-diarization\"}\n)\n/\nscalar(\n  sum(\n      telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/language-diarization\"}\n  )\n)\n",
+          "expr": "100 *\nsum by(status_code)(\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/language-diarization\", tenant=~\"$tenant\"}\n)\n/\nscalar(\n  sum(\n      telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/language-diarization\", tenant=~\"$tenant\"}\n  )\n)\n",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -3058,7 +3058,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 *\n(\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/audio-lang-detection\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/audio-lang-detection\"})\n)",
+          "expr": "100 *\n(\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/audio-lang-detection\", tenant=~\"$tenant\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/audio-lang-detection\", tenant=~\"$tenant\"})\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -3131,7 +3131,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 *\nsum by(status_code)(\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/audio-lang-detection\"}\n)\n/\nscalar(\n  sum(\n      telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/audio-lang-detection\"}\n  )\n)\n",
+          "expr": "100 *\nsum by(status_code)(\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/audio-lang-detection\", tenant=~\"$tenant\"}\n)\n/\nscalar(\n  sum(\n      telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/audio-lang-detection\", tenant=~\"$tenant\"}\n  )\n)\n",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -3186,6 +3186,22 @@
         "name": "app",
         "options": [],
         "query": "label_values(telemetry_obsv_requests_total{organization=~\"$organization\"}, app)",
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "includeAll": true,
+        "multi": true,
+        "name": "tenant",
+        "options": [],
+        "query": "label_values(telemetry_obsv_requests_total{organization=~\"$organization\", app=~\"$app\"}, tenant)",
         "refresh": 1,
         "type": "query"
       }

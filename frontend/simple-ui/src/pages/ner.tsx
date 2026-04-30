@@ -14,21 +14,23 @@ import {
   Spinner,
   Text,
   Textarea,
-  useToast,
   VStack,
   Badge,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performNERInference, listNERServices } from "../services/nerService";
 import { extractErrorInfo } from "../utils/errorHandler";
+import { NER_ERRORS, MIN_NER_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const NERPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [inputText, setInputText] = useState("");
-  const [sourceLanguage, setSourceLanguage] = useState("en");
+  const [sourceLanguage, setSourceLanguage] = useState("");
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -47,19 +49,47 @@ const NERPage: React.FC = () => {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  // Auto-select first service when services are loaded
-  useEffect(() => {
-    if (services.length > 0 && !selectedServiceId) {
-      setSelectedServiceId(services[0].service_id);
-    }
-  }, [services, selectedServiceId]);
+  const canDetect =
+    !!selectedServiceId?.trim() &&
+    !!sourceLanguage?.trim() &&
+    !!inputText?.trim() &&
+    inputText.length <= MAX_TEXT_LENGTH &&
+    !fetching;
 
   const handleProcess = async () => {
-    if (!inputText.trim()) {
+    const trimmedText = inputText.trim();
+    
+    // Validate input text
+    if (!trimmedText) {
+      const err = NER_ERRORS.TEXT_REQUIRED;
       toast({
-        title: "Input Required",
-        description: "Please enter text to process.",
-        status: "warning",
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    if (trimmedText.length < MIN_NER_TEXT_LENGTH) {
+      const err = NER_ERRORS.TEXT_TOO_SHORT;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    if (trimmedText.length > MAX_TEXT_LENGTH) {
+      const err = NER_ERRORS.TEXT_TOO_LONG;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -77,13 +107,24 @@ const NERPage: React.FC = () => {
       return;
     }
 
+    if (!sourceLanguage?.trim()) {
+      toast({
+        title: "Language Required",
+        description: "Please select a language.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     setFetching(true);
     setError(null);
     setFetched(false);
 
     try {
       const startTime = Date.now();
-      const response = await performNERInference(inputText, {
+      const response = await performNERInference(trimmedText, {
         serviceId: selectedServiceId,
         language: {
           sourceLanguage,
@@ -96,8 +137,8 @@ const NERPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Use centralized error handler
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err);
+      // Use centralized error handler (ner context so backend message shown as default when no specific mapping)
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'ner');
       
       setError(errorMessage);
       toast({
@@ -133,7 +174,7 @@ const NERPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>NER - Named Entity Recognition | AI4Inclusion Console</title>
+        <title>Named Entity Recognition (NER) | AI4Inclusion Console</title>
         <meta
           name="description"
           content="Test Named Entity Recognition to identify entities in text"
@@ -145,10 +186,10 @@ const NERPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Named Entity Recognition (NER)
+              {getServiceTitle("ner")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Identify key entities like names, locations, and organizations in text
+              {getServiceDescription("ner")}
             </Text>
           </Box>
 
@@ -160,13 +201,14 @@ const NERPage: React.FC = () => {
           mx="auto"
         >
             {/* Configuration Panel */}
-          <GridItem>
-            <VStack spacing={6} align="stretch">
+          <GridItem pt={0} mt={0} alignSelf="flex-start">
+            <VStack spacing={6} align="stretch" pt={0} mt={0}>
 
               {/* Service Selection */}
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  NER Service:
+                  NER Service{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 {isLoadingServices ? (
                   <HStack spacing={2} p={2}>
@@ -185,7 +227,7 @@ const NERPage: React.FC = () => {
                   <Select
                     value={selectedServiceId}
                     onChange={(e) => setSelectedServiceId(e.target.value)}
-                    placeholder="Select a NER service"
+                    placeholder={isLoadingServices ? "Loading..." : "Select"}
                     disabled={fetching}
                     size="md"
                     borderColor="gray.300"
@@ -202,24 +244,28 @@ const NERPage: React.FC = () => {
                   </Select>
                 )}
                 {selectedServiceId && services.length > 0 && (
-                  <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                  <Box
+                    mt={2}
+                    p={3}
+                    bg="orange.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="orange.200"
+                  >
                     {(() => {
-                      const selectedService = services.find((s) => s.service_id === selectedServiceId);
+                      const selectedService = services.find(
+                        (s) => s.service_id === selectedServiceId
+                      );
                       return selectedService ? (
                         <>
                           <Text fontSize="sm" color="gray.700" mb={1}>
-                            <strong>Service ID:</strong> {selectedService.service_id}
+                            <strong>Service Name:</strong>{" "}
+                            {selectedService.name || selectedService.service_id}
                           </Text>
-                          {selectedService.serviceDescription && (
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Description:</strong> {selectedService.serviceDescription}
-                            </Text>
-                          )}
-                          {selectedService.supported_languages.length > 0 && (
-                            <Text fontSize="sm" color="gray.700">
-                              <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
-                            </Text>
-                          )}
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Service Description:</strong>{" "}
+                            {selectedService.serviceDescription || "No description available"}
+                          </Text>
                         </>
                       ) : null;
                     })()}
@@ -229,13 +275,20 @@ const NERPage: React.FC = () => {
 
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  Select Language:
+                  Language{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 <Select
                   value={sourceLanguage}
                   onChange={(e) => setSourceLanguage(e.target.value)}
-                  isDisabled={fetching}
+                  isDisabled={fetching || !selectedServiceId}
                   size="md"
+                  placeholder="Select"
+                  borderColor="gray.300"
+                  _focus={{
+                    borderColor: "orange.400",
+                    boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
+                  }}
                 >
                   <option value="en">English</option>
                   <option value="hi">Hindi</option>
@@ -252,37 +305,59 @@ const NERPage: React.FC = () => {
                 </Select>
               </FormControl>
 
-              <FormControl>
+              <FormControl isInvalid={inputText.length > MAX_TEXT_LENGTH}>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  Enter text to identify entities:
+                  Source Text{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
                 <Textarea
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
                   placeholder="Enter text to identify entities..."
                   rows={6}
-                  isDisabled={fetching}
+                  isDisabled={fetching || !selectedServiceId}
                   bg="white"
-                  borderColor="gray.300"
+                  maxLength={MAX_TEXT_LENGTH}
+                  borderColor={inputText.length > MAX_TEXT_LENGTH ? "red.400" : "gray.300"}
                 />
+                {inputText.length > MAX_TEXT_LENGTH && (
+                  <Text fontSize="sm" color="red.500" mt={1}>
+                    Text exceeds the maximum limit of {MAX_TEXT_LENGTH} characters. Please reduce the length.
+                  </Text>
+                )}
+                <Box display="flex" justifyContent="flex-end" mt={1}>
+                  <Text
+                    fontSize="sm"
+                    color={inputText.length > MAX_TEXT_LENGTH ? "red.500" : "gray.500"}
+                    fontWeight={inputText.length > MAX_TEXT_LENGTH ? "semibold" : "normal"}
+                  >
+                    {inputText.length} / {MAX_TEXT_LENGTH}
+                  </Text>
+                </Box>
               </FormControl>
 
-                <Button
-                  colorScheme="orange"
-                  onClick={handleProcess}
-                  isLoading={fetching}
-                  loadingText="Processing..."
-                  size="md"
-                  w="full"
-                >
-                  {fetching ? "Processing..." : "Detect Entities"}
-                </Button>
+              {/* Instruction above Detect Entities (consistent with other services) */}
+              <Text fontSize="sm" color="gray.600">
+                Enter text and select language above, then click &quot;Detect Entities&quot; to extract entities.
+              </Text>
+
+              <Button
+                colorScheme="orange"
+                onClick={handleProcess}
+                isLoading={fetching}
+                loadingText="Processing..."
+                size="md"
+                w="full"
+                isDisabled={!canDetect}
+              >
+                {fetching ? "Processing..." : "Detect Entities"}
+              </Button>
               </VStack>
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Progress Indicator */}
               {fetching && (
                 <Box>

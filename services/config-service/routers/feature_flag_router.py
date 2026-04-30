@@ -1,8 +1,8 @@
 """
 FastAPI router for feature flag endpoints - Unleash and Redis only
 """
-import os
 from typing import Optional
+from ai4icore_env import app_env
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -25,10 +25,10 @@ def get_feature_flag_service() -> FeatureFlagService:
     # Get OpenFeature client from app state or None
     openfeature_client = getattr(app_main.app.state, "openfeature_client", None)
     
-    kafka_topic = os.getenv("FEATURE_FLAG_KAFKA_TOPIC", "feature-flag-events")
-    cache_ttl = int(os.getenv("FEATURE_FLAG_CACHE_TTL", "300"))
-    unleash_url = os.getenv("UNLEASH_URL")
-    unleash_api_token = os.getenv("UNLEASH_API_TOKEN")
+    kafka_topic = app_env.feature_flag_kafka_topic
+    cache_ttl = app_env.feature_flag_cache_ttl
+    unleash_url = app_env.unleash_url
+    unleash_api_token = app_env.unleash_api_token
     
     return FeatureFlagService(
         redis_client=app_main.redis_client,
@@ -53,7 +53,7 @@ async def evaluate_flag(
     Returns detailed evaluation result including value, variant, and reason.
     """
     # Default to UNLEASH_ENVIRONMENT or "development" if not provided
-    environment = request.environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
+    environment = request.environment or app_env.unleash_environment
     
     return await service.evaluate_flag(
         flag_name=request.flag_name,
@@ -78,7 +78,7 @@ async def evaluate_boolean_flag(
         raise HTTPException(status_code=400, detail="default_value must be a boolean for boolean evaluation")
     
     # Default to UNLEASH_ENVIRONMENT or "development" if not provided
-    environment = request.environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
+    environment = request.environment or app_env.unleash_environment
     
     value, reason = await service.evaluate_boolean_flag(
         flag_name=request.flag_name,
@@ -106,7 +106,7 @@ async def bulk_evaluate_flags(
     Evaluates all specified flags in parallel and returns results as a dictionary.
     """
     # Default to UNLEASH_ENVIRONMENT or "development" if not provided
-    environment = request.environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
+    environment = request.environment or app_env.unleash_environment
     
     results = await service.bulk_evaluate_flags(
         flag_names=request.flag_names,

@@ -44,7 +44,7 @@ export interface LanguageDetectionInferenceResponse {
 export const listLanguageDetectionServices = async (): Promise<LanguageDetectionServiceDetailsResponse[]> => {
   try {
     // Fetch services from model management service filtered by task_type='language-detection'
-    const services = await listServices('language-detection');
+    const services = await listServices('language-detection', true);
     const seen = new Set<string>();
 
     // Transform model management service response to LanguageDetectionServiceDetailsResponse format
@@ -126,7 +126,7 @@ export const performLanguageDetectionInference = async (
     };
   } catch (error) {
     console.error('Language detection inference error:', error);
-    throw new Error('Failed to perform language detection inference');
+    throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
 
