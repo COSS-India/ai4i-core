@@ -51,8 +51,11 @@ def _extract_user_id_from_jwt(request: Request) -> None:
     user_id = payload.get("sub") or payload.get("user_id")
     if user_id is None:
         return
-    token_type = payload.get("type", "")
-    if token_type != "access":
+    # auth-service uses type "access_token"; older payloads omit type or use "access".
+    # Only skip refresh tokens — previously we required type == "access", which dropped
+    # access_token and empty type, breaking downstream billing (pay-per-use actor key).
+    raw_type = str(payload.get("type") or payload.get("typ") or "").lower()
+    if raw_type in ("refresh", "refresh_token"):
         return
     request.state.user_id = int(user_id) if isinstance(user_id, (str, int)) else user_id
 

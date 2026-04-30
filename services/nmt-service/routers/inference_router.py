@@ -39,10 +39,12 @@ from ai4icore_constants.exceptions import (
 )
 from ai4icore_multi_tenant import (
     get_tenant_db_session_factory,
-    try_get_tenant_context,
     enforce_tenant_and_service_checks,
-    PayPerUseClient,
-    ppu_actor_key,
+)
+from utils.nmt_pay_per_use import (
+    _effective_service_id_for_ppu,
+    _nmt_ppu_check,
+    _nmt_ppu_record,
 )
 
 get_tenant_db_session = get_tenant_db_session_factory()
@@ -81,66 +83,8 @@ logger = get_logger(__name__)
 # Use service name to get the same tracer instance as main.py
 tracer = trace.get_tracer("nmt-service")
 
-#Tenant routing and service checks
-API_GATEWAY_URL = app_env.api_gateway_url
-
 # SMR Service Configuration
 SMR_SERVICE_URL = app_env.smr_service_url
-
-
-async def _ppu_tenant_id_nmt(http_request: Request) -> Optional[str]:
-    ctx = await try_get_tenant_context(http_request, API_GATEWAY_URL)
-    if ctx and ctx.get("tenant_id"):
-        return str(ctx["tenant_id"])
-    tid = getattr(http_request.state, "tenant_id", None)
-    return str(tid) if tid else None
-
-
-async def _nmt_ppu_check(http_request: Request, service_id: str, units: float) -> None:
-    ppu = PayPerUseClient()
-    tenant_id = await _ppu_tenant_id_nmt(http_request)
-    actor = ppu_actor_key(http_request)
-    if not ppu.base_url:
-        if tenant_id:
-            logger.warning(
-                "pay_per_use: base URL not configured; skipping quota/wallet pre-check for tenant_id=%s",
-                tenant_id,
-            )
-        return
-    if not tenant_id or actor is None or not service_id:
-        return
-    u = max(float(units), 1.0)
-    ok = await ppu.check(tenant_id, actor, str(service_id), u)
-    if not ok:
-        raise HTTPException(status_code=429, detail="Pay-per-use check failed")
-
-
-async def _nmt_ppu_record(http_request: Request, service_id: str, units: float) -> None:
-    ppu = PayPerUseClient()
-    tenant_id = await _ppu_tenant_id_nmt(http_request)
-    actor = ppu_actor_key(http_request)
-    if not ppu.base_url:
-        if tenant_id:
-            logger.warning(
-                "pay_per_use: base URL not configured; usage not recorded for tenant_id=%s "
-                "(set PAY_PER_USE_URL or PAY_PER_USE_SERVICE_URL)",
-                tenant_id,
-            )
-        return
-    if not tenant_id or actor is None or not service_id:
-        if tenant_id and actor is None:
-            logger.warning(
-                "pay_per_use: no billing actor (set user_id/api_key_id or valid JWT); "
-                "usage not recorded for tenant_id=%s service_id=%s",
-                tenant_id,
-                service_id,
-            )
-        return
-    u = max(float(units), 1.0)
-    try:
-        await ppu.record(tenant_id, actor, str(service_id), u)
-    except Exception as e:
-        logger.warning("pay_per_use record failed: %s", e)
 
 
 # Create router
@@ -1054,9 +998,11 @@ async def run_inference(
         # SMR already handled the context-aware translation, return the result
         from models.nmt_response import TranslationOutput
         context_output = smr_response.get("context_aware_result", {}).get("output", [])
-        sid_ctx = (
-            (request.config.serviceId or smr_response.get("serviceId") or "")
-        ).strip()
+        sid_ctx = _effective_service_id_for_ppu(
+            http_request,
+            request.config.serviceId,
+            smr_response.get("serviceId"),
+        )
         if request.input:
             nmt_ppu_units_ctx = float(max(sum(len(inp.source or "") for inp in request.input), 1))
         else:
@@ -1070,8 +1016,7 @@ async def run_inference(
                     1,
                 )
             )
-        if sid_ctx:
-            await _nmt_ppu_check(http_request, sid_ctx, nmt_ppu_units_ctx)
+        await _nmt_ppu_check(http_request, sid_ctx, nmt_ppu_units_ctx)
         output_list = [
             TranslationOutput(
                 source=item.get("source", ""),
@@ -1081,8 +1026,7 @@ async def run_inference(
         ]
         
         response = NMTInferenceResponse(output=output_list, smr_response=smr_response)
-        if sid_ctx:
-            await _nmt_ppu_record(http_request, sid_ctx, nmt_ppu_units_ctx)
+        await _nmt_ppu_record(http_request, sid_ctx, nmt_ppu_units_ctx)
         return response
     
     # Normal SMR flow when context-aware is not enabled or serviceId was already provided
@@ -1148,7 +1092,11 @@ async def run_inference(
 
             await _nmt_ppu_check(
                 http_request,
-                str(request.config.serviceId),
+                _effective_service_id_for_ppu(
+                    http_request,
+                    request.config.serviceId,
+                    smr_response_data.get("serviceId") if smr_response_data else None,
+                ),
                 float(max(total_input_characters, 1)),
             )
             
@@ -1500,7 +1448,11 @@ async def run_inference(
 
             await _nmt_ppu_record(
                 http_request,
-                str(request.config.serviceId),
+                _effective_service_id_for_ppu(
+                    http_request,
+                    request.config.serviceId,
+                    smr_response_data.get("serviceId") if smr_response_data else None,
+                ),
                 float(max(total_input_characters, 1)),
             )
             
@@ -1539,7 +1491,11 @@ async def run_inference(
                 logger.info("Returning static NMT fallback (Triton unreachable)")
                 await _nmt_ppu_record(
                     http_request,
-                    str(request.config.serviceId),
+                    _effective_service_id_for_ppu(
+                        http_request,
+                        request.config.serviceId,
+                        smr_response_data.get("serviceId") if smr_response_data else None,
+                    ),
                     float(max(total_input_characters, 1)),
                 )
                 return NMTInferenceResponse(output=output)
@@ -1655,7 +1611,11 @@ async def _run_nmt_inference_impl(
     total_input_chars = sum(len(inp.source or "") for inp in request.input)
     await _nmt_ppu_check(
         http_request,
-        str(request.config.serviceId),
+        _effective_service_id_for_ppu(
+            http_request,
+            request.config.serviceId,
+            smr_response_data.get("serviceId") if smr_response_data else None,
+        ),
         float(max(total_input_chars, 1)),
     )
 
@@ -1682,7 +1642,11 @@ async def _run_nmt_inference_impl(
             logger.info("Returning static NMT fallback (Triton unreachable)")
             await _nmt_ppu_record(
                 http_request,
-                str(request.config.serviceId),
+                _effective_service_id_for_ppu(
+                    http_request,
+                    request.config.serviceId,
+                    smr_response_data.get("serviceId") if smr_response_data else None,
+                ),
                 float(max(total_input_chars, 1)),
             )
             return NMTInferenceResponse(output=output, smr_response=smr_response_data)
@@ -1702,7 +1666,11 @@ async def _run_nmt_inference_impl(
 
     await _nmt_ppu_record(
         http_request,
-        str(request.config.serviceId),
+        _effective_service_id_for_ppu(
+            http_request,
+            request.config.serviceId,
+            smr_response_data.get("serviceId") if smr_response_data else None,
+        ),
         float(max(total_input_chars, 1)),
     )
 

@@ -233,6 +233,9 @@ def mock_service():
     service.name = "Test Service"
     service.model_id = "test-model"
     service.model_version = "1.0.0"
+    service.endpoint = "http://localhost:8087"
+    service.inference_server_type = "triton"
+    service.ssl_verify = True
     service.is_published = False
     service.published_at = None
     service.unpublished_at = None

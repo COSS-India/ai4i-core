@@ -29,6 +29,7 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
   availableLanguages,
   availableVoices,
   loading = false,
+  disabled = false,
 }) => {
   const [isMobile] = useMediaQuery("(max-width: 768px)");
 
@@ -80,7 +81,7 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
           value={language}
           onChange={handleLanguageChange}
           placeholder="Select"
-          disabled={availableLanguages.length === 0}
+          disabled={disabled || availableLanguages.length === 0}
         >
           {sortedLanguages.map((lang) => (
             <option key={lang} value={lang}>
@@ -100,6 +101,7 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
           value={gender}
           onChange={handleGenderChange}
           placeholder="Select"
+          disabled={disabled}
         >
           {sortedGenders.map((option) => (
             <option key={option.value} value={option.value}>
@@ -119,6 +121,7 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
           value={audioFormat}
           onChange={handleFormatChange}
           placeholder="Select"
+          disabled={disabled}
         >
           {sortedFormats.map((format) => (
             <option key={format} value={format}>

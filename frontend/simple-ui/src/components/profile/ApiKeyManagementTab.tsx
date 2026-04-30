@@ -12,7 +12,6 @@ import {
   HStack,
   Text,
   VStack,
-  useColorModeValue,
   Spinner,
   Center,
   Alert,
@@ -28,13 +27,6 @@ import {
   Td,
   Badge,
   TableContainer,
-  Modal,
-  ModalOverlay,
-  ModalContent,
-  ModalHeader,
-  ModalFooter,
-  ModalBody,
-  ModalCloseButton,
   AlertDialog,
   AlertDialogBody,
   AlertDialogFooter,
@@ -48,8 +40,15 @@ import {
 } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
 import { useApiKeyManagementTab } from "./hooks/useApiKeyManagementTab";
-import { TriangleDownIcon, TriangleUpIcon } from "@chakra-ui/icons";
+import { ViewIcon, EditIcon, DeleteIcon } from "@chakra-ui/icons";
 import UserSearchableSelect from "../common/UserSearchableSelect";
+import {
+  TableFilterToolbar,
+  TablePaginationBar,
+  TableSortHeader,
+  useAdminTableSurface,
+} from "../common/TableControls";
+import StandardModal from "../common/StandardModal";
 
 export interface ApiKeyManagementTabProps {
   users: import("../../types/auth").User[];
@@ -64,8 +63,8 @@ export default function ApiKeyManagementTab({
 }: ApiKeyManagementTabProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const { user } = useAuth();
-  const cardBg = useColorModeValue("white", "gray.800");
-  const cardBorder = useColorModeValue("gray.200", "gray.700");
+  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor: cardBorder } =
+    useAdminTableSurface();
 
   const mgmt = useApiKeyManagementTab({
     user: user ?? null,
@@ -74,6 +73,9 @@ export default function ApiKeyManagementTab({
   });
 
   const [keyNameSortDirection, setKeyNameSortDirection] = useState<"asc" | "desc">("asc");
+  const [listPage, setListPage] = useState(1);
+  const [listPageSize, setListPageSize] = useState(25);
+  const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
   const sortedApiKeys = useMemo(() => {
     return [...mgmt.filteredApiKeys].sort((a, b) => {
@@ -101,6 +103,16 @@ export default function ApiKeyManagementTab({
       return timeB - timeA;
     });
   }, [mgmt.filteredApiKeys, keyNameSortDirection, mgmt.filterUser]);
+
+  const totalApiKeys = sortedApiKeys.length;
+  const totalPages = Math.max(1, Math.ceil(totalApiKeys / listPageSize));
+  const startRow = totalApiKeys === 0 ? 0 : (listPage - 1) * listPageSize + 1;
+  const endRow = Math.min(listPage * listPageSize, totalApiKeys);
+  const paginatedApiKeys = sortedApiKeys.slice((listPage - 1) * listPageSize, listPage * listPageSize);
+
+  useEffect(() => {
+    if (listPage > totalPages) setListPage(totalPages);
+  }, [listPage, totalPages]);
 
   useEffect(() => {
     if (isActive) {
@@ -147,7 +159,14 @@ export default function ApiKeyManagementTab({
                     : mgmt.permissions.map((p) => p.name);
 
                 return (
-                  <HStack flexWrap="wrap" gap={3} align="flex-end">
+                  <TableFilterToolbar
+                    hasActiveFilters={hasActiveFilters}
+                    onClear={() => {
+                      mgmt.handleResetFilters();
+                      setListPage(1);
+                    }}
+                    align="flex-end"
+                  >
                     <FormControl w={{ base: "full", md: "320px" }}>
                       <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
                         User
@@ -155,7 +174,10 @@ export default function ApiKeyManagementTab({
                       <UserSearchableSelect
                         variant="filter"
                         value={mgmt.filterUser}
-                        onChange={(v) => mgmt.setFilterUser(v)}
+                        onChange={(v) => {
+                          mgmt.setFilterUser(v);
+                          setListPage(1);
+                        }}
                         seedUsers={users}
                         size="sm"
                         allOptionLabel="All Users"
@@ -170,8 +192,11 @@ export default function ApiKeyManagementTab({
                       <Select
                         size="sm"
                         value={mgmt.filterPermission}
-                        onChange={(e) => mgmt.setFilterPermission(e.target.value)}
-                        bg="white"
+                        onChange={(e) => {
+                          mgmt.setFilterPermission(e.target.value);
+                          setListPage(1);
+                        }}
+                        bg={cardBg}
                       >
                         <option value="all">All Permissions</option>
                         {permissionOptions.map((perm) => (
@@ -189,21 +214,18 @@ export default function ApiKeyManagementTab({
                       <Select
                         size="sm"
                         value={mgmt.filterActive}
-                        onChange={(e) => mgmt.setFilterActive(e.target.value)}
-                        bg="white"
+                        onChange={(e) => {
+                          mgmt.setFilterActive(e.target.value);
+                          setListPage(1);
+                        }}
+                        bg={cardBg}
                       >
                         <option value="all">All</option>
                         <option value="active">Active</option>
                         <option value="inactive">Inactive</option>
                       </Select>
                     </FormControl>
-
-                    {hasActiveFilters ? (
-                      <Button size="sm" variant="outline" onClick={mgmt.handleResetFilters}>
-                        Clear all
-                      </Button>
-                    ) : null}
-                  </HStack>
+                  </TableFilterToolbar>
                 );
               })()}
             </Box>
@@ -216,34 +238,25 @@ export default function ApiKeyManagementTab({
                 </VStack>
               </Center>
             ) : mgmt.filteredApiKeys.length > 0 ? (
-              <TableContainer>
-                <Table variant="simple">
-                  <Thead>
+              <TableContainer maxH="60vh" overflowY="auto">
+                <Table variant="simple" bg={tableBg} size="sm" w="100%">
+                  <Thead bg={tableHeaderBg}>
                     <Tr>
                       <Th>
-                        <HStack spacing={2}>
-                          <Text>Key Name</Text>
-                          <Tooltip label="Sort Name A to Z" hasArrow>
-                            <IconButton
-                              aria-label="Sort API keys by name ascending"
-                              icon={<TriangleUpIcon />}
-                              size="xs"
-                              variant={keyNameSortDirection === "asc" ? "solid" : "ghost"}
-                              colorScheme="gray"
-                              onClick={() => setKeyNameSortDirection("asc")}
-                            />
-                          </Tooltip>
-                          <Tooltip label="Sort Name Z to A" hasArrow>
-                            <IconButton
-                              aria-label="Sort API keys by name descending"
-                              icon={<TriangleDownIcon />}
-                              size="xs"
-                              variant={keyNameSortDirection === "desc" ? "solid" : "ghost"}
-                              colorScheme="gray"
-                              onClick={() => setKeyNameSortDirection("desc")}
-                            />
-                          </Tooltip>
-                        </HStack>
+                        <TableSortHeader
+                          label="Key Name"
+                          direction={keyNameSortDirection}
+                          onAsc={() => {
+                            setKeyNameSortDirection("asc");
+                            setListPage(1);
+                          }}
+                          onDesc={() => {
+                            setKeyNameSortDirection("desc");
+                            setListPage(1);
+                          }}
+                          ascAriaLabel="Sort API keys by name ascending"
+                          descAriaLabel="Sort API keys by name descending"
+                        />
                       </Th>
                       <Th>User</Th>
                       <Th>Permissions</Th>
@@ -254,12 +267,12 @@ export default function ApiKeyManagementTab({
                     </Tr>
                   </Thead>
                   <Tbody>
-                    {sortedApiKeys.map((key) => (
+                    {paginatedApiKeys.map((key) => (
                       <Tr
                         key={key.id}
                         onClick={() => mgmt.handleOpenViewModal(key)}
                         cursor="pointer"
-                        _hover={{ bg: "gray.50" }}
+                        _hover={{ bg: tableRowHoverBg }}
                       >
                         <Td fontWeight="semibold">{key.key_name}</Td>
                         <Td>
@@ -297,48 +310,62 @@ export default function ApiKeyManagementTab({
                             ? new Date(key.expires_at).toLocaleDateString()
                             : "Never"}
                         </Td>
-                        <Td>
-                          <HStack spacing={2}>
-                            <Button
-                              size="xs"
-                              colorScheme="blue"
-                              variant="outline"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                mgmt.handleOpenViewModal(key);
-                              }}
-                            >
-                              View
-                            </Button>
+                        <Td onClick={(e) => e.stopPropagation()}>
+                          <HStack spacing={1}>
+                            <Tooltip label="View details" hasArrow placement="top">
+                              <IconButton
+                                aria-label="View API key"
+                                icon={<ViewIcon />}
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="blue"
+                                _hover={{ bg: "blue.50" }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  mgmt.handleOpenViewModal(key);
+                                }}
+                              />
+                            </Tooltip>
                             <Tooltip
                               hasArrow
-                              label="This API key has been revoked and cannot be reactivated."
-                              isDisabled={key.is_active}
+                              label={
+                                key.is_active
+                                  ? "Update key"
+                                  : "This API key has been revoked and cannot be updated."
+                              }
                             >
-                              <Button
-                                size="xs"
+                              <IconButton
+                                aria-label="Update API key"
+                                icon={<EditIcon />}
+                                size="sm"
+                                variant="ghost"
                                 colorScheme="green"
+                                _hover={{ bg: "green.50" }}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   mgmt.handleOpenUpdateModal(key);
                                 }}
                                 isDisabled={!key.is_active}
-                              >
-                                Update
-                              </Button>
+                              />
                             </Tooltip>
-                            <Button
-                              size="xs"
-                              colorScheme="red"
-                              variant="outline"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                mgmt.handleOpenRevokeModal(key);
-                              }}
-                              isDisabled={!key.is_active}
+                            <Tooltip
+                              hasArrow
+                              label={key.is_active ? "Revoke key" : "Already revoked"}
                             >
-                              Revoke
-                            </Button>
+                              <IconButton
+                                aria-label="Revoke API key"
+                                icon={<DeleteIcon />}
+                                size="sm"
+                                variant="ghost"
+                                colorScheme="red"
+                                _hover={{ bg: "red.50" }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  mgmt.handleOpenRevokeModal(key);
+                                }}
+                                isDisabled={!key.is_active}
+                              />
+                            </Tooltip>
                           </HStack>
                         </Td>
                       </Tr>
@@ -346,6 +373,30 @@ export default function ApiKeyManagementTab({
                   </Tbody>
                 </Table>
               </TableContainer>
+            ) : null}
+
+            {!mgmt.isLoadingAllApiKeys && mgmt.filteredApiKeys.length > 0 ? (
+              <TablePaginationBar
+                startRow={startRow}
+                endRow={endRow}
+                totalItems={totalApiKeys}
+                page={listPage}
+                totalPages={totalPages}
+                pageSize={listPageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageSizeChange={(value) => {
+                  setListPageSize(value);
+                  setListPage(1);
+                }}
+                onFirst={() => setListPage(1)}
+                onPrev={() => setListPage((p) => Math.max(1, p - 1))}
+                onNext={() => setListPage((p) => Math.min(totalPages, p + 1))}
+                onLast={() => setListPage(totalPages)}
+                canPrev={listPage > 1}
+                canNext={listPage < totalPages}
+                borderColor={cardBorder}
+                bg={cardBg}
+              />
             ) : (
               <Alert status="info" borderRadius="md">
                 <AlertIcon />
@@ -361,17 +412,15 @@ export default function ApiKeyManagementTab({
       </Card>
 
       {/* View API Key Modal */}
-      <Modal
+      <StandardModal
         isOpen={mgmt.isViewModalOpen}
         onClose={mgmt.handleCloseViewModal}
         size="2xl"
-        isCentered
+        title="API Key Details"
+        footer={<Button onClick={mgmt.handleCloseViewModal}>Close</Button>}
+        contentProps={{ maxW: "900px", maxH: "600px" }}
+        bodyProps={{ overflowY: "auto" }}
       >
-        <ModalOverlay />
-        <ModalContent maxW="900px" maxH="600px">
-          <ModalHeader>API Key Details</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody overflowY="auto">
             {mgmt.selectedKeyForView && (
               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                 <Box>
@@ -459,21 +508,41 @@ export default function ApiKeyManagementTab({
                 </Box>
               </SimpleGrid>
             )}
-          </ModalBody>
-          <ModalFooter>
-            <Button onClick={mgmt.handleCloseViewModal}>Close</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+      </StandardModal>
 
       {/* Update API Key Modal */}
-      <Modal isOpen={mgmt.isUpdateModalOpen} onClose={mgmt.handleCloseUpdateModal} size="lg">
-        <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Update API Key</ModalHeader>
-          <ModalCloseButton />
-          <ModalBody>
-            <VStack spacing={4} align="stretch">
+      <StandardModal
+        isOpen={mgmt.isUpdateModalOpen}
+        onClose={mgmt.handleCloseUpdateModal}
+        size="lg"
+        title="Update API Key"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              mr={3}
+              onClick={mgmt.handleCloseUpdateModal}
+              isDisabled={mgmt.isUpdating}
+            >
+              Cancel
+            </Button>
+            <Button
+              colorScheme="blue"
+              onClick={mgmt.handleUpdateApiKey}
+              isLoading={mgmt.isUpdating}
+              loadingText="Updating..."
+              isDisabled={
+                mgmt.isUpdating ||
+                !(mgmt.updateFormData.key_name ?? "").trim() ||
+                !(mgmt.updateFormData.permissions?.length ?? 0)
+              }
+            >
+              Update
+            </Button>
+          </>
+        }
+      >
+        <VStack spacing={4} align="stretch">
               <FormControl>
                 <FormLabel fontWeight="semibold">Key Name</FormLabel>
                 <Input
@@ -552,33 +621,8 @@ export default function ApiKeyManagementTab({
                   </Text>
                 </Box>
               )}
-            </VStack>
-          </ModalBody>
-          <ModalFooter>
-            <Button
-              variant="ghost"
-              mr={3}
-              onClick={mgmt.handleCloseUpdateModal}
-              isDisabled={mgmt.isUpdating}
-            >
-              Cancel
-            </Button>
-            <Button
-              colorScheme="blue"
-              onClick={mgmt.handleUpdateApiKey}
-              isLoading={mgmt.isUpdating}
-              loadingText="Updating..."
-              isDisabled={
-                mgmt.isUpdating ||
-                !(mgmt.updateFormData.key_name ?? "").trim() ||
-                !(mgmt.updateFormData.permissions?.length ?? 0)
-              }
-            >
-              Update
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+        </VStack>
+      </StandardModal>
 
       {/* Revoke API Key Alert Dialog */}
       <AlertDialog

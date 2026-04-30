@@ -12,7 +12,7 @@ interface AuthGuardProps {
 
 // Routes that require authentication
 // Note: /nmt is excluded to allow anonymous "try-it" access
-const protectedRoutes = ['/asr', '/tts', '/llm', '/pipeline', '/pipeline-builder', '/model-management', '/services-management', '/tenant-management', '/api-key-management', '/profile', '/logs', '/traces', '/alerts-management', '/pii-management'];
+const protectedRoutes = ['/asr', '/tts', '/llm', '/pipeline', '/pipeline-builder', '/model-management', '/services-management', '/tenant-management', '/api-key-management', '/profile', '/logs', '/traces', '/alerts-management', '/pii-management', '/policy-management'];
 
 // Routes that require ADMIN role
 const adminOnlyRoutes = ['/alerts-management'];

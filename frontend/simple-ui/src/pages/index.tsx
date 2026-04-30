@@ -37,6 +37,7 @@ import { getServiceDescription, getServiceTitle, type ServiceId } from "../confi
 import { useAuth } from "../hooks/useAuth";
 import { useFeatureFlagsBulk, ALL_UI_FEATURE_FLAG_NAMES } from "../hooks/useFeatureFlag";
 import DoubleMicrophoneIcon from "../components/common/DoubleMicrophoneIcon";
+import { useGuestServices } from "../hooks/useGuestServices";
 
 const safeColorMap:any = {
   asr: { // Coral → Pastel Coral
@@ -150,6 +151,7 @@ const HomePage: React.FC = () => {
   const router = useRouter();
   const toast = useToastWithDeduplication();
   const { isAuthenticated, isLoading } = useAuth();
+  const { isGuest, isLoading: guestServicesLoading, allowedServiceIds } = useGuestServices();
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
 
@@ -179,11 +181,18 @@ const HomePage: React.FC = () => {
     { id: "language-diarization" as ServiceId, icon: IoLanguageOutline, path: "/language-diarization", color: "yellow", enabled: flags["language-diarization-enabled"] ?? true },
     { id: "audio-language-detection" as ServiceId, icon: IoRadioOutline, path: "/audio-language-detection", color: "gray", enabled: flags["audio-language-detection-enabled"] ?? true },
     { id: "ner" as ServiceId, icon: IoPricetagOutline, path: "/ner", color: "rose", enabled: flags["ner-enabled"] ?? true },
-  ].filter((service) => flagsLoading || service.enabled).map((s) => ({
-    ...s,
-    title: getServiceTitle(s.id),
-    description: getServiceDescription(s.id),
-  }));
+  ]
+    .filter((service) => flagsLoading || service.enabled)
+    .filter((service) => {
+      if (!isGuest) return true;
+      if (guestServicesLoading) return false;
+      return allowedServiceIds?.has(service.id) ?? false;
+    })
+    .map((s) => ({
+      ...s,
+      title: getServiceTitle(s.id),
+      description: getServiceDescription(s.id),
+    }));
 
 
   return (

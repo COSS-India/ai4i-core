@@ -40,6 +40,7 @@ export function useCreateApiKeyTab({
   const [selectedPermissionsForUser, setSelectedPermissionsForUser] = useState<string[]>([]);
   const [isCreatingApiKeyForUser, setIsCreatingApiKeyForUser] = useState(false);
   const [createdApiKeyToken, setCreatedApiKeyToken] = useState<string | null>(null);
+  const [isManagePermissionsOpen, setIsManagePermissionsOpen] = useState(false);
 
   const handleLoadPermissions = async () => {
     setIsLoadingPermissions(true);
@@ -158,6 +159,27 @@ export function useCreateApiKeyTab({
     }
   };
 
+  const openManagePermissions = async () => {
+    if (!selectedUserForPermissions) {
+      toast({
+        title: "Select user",
+        description: "Choose a user before managing permissions.",
+        status: "info",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (permissions.length === 0) {
+      await handleLoadPermissions();
+    }
+    setIsManagePermissionsOpen(true);
+  };
+
+  const closeManagePermissions = () => {
+    setIsManagePermissionsOpen(false);
+  };
+
   return {
     permissions,
     selectedUserForPermissions,
@@ -168,10 +190,13 @@ export function useCreateApiKeyTab({
     selectedPermissionsForUser,
     setSelectedPermissionsForUser,
     isCreatingApiKeyForUser,
+    isManagePermissionsOpen,
     createdApiKeyToken,
     clearCreatedApiKeyToken: () => setCreatedApiKeyToken(null),
     handleLoadPermissions,
     handleUserSelect,
     handleCreateApiKeyForUser,
+    openManagePermissions,
+    closeManagePermissions,
   };
 }

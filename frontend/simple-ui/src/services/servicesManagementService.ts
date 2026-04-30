@@ -15,6 +15,7 @@ export interface Service {
   model_id?: string; // For backward compatibility
   modelVersion?: string;
   model_version?: string; // For backward compatibility
+  modelSubmissionDate?: string;
   endpoint?: string;
   endpoint_url?: string; // For backward compatibility
   api_key?: string;

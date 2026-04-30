@@ -37,7 +37,7 @@ const LoginForm: React.FC<LoginFormProps> = ({
   onSuccess,
   onSwitchToRegister,
 }) => {
-  const { login, isLoading, error, clearError } = useAuth();
+  const { login, guestLogin, isLoading, isLoginLoading, isGuestLoginLoading, error, clearError } = useAuth();
   const [formData, setFormData] = useState<LoginRequest>({
     email: "",
     password: "",
@@ -109,6 +109,21 @@ const LoginForm: React.FC<LoginFormProps> = ({
       }
       // The error state will be updated by the hook, which will trigger the useEffect
       // that updates loginError
+    }
+  };
+
+  const handleGuestSignIn = async () => {
+    clearError();
+    setLoginError(null);
+    setLoginAttempted(true);
+
+    try {
+      await guestLogin();
+      onSuccess?.();
+      setLoginAttempted(false);
+      setLoginError(null);
+    } catch (error) {
+      console.error("LoginForm: Guest login failed with error:", error);
     }
   };
 
@@ -198,11 +213,25 @@ const LoginForm: React.FC<LoginFormProps> = ({
             colorScheme="blue"
             size="md"
             width="full"
-            isLoading={isLoading}
+            isLoading={isLoginLoading}
             loadingText="Signing in..."
             disabled={isLoading}
           >
-            {isLoading ? <LoadingSpinner size="sm" /> : "Sign In"}
+            {isLoginLoading ? <LoadingSpinner size="sm" /> : "Sign In"}
+          </Button>
+
+          <Button
+            type="button"
+            variant="outline"
+            colorScheme="teal"
+            size="md"
+            width="full"
+            isLoading={isGuestLoginLoading}
+            loadingText="Signing in as guest..."
+            disabled={isLoading}
+            onClick={handleGuestSignIn}
+          >
+            Sign in as Guest
           </Button>
 
           <Box width="full" py={2}>

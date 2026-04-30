@@ -147,6 +147,8 @@ export interface VoiceSelectorProps {
   availableLanguages: string[];
   availableVoices?: Voice[];
   loading?: boolean;
+  /** When true, all voice controls are disabled (e.g. no service selected yet). */
+  disabled?: boolean;
 }
 
 export interface TTSResultsProps {

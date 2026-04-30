@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai4icore-service-base"
+version = "1.0.0"
+description = "Shared infrastructure for AI4I-Core inference services: service registry, rate limiting, health checks"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.104.0",
+    "httpx>=0.25.0",
+    "redis>=5.0.0",
+    "starlette>=0.27.0",
+    "ai4icore-exceptions",
+    "ai4icore-env",
+]
+
+[tool.setuptools.packages.find]
+include = ["ai4icore_service_base*"]

@@ -39,6 +39,7 @@ const layoutRoutes = [
   '/traces',
   '/alerts-management',
   '/pii-management',
+  '/policy-management',
   // Admin / usage (also matched by /admin/* and /dashboard/* below)
   '/admin/quota-configs',
   '/admin/rate-limit-configs',

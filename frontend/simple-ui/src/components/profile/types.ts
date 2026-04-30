@@ -97,6 +97,8 @@ export interface StatusUpdateUserTarget {
   tenant_id: string;
   user_id: number;
   currentStatus: string;
+  /** Auth role from tenant user list (e.g. TENANT ADMIN); used when applying post-update session rules */
+  role?: string;
 }
 
 export type StatusUpdateTargetUnion = StatusUpdateTarget | StatusUpdateUserTarget;

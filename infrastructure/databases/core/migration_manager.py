@@ -189,9 +189,13 @@ class MigrationManager:
                 seeder_instance.run(self.adapter)
                 print(f"  ✅ Seeded: {seeder_class}")
             else:
-                # Run all seeders for this database
-                seeder_files = sorted([f for f in os.listdir(seeders_path) 
-                                      if f.endswith('.py') and f != '__init__.py'])
+                # Run all seeders for this database (only *_seeder.py — excludes helpers
+                # like auth_seeder_credentials.py that are not BaseSeeder subclasses).
+                seeder_files = sorted(
+                    f
+                    for f in os.listdir(seeders_path)
+                    if f.endswith("_seeder.py")
+                )
                 
                 for seeder_file in seeder_files:
                     seeder_instance = self._load_seeder(seeders_path / seeder_file)()

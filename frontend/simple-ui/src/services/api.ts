@@ -2,6 +2,7 @@
 
 import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestConfig } from 'axios';
 import { getStoredAccessToken } from '../utils/tokenStorage';
+import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 
 // API Base URL from environment (inlined at `next build` for NEXT_PUBLIC_*).
 // If the image was built without NEXT_PUBLIC_API_URL, axios/auth would use relative
@@ -88,6 +89,10 @@ export const apiEndpoints = {
     redact: '/api/v1/pii/redact',
     domains: '/api/v1/pii/domains',
   },
+  policy: {
+    /** Gateway prefix; service mounts routes at /v1 (see policy-service main.py). */
+    base: '/api/v1/policy-service',
+ },
 } as const;
 
 // Create Axios instance with standard timeout
@@ -170,14 +175,16 @@ llmApiClient.interceptors.response.use(
     }
     return response;
   },
-  (error: AxiosError) => {
-    // Don't automatically logout on 401 for service endpoints
-    // Let the UI handle the error and show appropriate messages
-    // This prevents users from being logged out on transient auth errors
-    if (error.response) {
-      const { status } = error.response;
+  async (error: AxiosError) => {
+    if (error.response && typeof window !== 'undefined') {
+      const { status, data } = error.response;
+      if (responseIndicatesTenantSuspendedOrInactive(status, data)) {
+        console.warn('LLM: tenant/user inactive — ending session');
+        const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+        forceFrontendSessionEnd();
+        return Promise.reject(error);
+      }
       if (status === 401) {
-        // Log the error but don't logout - let UI handle it
         console.warn('LLM service returned 401 - check authentication');
       }
     }
@@ -219,14 +226,16 @@ asrApiClient.interceptors.response.use(
     }
     return response;
   },
-  (error: AxiosError) => {
-    // Don't automatically logout on 401 for service endpoints
-    // Let the UI handle the error and show appropriate messages
-    // This prevents users from being logged out on transient auth errors
-    if (error.response) {
-      const { status } = error.response;
+  async (error: AxiosError) => {
+    if (error.response && typeof window !== 'undefined') {
+      const { status, data } = error.response;
+      if (responseIndicatesTenantSuspendedOrInactive(status, data)) {
+        console.warn('ASR: tenant/user inactive — ending session');
+        const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+        forceFrontendSessionEnd();
+        return Promise.reject(error);
+      }
       if (status === 401) {
-        // Log the error but don't logout - let UI handle it
         console.warn('ASR service returned 401 - check authentication');
       }
     }
@@ -285,6 +294,9 @@ apiClient.interceptors.request.use(
     const isFeatureFlagsEndpoint = url.includes('/api/v1/feature-flags');
     const isPolicyEngineEndpoint = url.includes('/api/v1/policy-engine');
     const isPayPerUseEndpoint = url.includes('/api/v1/pay-per-use');
+    const isPolicyServiceEndpoint = url.includes('/api/v1/policy-service');
+    const pathNoQuery = (url.split('?')[0] || '').toLowerCase();
+    const isPolicyServiceHealthPath = pathNoQuery.endsWith('/api/v1/policy-service/health');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
     
@@ -298,7 +310,8 @@ apiClient.interceptors.request.use(
                         isMultiTenantEndpoint ||
                         isFeatureFlagsEndpoint ||
                         isPolicyEngineEndpoint ||
-                        isPayPerUseEndpoint;
+                        isPayPerUseEndpoint ||
+                        (isPolicyServiceEndpoint && !isPolicyServiceHealthPath);
     
     // Proactively refresh token if it's expiring soon (skip for refresh and login endpoints)
     if ((requiresJWT || (isAuthEndpoint && !isAuthRefreshEndpoint)) && !isAuthRefreshEndpoint) {
@@ -353,6 +366,18 @@ apiClient.interceptors.response.use(
     // Handle different error types
     if (error.response) {
       const { status, data } = error.response;
+
+      if (
+        typeof window !== 'undefined' &&
+        responseIndicatesTenantSuspendedOrInactive(status, data)
+      ) {
+        console.warn('API: tenant suspended/deactivated or user inactive — ending session');
+        const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+        forceFrontendSessionEnd();
+        return Promise.reject(
+          new Error('Your organization account is no longer active. Please sign in again.')
+        );
+      }
       
       switch (status) {
         case 401:
@@ -377,6 +402,7 @@ apiClient.interceptors.response.use(
                                      url.includes('/api/v1/language-diarization') ||
                                      url.includes('/api/v1/audio-lang-detection') ||
                                      url.includes('/api/v1/telemetry') ||
+                                     url.includes('/api/v1/policy-service') ||
                                      isModelManagementEndpoint ||
                                      isMultiTenantEndpoint;
             
@@ -494,6 +520,15 @@ apiClient.interceptors.response.use(
                 if (typeof window !== 'undefined') {
                   window.location.href = '/auth';
                 }
+                return Promise.reject(new Error('Session expired. Please sign in again.'));
+              }
+
+              // Multi-tenant APIs back the app shell; any unresolved 401 should end the session
+              // instead of leaving the user on broken pages (e.g. logs, profile).
+              if (isMultiTenantEndpoint) {
+                console.warn('Multi-tenant API returned 401 — ending session');
+                const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+                forceFrontendSessionEnd();
                 return Promise.reject(new Error('Session expired. Please sign in again.'));
               }
               

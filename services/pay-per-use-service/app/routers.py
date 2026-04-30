@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,6 +59,14 @@ async def _policy_snapshot_safe(tenant_id: str, rds) -> Dict[str, Any]:
     try:
         return await _policy_snapshot(tenant_id, rds)
     except HTTPException:
+        return {}
+    except Exception as exc:
+        logger.warning(
+            "policy_snapshot_failed tenant_id=%s err=%s",
+            tenant_id,
+            exc,
+            exc_info=False,
+        )
         return {}
 
 
@@ -250,12 +258,9 @@ def _period_month() -> str:
 @router.post("/check", response_model=CheckResponse)
 async def check_usage(body: CheckRequest, session: AsyncSession = Depends(get_session)):
     rds = await get_redis()
-    try:
-        policy = await _policy_snapshot(body.tenant_id, rds)
-    except HTTPException as e:
-        if e.detail == "tenant_policy_not_found":
-            return CheckResponse(allowed=False, reason="no_policy")
-        raise
+    policy = await _policy_snapshot_safe(body.tenant_id, rds)
+    if not policy:
+        return CheckResponse(allowed=False, reason="no_policy")
 
     rc = policy.get("rate_limit_config") or {}
     qc = policy.get("quota_config") or {}
@@ -293,7 +298,9 @@ async def check_usage(body: CheckRequest, session: AsyncSession = Depends(get_se
 @router.post("/record", response_model=RecordResponse)
 async def record_usage(body: RecordRequest, session: AsyncSession = Depends(get_session)):
     rds = await get_redis()
-    policy = await _policy_snapshot(body.tenant_id, rds)
+    # Safe snapshot: strict _policy_snapshot raises when multi-tenant plan API fails — then NMT/pipeline
+    # never persists usage and dashboards stay empty. Fall back to {} and resolve rate from Redis/MM.
+    policy = await _policy_snapshot_safe(body.tenant_id, rds)
     tier = str(policy.get("tier") or "")
 
     rate = await _resolve_usage_rate(policy, body.service_id, tier, rds)
@@ -304,29 +311,78 @@ async def record_usage(body: RecordRequest, session: AsyncSession = Depends(get_
     wb = await _wallet_row(session, body.tenant_id, policy)
     await session.refresh(wb)
     rem = _remaining_balance(wb)
-    if rem < cost:
-        raise HTTPException(status_code=402, detail="Plan budget exhausted")
 
-    new_used = Decimal(str(wb.total_used or 0)) + cost
-    wb.total_used = new_used
-    wb.balance = _remaining_balance(wb)
-
-    session.add(
-        WalletTransaction(
-            tenant_id=body.tenant_id,
-            amount=-cost,
-            type="debit",
-            reference_id=str(uuid.uuid4()),
+    has_plan_data = bool(policy)
+    # check_usage only guarantees rem > 0, not rem >= cost. If rem < nominal cost, recording
+    # used to raise 402 here — NMT returned 200 but PayPerUseClient.record failed and no UsageRecord
+    # was stored (dashboard looked "stuck"). Partial debit when wallet covers part of the charge.
+    if rem <= 0:
+        if has_plan_data:
+            raise HTTPException(status_code=402, detail="Plan budget exhausted")
+        logger.warning(
+            "record_usage: insufficient wallet but no usable tenant plan snapshot — "
+            "persisting usage row with zero debit for observability "
+            "(tenant_id=%s service_id=%s units=%s rem=%s needed=%s)",
+            body.tenant_id,
+            body.service_id,
+            units,
+            rem,
+            cost,
         )
-    )
+        debit_cost = Decimal("0")
+        debit_rate = Decimal("0")
+    elif rem < cost:
+        if has_plan_data:
+            debit_cost = rem
+            debit_rate = rate
+            logger.info(
+                "record_usage: partial debit tenant_id=%s service_id=%s units=%s "
+                "nominal_cost=%s remaining=%s debit=%s",
+                body.tenant_id,
+                body.service_id,
+                units,
+                cost,
+                rem,
+                debit_cost,
+            )
+        else:
+            logger.warning(
+                "record_usage: insufficient wallet but no usable tenant plan snapshot — "
+                "persisting usage row with zero debit for observability "
+                "(tenant_id=%s service_id=%s units=%s rem=%s needed=%s)",
+                body.tenant_id,
+                body.service_id,
+                units,
+                rem,
+                cost,
+            )
+            debit_cost = Decimal("0")
+            debit_rate = Decimal("0")
+    else:
+        debit_cost = cost
+        debit_rate = rate
+
+    if debit_cost > 0:
+        new_used = Decimal(str(wb.total_used or 0)) + debit_cost
+        wb.total_used = new_used
+        wb.balance = _remaining_balance(wb)
+
+        session.add(
+            WalletTransaction(
+                tenant_id=body.tenant_id,
+                amount=-debit_cost,
+                type="debit",
+                reference_id=str(uuid.uuid4()),
+            )
+        )
     session.add(
         UsageRecord(
             tenant_id=body.tenant_id,
             api_key_id=body.api_key_id,
             service_id=body.service_id,
             units_consumed=units,
-            cost=cost,
-            rate_used=rate,
+            cost=debit_cost,
+            rate_used=debit_rate,
             tier=tier or None,
         )
     )
@@ -357,16 +413,23 @@ async def record_usage(body: RecordRequest, session: AsyncSession = Depends(get_
 
     await session.commit()
     await session.refresh(wb)
-    return RecordResponse(recorded=True, cost=float(cost), remaining_balance=float(_remaining_balance(wb)))
+    return RecordResponse(
+        recorded=True,
+        cost=float(debit_cost),
+        remaining_balance=float(_remaining_balance(wb)),
+    )
 
 
 @router.get("/usage/tenant/{tenant_id}")
 async def usage_tenant(
     tenant_id: str,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_session),
 ):
     assert_tenant_usage_access(request, tenant_id)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+    response.headers["Pragma"] = "no-cache"
     rds = await get_redis()
     total_req = await session.scalar(
         select(func.count()).select_from(UsageRecord).where(UsageRecord.tenant_id == tenant_id)
@@ -374,10 +437,10 @@ async def usage_tenant(
     wb = await _wallet_row(session, tenant_id)
     await session.refresh(wb)
 
-    try:
-        policy = await _policy_snapshot(tenant_id, rds)
-    except HTTPException:
-        policy = {}
+    # Use safe snapshot: strict _policy_snapshot only converts HTTP non-200 to HTTPException;
+    # httpx timeouts / connection errors still propagate → dashboard GET returned 500 and
+    # looked like "missing" calculations. Safe falls back to {} and we still show wallet + DB aggregates.
+    policy = await _policy_snapshot_safe(tenant_id, rds)
 
     tpc = float(wb.total_plan_cost or 0)
     tu = float(wb.total_used or 0)
@@ -778,11 +841,8 @@ async def usage_adopter(request: Request, session: AsyncSession = Depends(get_se
 async def get_wallet(tenant_id: str, request: Request, session: AsyncSession = Depends(get_session)):
     assert_wallet_access(request, tenant_id)
     rds = await get_redis()
-    try:
-        policy = await _policy_snapshot(tenant_id, rds)
-    except HTTPException:
-        policy = None
-    wb = await _wallet_row(session, tenant_id, policy or {})
+    policy = await _policy_snapshot_safe(tenant_id, rds)
+    wb = await _wallet_row(session, tenant_id, policy)
     await session.refresh(wb)
     rem = _remaining_balance(wb)
     return {

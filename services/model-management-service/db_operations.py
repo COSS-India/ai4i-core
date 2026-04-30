@@ -60,35 +60,16 @@ def generate_model_id(model_name: str, version: str) -> str:
     return model_id
 
 
-def generate_service_id(model_name: str, model_version: str, service_name: str) -> str:
+def generate_service_id(service_name: str) -> str:
     """
-    Generate a deterministic service_id hash from model_name, model_version, and service_name.
+    Generate a deterministic service_id hash from service_name only.
     Uses SHA256 for enterprise-standard hashing, truncated to 32 characters.
-    
-    Args:
-        model_name: The name of the model
-        model_version: The version of the model
-        service_name: The name of the service
-        
-    Returns:
-        A hexadecimal hash string (32 characters, first half of SHA256)
     """
-    # Normalize inputs: strip whitespace and convert to lowercase for consistency
-    normalized_model_name = model_name.strip().lower()
-    normalized_model_version = model_version.strip().lower()
     normalized_service_name = service_name.strip().lower()
-    
-    # Create a deterministic string from model_name, model_version, and service_name
-    hash_input = f"{normalized_model_name}:{normalized_model_version}:{normalized_service_name}"
-    
-    # Generate SHA256 hash
-    hash_obj = hashlib.sha256(hash_input.encode('utf-8'))
+    hash_input = normalized_service_name
+    hash_obj = hashlib.sha256(hash_input.encode("utf-8"))
     full_hash = hash_obj.hexdigest()
-    
-    # Truncate to 32 characters (first half of SHA256)
-    service_id = full_hash[:32]
-    
-    return service_id
+    return full_hash[:32]
 
 
 async def is_model_version_used_by_published_service(model_id: str, version: str) -> tuple[bool, List[str]]:
@@ -754,6 +735,7 @@ async def get_model_details(model_id: str, version: str = None) -> Dict[str, Any
             "uuid": str(model.id),
             "name": model.name,
             "version": model.version,
+            "submittedOn": model.submitted_on,
             "versionStatus": model.version_status.value if model.version_status else None,
             "versionStatusUpdatedAt": model.version_status_updated_at.isoformat() if model.version_status_updated_at else None,
             "description": model.description,
@@ -851,6 +833,7 @@ async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bo
                 "uuid": str(data.get("id")),
                 "name": data.get("name"),
                 "version": data.get("version"),
+                "submittedOn": data.get("submitted_on"),
                 "versionStatus": version_status_value,
                 "versionStatusUpdatedAt": version_status_updated_at_str,
                 "description": data.get("description"),
@@ -881,8 +864,8 @@ async def save_service_to_db(payload: ServiceCreateRequest, created_by: str = No
     Save a new service entry to the database.
     Includes:
       - Look up model to get model_name
-      - Generate service_id from hash of (model_name, model_version, service_name)
-      - Duplicate (model_id, model_version, name) check
+      - Generate service_id from hash of (service_name)
+      - Duplicate service name check (service name must be unique)
       - Record creation
       - Commit / rollback
     
@@ -906,24 +889,21 @@ async def save_service_to_db(payload: ServiceCreateRequest, created_by: str = No
                 detail=f"Model with ID {payload.modelId} and version {payload.modelVersion} does not exist, cannot create service."
             )
         
-        # Generate service_id from hash of (model_name, model_version, service_name)
-        generated_service_id = generate_service_id(model.name, payload.modelVersion, payload.name)
+        # Service ID is derived from the service name only.
+        generated_service_id = generate_service_id(payload.name)
         
-        # Pre-check for duplicates: check if (model_id, model_version, name) combination already exists
-        # Since service_id is now a hash of (model_name, model_version, service_name), this ensures uniqueness
+        # Pre-check for duplicates: enforce unique service names.
         stmt = select(Service).where(
-            Service.model_id == payload.modelId,
-            Service.model_version == payload.modelVersion,
             Service.name == payload.name
         )
         result = await db.execute(stmt)
         existing = result.scalars().first()
         
         if existing:
-            logger.warning(f"Duplicate service: model_id={payload.modelId}, model_version={payload.modelVersion}, name={payload.name}")
+            logger.warning(f"Duplicate service name: {payload.name}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Service with name '{payload.name}' for model '{model.name}' version '{payload.modelVersion}' already exists."
+                detail=f"Service with name '{payload.name}' already exists."
             )
         
         payload_dict = _json_safe(payload.model_dump(by_alias=True))
@@ -950,6 +930,8 @@ async def save_service_to_db(payload: ServiceCreateRequest, created_by: str = No
             model_id=payload_dict.get("modelId"),
             model_version=payload_dict.get("modelVersion"),
             endpoint=payload_dict.get("endpoint"),
+            inference_server_type=payload_dict.get("inferenceServerType", "triton"),
+            ssl_verify=payload_dict.get("sslVerify", True),
             api_key=payload_dict.get("api_key") or payload_dict.get("apiKey"),
             health_status=payload_dict.get("healthStatus", {}),
             benchmarks=payload_dict.get("benchmarks", []),
@@ -990,7 +972,7 @@ async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
     """
     Update an existing service record in PostgreSQL and refresh Redis cache.
     Note: serviceId is used as identifier and is NOT changed during update.
-    Note: name, modelId, and modelVersion are NOT updatable since service_id is derived from them.
+    Note: name is NOT updatable (service_id is derived from service name only).
     
     Args:
         request: Service update request data
@@ -1007,7 +989,7 @@ async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
         request_dict = request.model_dump(exclude_none=True,by_alias=True)
 
         # 1. Build DB update dict
-        # Note: name, modelId, modelVersion are NOT updatable since service_id is derived from (model_name, model_version, service_name)
+        # Note: name/modelId/modelVersion are not updatable since service_id is derived from service name only.
         db_update = {}
         
         # Track who made this update
@@ -1020,6 +1002,10 @@ async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
             db_update["hardware_description"] = request_dict["hardwareDescription"]
         if "endpoint" in request_dict:
             db_update["endpoint"] = request_dict["endpoint"]
+        if "inferenceServerType" in request_dict and request_dict["inferenceServerType"] is not None:
+            db_update["inference_server_type"] = request_dict["inferenceServerType"]
+        if "sslVerify" in request_dict and request_dict["sslVerify"] is not None:
+            db_update["ssl_verify"] = request_dict["sslVerify"]
         if "api_key" in request_dict:
             db_update["api_key"] = request_dict["api_key"]
         if "healthStatus" in request_dict:
@@ -1061,7 +1047,7 @@ async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
         if not db_update:
             logger.warning(
                 "No valid update fields provided for service update. Valid fields: serviceDescription, hardwareDescription, "
-                "endpoint, api_key, healthStatus, benchmarks, isPublished, cost_per_unit, unit_type, tier. "
+                "endpoint, inferenceServerType, sslVerify, api_key, healthStatus, benchmarks, isPublished, cost_per_unit, unit_type, tier. "
                 "Note: name, modelId, modelVersion are not updatable."
             )
             return -1  # No valid fields provided
@@ -1105,6 +1091,9 @@ async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
                     "publishedOn": db_service.published_on,
                     "modelId": db_service.model_id,
                     "endpoint": db_service.endpoint,
+                    "inferenceServerType": getattr(db_service, "inference_server_type", None)
+                    or "triton",
+                    "sslVerify": getattr(db_service, "ssl_verify", True),
                     "apiKey": db_service.api_key,
                     "healthStatus": db_service.health_status or {},
                     "benchmarks": db_service.benchmarks or {},
@@ -1255,6 +1244,8 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
             "publishedOn": service.published_on,
             "modelId": service.model_id,
             "endpoint": service.endpoint,
+            "inferenceServerType": getattr(service, "inference_server_type", None) or "triton",
+            "sslVerify": getattr(service, "ssl_verify", True),
             "api_key": service.api_key,
             "healthStatus": service.health_status,
             "benchmarks": service.benchmarks,
@@ -1608,6 +1599,8 @@ async def list_all_services(
                     modelId=service.model_id,
                     # Persist service endpoint and api key details
                     endpoint=getattr(service, "endpoint", None),
+                    inferenceServerType=getattr(service, "inference_server_type", None) or "triton",
+                    sslVerify=getattr(service, "ssl_verify", True),
                     healthStatus=getattr(service, "health_status", None),
                     benchmarks=getattr(service, "benchmarks", None),
                     policy=service_policy,  # Use the policy we fetched above

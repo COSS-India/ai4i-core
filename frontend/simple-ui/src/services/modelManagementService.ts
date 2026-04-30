@@ -2,6 +2,22 @@
 
 import { apiClient } from './api';
 
+export interface ModelDetails {
+  modelId?: string;
+  model_id?: string;
+  name?: string;
+  versionStatus?: string;
+  version_status?: string;
+  task?: { type?: string };
+  task_type?: string;
+  taskType?: string;
+  version?: string;
+  modelVersion?: string;
+  submittedOn?: string | number;
+  submitted_on?: string | number;
+  [key: string]: any;
+}
+
 export interface UnpublishModelResponse {
   message: string;
   modelId: string;
@@ -33,9 +49,9 @@ export const unpublishModel = async (
  * Get all models
  * @returns Promise with list of models
  */
-export const getAllModels = async (): Promise<any[]> => {
+export const getAllModels = async (): Promise<ModelDetails[]> => {
   try {
-    const response = await apiClient.get<any[]>('/api/v1/model-management/models');
+    const response = await apiClient.get<ModelDetails[]>('/api/v1/model-management/models');
     return response.data;
   } catch (error: any) {
     console.error('Get models error:', error);
@@ -54,7 +70,7 @@ export const createModel = async (modelData: any): Promise<any> => {
     const response = await apiClient.post<any>('/api/v1/model-management/models', modelData);
     return response.data;
   } catch (error: any) {
-    console.error('Create model error:', error);
+    console.error('Register model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
     throw error;
   }
@@ -65,9 +81,9 @@ export const createModel = async (modelData: any): Promise<any> => {
  * @param modelId - The ID of the model to fetch
  * @returns Promise with model details
  */
-export const getModelById = async (modelId: string): Promise<any> => {
+export const getModelById = async (modelId: string): Promise<ModelDetails> => {
   try {
-    const response = await apiClient.post<any>(
+    const response = await apiClient.post<ModelDetails>(
       `/api/v1/model-management/models/${encodeURIComponent(modelId)}`,
       { modelId }
     );

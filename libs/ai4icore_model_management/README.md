@@ -224,6 +224,14 @@ The middleware automatically:
    - `request.state.triton_model_name`
    - `request.state.triton_client`
 
+#### Optional health pre-flight gate (coarse)
+
+When enabled (via `MODEL_MANAGEMENT_HEALTH_GATE_*`), the middleware performs a fast pre-flight check against config-service’s cached health snapshot and **fails closed** with `503` when the backend health is `unhealthy` or `unknown/unavailable`.
+
+This gate is intentionally **microservice-level and permissive**:
+- **`degraded` is allowed** (at least one instance is healthy)
+- It **does not detect per-backend / per-variant partial outages**; those still surface as request-time errors from the inference client
+
 ## Caching Strategy
 
 The module uses a 3-layer caching strategy:

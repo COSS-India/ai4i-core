@@ -35,7 +35,7 @@ You need a **Bearer token** (JWT) to call the multi-tenant register endpoint. Us
 ```bash
 curl -X POST 'http://localhost:9000/api/v1/auth/login' \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@ai4inclusion.org","password":"Admin@123"}'
+  -d '{"email":"admin@ai4inclusion.org","password":"ADMIN_PASSWORD"}'
 ```
 
 **Sandbox:**
