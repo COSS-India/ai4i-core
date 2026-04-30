@@ -323,26 +323,14 @@ services:
   auth-service:
     build:
       context: .
-      dockerfile: ./services/auth-service-v2/Dockerfile
+      dockerfile: ./services/auth-service/Dockerfile
     container_name: ai4v-auth-service
     ports:
       - "8081:8081"
     environment:
       - ENV_FILE=.env
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=auth_db
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - JWT_REFRESH_SECRET_KEY=${JWT_REFRESH_SECRET_KEY}
-      - ENVIRONMENT=development
-      - DEBUG=true
     env_file:
-      - ./.env
+      - ./services/auth-service/.env
     depends_on:
       postgres:
         condition: service_healthy
