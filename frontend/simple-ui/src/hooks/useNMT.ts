@@ -1,16 +1,13 @@
 // Custom React hook for NMT functionality with text translation
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { useToast } from '@chakra-ui/react';
 import { performNMTInference } from '../services/nmtService';
 import { getWordCount } from '../utils/helpers';
 import { UseNMTReturn, NMTInferenceRequest, NMTInferenceResponse, LanguagePair } from '../types/nmt';
-import { DEFAULT_NMT_CONFIG, MAX_TEXT_LENGTH, MIN_NMT_TEXT_LENGTH, NMT_ERRORS } from '../config/constants';
+import { DEFAULT_NMT_CONFIG, MAX_TEXT_LENGTH } from '../config/constants';
 import { extractErrorInfo } from '../utils/errorHandler';
-
-// Allow letters (including Unicode/Indic), numbers, spaces, and common punctuation (ES5-compatible: no \p{} or u flag)
-const VALID_NMT_CHAR_REGEX = /^[\s.,!?;:'"\-–—()\[\]{}@#$%&*+=\/\\<>~`a-zA-Z0-9\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\u0D80-\u0DFF]*$/;
 
 export const useNMT = (): UseNMTReturn => {
   // State
@@ -25,11 +22,8 @@ export const useNMT = (): UseNMTReturn => {
   const [requestTime, setRequestTime] = useState<string>('0');
   const [error, setError] = useState<string | null>(null);
 
-  // Only show "text exceeds limit" toast once per exceed (not every keystroke)
-  const hasShownTextLimitToastRef = useRef(false);
-
   // Toast hook
-  const toast = useToastWithDeduplication();
+  const toast = useToast();
 
   // NMT inference mutation
   const nmtMutation = useMutation({
@@ -60,29 +54,18 @@ export const useNMT = (): UseNMTReturn => {
         setError(null);
       } catch (err) {
         console.error('Error processing NMT response:', err);
-        const nmtErr = NMT_ERRORS.TRANSLATION_FAILED;
-        setError(nmtErr.description);
+        setError('Failed to process translation response.');
         setFetching(false);
-        toast({
-          title: nmtErr.title,
-          description: nmtErr.description,
-          status: 'error',
-          duration: 5000,
-          isClosable: true,
-        });
       }
     },
     onError: (error: any) => {
       console.error('NMT inference error:', error);
       
-      // Use centralized error handler (NMT context so backend message shown as default when no specific mapping)
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error, 'nmt');
+      // Use centralized error handler
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
       
       setError(errorMessage);
       setFetching(false);
-      // Clear previous translation so stale output is not shown alongside the error
-      setTranslatedText('');
-      setFetched(false);
       toast({
         title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
@@ -95,69 +78,11 @@ export const useNMT = (): UseNMTReturn => {
 
   // Perform inference
   const performInference = useCallback(async (text: string) => {
-    const trimmed = text?.trim() ?? '';
-
-    if (!selectedServiceId?.trim()) {
+    if (!text || text.trim() === '') {
       toast({
-        title: 'Selection required',
-        description: 'Please select a translation service.',
+        title: 'Input Required',
+        description: 'Please enter text to translate.',
         status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-    if (!languagePair.sourceLanguage?.trim()) {
-      toast({
-        title: 'Selection required',
-        description: 'Please select a source language.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-    if (!languagePair.targetLanguage?.trim()) {
-      toast({
-        title: 'Selection required',
-        description: 'Please select a target language.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (!text) {
-      const err = NMT_ERRORS.NO_TEXT_INPUT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-    
-    if (trimmed === '') {
-      const err = NMT_ERRORS.EMPTY_INPUT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (trimmed.length < MIN_NMT_TEXT_LENGTH) {
-      const err = NMT_ERRORS.TEXT_TOO_SHORT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
         duration: 3000,
         isClosable: true,
       });
@@ -165,23 +90,10 @@ export const useNMT = (): UseNMTReturn => {
     }
 
     if (text.length > MAX_TEXT_LENGTH) {
-      const err = NMT_ERRORS.TEXT_TOO_LONG;
       toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (!VALID_NMT_CHAR_REGEX.test(trimmed)) {
-      const err = NMT_ERRORS.INVALID_CHARACTERS;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
+        title: 'Text Too Long',
+        description: `Text length exceeds maximum limit of ${MAX_TEXT_LENGTH} characters.`,
+        status: 'warning',
         duration: 3000,
         isClosable: true,
       });
@@ -189,11 +101,22 @@ export const useNMT = (): UseNMTReturn => {
     }
 
     if (languagePair.sourceLanguage === languagePair.targetLanguage) {
-      const err = NMT_ERRORS.SAME_LANGUAGE_ERROR;
       toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
+        title: 'Invalid Language Pair',
+        description: 'Source and target languages must be different.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    // Require a model/service to be selected before translating
+    if (!selectedServiceId) {
+      toast({
+        title: 'Select a model',
+        description: 'Please select a translation model before testing.',
+        status: 'warning',
         duration: 3000,
         isClosable: true,
       });
@@ -210,25 +133,18 @@ export const useNMT = (): UseNMTReturn => {
     }
   }, [nmtMutation, languagePair, toast, selectedServiceId]);
 
-  // Set input text with validation — show toast only when first exceeding limit, not every keystroke
+  // Set input text with validation
   const setInputTextWithValidation = useCallback((text: string) => {
     setInputText(text);
-
+    
     if (text.length > MAX_TEXT_LENGTH) {
-      if (!hasShownTextLimitToastRef.current) {
-        hasShownTextLimitToastRef.current = true;
-        const err = NMT_ERRORS.TEXT_TOO_LONG;
-        toast({
-          id: 'nmt-text-exceeds-limit',
-          title: err.title,
-          description: err.description,
-          status: 'warning',
-          duration: 3000,
-          isClosable: true,
-        });
-      }
-    } else {
-      hasShownTextLimitToastRef.current = false;
+      toast({
+        title: 'Text Length Warning',
+        description: `Text length (${text.length}) exceeds recommended limit of ${MAX_TEXT_LENGTH} characters.`,
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
     }
   }, [toast]);
 

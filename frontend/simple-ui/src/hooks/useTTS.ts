@@ -1,16 +1,13 @@
 // Custom React hook for TTS functionality with text input and audio generation
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { useToast } from '@chakra-ui/react';
 import { performTTSInference } from '../services/ttsService';
-import { getWordCount, base64ToAudioObjectUrl } from '../utils/helpers';
+import { getWordCount } from '../utils/helpers';
 import { UseTTSReturn, TTSInferenceRequest, Gender, AudioFormat, SampleRate } from '../types/tts';
-import { DEFAULT_TTS_CONFIG, MAX_TEXT_LENGTH, MIN_TTS_TEXT_LENGTH, TTS_ERRORS } from '../config/constants';
+import { DEFAULT_TTS_CONFIG, MAX_TEXT_LENGTH } from '../config/constants';
 import { extractErrorInfo } from '../utils/errorHandler';
-
-// Allow letters (including Unicode/Indic), numbers, spaces, and common punctuation (ES5-compatible: no \p{} or u flag)
-const VALID_TTS_CHAR_REGEX = /^[\s.,!?;:'"\-–—()\[\]{}@#$%&*+=\/\\<>~`a-zA-Z0-9\u0900-\u097F\u0980-\u09FF\u0A00-\u0A7F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\u0D80-\u0DFF]*$/;
 
 // Helper function to get the correct service ID based on language
 const getServiceIdForLanguage = (language: string): string => {
@@ -29,10 +26,10 @@ const getServiceIdForLanguage = (language: string): string => {
 export const useTTS = (serviceId?: string): UseTTSReturn => {
   // State
   const [language, setLanguage] = useState<string>(DEFAULT_TTS_CONFIG.language);
-  const [gender, setGender] = useState<string>(DEFAULT_TTS_CONFIG.gender);
-  const [audioFormat, setAudioFormat] = useState<string>(DEFAULT_TTS_CONFIG.audioFormat);
+  const [gender, setGender] = useState<Gender>(DEFAULT_TTS_CONFIG.gender);
+  const [audioFormat, setAudioFormat] = useState<AudioFormat>(DEFAULT_TTS_CONFIG.audioFormat);
   const [samplingRate, setSamplingRate] = useState<SampleRate>(DEFAULT_TTS_CONFIG.sampleRate);
-  const [modelId, setModelId] = useState<string>("");
+  const [modelId, setModelId] = useState<string>(getServiceIdForLanguage(DEFAULT_TTS_CONFIG.language));
   const [inputText, setInputText] = useState<string>('');
   const [audio, setAudio] = useState<string>('');
   const [fetching, setFetching] = useState<boolean>(false);
@@ -45,23 +42,8 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
   // Audio ref for playback control
   const audioRef = useState<HTMLAudioElement | null>(null)[0];
 
-  // Only show "text exceeds limit" toast once per exceed (not every keystroke)
-  const hasShownTextLimitToastRef = useRef(false);
-  // Blob URL for current audio (CSP allows blob: for media-src; data: is blocked)
-  const audioObjectUrlRef = useRef<string | null>(null);
-
   // Toast hook
-  const toast = useToastWithDeduplication();
-
-  // Revoke blob URL on unmount to avoid leaks
-  useEffect(() => {
-    return () => {
-      if (audioObjectUrlRef.current) {
-        URL.revokeObjectURL(audioObjectUrlRef.current);
-        audioObjectUrlRef.current = null;
-      }
-    };
-  }, []);
+  const toast = useToast();
 
   // TTS inference mutation
   const ttsMutation = useMutation({
@@ -72,9 +54,9 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
       const config: TTSInferenceRequest['config'] = {
         language: { sourceLanguage: language },
         serviceId: effectiveServiceId,
-        gender: gender as Gender,
+        gender,
         samplingRate,
-        audioFormat: audioFormat as AudioFormat,
+        audioFormat,
       };
 
       return performTTSInference(text, config);
@@ -83,20 +65,14 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
       try {
         const audioContent = response.data.audio[0]?.audioContent;
         if (audioContent) {
-          if (audioObjectUrlRef.current) {
-            URL.revokeObjectURL(audioObjectUrlRef.current);
-            audioObjectUrlRef.current = null;
-          }
-          const format = (response.data.config?.audioFormat as string) || audioFormat || 'wav';
-          const blobUrl = base64ToAudioObjectUrl(audioContent, format);
-          audioObjectUrlRef.current = blobUrl;
-          setAudio(blobUrl);
+          const dataUrl = `data:audio/wav;base64,${audioContent}`;
+          setAudio(dataUrl);
           
           // Set response time
           setRequestTime(response.responseTime.toString());
           
-          // Get audio duration using blob URL (same as playback)
-          const audioElement = new Audio(blobUrl);
+          // Get audio duration
+          const audioElement = new Audio(dataUrl);
           audioElement.addEventListener('loadedmetadata', () => {
             setAudioDuration(audioElement.duration);
           });
@@ -109,23 +85,15 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
         }
       } catch (err) {
         console.error('Error processing TTS response:', err);
-        const ttsErr = TTS_ERRORS.AUDIO_GEN_FAILED;
-        setError(ttsErr.description);
+        setError('Failed to process audio response.');
         setFetching(false);
-        toast({
-          title: ttsErr.title,
-          description: ttsErr.description,
-          status: 'error',
-          duration: 5000,
-          isClosable: true,
-        });
       }
     },
     onError: (error: any) => {
       console.error('TTS inference error:', error);
       
-      // Use centralized error handler (TTS context so backend message shown as default when no specific mapping)
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error, 'tts');
+      // Use centralized error handler
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
       
       setError(errorMessage);
       setFetching(false);
@@ -141,80 +109,11 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
 
   // Perform inference
   const performInference = useCallback(async (text: string) => {
-    const trimmed = text?.trim() ?? '';
-
-    // Mandatory fields: service, language, voice (gender), audio format, text
-    if (!serviceId?.trim()) {
+    if (!text || text.trim() === '') {
       toast({
-        title: 'Selection required',
-        description: 'Please select a TTS service.',
+        title: 'Input Required',
+        description: 'Please enter text to synthesize.',
         status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-    if (!language?.trim()) {
-      toast({
-        title: 'Selection required',
-        description: 'Please select a language.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-    if (!gender || (gender !== 'male' && gender !== 'female')) {
-      toast({
-        title: 'Selection required',
-        description: 'Please select a voice.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-    if (!audioFormat?.trim()) {
-      toast({
-        title: 'Selection required',
-        description: 'Please select an audio format.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (!text) {
-      const err = TTS_ERRORS.NO_TEXT_INPUT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (trimmed === '') {
-      const err = TTS_ERRORS.EMPTY_INPUT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (trimmed.length < MIN_TTS_TEXT_LENGTH) {
-      const err = TTS_ERRORS.TEXT_TOO_SHORT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
         duration: 3000,
         isClosable: true,
       });
@@ -222,23 +121,10 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
     }
 
     if (text.length > MAX_TEXT_LENGTH) {
-      const err = TTS_ERRORS.TEXT_TOO_LONG;
       toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (!VALID_TTS_CHAR_REGEX.test(trimmed)) {
-      const err = TTS_ERRORS.INVALID_CHARACTERS;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'error',
+        title: 'Text Too Long',
+        description: `Text length exceeds maximum limit of ${MAX_TEXT_LENGTH} characters.`,
+        status: 'warning',
         duration: 3000,
         isClosable: true,
       });
@@ -266,34 +152,27 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
     } catch (err) {
       console.error('Inference error:', err);
     }
-  }, [ttsMutation, toast, serviceId, language, gender, audioFormat]);
+  }, [ttsMutation, toast, serviceId, language]);
 
-  // Set input text with validation — show toast only when first exceeding limit, not every keystroke
+  // Set input text with validation
   const setInputTextWithValidation = useCallback((text: string) => {
     setInputText(text);
-
+    
     if (text.length > MAX_TEXT_LENGTH) {
-      if (!hasShownTextLimitToastRef.current) {
-        hasShownTextLimitToastRef.current = true;
-        const err = TTS_ERRORS.TEXT_TOO_LONG;
-        toast({
-          id: 'tts-text-exceeds-limit',
-          title: err.title,
-          description: err.description,
-          status: 'warning',
-          duration: 3000,
-          isClosable: true,
-        });
-      }
-    } else {
-      hasShownTextLimitToastRef.current = false;
+      toast({
+        title: 'Text Length Warning',
+        description: `Text length (${text.length}) exceeds recommended limit of ${MAX_TEXT_LENGTH} characters.`,
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
     }
   }, [toast]);
 
   // Set language with validation
   const setLanguageWithValidation = useCallback((newLanguage: string) => {
     setLanguage(newLanguage);
-    setModelId(newLanguage?.trim() ? getServiceIdForLanguage(newLanguage) : "");
+    setModelId(getServiceIdForLanguage(newLanguage));
     setInputText('');
     setAudio('');
     setFetched(false);
@@ -317,11 +196,9 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
       const audioElement = new Audio(audio);
       audioElement.play().catch(err => {
         console.error('Error playing audio:', err);
-        const isFormatError = err?.name === 'NotSupportedError' || err?.message?.toLowerCase().includes('format') || err?.message?.toLowerCase().includes('supported');
-        const ttsErr = isFormatError ? TTS_ERRORS.AUDIO_FORMAT_ERROR : TTS_ERRORS.PLAYBACK_FAILED;
         toast({
-          title: ttsErr.title,
-          description: ttsErr.description,
+          title: 'Playback Error',
+          description: 'Failed to play audio. Please try again.',
           status: 'error',
           duration: 3000,
           isClosable: true,
@@ -343,24 +220,22 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
       try {
         const link = document.createElement('a');
         link.href = audio;
-        const downloadExt = audioFormat?.toLowerCase() === 'mp3' ? 'mp3' : 'wav';
-        link.download = `tts_audio_${Date.now()}.${downloadExt}`;
+        link.download = `tts_audio_${Date.now()}.wav`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
       } catch (err) {
         console.error('Error downloading audio:', err);
-        const ttsErr = TTS_ERRORS.DOWNLOAD_FAILED;
         toast({
-          title: ttsErr.title,
-          description: ttsErr.description,
+          title: 'Download Error',
+          description: 'Failed to download audio. Please try again.',
           status: 'error',
           duration: 3000,
           isClosable: true,
         });
       }
     }
-  }, [audio, audioFormat, toast]);
+  }, [audio, toast]);
 
   return {
     // State

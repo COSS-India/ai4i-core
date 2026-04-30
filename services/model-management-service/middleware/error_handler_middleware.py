@@ -4,7 +4,7 @@ Global error handler middleware for consistent error responses.
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from ai4icore_constants.exceptions import (
+from middleware.exceptions import (
     AuthenticationError, 
     AuthorizationError, 
     RateLimitExceededError,
@@ -61,26 +61,15 @@ def add_error_handlers(app: FastAPI) -> None:
     
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
-        """Handle generic HTTP exceptions. Accepts detail as string or dict with message (and optional kind/code, error)."""
-        if isinstance(exc.detail, dict) and "message" in exc.detail:
-            message = exc.detail["message"]
-            code = exc.detail.get("kind") or exc.detail.get("code") or "HTTP_ERROR"
-            details = exc.detail.get("error") or exc.detail.get("errors")
-            if isinstance(details, list):
-                details = "; ".join(str(d) for d in details)
-        else:
-            message = str(exc.detail)
-            code = "HTTP_ERROR"
-            details = None
+        """Handle generic HTTP exceptions."""
         error_detail = ErrorDetail(
-            message=message,
-            code=code,
-            timestamp=time.time(),
-            details=details
+            message=str(exc.detail),
+            code="HTTP_ERROR",
+            timestamp=time.time()
         )
         return JSONResponse(
             status_code=exc.status_code,
-            content={"detail": error_detail.model_dump(exclude_none=True)}
+            content={"detail": error_detail.dict()}
         )
     
     @app.exception_handler(Exception)

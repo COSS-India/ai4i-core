@@ -29,26 +29,12 @@ const AuthPage: React.FC = () => {
   const cardBorder = useColorModeValue("gray.200", "gray.700");
   const pageBg = useColorModeValue("gray.50", "gray.900");
 
-  // Allow only same-origin relative paths to prevent open redirects
-  const isSafeRelativePath = (path: string): boolean => {
-    if (typeof path !== "string" || path.length === 0) return false;
-    if (!path.startsWith("/")) return false;
-    if (path.startsWith("//")) return false;
-    return true;
-  };
-
-  const getRedirectPath = (): string => {
-    const redirect = router.query.redirect;
-    const path = typeof redirect === "string" ? redirect : "";
-    return isSafeRelativePath(path) ? path : "/";
-  };
-
-  // Redirect to home or intended destination if already authenticated
+  // Redirect to home if already authenticated
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
-      router.push(getRedirectPath());
+      router.push("/");
     }
-  }, [isAuthenticated, isLoading, router, router.query]);
+  }, [isAuthenticated, isLoading, router]);
 
   // Get initial mode from query parameter
   useEffect(() => {
@@ -60,9 +46,20 @@ const AuthPage: React.FC = () => {
     }
   }, [router.query]);
 
-  // Handle successful login - redirect to home or intended destination from query
+  // Handle successful login - redirect to home or intended destination
   const handleLoginSuccess = () => {
-    router.push(getRedirectPath());
+    // Check if there's a redirect destination stored
+    if (typeof window !== 'undefined') {
+      const redirectPath = sessionStorage.getItem('redirectAfterAuth');
+      if (redirectPath) {
+        sessionStorage.removeItem('redirectAfterAuth');
+        router.push(redirectPath);
+      } else {
+        router.push("/");
+      }
+    } else {
+      router.push("/");
+    }
   };
 
   // Handle successful registration - switch to login tab

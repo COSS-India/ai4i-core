@@ -29,7 +29,6 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
   availableLanguages,
   availableVoices,
   loading = false,
-  disabled = false,
 }) => {
   const [isMobile] = useMediaQuery("(max-width: 768px)");
 
@@ -58,32 +57,20 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
     );
   }
 
-  // Sort options alphabetically by display label
-  const sortedLanguages = [...availableLanguages].sort((a, b) =>
-    (LANG_CODE_TO_LABEL[a] || a).localeCompare(LANG_CODE_TO_LABEL[b] || b)
-  );
-  const sortedGenders = [...GENDER_OPTIONS].sort((a, b) =>
-    a.label.localeCompare(b.label)
-  );
-  const sortedFormats = [...AUDIO_FORMATS].sort((a, b) =>
-    a.localeCompare(b)
-  );
-
   return (
     <Stack spacing={4} direction={isMobile ? "column" : "row"}>
       {/* Language Selection */}
       <FormControl flex={1}>
         <FormLabel className="dview-service-try-option-title">
-          Language{" "}
-          <Text as="span" color="red.500">*</Text>
+          Select Language
         </FormLabel>
         <Select
           value={language}
           onChange={handleLanguageChange}
-          placeholder="Select"
-          disabled={disabled || availableLanguages.length === 0}
+          placeholder="Choose language"
+          disabled={availableLanguages.length === 0}
         >
-          {sortedLanguages.map((lang) => (
+          {availableLanguages.map((lang) => (
             <option key={lang} value={lang}>
               {LANG_CODE_TO_LABEL[lang] || lang}
             </option>
@@ -91,19 +78,15 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
         </Select>
       </FormControl>
 
-      {/* Voice Selection */}
+      {/* Gender Selection */}
       <FormControl flex={1}>
-        <FormLabel className="dview-service-try-option-title">
-          Voice{" "}
-          <Text as="span" color="red.500">*</Text>
-        </FormLabel>
+        <FormLabel className="dview-service-try-option-title">Voice</FormLabel>
         <Select
           value={gender}
           onChange={handleGenderChange}
-          placeholder="Select"
-          disabled={disabled}
+          placeholder="Choose gender"
         >
-          {sortedGenders.map((option) => (
+          {GENDER_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
@@ -114,16 +97,14 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
       {/* Audio Format Selection */}
       <FormControl flex={1}>
         <FormLabel className="dview-service-try-option-title">
-          Audio Format{" "}
-          <Text as="span" color="red.500">*</Text>
+          Audio Format
         </FormLabel>
         <Select
           value={audioFormat}
           onChange={handleFormatChange}
-          placeholder="Select"
-          disabled={disabled}
+          placeholder="Choose format"
         >
-          {sortedFormats.map((format) => (
+          {AUDIO_FORMATS.map((format) => (
             <option key={format} value={format}>
               {format.toUpperCase()}
             </option>

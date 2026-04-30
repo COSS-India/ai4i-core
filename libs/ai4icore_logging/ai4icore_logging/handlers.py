@@ -5,10 +5,9 @@ Custom handlers for sending logs to Kafka and other destinations.
 """
 
 import logging
+import os
 import sys
 from typing import Optional
-
-from ai4icore_env import app_env
 
 try:
     from kafka import KafkaProducer
@@ -47,8 +46,8 @@ class KafkaHandler(logging.Handler):
         
         # Get Kafka servers from env or parameter
         self.bootstrap_servers = (
-            bootstrap_servers or
-            app_env.kafka_bootstrap_servers
+            bootstrap_servers or 
+            os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
         )
         
         # Try to initialize Kafka producer

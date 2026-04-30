@@ -1,11 +1,17 @@
 /**
  * Authentication modal component with Chakra UI
  */
+import {
+  Modal,
+  ModalBody,
+  ModalCloseButton,
+  ModalContent,
+  ModalOverlay,
+} from "@chakra-ui/react";
 import React, { useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
 import LoginForm from "./LoginForm";
 import RegisterForm from "./RegisterForm";
-import StandardModal from "../common/StandardModal";
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -57,31 +63,39 @@ const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   return (
-    <StandardModal
+    <Modal
       isOpen={isOpen}
       onClose={onClose}
       size="md"
-      title=""
-      hideHeader
-      bodyProps={{ pb: 6 }}
-      hideCloseButton={false}
-      overlayProps={{ bg: "blackAlpha.300", backdropFilter: "blur(10px)", zIndex: 1400 }}
-      contentProps={{ zIndex: 1500 }}
-      footer={undefined}
+      isCentered
+      closeOnOverlayClick={true}
     >
-      {mode === "login" ? (
-        <LoginForm
-          onSuccess={handleSuccess}
-          onSwitchToRegister={switchToRegister}
-        />
-      ) : (
-        <RegisterForm
-          onSuccess={handleSuccess}
-          onSwitchToLogin={switchToLogin}
-          onRegisterSuccess={handleRegisterSuccess}
-        />
-      )}
-    </StandardModal>
+      <ModalOverlay
+        bg="blackAlpha.300"
+        backdropFilter="blur(10px)"
+        zIndex={1400}
+      />
+      <ModalContent zIndex={1500}>
+        {/* <ModalHeader>
+          {mode === 'login' ? 'Sign In' : 'Sign Up'}
+        </ModalHeader> */}
+        <ModalCloseButton />
+        <ModalBody pb={6}>
+          {mode === "login" ? (
+            <LoginForm
+              onSuccess={handleSuccess}
+              onSwitchToRegister={switchToRegister}
+            />
+          ) : (
+            <RegisterForm
+              onSuccess={handleSuccess}
+              onSwitchToLogin={switchToLogin}
+              onRegisterSuccess={handleRegisterSuccess}
+            />
+          )}
+        </ModalBody>
+      </ModalContent>
+    </Modal>
   );
 };
 

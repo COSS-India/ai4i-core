@@ -48,7 +48,7 @@ export interface TransliterationInferenceResponse {
 export const listTransliterationServices = async (): Promise<TransliterationServiceDetailsResponse[]> => {
   try {
     // Fetch services from model management service filtered by task_type='transliteration'
-    const services = await listServices('transliteration', true);
+    const services = await listServices('transliteration');
     const seen = new Set<string>();
 
     // Transform model management service response to TransliterationServiceDetailsResponse format
@@ -132,7 +132,7 @@ export const performTransliterationInference = async (
     };
   } catch (error) {
     console.error('Transliteration inference error:', error);
-    throw error; // Re-throw so toast can show backend message via extractErrorInfo
+    throw new Error('Failed to perform transliteration inference');
   }
 };
 

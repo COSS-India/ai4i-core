@@ -26,7 +26,7 @@ export interface LLMServiceDetailsResponse {
 export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> => {
   try {
     // Fetch services from model management service filtered by task_type='llm'
-    const services = await listServices('llm', true);
+    const services = await listServices('llm');
     const seen = new Set<string>();
 
     // Transform model management service response to LLMServiceDetailsResponse format
@@ -113,7 +113,7 @@ export const performLLMInference = async (
     };
   } catch (error) {
     console.error('LLM inference error:', error);
-    throw error; // Re-throw so toast can show backend message via extractErrorInfo
+    throw new Error('Failed to perform LLM inference');
   }
 };
 

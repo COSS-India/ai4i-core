@@ -1,5 +1,10 @@
-from ai4icore_env import app_env
+import os
+import redis  # Synchronous Redis client for redis_om
+from dotenv import load_dotenv
+
 from logger import logger
+
+load_dotenv()
 
 
 # def get_cache_connection() -> redis.Redis | None:
@@ -41,10 +46,10 @@ def get_async_cache_connection():
     """
     import redis.asyncio as redis_async
     
-    redis_host = app_env.redis_host
-    redis_port = int(app_env.redis_port)
-    redis_db = app_env.redis_db
-    redis_password = app_env.redis_password
+    redis_host = os.getenv("REDIS_HOST", "localhost")
+    redis_port = int(os.getenv("REDIS_PORT", 6379))
+    redis_db = int(os.getenv("REDIS_DB", 0))
+    redis_password = os.getenv("REDIS_PASSWORD")
 
     try:
         client = redis_async.Redis(

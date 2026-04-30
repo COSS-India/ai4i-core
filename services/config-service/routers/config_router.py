@@ -11,7 +11,7 @@ from models.config_models import (
 )
 from repositories.config_repository import ConfigRepository
 from services.config_service import ConfigurationService
-from ai4icore_env import app_env
+import os
 
 
 router = APIRouter(prefix="/api/v1/config", tags=["Configuration"])
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/v1/config", tags=["Configuration"])
 def get_config_service() -> ConfigurationService:
     import main as app_main  # type: ignore
     repo = ConfigRepository(app_main.db_session)
-    topic = app_env.kafka_topic_config_updates
+    topic = os.getenv('KAFKA_TOPIC_CONFIG_UPDATES', 'config-updates')
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"Using Kafka topic for config updates: {topic}")

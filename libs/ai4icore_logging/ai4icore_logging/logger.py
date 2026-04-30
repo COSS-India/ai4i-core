@@ -5,10 +5,9 @@ Provides get_logger function and logging configuration.
 """
 
 import logging
+import os
 import sys
 from typing import Optional
-
-from ai4icore_env import app_env
 
 from .formatters import JSONFormatter
 from .handlers import KafkaHandler
@@ -52,8 +51,8 @@ def get_logger(
                 root_service_name = handler.formatter.service_name
                 break
     
-    # Priority: provided service_name > root logger's service_name > db_settings > "unknown"
-    service_name = service_name or root_service_name or app_env.service_name or "unknown"
+    # Priority: provided service_name > root logger's service_name > env var > "unknown"
+    service_name = service_name or root_service_name or os.getenv("SERVICE_NAME", "unknown")
     
     # Avoid duplicate handlers
     if logger.handlers:
@@ -65,7 +64,7 @@ def get_logger(
     
     # Set log level
     if level is None:
-        log_level_str = (app_env.log_level or "INFO").upper()
+        log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
         level = getattr(logging, log_level_str, logging.INFO)
     
     logger.setLevel(level)
@@ -122,7 +121,7 @@ def configure_logging(
     root_logger.handlers.clear()
     
     # Create formatter
-    service_name = service_name or app_env.service_name or "unknown"
+    service_name = service_name or os.getenv("SERVICE_NAME", "unknown")
     formatter = JSONFormatter(service_name=service_name)
     
     # Add stdout handler for root logger

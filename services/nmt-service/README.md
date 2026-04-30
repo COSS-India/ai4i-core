@@ -432,6 +432,6 @@ This project is licensed under the MIT License.
 ## Credits
 
 - **AI4Bharat** for the IndicTrans2 model
-- **AI4ICore** for the original implementation
+- **Dhruva Platform** for the original implementation
 - **Triton Inference Server** for model serving
 - **FastAPI** for the web framework

@@ -1,22 +1,26 @@
 // Custom React hook for LLM functionality with text processing
 
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { useState, useCallback } from 'react';
+import { useMutation } from '@tanstack/react-query';
+import { useToast } from '@chakra-ui/react';
 import { performLLMInference } from '../services/llmService';
-import { listNMTServices, performNMTInference } from '../services/nmtService';
+import { performNMTInference } from '../services/nmtService';
 import { getWordCount } from '../utils/helpers';
 import { UseLLMReturn, LLMInferenceRequest } from '../types/llm';
 import { extractErrorInfo } from '../utils/errorHandler';
-import type { NMTServiceDetailsResponse } from '../types/nmt';
 
 const MAX_TEXT_LENGTH = 50000;
+const DEFAULT_LLM_CONFIG = {
+  serviceId: 'llm',
+  inputLanguage: 'en',
+  outputLanguage: 'hi',
+};
 
 export const useLLM = (serviceId?: string): UseLLMReturn => {
   // State
-  const [selectedModelId, setSelectedModelId] = useState<string>('');
-  const [inputLanguage, setInputLanguage] = useState<string>('');
-  const [outputLanguage, setOutputLanguage] = useState<string>('');
+  const [selectedModelId, setSelectedModelId] = useState<string>('llm');
+  const [inputLanguage, setInputLanguage] = useState<string>('en');
+  const [outputLanguage, setOutputLanguage] = useState<string>('hi');
   const [inputText, setInputText] = useState<string>('');
   const [outputText, setOutputText] = useState<string>('');
   const [nmtOutputText, setNmtOutputText] = useState<string>('');
@@ -30,38 +34,8 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
   const [nmtRequestTime, setNmtRequestTime] = useState<string>('0');
   const [error, setError] = useState<string | null>(null);
 
-  const [nmtServiceId, setNmtServiceId] = useState<string>('');
-  const [nmtServiceDetails, setNmtServiceDetails] = useState<NMTServiceDetailsResponse | null>(null);
-
-  // Only show "text exceeds limit" toast once per exceed (not every keystroke)
-  const hasShownTextLimitToastRef = useRef(false);
-
   // Toast hook
-  const toast = useToastWithDeduplication();
-
-  const { data: nmtServices } = useQuery({
-    queryKey: ['nmt-services-for-llm'],
-    queryFn: listNMTServices,
-    staleTime: 10 * 60 * 1000, // 10 minutes
-  });
-
-  const defaultPublishedNmtService = useMemo(() => {
-    if (!nmtServices || nmtServices.length === 0) return null;
-
-    // Logged-in users already get published-only via listNMTServices().
-    // For anonymous/try-it responses (or future API changes), prefer an explicitly-published service when present.
-    const anyWithPublishedFlag = (nmtServices as any[]).find(
-      (s) => s && (s.is_published === true || s.isPublished === true || s.status === 'published')
-    ) as NMTServiceDetailsResponse | undefined;
-
-    return anyWithPublishedFlag ?? nmtServices[0];
-  }, [nmtServices]);
-
-  useEffect(() => {
-    if (!defaultPublishedNmtService) return;
-    setNmtServiceId(defaultPublishedNmtService.service_id);
-    setNmtServiceDetails(defaultPublishedNmtService);
-  }, [defaultPublishedNmtService]);
+  const toast = useToast();
 
   // LLM inference mutation
   const llmMutation = useMutation({
@@ -150,18 +124,6 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
       return;
     }
 
-    // Validate that source and target languages are selected
-    if (!inputLanguage?.trim() || !outputLanguage?.trim()) {
-      toast({
-        title: 'Language Required',
-        description: 'Please select both source and target languages.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
     try {
       setIsDualMode(false);
       setFetching(true);
@@ -211,29 +173,6 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
       return;
     }
 
-    // Validate that source and target languages are selected
-    if (!inputLanguage?.trim() || !outputLanguage?.trim()) {
-      toast({
-        title: 'Language Required',
-        description: 'Please select both source and target languages.',
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (!nmtServiceId) {
-      toast({
-        title: 'NMT Service Unavailable',
-        description: 'No published NMT service is available right now. Please try again later.',
-        status: 'warning',
-        duration: 4000,
-        isClosable: true,
-      });
-      return;
-    }
-
     try {
       setIsDualMode(true);
       setFetching(true);
@@ -252,7 +191,7 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
             sourceLanguage: inputLanguage,
             targetLanguage: outputLanguage,
           },
-          serviceId: nmtServiceId,
+          serviceId: 'ai4bharat/indictrans--gpu-t4',
         }),
       ]);
 
@@ -283,26 +222,20 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
         isClosable: true,
       });
     }
-  }, [serviceId, selectedModelId, inputLanguage, outputLanguage, toast, nmtServiceId]);
+  }, [serviceId, selectedModelId, inputLanguage, outputLanguage, toast]);
 
-  // Set input text with validation — show toast only when first exceeding limit, not every keystroke
+  // Set input text with validation
   const setInputTextWithValidation = useCallback((text: string) => {
     setInputText(text);
-
+    
     if (text.length > MAX_TEXT_LENGTH) {
-      if (!hasShownTextLimitToastRef.current) {
-        hasShownTextLimitToastRef.current = true;
-        toast({
-          id: 'llm-text-exceeds-limit',
-          title: 'Text Length Warning',
-          description: `Text length (${text.length}) exceeds recommended limit of ${MAX_TEXT_LENGTH} characters.`,
-          status: 'warning',
-          duration: 3000,
-          isClosable: true,
-        });
-      }
-    } else {
-      hasShownTextLimitToastRef.current = false;
+      toast({
+        title: 'Text Length Warning',
+        description: `Text length (${text.length}) exceeds recommended limit of ${MAX_TEXT_LENGTH} characters.`,
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
     }
   }, [toast]);
 
@@ -362,3 +295,4 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
     swapLanguages,
   };
 };
+

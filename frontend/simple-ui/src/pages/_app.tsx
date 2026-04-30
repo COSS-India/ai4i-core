@@ -2,14 +2,11 @@
 
 import React, { useState } from 'react';
 import { AppProps } from 'next/app';
-import Head from 'next/head';
 import { ChakraProvider } from '@chakra-ui/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { useRouter } from 'next/router';
 import customTheme from '../theme';
-// Force feature-flag module to load before Layout/Sidebar to avoid circular dependency (useFeatureFlagsBulk undefined)
-import '../hooks/useFeatureFlag';
 import Layout from '../components/common/Layout';
 import AuthGuard from '../components/auth/AuthGuard';
 import '../styles/globals.css';
@@ -26,8 +23,6 @@ const layoutRoutes = [
   '/profile', 
   '/model-management',
   '/services-management',
-  '/tenant-management',
-  '/api-key-management',
   '/ocr',
   '/transliteration',
   '/language-detection',
@@ -35,11 +30,6 @@ const layoutRoutes = [
   '/language-diarization',
   '/audio-language-detection',
   '/ner',
-  '/logs',
-  '/traces',
-  '/alerts-management',
-  '/pii-management',
-  '/policy-management',
 ];
 
 export default function App({ Component, pageProps }: AppProps) {
@@ -65,9 +55,6 @@ export default function App({ Component, pageProps }: AppProps) {
 
   return (
     <ChakraProvider theme={customTheme}>
-      <Head>
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover" />
-      </Head>
       <QueryClientProvider client={queryClient}>
         {/* Conditional Layout Rendering with Auth Guard */}
         <AuthGuard>

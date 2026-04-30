@@ -6,7 +6,6 @@ from models.tenant_email import TenantResendEmailVerificationRequest, TenantRese
 from services.tenant_service import verify_email_token, resend_verification_email
 
 from logger import logger
-from middleware.dependencies import require_admin
 
 
 router = APIRouter(
@@ -21,11 +20,7 @@ async def verify_email(
     token: str = Query(..., description="Email verification token"),
     db_tenant: AsyncSession = Depends(get_tenant_db_session),
     db_auth: AsyncSession = Depends(get_auth_db_session),
-   ):
-    """
-    This endpoint is PUBLIC (no authentication required) since users
-    click the verification link from their email client before logging in.
-    """
+):
     try:
         await verify_email_token(token, db_tenant, db_auth, background_tasks)
         logger.info(f"Email verified successfully")
@@ -40,11 +35,7 @@ async def verify_email(
         raise HTTPException(status_code=500, detail="Internal server error")
     
 
-@router.post("/resend", 
-             response_model=TenantResendEmailVerificationResponse, 
-             status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(require_admin)]
-             )
+@router.post("/resend", response_model=TenantResendEmailVerificationResponse, status_code=status.HTTP_201_CREATED)
 async def resend_verification(
     payload: TenantResendEmailVerificationRequest,
     background_tasks: BackgroundTasks,

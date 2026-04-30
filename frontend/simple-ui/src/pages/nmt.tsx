@@ -13,30 +13,29 @@ import {
   HStack,
   Progress,
   Text,
+  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
 import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
-import { FaLanguage } from "react-icons/fa";
 import ContentLayout from "../components/common/ContentLayout";
 import LoadingSpinner from "../components/common/LoadingSpinner";
-import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import ModelLanguageSelector from "../components/nmt/ModelLanguageSelector";
 import TextTranslator from "../components/nmt/TextTranslator";
 import TranslationResults from "../components/nmt/TranslationResults";
 import { useAuth } from "../hooks/useAuth";
 import { useNMT } from "../hooks/useNMT";
+import { INDICTRANS_ANONYMOUS_SERVICE_ID } from "../data/indictransAnonymousService";
 import {
   getSupportedLanguagePairsForService,
   listNMTServices,
 } from "../services/nmtService";
 import { getRemainingTryItRequests, shouldWarnAboutRateLimit } from "../services/tryItService";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const NMTPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
+  const toast = useToast();
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [showRateLimitWarning, setShowRateLimitWarning] = useState(false);
@@ -58,15 +57,16 @@ const NMTPage: React.FC = () => {
     setLanguagePair,
     setSelectedServiceId,
     clearResults,
+    swapLanguages,
   } = useNMT();
-
-  // Fetch available services (anonymous: try-it API with X-Try-It: true; logged-in: model management with auth)
-  const { data: services, isLoading: servicesLoading } = useQuery({
-    queryKey: ["nmt-services", isAuthenticated],
-    queryFn: listNMTServices,
-    staleTime: 10 * 60 * 1000, // 10 minutes
-  });
-
+  
+  // Set hardcoded service ID for anonymous users (try-it mode)
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated && !selectedServiceId) {
+      setSelectedServiceId(INDICTRANS_ANONYMOUS_SERVICE_ID);
+    }
+  }, [isAuthenticated, authLoading, selectedServiceId, setSelectedServiceId]);
+  
   // Check if user is anonymous and update rate limit info
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -74,7 +74,7 @@ const NMTPage: React.FC = () => {
       setRemainingRequests(getRemainingTryItRequests());
     }
   }, [isAuthenticated, authLoading, fetched]);
-
+  
   // Update remaining requests after each translation
   useEffect(() => {
     if (!isAuthenticated && fetched) {
@@ -82,6 +82,13 @@ const NMTPage: React.FC = () => {
       setShowRateLimitWarning(shouldWarnAboutRateLimit());
     }
   }, [isAuthenticated, fetched]);
+
+  // Fetch available services
+  const { data: services, isLoading: servicesLoading } = useQuery({
+    queryKey: ["nmt-services"],
+    queryFn: listNMTServices,
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
 
   // Fetch available language pairs for selected service
   const { data: languagePairs, isLoading: pairsLoading } = useQuery({
@@ -92,16 +99,22 @@ const NMTPage: React.FC = () => {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  const canTranslate =
-    !!selectedServiceId?.trim() &&
-    !!languagePair.sourceLanguage?.trim() &&
-    !!languagePair.targetLanguage?.trim() &&
-    languagePair.sourceLanguage !== languagePair.targetLanguage &&
-    !!inputText?.trim();
-
   const handleTranslate = () => {
-    if (!canTranslate) return;
+    if (!inputText.trim()) {
+      toast({
+        title: "Input Required",
+        description: "Please enter text to translate.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     performInference(inputText);
+  };
+
+  const handleSwapTexts = () => {
+    swapLanguages();
   };
 
   return (
@@ -110,7 +123,7 @@ const NMTPage: React.FC = () => {
         <title>NMT - Neural Machine Translation | AI4Inclusion Console</title>
         <meta
           name="description"
-          content="Test Neural Machine Translation across Indic languages"
+          content="Test Neural Machine Translation between 22+ Indic languages"
         />
       </Head>
 
@@ -119,10 +132,10 @@ const NMTPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              {getServiceTitle("nmt")}
+              Neural Machine Translation
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              {getServiceDescription("nmt")}
+              Translate text between languages with high accuracy
             </Text>
           </Box>
 
@@ -168,10 +181,10 @@ const NMTPage: React.FC = () => {
             mx="auto"
           >
             {/* Configuration Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
-                {/* Service and Language Selector - same layout for all users (anonymous can change service from try-it API list) */}
-                <Box pt={0} mt={0}>
+            <GridItem>
+              <VStack spacing={6} align="stretch">
+                {/* Service and Language Selector - same layout for all; service dropdown disabled for anonymous */}
+                <Box>
                   <ModelLanguageSelector
                     languagePair={languagePair}
                     onLanguagePairChange={setLanguagePair}
@@ -180,44 +193,30 @@ const NMTPage: React.FC = () => {
                     selectedServiceId={selectedServiceId}
                     onServiceChange={setSelectedServiceId}
                     hideServiceSelector={false}
-                    inferenceInProgress={fetching}
+                    serviceDropdownDisabled={!authLoading && !isAuthenticated}
                   />
                 </Box>
 
-                {/* Source Text */}
+                {/* Text Translator */}
                 <Box>
                   <TextTranslator
                     inputText={inputText}
+                    translatedText={translatedText}
                     onInputChange={setInputText}
+                    onTranslate={handleTranslate}
+                    isLoading={fetching}
+                    sourceLanguage={languagePair.sourceLanguage}
                     maxLength={512}
-                    disabled={fetching || !selectedServiceId}
+                    disabled={fetching}
                   />
                 </Box>
-
-                {/* Instruction above Translate (same order as TTS/ASR) */}
-                <Text fontSize="sm" color="gray.600">
-                  Select an NMT service and languages above, enter text, then click &quot;Translate&quot;.
-                </Text>
-
-                {/* Translate Button */}
-                <Button
-                  leftIcon={<FaLanguage />}
-                  colorScheme="orange"
-                  size="lg"
-                  onClick={handleTranslate}
-                  isLoading={fetching}
-                  loadingText="Translating..."
-                  isDisabled={!canTranslate || fetching}
-                  w="full"
-                >
-                  Translate
-                </Button>
               </VStack>
             </GridItem>
 
-            {/* Results Panel - translation output on right, aligned with left */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
+            {/* Results Panel */}
+            <GridItem>
+              <VStack spacing={6} align="stretch">
+                {/* Progress Indicator */}
                 {fetching && (
                   <Box>
                     <Text mb={2} fontSize="sm" color="gray.600">
@@ -227,6 +226,7 @@ const NMTPage: React.FC = () => {
                   </Box>
                 )}
 
+                {/* Error Display */}
                 {error && (
                   <Box
                     p={4}
@@ -241,51 +241,57 @@ const NMTPage: React.FC = () => {
                   </Box>
                 )}
 
+                {/* Translation Results */}
                 {fetched && translatedText && (
-                  <>
-                    <Box
-                      p={4}
-                      bg="gray.50"
-                      borderRadius="md"
-                      borderWidth="1px"
-                      borderColor="gray.200"
-                      w="full"
+                  <TranslationResults
+                    sourceText={inputText}
+                    translatedText={translatedText}
+                    requestWordCount={requestWordCount}
+                    responseWordCount={responseWordCount}
+                    responseTime={Number(requestTime)}
+                    onSwapTexts={handleSwapTexts}
+                  />
+                )}
+
+                {/* Clear Results Button */}
+                {fetched && (
+                  <Box textAlign="center">
+                    <button
+                      onClick={clearResults}
+                      style={{
+                        padding: "8px 16px",
+                        backgroundColor: "#f7fafc",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        fontSize: "14px",
+                        color: "#4a5568",
+                      }}
                     >
-                      <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={2}>
-                        Translation
-                      </Text>
-                      <Text fontSize="sm" color="gray.800" whiteSpace="pre-wrap">
-                        {translatedText}
-                      </Text>
-                    </Box>
-                    <TranslationResults
-                      sourceText={inputText}
-                      translatedText={translatedText}
-                      requestWordCount={requestWordCount}
-                      responseWordCount={responseWordCount}
-                      responseTime={Number(requestTime)}
-                    />
-                    <Box textAlign="center">
-                      <button
-                        onClick={clearResults}
-                        style={{
-                          padding: "8px 16px",
-                          backgroundColor: "#f7fafc",
-                          border: "1px solid #e2e8f0",
-                          borderRadius: "6px",
-                          cursor: "pointer",
-                          fontSize: "14px",
-                          color: "#4a5568",
-                        }}
-                      >
-                        Clear Results
-                      </button>
-                    </Box>
-                  </>
+                      Clear Results
+                    </button>
+                  </Box>
+                )}
+
+                {/* Instructions */}
+                {!fetched && !fetching && (
+                  <Box p={6} bg="gray.50" borderRadius="md" textAlign="center">
+                    <Text color="gray.600" fontSize="sm">
+                      Select a language pair and enter text to translate. The
+                      system supports translation between multiple languages.
+                    </Text>
+                  </Box>
                 )}
               </VStack>
             </GridItem>
           </Grid>
+
+          {/* Language Pairs Loading Indicator - only when a model is selected */}
+          {selectedServiceId && pairsLoading && (
+            <Box textAlign="center">
+              <LoadingSpinner label="Loading language pairs..." />
+            </Box>
+          )}
         </VStack>
       </ContentLayout>
     </>

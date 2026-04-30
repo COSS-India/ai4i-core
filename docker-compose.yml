@@ -16,9 +16,8 @@ services:
       - ./infrastructure/postgres:/docker-entrypoint-initdb.d
     command: >
       postgres
-      -c password_encryption=scram-sha-256
+      -c password_encryption=md5
       -c listen_addresses='*'
-      -c max_connections=300
     networks:
       - microservices-network
     healthcheck:
@@ -32,7 +31,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ai4v-redis
-    command: redis-server /usr/local/etc/redis/redis.conf --requirepass "${REDIS_PASSWORD}"
+    command: redis-server /usr/local/etc/redis/redis.conf
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     ports:
@@ -57,7 +56,6 @@ services:
     container_name: ai4v-influxdb
     environment:
       DOCKER_INFLUXDB_INIT_MODE: setup
-      DOCKER_INFLUXDB_INIT_CLI_CONFIG_NAME: ai4i-influx
       DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_ADMIN_USER}
       DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD}
       DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG}
@@ -181,21 +179,20 @@ services:
 
   kong:
     image: kong:3.4-ubuntu
-    container_name: ai4v-gateway
-    profiles:
-      - kong
+    container_name: ai4v-kong-gateway
     ports:
-      - "8080:8080"
+      - "8000:8000"
       - "8443:8443"
+      - "8001:8001"
+      - "8444:8444"
     environment:
       KONG_DATABASE: "off"
-      KONG_PROXY_LISTEN: 0.0.0.0:8080
       KONG_DECLARATIVE_CONFIG: /tmp/kong-substituted.yml
       KONG_PROXY_ACCESS_LOG: /dev/stdout
       KONG_ADMIN_ACCESS_LOG: /dev/stdout
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_ERROR_LOG: /dev/stderr
-      KONG_ADMIN_LISTEN: "off"
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
       KONG_ADMIN_GUI_URL: http://localhost:8002
       # Load only our custom plugin to avoid missing bundled plugins issues
       KONG_PLUGINS: token-validator
@@ -211,20 +208,16 @@ services:
     env_file:
       - ./.env
     volumes:
-      - ./services/api-gateway-service/gateways/kong/kong.yml:/kong/kong.yml:ro
-      - ./services/api-gateway-service/gateways/kong/substitute-env.sh:/kong/substitute-env.sh:ro
+      - ./services/Konga-API-manager/kong-new-architecture.yml:/kong/kong-new-architecture.yml:ro
+      - ./services/Konga-API-manager/substitute-env.sh:/kong/substitute-env.sh:ro
       - ./services/Konga-API-manager/plugins/token-validator/kong/plugins:/usr/local/share/lua/5.1/kong/plugins:ro
     command: >
       sh -c "
-        CR=$(printf '\\r') &&
-        tr -d \"$$CR\" < /kong/substitute-env.sh > /tmp/kong-substitute-env.sh &&
-        sh /tmp/kong-substitute-env.sh &&
+        sh /kong/substitute-env.sh &&
         /docker-entrypoint.sh kong docker-start
       "
     networks:
-      microservices-network:
-        aliases:
-          - api-gateway-service
+      - microservices-network
     depends_on:
       postgres:
         condition: service_healthy
@@ -241,8 +234,6 @@ services:
   postgres-konga:
     image: postgres:11-alpine
     container_name: ai4v-postgres-konga
-    profiles:
-      - kong
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -264,8 +255,6 @@ services:
   kong-manager:
     image: pantsel/konga:latest
     container_name: ai4v-kong-manager
-    profiles:
-      - kong
     ports:
       - "8002:1337"
     environment:
@@ -287,62 +276,68 @@ services:
       - microservices-network
     restart: unless-stopped
 
-  apisix:
-    image: apache/apisix:latest
-    container_name: ai4v-gateway
-    profiles:
-      - apisix
+  # Swagger UI for Kong-facing API documentation
+  swagger-kong-ui:
+    image: swaggerapi/swagger-ui
+    container_name: ai4v-swagger-kong-ui
+    ports:
+      - "8086:8080"
+    volumes:
+      # Generated OpenAPI spec that points to Kong and includes all endpoints.
+      # Mount it at a custom path; the swagger-ui entrypoint will copy it into
+      # /usr/share/nginx/html/openapi.json on startup.
+      - ./docs/kong-openapi.json:/kong-openapi.json:ro
+    environment:
+      SWAGGER_JSON: /kong-openapi.json
+    networks:
+      - microservices-network
+    depends_on:
+      - kong
+
+  # Microservices
+  api-gateway-service:
+    build:
+      context: .
+      dockerfile: ./services/api-gateway-service/Dockerfile
+    container_name: ai4v-api-gateway
     ports:
       - "8080:8080"
     environment:
-      APISIX_STAND_ALONE: "true"
-      APISIX_PUBLIC_ORIGIN: ${APISIX_PUBLIC_ORIGIN:-http://localhost:3000}
-      APISIX_UPSTREAM_SUFFIX: ${APISIX_UPSTREAM_SUFFIX:-}
+      - ENV_FILE=.env
+      # Swagger/OpenAPI server URL used in the generated docs
+      # Prod: point Swagger to public API Gateway URL
+      - TRY_IT_LIMIT=5
+      - TRY_IT_TTL_SECONDS=3600
+      # Service URLs - use service names for container-to-container communication
+      - AUTH_SERVICE_URL=http://auth-service:8081
     env_file:
-      - ./.env
-    volumes:
-      - ./services/api-gateway-service/gateways/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
-      - ./services/api-gateway-service/gateways/apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml.template:ro
-      - ./services/api-gateway-service/gateways/apisix/substitute-env.sh:/usr/local/apisix/substitute-env.sh:ro
-    command: >
-      sh -c "
-        CR=$(printf '\\r') &&
-        tr -d \"$$CR\" < /usr/local/apisix/substitute-env.sh > /tmp/substitute-env.sh &&
-        tr -d \"$$CR\" < /usr/local/apisix/conf/apisix.yaml.template > /tmp/apisix.yaml.template &&
-        APISIX_CONFIG_TEMPLATE=/tmp/apisix.yaml.template sh /tmp/substitute-env.sh &&
-        /usr/bin/apisix init &&
-        exec /usr/local/openresty/bin/openresty -p /usr/local/apisix -g 'daemon off;'
-      "
+      - ./services/api-gateway-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
-      microservices-network:
-        aliases:
-          - api-gateway-service
-    dns_search: []
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
     restart: unless-stopped
 
   auth-service:
     build:
       context: .
-      dockerfile: ./services/auth-service-v2/Dockerfile
+      dockerfile: ./services/auth-service/Dockerfile
     container_name: ai4v-auth-service
     ports:
       - "8081:8081"
     environment:
       - ENV_FILE=.env
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=auth_db
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - JWT_REFRESH_SECRET_KEY=${JWT_REFRESH_SECRET_KEY}
-      - ENVIRONMENT=development
-      - DEBUG=true
     env_file:
-      - ./.env
+      - ./services/auth-service/.env
     depends_on:
       postgres:
         condition: service_healthy
@@ -352,6 +347,12 @@ services:
       microservices-network:
         aliases:
           - auth-service
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
     restart: unless-stopped
 
   config-service:
@@ -418,8 +419,8 @@ services:
 
   telemetry-service:
     build:
-      context: .
-      dockerfile: ./services/telemetry-service/Dockerfile
+      context: ./services/telemetry-service
+      dockerfile: Dockerfile
     container_name: ai4v-telemetry-service
     ports:
       - "8084:8084"
@@ -510,14 +511,12 @@ services:
     container_name: ai4v-asr-service
     ports:
       - "8087:8087"
-    env_file:
-      - ./services/asr-service/.env
     environment:
       - ENV_FILE=.env
-      - AUTH_ENABLED=true
-      - REQUIRE_API_KEY=true
-      - ALLOW_ANONYMOUS_ACCESS=false
-      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
+      - AUTH_ENABLED=false
+      - REQUIRE_API_KEY=false
+      - ALLOW_ANONYMOUS_ACCESS=true
+      - TRITON_ENDPOINT=http://13.200.133.97:9000
       - TRITON_TIMEOUT=120
     depends_on:
       config-service:
@@ -547,7 +546,7 @@ services:
       - "8088:8088"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
+      - TRITON_ENDPOINT=http://13.200.133.97:9000
     env_file:
       - ./services/tts-service/.env
     depends_on:
@@ -578,8 +577,6 @@ services:
       - "8091:8089"
     environment:
       - ENV_FILE=.env
-      - SMR_ENABLED=${SMR_ENABLED:-false}
-      - SMR_SERVICE_URL=http://smr-service:8097
     env_file:
       - ./services/nmt-service/.env
     depends_on:
@@ -608,8 +605,6 @@ services:
     container_name: ai4v-ocr-service
     ports:
       - "8099:8099"
-    env_file:
-      - ./services/ocr-service/.env
     environment:
       - ENV_FILE=.env
     depends_on:
@@ -664,45 +659,6 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  pii-guard-service:
-    build:
-      context: .
-      dockerfile: services/pii-service/Dockerfile
-    container_name: ai4v-pii-guard-service
-    ports:
-      - "8105:8000"
-    env_file:
-      - ./services/pii-service/.env.defaults
-      - path: ./services/pii-service/.env
-        required: false
-    environment:
-      - AUTH_ENABLED=true
-      - DEV_MODE=false
-      - DB_HOST=postgres
-      - DB_NAME=${POSTGRES_DB}
-      - DB_USER=${POSTGRES_USER}
-      - DB_PASS=${POSTGRES_PASSWORD}
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - KAFKA_AUDIT_TOPIC=${KAFKA_PII_AUDIT_TOPIC:-pii_audit_logs}
-      - OTEL_SERVICE_NAME=pii-guardrail
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
-      - NER_SERVICE_URL=${EXTERNAL_GPU_NER_URL}
-      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL}
-      - JWKS_URL=${JWKS_URL}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-    networks:
-      microservices-network:
-        aliases:
-          - pii-guard-service
-    restart: unless-stopped
-
   llm-service:
     build:
       context: .
@@ -712,7 +668,7 @@ services:
       - "8093:8090"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
+      - TRITON_ENDPOINT=http://3.235.56.233:8001
       - TRITON_TIMEOUT=300
     env_file:
       - ./services/llm-service/.env
@@ -803,9 +759,6 @@ services:
       - ALLOW_ANONYMOUS_ACCESS=${MODEL_MANAGEMENT_ALLOW_ANONYMOUS_ACCESS:-false}
       - MAX_ACTIVE_VERSIONS_PER_MODEL=${MAX_ACTIVE_VERSIONS_PER_MODEL:-5}
       - ALLOW_DEPRECATED_MODEL_CHANGES=${ALLOW_DEPRECATED_MODEL_CHANGES:-true}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - JWT_REFRESH_SECRET_KEY=${JWT_REFRESH_SECRET_KEY}
-      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
     depends_on:
       postgres:
         condition: service_healthy
@@ -905,7 +858,7 @@ services:
       - "8095:8095"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
+      - TRITON_ENDPOINT=http://65.1.35.3:8700
     depends_on:
       config-service:
         condition: service_healthy
@@ -932,7 +885,7 @@ services:
       - "9002:8090"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
+      - TRITON_ENDPOINT=65.1.35.3:8600
     env_file:
       - ./services/language-diarization-service/.env
     depends_on:
@@ -961,7 +914,7 @@ services:
       - "8096:8096"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
+      - TRITON_ENDPOINT=65.1.35.3:8100
     env_file:
       - ./services/audio-lang-detection-service/.env
     depends_on:
@@ -986,7 +939,16 @@ services:
     build:
       context: ./frontend/simple-ui
       dockerfile: Dockerfile
-
+      args:
+        # Browser talks directly to the API Gateway on host port 8080
+        NEXT_PUBLIC_API_URL: http://localhost:8080
+        # Service-specific API keys from .env file (no hardcoding)
+        NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
+        NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
+        NEXT_PUBLIC_TTS_API_KEY: ${TTS_API_KEY}
+        NEXT_PUBLIC_NMT_API_KEY: ${NMT_API_KEY}
+        NEXT_PUBLIC_PIPELINE_API_KEY: ${PIPELINE_API_KEY}
+        NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
     container_name: ai4v-simple-ui
     ports:
       - "3000:3000"
@@ -994,11 +956,19 @@ services:
       # HOSTNAME=0.0.0.0 tells Next.js standalone server to listen on all interfaces
       - HOSTNAME=0.0.0.0
       # Route all frontend API calls through the API Gateway on host
-      - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
-      # Telemetry/Observability service URL (logs and traces) - routed through API Gateway
-      - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://core-v1.ai4inclusion.org
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
+      - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
+      # Service-specific API keys for API Gateway authentication / RBAC
+      - NEXT_PUBLIC_ASR_API_KEY=${ASR_API_KEY}
+      - NEXT_PUBLIC_TTS_API_KEY=${TTS_API_KEY}
+      - NEXT_PUBLIC_NMT_API_KEY=${NMT_API_KEY}
+      - NEXT_PUBLIC_PIPELINE_API_KEY=${PIPELINE_API_KEY}
+      - NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${MODEL_MANAGEMENT_API_KEY}
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
       - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
+    depends_on:
+      api-gateway-service:
+        condition: service_healthy
     networks:
       - microservices-network
     # healthcheck:
@@ -1017,7 +987,6 @@ services:
       - "9090:9090"
     volumes:
       - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./infrastructure/prometheus/rules:/etc/prometheus/rules
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -1025,9 +994,9 @@ services:
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--storage.tsdb.retention.time=30d'
-      - '--web.enable-lifecycle'
-      - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
+      - '--web.external-url=http://localhost/prometheus/'
       # - '--web.external-url=http://localhost:9090'
+
       - '--web.route-prefix=/'
     networks:
       - microservices-network
@@ -1041,110 +1010,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-
-  # Observability: Alertmanager (POC)
-  # Mount directory; bootstrap ensures alertmanager.yml exists (copy from .default.yml if missing)
-  alertmanager:
-    image: prom/alertmanager:v0.27.0
-    container_name: ai4v-alertmanager
-    ports:
-      - "9095:9093"
-    volumes:
-      - ./infrastructure/alertmanager:/etc/alertmanager
-    entrypoint: ["sh", "-c"]
-    command:
-      - |
-        if [ ! -f /etc/alertmanager/alertmanager.yml ]; then
-          cp /etc/alertmanager/alertmanager.default.yml /etc/alertmanager/alertmanager.yml;
-        fi;
-        exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml
-    networks:
-      - microservices-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # Alert Management Service
-  # Provides CRUD operations for alert definitions, notification receivers, and routing rules
-  alert-management-service:
-    build:
-      context: .
-      dockerfile: ./services/alert-management-service/Dockerfile
-    container_name: ai4v-alert-management-service
-    ports:
-      - "8104:8098"
-    environment:
-      - SERVICE_NAME=alert-management-service
-      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - ALERT_CONFIG_SYNC_SERVICE_URL=http://alert-config-sync-service:8097
-      - ALERT_SYNC_ENABLED=true
-      - PORT=8098
-    env_file:
-      - ./.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - microservices-network
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8098/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    restart: unless-stopped
-
-  # Alert Configuration Sync Service
-  # Generates Prometheus and Alertmanager YAML files from database and triggers hot reload
-  alert-config-sync-service:
-    build:
-      context: .
-      dockerfile: ./services/alert-config-sync-service/Dockerfile
-    container_name: ai4v-alert-config-sync-service
-    ports:
-      - "8101:8097"
-    environment:
-      - SERVICE_NAME=alert-config-sync-service
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - PROMETHEUS_URL=http://prometheus:9090
-      - ALERTMANAGER_URL=http://alertmanager:9093
-      - PROMETHEUS_APPLICATION_ALERTS_PATH=/etc/prometheus/rules/application-alerts.yml
-      - PROMETHEUS_INFRASTRUCTURE_ALERTS_PATH=/etc/prometheus/rules/infrastructure-alerts.yml
-      - ALERTMANAGER_CONFIG_PATH=/etc/alertmanager/alertmanager.yml
-      - SYNC_INTERVAL=60
-      - PORT=8097
-    volumes:
-      # Mount Prometheus rules directory (writable so sync service can write YAML files)
-      - ./infrastructure/prometheus/rules:/etc/prometheus/rules
-      # Mount Alertmanager config file (writable so sync service can write YAML file)
-      # Mount alertmanager dir so sync service can write alertmanager.yml (bootstrap creates it from .default if missing)
-      - ./infrastructure/alertmanager:/etc/alertmanager
-    depends_on:
-      postgres:
-        condition: service_healthy
-      prometheus:
-        condition: service_started
-      alertmanager:
-        condition: service_started
-    networks:
-      - microservices-network
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8097/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    restart: unless-stopped
 
   # Observability: Grafana
   grafana:
@@ -1284,7 +1149,6 @@ services:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
       - ./infrastructure/fluent-bit/extract_context.lua:/fluent-bit/scripts/extract_context.lua:ro
-      # - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -1295,73 +1159,14 @@ services:
     restart: unless-stopped
 
 
-  smr-service:
-    build:
-      context: .
-      dockerfile: ./services/smr-service/Dockerfile
-    container_name: ai4v-smr-service
-    ports:
-      - "8103:8097"
-    environment:
-      - ENV_FILE=.env
-    env_file:
-      - ./services/smr-service/.env
-    depends_on:
-      model-management-service:
-        condition: service_started
-    networks:
-      microservices-network:
-        aliases:
-          - smr-service
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8097/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
-  request-profiler-service:
-    build:
-      context: ./services/request-profiler
-      dockerfile: Dockerfile
-    container_name: ai4v-request-profiler-service
-    ports:
-      - "8888:8000"
-    volumes:
-      - ./services/request-profiler/models:/app/models:ro
-    environment:
-      - LOG_LEVEL=info
-      - MODEL_DIR=/app/models
-      - ENVIRONMENT=production
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: "2.0"
-        reservations:
-          memory: 512M
-          cpus: "1.0"
-    networks:
-      microservices-network:
-        aliases:
-          - request-profiler-service
-          - profiler-service
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    restart: unless-stopped
-
-
 
 volumes:
   postgres-data:
     driver: local
-    # Use Docker-managed volume by default (portable across environments).
-      
+    # driver_opts:
+    #       type: "none"
+    #       o: "bind"
+    #       device: "/home/ubuntu/ai4i-v/volumes/pg_data"
   postgres-konga-data:
     driver: local
   redis-data:
@@ -1382,8 +1187,6 @@ volumes:
     driver: local
   opensearch-data:
     driver: local
-  alertmanager-data:
-    driver: local
 
 networks:
   microservices-network:
@@ -1391,3 +1194,4 @@ networks:
     ipam:
       config:
         - subnet: 172.31.0.0/16
+

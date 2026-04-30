@@ -1,50 +1,69 @@
 /**
- * Hook for checking and handling session expiry.
- * Session expiry is enforced via JWT exp + refresh tokens (server-side);
- * no client-stored timestamp is used.
+ * Hook for checking and handling session expiry
+ * - 7 days if remember_me is true
+ * - 24 hours if remember_me is false
  */
 import { useCallback } from 'react';
 import { useRouter } from 'next/router';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { useToast } from '@chakra-ui/react';
 import authService from '../services/authService';
 
 export const useSessionExpiry = () => {
   const router = useRouter();
-  const toast = useToastWithDeduplication();
+  const toast = useToast();
 
   /**
-   * Check if session has expired and handle accordingly.
-   * Uses JWT exp and refresh token presence; server enforces refresh token expiry.
+   * Check if session has expired and handle accordingly
    * @returns true if session is valid, false if expired or not authenticated
    */
   const checkSessionExpiry = useCallback((): boolean => {
+    // Check if user is authenticated first
     if (!authService.isAuthenticated()) {
+      // No token found - user is not authenticated
       authService.clearAuthTokens();
       authService.clearStoredUser();
+
+      // Show toast notification
       toast({
-        title: 'Session expired',
+        title: 'Session  Expired',
         description: 'Please log in to continue.',
         status: 'warning',
         duration: 5000,
         isClosable: true,
         position: 'top',
       });
+
+      // Redirect to login page
       router.push('/auth');
+      
       return false;
     }
 
+    // Check if session has expired (24 hours or 7 days depending on remember_me)
     if (authService.isSessionExpired()) {
+      // Clear tokens and user data
       authService.clearAuthTokens();
       authService.clearStoredUser();
+
+      // Get remember_me setting for appropriate message
+      const rememberMe = typeof window !== 'undefined' 
+        ? localStorage.getItem('remember_me') === 'true' 
+        : false;
+      const sessionDuration = rememberMe ? '7 days' : '24 hours';
+
+      // Show toast notification
       toast({
-        title: 'Session expired',
-        description: 'Your session has expired. Please sign in again.',
+        title: 'Session Expired',
+        description: `Your session has expired after ${sessionDuration}. Please log in again.`,
         status: 'warning',
         duration: 5000,
         isClosable: true,
         position: 'top',
       });
+
+      // Redirect to login page
       router.push('/auth');
+      
       return false;
     }
 

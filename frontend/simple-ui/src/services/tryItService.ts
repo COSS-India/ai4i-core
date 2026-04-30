@@ -22,8 +22,10 @@ tryItClient.interceptors.request.use(
     // Add anonymous session ID for rate limiting
     const sessionId = getAnonymousSessionId();
     config.headers['X-Anonymous-Session-Id'] = sessionId;
+    
     // Add request start time for timing calculation
     config.headers['request-startTime'] = new Date().getTime().toString();
+    
     return config;
   },
   (error) => {
@@ -55,21 +57,6 @@ export interface TryItRequest {
 }
 
 /**
- * Fetch NMT services for try-it (anonymous) users.
- * Uses GET /api/v1/model-management/services/try-it-service-list?task_type=nmt (no auth).
- * @returns Promise with raw list of services from the API
- */
-export const listTryItNMTServices = async (): Promise<any[]> => {
-  const response = await tryItClient.get<any[]>(
-    '/api/v1/model-management/services/try-it-service-list',
-    {
-      params: { task_type: 'nmt' },
-    }
-  );
-  return Array.isArray(response.data) ? response.data : [];
-};
-
-/**
  * Perform NMT inference using Try-It endpoint (anonymous access)
  * Rate limited to 5 requests per hour per user/IP
  * @param text - Text to translate
@@ -81,22 +68,9 @@ export const performTryItNMTInference = async (
   config: NMTInferenceRequest['config']
 ): Promise<{ data: NMTInferenceResponse; responseTime: number }> => {
   try {
-    // Strip script codes for try-it: the anonymous try-it model only accepts bare
-    // language codes (e.g. "en", "hi").  Sending "en_Latn" or "hi_Deva" causes a
-    // "Language-pair not supported" 400 from Triton.  Logged-in inference routes
-    // through SMR which picks a model that does support script codes, so we only
-    // need to sanitise the config here.
-    const tryItConfig: NMTInferenceRequest['config'] = {
-      ...config,
-      language: {
-        sourceLanguage: config.language.sourceLanguage,
-        targetLanguage: config.language.targetLanguage,
-      },
-    };
-
     const nmtPayload: NMTInferenceRequest = {
       input: [{ source: text }],
-      config: tryItConfig,
+      config,
       controlConfig: {
         dataTracking: false,
       },
@@ -120,32 +94,26 @@ export const performTryItNMTInference = async (
       responseTime
     };
   } catch (error: any) {
-    console.error('Try-It NMT inference error:', error);
-
-    if (error.response?.status === 403 || error.response?.status === 429) {
-      // Extract message from either FastAPI format (data.detail) or APISIX gateway format (data.error_msg)
-      const rawMessage: string =
-        (typeof error.response?.data?.detail === 'string' ? error.response.data.detail : '') ||
-        error.response?.data?.detail?.message ||
-        error.response?.data?.error_msg ||
-        error.response?.data?.message ||
-        '';
-
-      if (
-        rawMessage.toLowerCase().includes('login') ||
-        rawMessage.toLowerCase().includes('rate') ||
-        error.response?.status === 429
-      ) {
-        throw new Error('Rate limit exceeded. You can try up to 5 translations per hour. Please sign in for unlimited access.');
+    // Handle rate limit errors
+    if (error.response?.status === 403) {
+      const errorMessage = error.response?.data?.detail || '';
+      if (errorMessage.includes('login')) {
+        throw new Error('Rate limit exceeded. Please login to continue using the service.');
       }
-
+    }
+    
+    console.error('Try-It NMT inference error:', error);
+    
+    // Provide user-friendly error messages
+    if (error.response?.status === 429) {
+      throw new Error('Too many requests. Please try again later.');
+    } else if (error.response?.status === 403) {
       throw new Error('Access denied. Please login to access this service.');
-    }
-
-    if (error.message) {
+    } else if (error.message) {
       throw error;
+    } else {
+      throw new Error('Failed to perform translation. Please try again.');
     }
-    throw new Error('Failed to perform translation. Please try again.');
   }
 };
 
