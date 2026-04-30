@@ -18,16 +18,11 @@ const PIPELINE_ENDPOINTS = {
 export const runPipelineInference = async (
   request: PipelineInferenceRequest
 ): Promise<PipelineInferenceResponse> => {
-  try {
-    const response = await apiClient.post(
-      PIPELINE_ENDPOINTS.inference,
-      request
-    );
-    return response.data;
-  } catch (error) {
-    console.error('Pipeline inference error:', error);
-    throw error; // Re-throw so toast can show backend message via extractErrorInfo
-  }
+  const response = await apiClient.post(
+    PIPELINE_ENDPOINTS.inference,
+    request
+  );
+  return response.data;
 };
 
 /**

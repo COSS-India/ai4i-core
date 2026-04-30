@@ -40,12 +40,6 @@
         "trace_id": {
           "type": "keyword"
         },
-        "organization": {
-          "type": "keyword"
-        },
-        "tenant_id": {
-          "type": "keyword"
-        },
         "service_version": {
           "type": "keyword"
         },

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { useToastWithDeduplication } from './useToastWithDeduplication';
+import { useToast } from '@chakra-ui/react';
 import { StreamingConfig, SocketStatus } from '../types/common';
 
 interface UseWebSocketOptions {
@@ -46,7 +46,7 @@ export const useWebSocket = (
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Toast hook
-  const toast = useToastWithDeduplication();
+  const toast = useToast();
 
   // Connect to WebSocket
   const connect = useCallback(() => {

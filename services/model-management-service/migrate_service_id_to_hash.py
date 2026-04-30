@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Migration script to normalize service_id into a deterministic hash.
-
-New rule:
-  service_id = sha256(service_name.lower().strip()).hexdigest()[:32]
+Migration script to convert service_id from user-entered string to hash of (model_name, model_version, service_name).
 
 Steps:
-1. For each service, use its current `name` (service_name)
-2. Generate the expected `service_id` using the new hash rule
-3. Update the `service_id` in the services table
+1. For each service, look up the associated model to get model_name
+2. Generate new service_id as hash of (model_name, model_version, service_name)
+3. Update the service_id in the services table
+
+This script should be run before deploying the new code that generates service_id from hash.
+Run the SQL migration script (12-service-id-hash-migration.sql) after this Python script.
 """
 
 import asyncio
@@ -16,7 +16,6 @@ import hashlib
 import os
 import sys
 from typing import Dict, List, Tuple
-from ai4icore_env import app_env
 from dotenv import load_dotenv
 
 # Add the service directory to the path so we can import modules
@@ -30,13 +29,17 @@ from logger import logger
 load_dotenv()
 
 
-def generate_service_id(service_name: str) -> str:
+def generate_service_id(model_name: str, model_version: str, service_name: str) -> str:
     """
-    Generate a deterministic service_id hash from service_name only.
+    Generate a unique service_id hash from model_name, model_version, and service_name.
     This matches the function in db_operations.py
     """
+    # Normalize inputs: strip whitespace and convert to lowercase for consistency
+    normalized_model_name = model_name.strip().lower()
+    normalized_model_version = model_version.strip().lower()
     normalized_service_name = service_name.strip().lower()
-    hash_input = normalized_service_name.encode("utf-8")
+    
+    hash_input = f"{normalized_model_name}:{normalized_model_version}:{normalized_service_name}".encode('utf-8')
     hash_obj = hashlib.sha256(hash_input)
     return hash_obj.hexdigest()[:32]
 
@@ -44,8 +47,8 @@ def generate_service_id(service_name: str) -> str:
 async def migrate_services_table(db: AsyncSession) -> Tuple[int, int, Dict[str, str]]:
     """
     Migrate the services table:
-    1. Use each service's current `name` as the service_name
-    2. Generate the expected service_id using the new hash rule (hash(service_name))
+    1. For each service, look up the model to get model_name
+    2. Generate new service_id from hash(model_name, model_version, service_name)
     3. Update the service_id field
     
     Returns:
@@ -89,7 +92,7 @@ async def migrate_services_table(db: AsyncSession) -> Tuple[int, int, Dict[str, 
                 
                 if is_already_hashed:
                     # Check if it matches the expected hash
-                    expected_hash = generate_service_id(service_name)
+                    expected_hash = generate_service_id(model_name, model_version, service_name)
                     if old_service_id == expected_hash:
                         logger.info(f"Service {service_uuid}: service_id already in correct hash format, skipping")
                         service_id_mapping[old_service_id] = old_service_id
@@ -100,8 +103,8 @@ async def migrate_services_table(db: AsyncSession) -> Tuple[int, int, Dict[str, 
                             f"Expected: {expected_hash}, Current: {old_service_id}. Will update."
                         )
                 
-                # Generate new service_id from hash(service_name)
-                new_service_id = generate_service_id(service_name)
+                # Generate new service_id from hash(model_name, model_version, service_name)
+                new_service_id = generate_service_id(model_name, model_version, service_name)
                 
                 if old_service_id == new_service_id:
                     logger.info(f"Service {service_uuid}: service_id already matches hash, skipping")
@@ -116,7 +119,7 @@ async def migrate_services_table(db: AsyncSession) -> Tuple[int, int, Dict[str, 
                 if check_result.fetchone():
                     logger.error(
                         f"Service {service_uuid}: New service_id '{new_service_id}' already exists! "
-                        f"This indicates a hash collision or duplicate for service_name '{service_name}'. Skipping."
+                        f"This indicates a hash collision or duplicate (model_name, model_version, service_name). Skipping."
                     )
                     errors += 1
                     continue
@@ -133,7 +136,7 @@ async def migrate_services_table(db: AsyncSession) -> Tuple[int, int, Dict[str, 
                 
                 logger.info(
                     f"Service {service_uuid}: Updated service_id from '{old_service_id}' to '{new_service_id}' "
-                    f"(service_name: '{service_name}')"
+                    f"(model_name: '{model_name}', model_version: '{model_version}', service_name: '{service_name}')"
                 )
                 
             except Exception as e:
@@ -155,7 +158,7 @@ async def migrate_services_table(db: AsyncSession) -> Tuple[int, int, Dict[str, 
 
 async def verify_migration(db: AsyncSession) -> bool:
     """
-    Verify that all service_ids are now hashes and match the service_name-based hash rule.
+    Verify that all service_ids are now hashes and match (model_name, model_version, service_name) combinations.
     
     Returns:
         True if verification passes, False otherwise
@@ -178,7 +181,7 @@ async def verify_migration(db: AsyncSession) -> bool:
                 logger.error(f"  Service {service[0]}: service_id='{service[1]}', name='{service[2]}', model_id='{service[3]}', model_version='{service[4]}'")
             return False
         
-        # Verify that service_id matches hash(service_name) for all services
+        # Verify that service_id matches hash(model_name, model_version, service_name) for all services
         result = await db.execute(text("""
             SELECT s.id, s.service_id, s.name, s.model_id, s.model_version, m.name as model_name
             FROM services s
@@ -197,7 +200,7 @@ async def verify_migration(db: AsyncSession) -> bool:
                 logger.warning(f"Service {service[0]}: Could not find associated model, skipping verification")
                 continue
             
-            expected_service_id = generate_service_id(service_name)
+            expected_service_id = generate_service_id(model_name, model_version, service_name)
             
             if service_id != expected_service_id:
                 mismatches.append({
@@ -210,7 +213,7 @@ async def verify_migration(db: AsyncSession) -> bool:
                 })
         
         if mismatches:
-            logger.error(f"Found {len(mismatches)} services where service_id doesn't match hash(service_name):")
+            logger.error(f"Found {len(mismatches)} services where service_id doesn't match hash(model_name, model_version, service_name):")
             for mismatch in mismatches:
                 logger.error(
                     f"  Service {mismatch['id']}: service_id='{mismatch['current_service_id']}', "
@@ -219,7 +222,7 @@ async def verify_migration(db: AsyncSession) -> bool:
                 )
             return False
         
-        logger.info("✓ Verification passed: All service_ids are valid hashes matching hash(service_name)")
+        logger.info("✓ Verification passed: All service_ids are valid hashes matching (model_name, model_version, service_name)")
         return True
         
     except Exception as e:
@@ -230,13 +233,13 @@ async def verify_migration(db: AsyncSession) -> bool:
 async def main():
     """Main migration function"""
     logger.info("=" * 80)
-    logger.info("Starting service_id migration: Converting to hash of service_name only")
+    logger.info("Starting service_id migration: Converting to hash of (model_name, model_version, service_name)")
     logger.info("=" * 80)
     
     # Create database connection
     # Use localhost:5434 for migration (override .env if needed)
-    migration_host = app_env.migration_db_host
-    migration_port = app_env.migration_db_port
+    migration_host = os.getenv("MIGRATION_DB_HOST", "localhost")
+    migration_port = int(os.getenv("MIGRATION_DB_PORT", "5434"))
     connection_string = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{migration_host}:{migration_port}/{DB_NAME}"
     logger.info(f"Connecting to database: {migration_host}:{migration_port}")
     engine = create_async_engine(connection_string, echo=False)

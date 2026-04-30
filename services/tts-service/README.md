@@ -702,6 +702,6 @@ MIT License
 
 ## Credits
 
-- AI4ICore for the original implementation
+- Dhruva Platform for the original implementation
 - AI4Bharat for the Indic TTS models
 - Coqui TTS for the underlying technology

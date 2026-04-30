@@ -10,7 +10,7 @@ class ModelProcessingType(BaseModel):
 
 
 class Schema(BaseModel):
-    modelProcessingType: Optional[ModelProcessingType] = None
+    modelProcessingType: ModelProcessingType
     model_name: Optional[str] = None
     request: Dict[str, Any] = {}
     response: Dict[str, Any] = {}
@@ -53,10 +53,8 @@ class OAuthId(BaseModel):
 
 class TeamMember(BaseModel):
     name: str
-    aboutMe: Optional[str] = None
-    oauthId: Optional[OAuthId] = None
-    
-    model_config = ConfigDict(extra="ignore")  # Ignore extra fields like 'role'
+    aboutMe: Optional[str]
+    oauthId: Optional[OAuthId]
 
 
 class Submitter(BaseModel):

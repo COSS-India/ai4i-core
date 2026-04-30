@@ -103,14 +103,13 @@ export interface LanguageSelectorProps {
 
 export interface TextTranslatorProps {
   inputText: string;
+  translatedText: string;
   onInputChange: (text: string) => void;
+  onTranslate: () => void;
+  isLoading: boolean;
+  sourceLanguage: string;
   maxLength?: number;
   disabled?: boolean;
-  /** Optional: used when translation output is rendered inside this component */
-  translatedText?: string;
-  onTranslate?: () => void;
-  isLoading?: boolean;
-  sourceLanguage?: string;
 }
 
 export interface TranslationResultsProps {

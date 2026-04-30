@@ -22,16 +22,8 @@ from .formatters import JSONFormatter
 from .handlers import KafkaHandler
 from .middleware import (
     CorrelationMiddleware,
-    RequestLoggingMiddleware,
     get_correlation_id,
     get_trace_id_from_request,
-)
-from .service_request_logging import ServiceRequestLoggingMiddleware
-from .config import LoggingConfig
-from .plugin import (
-    LoggingPlugin,
-    create_logging_plugin,
-    register_logging_plugin,
 )
 
 __all__ = [
@@ -48,13 +40,7 @@ __all__ = [
     "JSONFormatter",
     "KafkaHandler",
     "CorrelationMiddleware",
-    "RequestLoggingMiddleware",
-    "ServiceRequestLoggingMiddleware",
     "get_correlation_id",
     "get_trace_id_from_request",
-    "LoggingConfig",
-    "LoggingPlugin",
-    "create_logging_plugin",
-    "register_logging_plugin",
 ]
 

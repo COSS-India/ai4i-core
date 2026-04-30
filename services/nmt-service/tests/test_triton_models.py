@@ -4,15 +4,9 @@ Test script to query Triton servers and list available models
 Fetches NMT services from model management service and tests their Triton endpoints
 """
 
-import os
 import sys
+import os
 import asyncio
-
-# Add the parent directory to the path so app.* imports work
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, parent_dir)
-
-from ai4icore_env import app_env
 
 # Check if tritonclient is available
 try:
@@ -22,7 +16,13 @@ except ImportError:
     print("  pip install tritonclient[http]")
     sys.exit(1)
 
-from ai4icore_model_management import TritonClient, ModelManagementClient
+# Add the parent directory to the path to import modules
+# (test file is in tests/ subdirectory, need to go up one level)
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, parent_dir)
+
+from utils.triton_client import TritonClient
+from utils.model_management_client import ModelManagementClient
 
 
 def test_triton_endpoint(endpoint: str, service_id: str = None, expected_model: str = None):
@@ -73,8 +73,8 @@ async def test_all_nmt_services():
     print()
     
     # Initialize model management client
-    model_mgmt_url = app_env.model_management_service_url
-    model_mgmt_api_key = app_env.model_management_service_api_key
+    model_mgmt_url = os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091")
+    model_mgmt_api_key = os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY")
     
     print(f"Connecting to Model Management Service: {model_mgmt_url}")
     print()
@@ -108,7 +108,7 @@ async def test_all_nmt_services():
         unique_endpoints = {}
         for service in services:
             if service.endpoint:
-                endpoint = service.endpoint
+                endpoint = service.endpoint.replace("http://", "").replace("https://", "")
                 if endpoint not in unique_endpoints:
                     unique_endpoints[endpoint] = []
                 unique_endpoints[endpoint].append({
@@ -150,6 +150,9 @@ async def test_all_nmt_services():
 
 def test_single_endpoint(endpoint: str):
     """Test a single endpoint provided as argument"""
+    # Remove http:// or https:// if present
+    endpoint = endpoint.replace("http://", "").replace("https://", "")
+    
     print("-" * 80)
     print("Querying Triton Server...")
     print("-" * 80)
@@ -164,8 +167,8 @@ def main():
     if len(sys.argv) > 1:
         endpoint = sys.argv[1]
         test_single_endpoint(endpoint)
-    elif app_env.triton_endpoint:
-        endpoint = app_env.triton_endpoint
+    elif os.getenv("TRITON_ENDPOINT"):
+        endpoint = os.getenv("TRITON_ENDPOINT")
         test_single_endpoint(endpoint)
     else:
         # Fetch from model management service

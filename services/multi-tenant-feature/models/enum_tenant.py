@@ -2,22 +2,16 @@ from enum import Enum
 
 class TenantStatus(str, Enum):
     PENDING = "PENDING"          # waiting for email verification 
+    IN_PROGRESS = "IN_PROGRESS"  
     ACTIVE = "ACTIVE"            # once email verified
     SUSPENDED = "SUSPENDED"
     DEACTIVATED = "DEACTIVATED"
+    # ARCHIVED = "ARCHIVED"
     
 class TenantUserStatus(str, Enum):
-    PENDING ="PENDING"           # used as default 
     ACTIVE = "ACTIVE"            # user created and approved by tenant admin
     SUSPENDED = "SUSPENDED"
-
-
-class TenantUserRole(str, Enum):
-    """Roles assignable to tenant users. Must exist in auth service."""
-    USER = "USER"
-    GUEST = "GUEST"
-    MODERATOR = "MODERATOR"
-    TENANTADMIN = "TENANT ADMIN"
+    DEACTIVATED = "DEACTIVATED"
 
 
 class SubscriptionType(str, Enum):

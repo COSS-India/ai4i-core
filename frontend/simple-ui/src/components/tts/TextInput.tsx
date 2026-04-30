@@ -50,8 +50,7 @@ const TextInput: React.FC<TextInputProps> = ({
     <VStack spacing={3} w="full" align="stretch">
       <FormControl isInvalid={isInvalid}>
         <FormLabel fontSize="sm" fontWeight="semibold" color="gray.700">
-          Text Input{" "}
-          <Text as="span" color="red.500">*</Text>
+          Text Input
         </FormLabel>
         <Textarea
           value={value}
@@ -86,6 +85,13 @@ const TextInput: React.FC<TextInputProps> = ({
           {charCount}/{maxLength}
         </Text>
       </Box>
+
+      {/* Language Info */}
+      {language && (
+        <Text fontSize="xs" color="gray.500" textAlign="center">
+          Language: {language}
+        </Text>
+      )}
     </VStack>
   );
 };

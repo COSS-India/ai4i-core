@@ -1,11 +1,7 @@
 // ASR service testing page with recording, file upload, and results display
 
 import {
-  Alert,
-  AlertDescription,
-  AlertIcon,
   Box,
-  Button,
   FormControl,
   FormLabel,
   Grid,
@@ -14,26 +10,22 @@ import {
   Progress,
   Select,
   Text,
+  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
 import React from "react";
-import { FaFileAlt } from "react-icons/fa";
 import ASRResults from "../components/asr/ASRResults";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
 import LoadingSpinner from "../components/common/LoadingSpinner";
-import AudioInputPreview from "../components/common/AudioInputPreview";
 import { ASR_SUPPORTED_LANGUAGES } from "../config/constants";
-import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { useASR } from "../hooks/useASR";
 import { listASRServices, ASRServiceDetails } from "../services/asrService";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const ASRPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
-  const [audioClearToken, setAudioClearToken] = React.useState(0);
+  const toast = useToast();
   const {
     language,
     sampleRate,
@@ -47,11 +39,9 @@ const ASRPage: React.FC = () => {
     requestTime,
     timer,
     error,
-    pendingAudio,
-    setPendingAudio,
     startRecording,
     stopRecording,
-    runTranscribe,
+    performInference,
     setLanguage,
     setSampleRate,
     setServiceId,
@@ -59,17 +49,21 @@ const ASRPage: React.FC = () => {
     clearResults,
   } = useASR();
 
-  const handleClearAudioInput = () => {
-    clearResults();
-    setAudioClearToken((t) => t + 1);
-  };
-
   // Fetch available ASR services from model management
   const { data: asrServices, isLoading: servicesLoading } = useQuery<ASRServiceDetails[]>({
     queryKey: ["asr-services"],
     queryFn: listASRServices,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
+
+  // Auto-select first available ASR service when list loads
+  React.useEffect(() => {
+    if (!asrServices || asrServices.length === 0) return;
+    if (!serviceId || serviceId === "asr_am_ensemble") {
+      // If no service selected or still using default, select first available
+      setServiceId(asrServices[0].service_id);
+    }
+  }, [asrServices, serviceId, setServiceId]);
 
   const handleRecordingChange = (isRecording: boolean) => {
     if (isRecording) {
@@ -80,11 +74,14 @@ const ASRPage: React.FC = () => {
   };
 
   const handleAudioReady = (audioBase64: string) => {
-    setPendingAudio(audioBase64);
+    // Process the audio using the useASR hook
+    console.log(
+      "handleAudioReady called with audioBase64 length:",
+      audioBase64.length
+    );
+    console.log("Audio ready for processing, calling performInference...");
+    performInference(audioBase64);
   };
-
-  const canTranscribe =
-    !!pendingAudio && !!serviceId?.trim() && !!language?.trim() && !fetching;
 
   return (
     <>
@@ -101,10 +98,10 @@ const ASRPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              {getServiceTitle("asr")}
+              Automatic Speech Recognition
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              {getServiceDescription("asr")}
+              Convert speech to text with support for 12+ Indic languages
             </Text>
           </Box>
 
@@ -116,19 +113,18 @@ const ASRPage: React.FC = () => {
             mx="auto"
           >
             {/* Configuration Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
+            <GridItem>
+              <VStack spacing={6} align="stretch">
                 {/* Inference Mode Selection */}
-                <FormControl mt={0} pt={0}>
-                  <FormLabel className="dview-service-try-option-title" mt={0}>
+                <FormControl>
+                  <FormLabel className="dview-service-try-option-title">
                     Inference Mode
                   </FormLabel>
                   <Select
                     value={inferenceMode}
                     onChange={(e) =>
-                      setInferenceMode(e.target.value as "" | "rest" | "streaming")
+                      setInferenceMode(e.target.value as "rest" | "streaming")
                     }
-                    placeholder="Select"
                   >
                     <option value="rest">REST API</option>
                     <option value="streaming">WebSocket Streaming</option>
@@ -147,14 +143,11 @@ const ASRPage: React.FC = () => {
                     value={serviceId}
                     onChange={(e) => setServiceId(e.target.value)}
                     isDisabled={fetching || servicesLoading}
-                    placeholder={servicesLoading ? "Loading..." : "Select"}
+                    placeholder={servicesLoading ? "Loading services..." : "Select a ASR service"}
                   >
                     {asrServices?.map((service) => {
                       const version = service.modelVersion || service.model_version;
-                      // Show the human-friendly service name in the dropdown,
-                      // but keep the underlying value as the service_id.
-                      const displayName = service.name || service.service_id;
-                      const displayText = version ? `${displayName} (${version})` : displayName;
+                      const displayText = version ? `${service.service_id} (${version})` : service.service_id;
                       return (
                         <option key={service.service_id} value={service.service_id}>
                           {displayText}
@@ -162,32 +155,6 @@ const ASRPage: React.FC = () => {
                       );
                     })}
                   </Select>
-                  {serviceId && asrServices && (
-                    <Box
-                      mt={2}
-                      p={3}
-                      bg="orange.50"
-                      borderRadius="md"
-                      border="1px"
-                      borderColor="orange.200"
-                    >
-                      {(() => {
-                        const selectedService = asrServices.find((s) => s.service_id === serviceId);
-                        return selectedService ? (
-                          <>
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service Name:</strong>{" "}
-                              {selectedService.name || selectedService.service_id}
-                            </Text>
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service Description:</strong>{" "}
-                              {selectedService.description || "No description available"}
-                            </Text>
-                          </>
-                        ) : null;
-                      })()}
-                    </Box>
-                  )}
                 </FormControl>
 
                 {/* Language Selection */}
@@ -201,7 +168,6 @@ const ASRPage: React.FC = () => {
                   <Select
                     value={language}
                     onChange={(e) => setLanguage(e.target.value)}
-                    placeholder="Select"
                   >
                     {ASR_SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
@@ -211,7 +177,7 @@ const ASRPage: React.FC = () => {
                   </Select>
                 </FormControl>
 
-                {/* Audio Input */}
+                {/* Audio Recorder */}
                 <Box>
                   <FormLabel className="dview-service-try-option-title" mb={4}>
                     Audio Input{" "}
@@ -224,52 +190,16 @@ const ASRPage: React.FC = () => {
                     isRecording={recording}
                     onRecordingChange={handleRecordingChange}
                     sampleRate={sampleRate}
-                    disabled={fetching || !serviceId || !language}
+                    disabled={fetching}
                     timer={timer}
-                    onClear={handleClearAudioInput}
-                    clearToken={audioClearToken}
                   />
-                  {/* Upload / recording confirmation - show when audio is ready */}
-                  {!recording && pendingAudio && (
-                    <>
-                      <Alert status="success" borderRadius="md" mt={4}>
-                        <AlertIcon />
-                        <AlertDescription>
-                          Audio ready (recording or upload). Click Transcribe to generate the transcript.
-                        </AlertDescription>
-                      </Alert>
-                      <AudioInputPreview
-                        audioBase64OrDataUrl={pendingAudio}
-                        label="Review your audio"
-                    onClear={handleClearAudioInput}
-                      />
-                    </>
-                  )}
                 </Box>
-
-                {/* Helper text above action button only (record/upload are separate blocks in AudioRecorder above) */}
-                <Text fontSize="sm" color="gray.600">
-                  Record or upload audio above, then click Transcribe to generate the transcript.
-                </Text>
-
-                {/* Transcribe Button - same UI order as TTS Generate Audio */}
-                <Button
-                  leftIcon={<FaFileAlt />}
-                  colorScheme="orange"
-                  size="lg"
-                  onClick={runTranscribe}
-                  isLoading={fetching}
-                  loadingText="Transcribing..."
-                  isDisabled={!canTranscribe}
-                >
-                  Transcribe
-                </Button>
               </VStack>
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
+            <GridItem>
+              <VStack spacing={6} align="stretch">
                 {/* Progress Indicator */}
                 {fetching && (
                   <Box>
@@ -307,7 +237,7 @@ const ASRPage: React.FC = () => {
                     {/* Clear Results Button */}
                     <Box textAlign="center">
                       <button
-                      onClick={handleClearAudioInput}
+                        onClick={clearResults}
                         style={{
                           padding: "8px 16px",
                           backgroundColor: "#f7fafc",
@@ -326,6 +256,13 @@ const ASRPage: React.FC = () => {
               </VStack>
             </GridItem>
           </Grid>
+
+          {/* Services Loading Indicator */}
+          {servicesLoading && (
+            <Box textAlign="center">
+              <LoadingSpinner label="Loading ASR services..." />
+            </Box>
+          )}
         </VStack>
       </ContentLayout>
     </>

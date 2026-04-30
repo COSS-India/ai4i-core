@@ -233,66 +233,10 @@ def mock_service():
     service.name = "Test Service"
     service.model_id = "test-model"
     service.model_version = "1.0.0"
-    service.endpoint = "http://localhost:8087"
-    service.inference_server_type = "triton"
-    service.ssl_verify = True
     service.is_published = False
     service.published_at = None
     service.unpublished_at = None
     return service
-
-
-# ---------------------------------------------------------------------------
-# A/B Testing fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def experiment_variant_control():
-    """Sample variant for control (50% traffic)."""
-    return {
-        "variant_name": "control",
-        "service_id": "test-service-a",
-        "traffic_percentage": 50,
-        "description": "Control variant"
-    }
-
-
-@pytest.fixture
-def experiment_variant_b():
-    """Sample variant B (50% traffic)."""
-    return {
-        "variant_name": "variant-b",
-        "service_id": "test-service-b",
-        "traffic_percentage": 50,
-        "description": "Variant B"
-    }
-
-
-@pytest.fixture
-def experiment_create_payload(experiment_variant_control, experiment_variant_b):
-    """Valid experiment create payload (2 variants, 100% traffic)."""
-    return {
-        "name": "ASR Model Comparison",
-        "description": "Compare v1 vs v2",
-        "task_type": ["asr"],
-        "languages": ["hi", "en"],
-        "variants": [experiment_variant_control, experiment_variant_b]
-    }
-
-
-@pytest.fixture
-def experiment_update_payload():
-    """Valid experiment update payload (name only)."""
-    return {
-        "name": "Updated Experiment Name",
-        "description": "Updated description"
-    }
-
-
-@pytest.fixture
-def experiment_status_payload():
-    """Valid status update payload."""
-    return {"action": "start"}
 
 
 # Custom markers
@@ -303,7 +247,6 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "hash_id: Hash-based ID generation tests")
     config.addinivalue_line("markers", "license: License validation tests")
     config.addinivalue_line("markers", "name_validation: Name validation tests")
-    config.addinivalue_line("markers", "ab_testing: A/B testing experiment and variant selection tests")
 
 
 # Pytest plugins

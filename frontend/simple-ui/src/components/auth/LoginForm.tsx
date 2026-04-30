@@ -37,7 +37,7 @@ const LoginForm: React.FC<LoginFormProps> = ({
   onSuccess,
   onSwitchToRegister,
 }) => {
-  const { login, guestLogin, isLoading, isLoginLoading, isGuestLoginLoading, error, clearError } = useAuth();
+  const { login, isLoading, error, clearError } = useAuth();
   const [formData, setFormData] = useState<LoginRequest>({
     email: "",
     password: "",
@@ -60,22 +60,7 @@ const LoginForm: React.FC<LoginFormProps> = ({
     if (loginAttempted && error) {
       // Only show login-related errors, not initialization errors
       if (error !== "Failed to initialize authentication") {
-        // Ensure error is always a string, not an object
-        let errorMessage = 'Login failed';
-        if (typeof error === 'string') {
-          errorMessage = error;
-        } else if (error && typeof error === 'object') {
-          // Try to extract error message from various possible formats
-          // Type assertion to handle error object properties
-          const errorObj = error as any;
-          errorMessage = errorObj.message || 
-                       errorObj.detail || 
-                       errorObj.error || 
-                       (errorObj.response?.data?.detail) ||
-                       (errorObj.response?.data?.message) ||
-                       (typeof errorObj.toString === 'function' && errorObj.toString() !== '[object Object]' ? errorObj.toString() : JSON.stringify(errorObj));
-        }
-        setLoginError(errorMessage);
+        setLoginError(error);
       } else {
         setLoginError(null);
       }
@@ -109,21 +94,6 @@ const LoginForm: React.FC<LoginFormProps> = ({
       }
       // The error state will be updated by the hook, which will trigger the useEffect
       // that updates loginError
-    }
-  };
-
-  const handleGuestSignIn = async () => {
-    clearError();
-    setLoginError(null);
-    setLoginAttempted(true);
-
-    try {
-      await guestLogin();
-      onSuccess?.();
-      setLoginAttempted(false);
-      setLoginError(null);
-    } catch (error) {
-      console.error("LoginForm: Guest login failed with error:", error);
     }
   };
 
@@ -213,25 +183,11 @@ const LoginForm: React.FC<LoginFormProps> = ({
             colorScheme="blue"
             size="md"
             width="full"
-            isLoading={isLoginLoading}
+            isLoading={isLoading}
             loadingText="Signing in..."
             disabled={isLoading}
           >
-            {isLoginLoading ? <LoadingSpinner size="sm" /> : "Sign In"}
-          </Button>
-
-          <Button
-            type="button"
-            variant="outline"
-            colorScheme="teal"
-            size="md"
-            width="full"
-            isLoading={isGuestLoginLoading}
-            loadingText="Signing in as guest..."
-            disabled={isLoading}
-            onClick={handleGuestSignIn}
-          >
-            Sign in as Guest
+            {isLoading ? <LoadingSpinner size="sm" /> : "Sign In"}
           </Button>
 
           <Box width="full" py={2}>
@@ -265,23 +221,15 @@ const LoginForm: React.FC<LoginFormProps> = ({
 
           <Button
             type="button"
-            bg="orange.300"
-            color="gray.800"
+            colorScheme="red"
             size="md"
             width="full"
-            _hover={{ bg: "orange.400" }}
-            _active={{ bg: "orange.500" }}
             onClick={() => {
               const apiBaseUrl =
                 API_BASE_URL || (typeof window !== "undefined"
                   ? window.location.origin
                   : "");
-              const frontendCallback =
-                typeof window !== "undefined"
-                  ? `${window.location.origin}/auth/callback`
-                  : "http://localhost:3000/auth/callback";
-              const redirect = encodeURIComponent(frontendCallback);
-              window.location.href = `${apiBaseUrl}/api/v1/auth/oauth2/google/authorize?redirect_uri=${redirect}`;
+              window.location.href = `${apiBaseUrl}/api/v1/auth/oauth2/google/authorize`;
             }}
             leftIcon={
               <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">

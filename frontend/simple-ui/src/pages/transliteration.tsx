@@ -1,4 +1,4 @@
-// Transliteration testing page
+// Transliteration service testing page
 
 import {
   Box,
@@ -14,127 +14,60 @@ import {
   Spinner,
   Text,
   Textarea,
+  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useState, useEffect } from "react";
 import ContentLayout from "../components/common/ContentLayout";
-import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performTransliterationInference, listTransliterationServices } from "../services/transliterationService";
-import { TRANSLITERATION_ERRORS, MIN_TRANSLITERATION_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
-import { extractErrorInfo } from "../utils/errorHandler";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const TransliterationPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
+  const toast = useToast();
   const [serviceId, setServiceId] = useState<string>("");
   const [inputText, setInputText] = useState("");
-  const [sourceLanguage, setSourceLanguage] = useState("");
-  const [targetLanguage, setTargetLanguage] = useState("");
+  const [sourceLanguage, setSourceLanguage] = useState("en");
+  const [targetLanguage, setTargetLanguage] = useState("hi");
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
-  const languageOptions = useMemo(
-    () => [
-      { value: "en", label: "English" },
-      { value: "hi", label: "Hindi" },
-      { value: "ta", label: "Tamil" },
-      { value: "te", label: "Telugu" },
-      { value: "kn", label: "Kannada" },
-      { value: "ml", label: "Malayalam" },
-      { value: "mr", label: "Marathi" },
-      { value: "gu", label: "Gujarati" },
-      { value: "bn", label: "Bengali" },
-      { value: "pa", label: "Punjabi" },
-      { value: "or", label: "Odia" },
-      { value: "as", label: "Assamese" },
-    ],
-    []
-  );
-  const targetLanguageOptions = useMemo(
-    () => languageOptions.filter((lang) => lang.value !== sourceLanguage),
-    [languageOptions, sourceLanguage]
-  );
 
-  useEffect(() => {
-    if (targetLanguage && targetLanguage === sourceLanguage) {
-      setTargetLanguage("");
-    }
-  }, [sourceLanguage, targetLanguage]);
-
-  // Fetch available transliteration options
+  // Fetch available Transliteration services
   const { data: transliterationServices, isLoading: servicesLoading } = useQuery({
     queryKey: ["transliteration-services"],
     queryFn: listTransliterationServices,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
 
-  const canTransliterate =
-    !!serviceId?.trim() &&
-    !!sourceLanguage?.trim() &&
-    !!targetLanguage?.trim() &&
-    !!inputText?.trim() &&
-    inputText.length <= MAX_TEXT_LENGTH &&
-    !fetching;
+  // Auto-select first available Transliteration service when list loads
+  useEffect(() => {
+    if (!transliterationServices || transliterationServices.length === 0) return;
+    if (!serviceId) {
+      // If no service selected, select first available
+      setServiceId(transliterationServices[0].service_id);
+    }
+  }, [transliterationServices, serviceId]);
 
   const handleProcess = async () => {
-    const trimmedText = inputText.trim();
+    if (!inputText.trim()) {
+      toast({
+        title: "Input Required",
+        description: "Please enter text to transliterate.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
 
-    if (!serviceId?.trim()) {
+    if (!serviceId) {
       toast({
         title: "Service Required",
-        description: "Please select a transliteration.",
+        description: "Please select a Transliteration service.",
         status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (!sourceLanguage?.trim() || !targetLanguage?.trim()) {
-      toast({
-        title: "Language Required",
-        description: "Please select both source and target languages.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (!trimmedText) {
-      const err = TRANSLITERATION_ERRORS.TEXT_REQUIRED;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (trimmedText.length < MIN_TRANSLITERATION_TEXT_LENGTH) {
-      const err = TRANSLITERATION_ERRORS.TEXT_TOO_SHORT;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    if (trimmedText.length > MAX_TEXT_LENGTH) {
-      const err = TRANSLITERATION_ERRORS.TEXT_TOO_LONG;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -147,7 +80,7 @@ const TransliterationPage: React.FC = () => {
 
     try {
       const startTime = Date.now();
-      const response = await performTransliterationInference(trimmedText, {
+      const response = await performTransliterationInference(inputText, {
         serviceId: serviceId,
         language: {
           sourceLanguage,
@@ -163,12 +96,24 @@ const TransliterationPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Use centralized error handler (transliteration context so backend message shown as default when no specific mapping)
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'transliteration');
+      // Prioritize API error message from response
+      let errorMessage = "Failed to perform transliteration";
+      
+      if (err?.response?.data?.detail?.message) {
+        errorMessage = err.response.data.detail.message;
+      } else if (err?.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err?.response?.data?.detail) {
+        if (typeof err.response.data.detail === 'string') {
+          errorMessage = err.response.data.detail;
+        }
+      } else if (err?.message) {
+        errorMessage = err.message;
+      }
       
       setError(errorMessage);
       toast({
-        title: showOnlyMessage ? undefined : errorTitle,
+        title: "Error",
         description: errorMessage,
         status: "error",
         duration: 5000,
@@ -201,10 +146,10 @@ const TransliterationPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              {getServiceTitle("transliteration")}
+              Transliteration Service
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              {getServiceDescription("transliteration")}
+              Convert text from one script to another while keeping pronunciation intact
             </Text>
           </Box>
 
@@ -216,24 +161,23 @@ const TransliterationPage: React.FC = () => {
           mx="auto"
         >
             {/* Configuration Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
+            <GridItem>
+              <VStack spacing={6} align="stretch">
                 {/* Service Selection */}
                 <FormControl>
                   <FormLabel fontSize="sm" fontWeight="semibold">
-                    Transliteration{" "}
-                    <Text as="span" color="red.500">*</Text>
+                    Transliteration Service:
                   </FormLabel>
                   {servicesLoading ? (
                     <HStack spacing={2} p={2}>
                       <Spinner size="sm" color="orange.500" />
-                      <Text fontSize="sm" color="gray.600">Loading...</Text>
+                      <Text fontSize="sm" color="gray.600">Loading services...</Text>
                     </HStack>
                   ) : (
                     <Select
                       value={serviceId}
                       onChange={(e) => setServiceId(e.target.value)}
-                      placeholder={servicesLoading ? "Loading..." : "Select"}
+                      placeholder="Select a Transliteration service"
                       disabled={fetching}
                       size="md"
                       borderColor="gray.300"
@@ -250,28 +194,24 @@ const TransliterationPage: React.FC = () => {
                     </Select>
                   )}
                   {serviceId && transliterationServices && (
-                    <Box
-                      mt={2}
-                      p={3}
-                      bg="orange.50"
-                      borderRadius="md"
-                      border="1px"
-                      borderColor="orange.200"
-                    >
+                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
                       {(() => {
-                        const selectedService = transliterationServices.find(
-                          (s) => s.service_id === serviceId
-                        );
+                        const selectedService = transliterationServices.find(s => s.service_id === serviceId);
                         return selectedService ? (
                           <>
                             <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service Name:</strong>{" "}
-                              {selectedService.name || selectedService.service_id}
+                              <strong>Service ID:</strong> {selectedService.service_id}
                             </Text>
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service Description:</strong>{" "}
-                              {selectedService.serviceDescription || "No description available"}
-                            </Text>
+                            {selectedService.serviceDescription && (
+                              <Text fontSize="sm" color="gray.700" mb={1}>
+                                <strong>Description:</strong> {selectedService.serviceDescription}
+                              </Text>
+                            )}
+                            {selectedService.supported_languages.length > 0 && (
+                              <Text fontSize="sm" color="gray.700">
+                                <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
+                              </Text>
+                            )}
                           </>
                         ) : null;
                       })()}
@@ -282,80 +222,69 @@ const TransliterationPage: React.FC = () => {
               <HStack spacing={4}>
                 <FormControl>
                   <FormLabel fontSize="sm" fontWeight="semibold">
-                    Source Language{" "}
-                    <Text as="span" color="red.500">*</Text>
+                    Source Language:
                   </FormLabel>
                   <Select
                     value={sourceLanguage}
                     onChange={(e) => setSourceLanguage(e.target.value)}
-                    placeholder="Select"
-                    isDisabled={fetching || !serviceId}
+                    isDisabled={fetching}
                     size="md"
                   >
-                    {languageOptions.map((lang) => (
-                      <option key={lang.value} value={lang.value}>
-                        {lang.label}
-                      </option>
-                    ))}
+                    <option value="en">English</option>
+                    <option value="hi">Hindi</option>
+                    <option value="ta">Tamil</option>
+                    <option value="te">Telugu</option>
+                    <option value="kn">Kannada</option>
+                    <option value="ml">Malayalam</option>
+                    <option value="mr">Marathi</option>
+                    <option value="gu">Gujarati</option>
+                    <option value="bn">Bengali</option>
+                    <option value="pa">Punjabi</option>
+                    <option value="or">Odia</option>
+                    <option value="as">Assamese</option>
                   </Select>
                 </FormControl>
 
                 <FormControl>
                   <FormLabel fontSize="sm" fontWeight="semibold">
-                    Target Language{" "}
-                    <Text as="span" color="red.500">*</Text>
+                    Target Language:
                   </FormLabel>
                   <Select
                     value={targetLanguage}
                     onChange={(e) => setTargetLanguage(e.target.value)}
-                    placeholder="Select"
-                    isDisabled={fetching || !serviceId}
+                    isDisabled={fetching}
                     size="md"
                   >
-                    {targetLanguageOptions.map((lang) => (
-                      <option key={lang.value} value={lang.value}>
-                        {lang.label}
-                      </option>
-                    ))}
+                    <option value="en">English</option>
+                    <option value="hi">Hindi</option>
+                    <option value="ta">Tamil</option>
+                    <option value="te">Telugu</option>
+                    <option value="kn">Kannada</option>
+                    <option value="ml">Malayalam</option>
+                    <option value="mr">Marathi</option>
+                    <option value="gu">Gujarati</option>
+                    <option value="bn">Bengali</option>
+                    <option value="pa">Punjabi</option>
+                    <option value="or">Odia</option>
+                    <option value="as">Assamese</option>
                   </Select>
                 </FormControl>
               </HStack>
 
                 <FormControl>
                   <FormLabel fontSize="sm" fontWeight="semibold">
-                    Source Text{" "}
-                    <Text as="span" color="red.500">*</Text>
+                    Enter text to transliterate:
                   </FormLabel>
                   <Textarea
                     value={inputText}
                     onChange={(e) => setInputText(e.target.value)}
                     placeholder="Enter text to transliterate..."
                     rows={6}
-                    isDisabled={fetching || !serviceId}
+                    isDisabled={fetching}
                     bg="white"
-                    maxLength={MAX_TEXT_LENGTH}
-                    borderColor={inputText.length > MAX_TEXT_LENGTH ? "red.400" : "gray.300"}
+                    borderColor="gray.300"
                   />
-                  <HStack mt={2} justify="flex-end" align="center">
-                    <Text
-                      fontSize="xs"
-                      color={inputText.length > MAX_TEXT_LENGTH ? "red.500" : "gray.500"}
-                      fontWeight={inputText.length > MAX_TEXT_LENGTH ? "semibold" : "normal"}
-                    >
-                      {inputText.length} / {MAX_TEXT_LENGTH}
-                    </Text>
-                  </HStack>
-                  {inputText.length > MAX_TEXT_LENGTH && (
-                    <Text fontSize="sm" color="red.500" mt={1}>
-                      Text exceeds the maximum limit of {MAX_TEXT_LENGTH} characters. Please reduce the length.
-                    </Text>
-                  )}
                 </FormControl>
-
-                {/* Instruction above Transliterate button */}
-                <Text fontSize="sm" color="gray.600">
-                  Select a transliteration and languages above, enter source text, then click Transliterate to convert the script.
-                </Text>
 
                 <Button
                   colorScheme="orange"
@@ -364,7 +293,6 @@ const TransliterationPage: React.FC = () => {
                   loadingText="Processing..."
                   size="md"
                   w="full"
-                  isDisabled={!canTransliterate}
                 >
                   Transliterate
                 </Button>
@@ -372,8 +300,8 @@ const TransliterationPage: React.FC = () => {
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
+            <GridItem>
+              <VStack spacing={6} align="stretch">
                 {/* Progress Indicator */}
                 {fetching && (
                   <Box>

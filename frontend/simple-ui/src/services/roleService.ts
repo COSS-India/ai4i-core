@@ -59,12 +59,7 @@ class RoleService {
         throw new Error(message);
       }
 
-      const json = await response.json();
-      // Unwrap v2 response envelope: { success: true, data: {...} }
-      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
-        return json.data as T;
-      }
-      return json as T;
+      return await response.json();
     } catch (error) {
       console.error('Role service request failed:', error);
       throw error;

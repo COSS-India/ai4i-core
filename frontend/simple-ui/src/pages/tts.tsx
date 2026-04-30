@@ -18,20 +18,18 @@ import {
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { FaRegFileAudio } from "react-icons/fa";
 import ContentLayout from "../components/common/ContentLayout";
 import LoadingSpinner from "../components/common/LoadingSpinner";
-import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import TextInput from "../components/tts/TextInput";
 import TTSResults from "../components/tts/TTSResults";
 import VoiceSelector from "../components/tts/VoiceSelector";
 import { useTTS } from "../hooks/useTTS";
 import { listVoices, listTTSServices } from "../services/ttsService";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const TTSPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
+  const toast = useToast();
   const [serviceId, setServiceId] = useState<string>("");
   const {
     language,
@@ -62,25 +60,33 @@ const TTSPage: React.FC = () => {
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
 
-  // Fetch available voices when language and voice are selected (short timeout + no retry)
-  const { data: voicesData, isLoading: voicesLoading, isError: voicesError } = useQuery({
+  // Fetch available voices
+  const { data: voicesData, isLoading: voicesLoading } = useQuery({
     queryKey: ["tts-voices", language, gender],
-    queryFn: () => listVoices({ language, gender: gender as "male" | "female" }),
+    queryFn: () => listVoices({ language, gender }),
     staleTime: 5 * 60 * 1000, // 5 minutes
-    retry: false,
-    enabled: !!language?.trim() && (gender === "male" || gender === "female"),
   });
 
-  const allMandatoryFilled =
-    !!serviceId?.trim() &&
-    !!language?.trim() &&
-    !!gender &&
-    (gender === "male" || gender === "female") &&
-    !!audioFormat?.trim() &&
-    !!inputText?.trim();
+  // Auto-select first available TTS service when list loads
+  useEffect(() => {
+    if (!ttsServices || ttsServices.length === 0) return;
+    if (!serviceId) {
+      // If no service selected, select first available
+      setServiceId(ttsServices[0].service_id);
+    }
+  }, [ttsServices, serviceId]);
 
   const handleGenerate = () => {
-    if (!allMandatoryFilled) return;
+    if (!inputText.trim()) {
+      toast({
+        title: "Input Required",
+        description: "Please enter text to synthesize.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     performInference(inputText);
   };
 
@@ -93,7 +99,7 @@ const TTSPage: React.FC = () => {
         <title>TTS - Text-to-Speech | AI4Inclusion Console</title>
         <meta
           name="description"
-          content="Generate natural-sounding speech from text in Indic languages"
+          content="Test Text-to-Speech with multiple voice options and audio formats"
         />
       </Head>
 
@@ -102,10 +108,11 @@ const TTSPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              {getServiceTitle("tts")}
+              Text-to-Speech
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              {getServiceDescription("tts")}
+              Convert text to natural-sounding speech with multiple voice
+              options
             </Text>
           </Box>
 
@@ -117,13 +124,12 @@ const TTSPage: React.FC = () => {
             mx="auto"
           >
             {/* Configuration Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
+            <GridItem>
+              <VStack spacing={6} align="stretch">
                 {/* Service Selection */}
-                <FormControl mt={0} pt={0}>
-                  <FormLabel fontSize="sm" fontWeight="semibold" mt={0}>
-                    TTS Service{" "}
-                    <Text as="span" color="red.500">*</Text>
+                <FormControl>
+                  <FormLabel fontSize="sm" fontWeight="semibold">
+                    TTS Service:
                   </FormLabel>
                   {servicesLoading ? (
                     <HStack spacing={2} p={2}>
@@ -134,7 +140,7 @@ const TTSPage: React.FC = () => {
                     <Select
                       value={serviceId}
                       onChange={(e) => setServiceId(e.target.value)}
-                      placeholder={servicesLoading ? "Loading..." : "Select"}
+                      placeholder="Select a TTS service"
                       disabled={fetching}
                       size="md"
                       borderColor="gray.300"
@@ -151,26 +157,24 @@ const TTSPage: React.FC = () => {
                     </Select>
                   )}
                   {serviceId && ttsServices && (
-                    <Box
-                      mt={2}
-                      p={3}
-                      bg="orange.50"
-                      borderRadius="md"
-                      border="1px"
-                      borderColor="orange.200"
-                    >
+                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
                       {(() => {
-                        const selectedService = ttsServices.find((s) => s.service_id === serviceId);
+                        const selectedService = ttsServices.find(s => s.service_id === serviceId);
                         return selectedService ? (
                           <>
                             <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service Name:</strong>{" "}
-                              {selectedService.name || selectedService.service_id}
+                              <strong>Service ID:</strong> {selectedService.service_id}
                             </Text>
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Service Description:</strong>{" "}
-                              {selectedService.serviceDescription || "No description available"}
-                            </Text>
+                            {selectedService.serviceDescription && (
+                              <Text fontSize="sm" color="gray.700" mb={1}>
+                                <strong>Description:</strong> {selectedService.serviceDescription}
+                              </Text>
+                            )}
+                            {selectedService.supported_languages.length > 0 && (
+                              <Text fontSize="sm" color="gray.700">
+                                <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
+                              </Text>
+                            )}
                           </>
                         ) : null;
                       })()}
@@ -178,10 +182,10 @@ const TTSPage: React.FC = () => {
                   )}
                 </FormControl>
 
-                {/* Audio Configuration */}
+                {/* Voice Selector */}
                 <Box>
                   <Text className="dview-service-try-option-title" mb={4}>
-                    Audio Configuration
+                    Voice Configuration
                   </Text>
                   <VoiceSelector
                     language={language}
@@ -193,9 +197,8 @@ const TTSPage: React.FC = () => {
                     onFormatChange={setAudioFormat}
                     onSampleRateChange={setSamplingRate}
                     availableLanguages={serviceId ? indoAryanLanguages : []}
-                    availableVoices={voicesData?.voices ?? []}
+                    availableVoices={voicesData?.voices}
                     loading={voicesLoading}
-                    disabled={fetching || !serviceId}
                   />
                 </Box>
 
@@ -207,14 +210,9 @@ const TTSPage: React.FC = () => {
                     language={language}
                     maxLength={512}
                     placeholder="Enter text to synthesize..."
-                    disabled={fetching || !serviceId}
+                    disabled={fetching}
                   />
                 </Box>
-
-                {/* Instruction above Generate Audio */}
-                <Text fontSize="sm" color="gray.600">
-                  Enter text and click &quot;Generate Audio&quot; to create speech synthesis. You can adjust voice settings and audio format in the configuration panel.
-                </Text>
 
                 {/* Generate Button */}
                 <Button
@@ -224,7 +222,7 @@ const TTSPage: React.FC = () => {
                   onClick={handleGenerate}
                   isLoading={fetching}
                   loadingText="Generating..."
-                  isDisabled={!allMandatoryFilled || fetching}
+                  isDisabled={!inputText.trim() || fetching}
                 >
                   Generate Audio
                 </Button>
@@ -232,8 +230,8 @@ const TTSPage: React.FC = () => {
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem pt={0} mt={0} alignSelf="flex-start">
-              <VStack spacing={6} align="stretch" pt={0} mt={0}>
+            <GridItem>
+              <VStack spacing={6} align="stretch">
                 {/* Progress Indicator */}
                 {fetching && (
                   <Box>
@@ -263,7 +261,6 @@ const TTSPage: React.FC = () => {
                 {fetched && audio && (
                   <TTSResults
                     audioSrc={audio}
-                    audioFormat={audioFormat}
                     wordCount={requestWordCount}
                     responseTime={Number(requestTime)}
                     audioDuration={audioDuration}
@@ -290,9 +287,26 @@ const TTSPage: React.FC = () => {
                   </Box>
                 )}
 
+                {/* Instructions */}
+                {!fetched && !fetching && (
+                  <Box p={6} bg="gray.50" borderRadius="md" textAlign="center">
+                    <Text color="gray.600" fontSize="sm">
+                      Enter text and click &quot;Generate Audio&quot; to create
+                      speech synthesis. You can adjust voice settings and audio
+                      format in the configuration panel.
+                    </Text>
+                  </Box>
+                )}
               </VStack>
             </GridItem>
           </Grid>
+
+          {/* Voices Loading Indicator */}
+          {voicesLoading && (
+            <Box textAlign="center">
+              <LoadingSpinner label="Loading voice options..." />
+            </Box>
+          )}
         </VStack>
       </ContentLayout>
     </>

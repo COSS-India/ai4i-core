@@ -12,21 +12,11 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy shared libs
-COPY libs/ai4icore_constants /app/libs/ai4icore_constants
-COPY libs/ai4icore_env /app/libs/ai4icore_env
-COPY libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
-COPY libs/ai4icore_auth /app/libs/ai4icore_auth
-
 # Copy requirements from build context
-COPY services/model-management-service/requirements.txt .
+COPY requirements.txt .
 
 # Install dependencies (NO --user)
 RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir -e /app/libs/ai4icore_constants
-RUN pip install --no-cache-dir -e /app/libs/ai4icore_env
-RUN pip install --no-cache-dir -e /app/libs/ai4icore_exceptions
-RUN pip install --no-cache-dir -e /app/libs/ai4icore_auth
 
 # ---------------- Stage 2: Runtime ----------------
 FROM python:3.11-slim
@@ -51,14 +41,8 @@ RUN useradd --create-home --shell /bin/bash app
 # Copy installed Python packages
 COPY --from=builder /usr/local /usr/local
 
-# Copy shared libs from builder
-COPY --from=builder /app/libs/ai4icore_constants /app/libs/ai4icore_constants
-COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
-COPY --from=builder /app/libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
-COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
-
 # Copy application code
-COPY services/model-management-service .
+COPY . .
 
 # Fix permissions
 RUN chown -R app:app /app

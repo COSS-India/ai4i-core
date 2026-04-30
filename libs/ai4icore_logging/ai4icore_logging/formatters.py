@@ -6,10 +6,9 @@ Formats log records as structured JSON for easy parsing and searching.
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-
-from ai4icore_env import app_env
 
 from .context import get_trace_id, get_organization
 
@@ -52,9 +51,9 @@ class JSONFormatter(logging.Formatter):
         """
         super().__init__()
         
-        self.service_name = service_name or app_env.service_name or "unknown"
-        self.service_version = service_version or app_env.service_version or "1.0.0"
-        self.environment = environment or app_env.environment or "development"
+        self.service_name = service_name or os.getenv("SERVICE_NAME", "unknown")
+        self.service_version = service_version or os.getenv("SERVICE_VERSION", "1.0.0")
+        self.environment = environment or os.getenv("ENVIRONMENT", "development")
         self.include_hostname = include_hostname
         
         if include_hostname:
@@ -167,29 +166,6 @@ class JSONFormatter(logging.Formatter):
         else:
             # Add organization field with "unknown" to indicate it was checked but not found
             log_data["organization"] = "unknown"
-        
-        # Get tenant_id from context (if available)
-        # Also check log record's extra context (set by RequestLoggingMiddleware)
-        tenant_id = None
-        try:
-            from .context import get_tenant_id
-            tenant_id = get_tenant_id()
-        except Exception:
-            pass
-        
-        # Fallback: check if tenant_id is in the log record's extra context
-        if not tenant_id:
-            context = getattr(record, "context", None)
-            if context and isinstance(context, dict):
-                tenant_id = context.get("tenant_id")
-        
-        # Always add tenant_id field
-        # If not found in context, use default to prevent logs without tenant_id
-        # The tenant_id should be set in logging context by middleware or during login
-        if tenant_id:
-            log_data["tenant_id"] = tenant_id
-        else:
-            log_data["tenant_id"] = "system"
         
         # Add service metadata
         log_data["service_version"] = self.service_version

@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kong-database-config
+  namespace: kong
+data:
+  kong.yml: |
+    _format_version: "3.0"
+    _transform: true
+    
+    # Services
+    services:
+    - name: triton-multilingual-asr-service
+      url: http://10.100.155.202:8000
+      routes:
+      - name: triton-asr-route
+        paths:
+        - /api/v1/asr
+        - /v2/models
+        - /v2/health
+        methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        strip_path: false
+        plugins:
+        - name: rate-limiting
+          config:
+            minute: 300
+            hour: 3000
+        - name: key-auth
+          config:
+            key_names:
+            - apikey
+        - name: cors
+          config:
+            origins:
+            - "https://ai4inclusion.org"
+            - "https://www.ai4inclusion.org"
+            methods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+            headers:
+            - Accept
+            - Accept-Version
+            - Content-Length
+            - Content-MD5
+            - Content-Type
+            - Date
+            - X-Auth-Token
+            - Authorization
+            exposed_headers:
+            - X-Auth-Token
+            credentials: true
+            max_age: 3600
+            preflight_continue: false
+    
+    # Consumers (API Keys)
+    consumers:
+    - username: triton-asr-client
+      keyauth_credentials:
+      - key: triton-asr-api-key-2024
+        tags:
+        - triton
+        - asr
+        - production
+

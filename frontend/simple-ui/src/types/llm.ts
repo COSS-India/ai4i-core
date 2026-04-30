@@ -84,12 +84,14 @@ export interface LanguageSelectorProps {
   onInputLanguageChange: (lang: string) => void;
   onOutputLanguageChange: (lang: string) => void;
   availableLanguages: string[];
-  disabled?: boolean;
 }
 
 export interface TextInputProps {
   inputText: string;
   onInputChange: (text: string) => void;
+  onProcess: () => void;
+  isLoading: boolean;
+  inputLanguage: string;
   maxLength?: number;
   disabled?: boolean;
 }
