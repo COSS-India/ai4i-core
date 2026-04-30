@@ -40,10 +40,6 @@ class PasswordChangeRequest(BaseSchema):
     confirm_password: str = Field(..., min_length=8, max_length=64)
 
 
-class LogoutRequest(BaseSchema):
-    refresh_token: Optional[str] = None
-
-
 class ProvisionUserRequest(BaseSchema):
     email: EmailStr
     username: str = Field(..., min_length=3, max_length=100)

@@ -1,8 +1,14 @@
 """
 Redis client lifecycle for auth-service.
 
-Single logical DB (default 0) for API keys, tenant status, revocation keys, etc.
-Keys are distinguished by prefix (e.g. auth:apikey:, auth:tenant_status:).
+Single logical DB (default 0). Auth-service uses Redis ONLY for:
+  - API key cache (auth:apikey:*)
+  - Tenant status cache (auth:tenant_status:*)
+  - Tenant-user status cache (auth:tenant_user_status:*)
+  - Revocation cooldowns (auth:revocation_cooldown:*)
+
+Roles, permissions, and endpoint→permission_id maps are kept in-process
+(see PermissionChecker and RoleService).
 """
 
 import logging
@@ -89,38 +95,5 @@ def get_redis_client() -> aioredis.Redis:
     return _redis
 
 
-# Backward-compatible names — all resolve to the single DB 0 client.
-def get_redis_client_api_permissions() -> aioredis.Redis:
-    return get_redis_client()
-
-
-def get_redis_client_role_permissions() -> aioredis.Redis:
-    return get_redis_client()
-
-
-def get_redis_client_api_keys() -> aioredis.Redis:
-    return get_redis_client()
-
-
-def get_redis_client_refresh_tokens() -> aioredis.Redis:
-    return get_redis_client()
-
-
 async def get_redis() -> AsyncGenerator[aioredis.Redis, None]:
-    yield get_redis_client()
-
-
-async def get_redis_api_permissions() -> AsyncGenerator[aioredis.Redis, None]:
-    yield get_redis_client()
-
-
-async def get_redis_role_permissions() -> AsyncGenerator[aioredis.Redis, None]:
-    yield get_redis_client()
-
-
-async def get_redis_api_keys() -> AsyncGenerator[aioredis.Redis, None]:
-    yield get_redis_client()
-
-
-async def get_redis_refresh_tokens() -> AsyncGenerator[aioredis.Redis, None]:
     yield get_redis_client()

@@ -23,7 +23,6 @@ _uvicorn_access.disabled = True
 _uvicorn_access.setLevel(logging.CRITICAL + 1)
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
 from ai4icore_auth.middleware import AuthMiddleware
@@ -32,13 +31,13 @@ from ai4icore_auth.permission_checker import PermissionChecker, set_global_endpo
 from app.core.config import settings
 from app.core.database import close_database, get_db, init_database
 from app.core.exceptions import register_exception_handlers
-from app.core.redis import close_redis, get_redis_client, init_redis
+from app.core.redis import close_redis, init_redis
 from app.core.security import key_manager
 from app.dependencies.auth import get_jwt_verifier, init_jwt_verifier
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.models.role import Permission
 from app.routes import api_router
-from app.services.cache_service import CacheService
+from app.services.role_permission_cache import role_permission_cache
 
 
 logger = logging.getLogger(__name__)
@@ -66,11 +65,6 @@ async def lifespan(app: FastAPI):
 
     # Production safety checks
     is_prod = settings.environment in ("production", "staging")
-    if is_prod and settings.cors_origins == "*":
-        raise RuntimeError(
-            "FATAL: CORS_ORIGINS='*' is not allowed in production/staging. "
-            "Set CORS_ORIGINS to specific origins (comma-separated)."
-        )
     if is_prod and settings.debug:
         raise RuntimeError("FATAL: DEBUG=true is not allowed in production/staging.")
 
@@ -92,6 +86,9 @@ async def lifespan(app: FastAPI):
     # Load API-to-permission mapping (in-memory; legacy Redis key removed)
     await _load_api_permissions_with_retry()
 
+    # In-memory role -> permission cache with 60s refresh
+    await role_permission_cache.start()
+
     # Telemetry (optional)
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -103,6 +100,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    await role_permission_cache.stop()
     await close_redis()
     await close_database()
     logger.info("Shutdown complete.")
@@ -114,8 +112,11 @@ def get_permission_checker() -> PermissionChecker | None:
 
 async def load_api_permissions() -> None:
     """
-    Load api_permissions.json into API_PERMISSIONS and resolve endpoint → permission_id
-    into memory (PermissionChecker + process-wide map for shared library consumers).
+    Load api_permissions.json into API_PERMISSIONS and build the
+    endpoint -> permission_id map used by PermissionChecker.
+
+    permissionRequired is a permission name string (resolved against the
+    permissions table at startup) or null for public endpoints.
     """
     global _permission_checker
 
@@ -129,35 +130,32 @@ async def load_api_permissions() -> None:
         API_PERMISSIONS.clear()
         API_PERMISSIONS.update(payload)
 
-        redis_client = get_redis_client()
-        cache_service = CacheService(redis_client)
-        await cache_service.delete_legacy_api_perms_key()
+        mappings = API_PERMISSIONS.get("apiMappings", [])
 
         name_to_id: dict[str, int] = {}
         async for db in get_db():
             result = await db.execute(select(Permission.name, Permission.id))
             for name, pid in result.all():
-                key = name.value if hasattr(name, "value") else str(name)
-                name_to_id[key] = pid
+                name_to_id[name] = pid
             break
 
         endpoint_to_id: dict[str, str] = {}
-        for m in API_PERMISSIONS.get("apiMappings", []):
-            perm_name = m.get("permissionRequired")
-            if perm_name is None:
+        for m in mappings:
+            req = m.get("permissionRequired")
+            if req is None:
                 continue
-            perm_id = name_to_id.get(perm_name)
+            perm_id = name_to_id.get(req)
             if perm_id is not None:
                 endpoint_to_id[m["endpoint"]] = str(perm_id)
             else:
-                logger.warning("Permission '%s' not found in DB, skipping.", perm_name)
+                logger.warning("Permission '%s' not found in DB, skipping.", req)
 
         checker = PermissionChecker()
         checker._api_permission_map = endpoint_to_id
         set_global_endpoint_permission_map(endpoint_to_id)
         _permission_checker = checker
 
-        logger.info("API permission mapping loaded: %d endpoints → DB IDs.", len(endpoint_to_id))
+        logger.info("API permission mapping loaded: %d endpoints.", len(endpoint_to_id))
     except (FileNotFoundError, ValueError) as exc:
         logger.warning("Failed to load API permission mapping: %s", exc)
         return
@@ -207,18 +205,8 @@ def create_app() -> FastAPI:
     # Exception handlers
     register_exception_handlers(app)
 
-    # CORS — restricted in production, open in dev
-    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
-    allow_all = origins == ["*"]
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=not allow_all,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
     # Middleware (order matters — outermost first)
+    # CORS is handled at the nginx gateway, not here.
     app.add_middleware(RequestLoggingMiddleware)
     # Shared AuthMiddleware with lazy verifier factory —
     # verifier is initialized in lifespan (after key_manager),

@@ -41,7 +41,7 @@ from app.services.auth_email_templates import (
     render_verify_email,
     render_welcome,
 )
-from app.services.password_service import PasswordService
+from app.core.security import password_manager
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
 
@@ -54,7 +54,6 @@ class AuthService:
         user_repo: UserRepository,
         role_service: RoleService,
         token_service: TokenService,
-        password_service: PasswordService,
         credentials_repo: CredentialsRepository,
         refresh_token_repo: RefreshTokenRepository,
         verification_repo: VerificationRepository,
@@ -64,7 +63,6 @@ class AuthService:
         self._users = user_repo
         self._roles = role_service
         self._tokens = token_service
-        self._passwords = password_service
         self._credentials = credentials_repo
         self._refresh_tokens = refresh_token_repo
         self._verifications = verification_repo
@@ -150,7 +148,7 @@ class AuthService:
         pattern: the user types the password they want, but the account stays
         inactive until they prove ownership of the email address.
         """
-        self._passwords.validate_and_confirm(password, confirm_password)
+        password_manager.validate_and_confirm(password, confirm_password)
 
         if await self._users.get_by_email(email):
             raise DuplicateEntityError("User", "email")
@@ -172,7 +170,7 @@ class AuthService:
         )
         await self._users.create(user)
 
-        hash_result = self._passwords.hash_password(password)
+        hash_result = password_manager.hash_password(password)
         creds = UserCredentials(
             user_id=user.id,
             password_hash=hash_result.hashed,
@@ -340,7 +338,7 @@ class AuthService:
         """Consume a RESET token and replace the user's password. Token is
         single-use; refresh tokens are revoked so other sessions are signed
         out per security spec. Sends a password_changed notification."""
-        self._passwords.validate_and_confirm(new_password, confirm_password)
+        password_manager.validate_and_confirm(new_password, confirm_password)
 
         payload = self._validate_token_of_type(token, TokenType.RESET)
 
@@ -360,7 +358,7 @@ class AuthService:
             # with creds), but guard regardless.
             raise TokenInvalidError("Invalid reset link.")
 
-        hash_result = self._passwords.hash_password(new_password)
+        hash_result = password_manager.hash_password(new_password)
         await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
         await self._verifications.deactivate(token_obj)
         # Sign out all other sessions per security spec.
@@ -384,12 +382,12 @@ class AuthService:
         if not creds or not creds.password_hash or not creds.password_salt:
             raise InvalidCredentialsError()
 
-        if not self._passwords.verify_password(password, creds.password_hash, creds.password_salt):
+        if not password_manager.verify_password(password, creds.password_hash, creds.password_salt):
             raise InvalidCredentialsError()
 
         tenant_id = str(user.tenant_id) if user.tenant_id else None
 
-        permission_ids = await self._roles.get_user_permission_ids_cached(user.id)
+        permission_ids = await self._roles.get_user_permission_ids(user.id)
 
         access_token = self._tokens.create_access_token(
             user_id=str(user.id),
@@ -428,7 +426,7 @@ class AuthService:
             raise UserInactiveError()
 
         tenant_id = str(user.tenant_id) if user.tenant_id else None
-        permission_ids = await self._roles.get_user_permission_ids_cached(user.id)
+        permission_ids = await self._roles.get_user_permission_ids(user.id)
 
         access_token = self._tokens.create_access_token(
             user_id=str(user.id),
@@ -460,16 +458,16 @@ class AuthService:
         confirm_password: str,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> None:
-        self._passwords.validate_and_confirm(new_password, confirm_password)
+        password_manager.validate_and_confirm(new_password, confirm_password)
 
         creds = await self._credentials.get_by_user_id(user.id)
         if not creds:
             raise InvalidCredentialsError("No credentials found for user.")
 
-        if not self._passwords.verify_password(current_password, creds.password_hash, creds.password_salt):
+        if not password_manager.verify_password(current_password, creds.password_hash, creds.password_salt):
             raise InvalidCredentialsError("Current password is incorrect.")
 
-        hash_result = self._passwords.hash_password(new_password)
+        hash_result = password_manager.hash_password(new_password)
         await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
         await self._credentials.commit()
         logger.info("Password changed for user id=%s", user.id)
@@ -554,7 +552,7 @@ class AuthService:
     ) -> None:
         """Consume a setup token, create credentials, activate the user, send
         welcome email."""
-        self._passwords.validate_and_confirm(new_password, confirm_password)
+        password_manager.validate_and_confirm(new_password, confirm_password)
 
         payload = self._validate_token_of_type(token, TokenType.SETUP)
 
@@ -568,7 +566,7 @@ class AuthService:
         if not user:
             raise TokenInvalidError("Invalid setup link.")
 
-        hash_result = self._passwords.hash_password(new_password)
+        hash_result = password_manager.hash_password(new_password)
         creds = UserCredentials(
             user_id=user.id,
             password_hash=hash_result.hashed,

@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
 
 from app.core.config import settings
+from app.core.exceptions import PasswordMismatchError, PasswordValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +252,14 @@ class PasswordManager:
         if any(c.isspace() for c in password):
             errors.append("Password must not contain spaces.")
         return len(errors) == 0, errors
+
+    def validate_and_confirm(self, password: str, confirm_password: str) -> None:
+        """Validate strength and confirm passwords match. Raises on failure."""
+        if password != confirm_password:
+            raise PasswordMismatchError()
+        valid, errors = self.validate_strength(password)
+        if not valid:
+            raise PasswordValidationError(errors)
 
 
 password_manager = PasswordManager()

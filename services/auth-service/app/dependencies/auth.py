@@ -33,7 +33,7 @@ from app.models.user import User
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.user_repository import UserRepository
 from app.services.cache_service import CacheService
-from app.services.token_service import TokenPayload, TokenService
+from app.services.token_service import TokenPayload
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +75,6 @@ async def init_jwt_verifier() -> None:
 
     _jwt_verifier = verifier
     logger.info("Shared JWTVerifier initialized with %d public keys.", verifier.loaded_key_count)
-
-
-def get_token_service() -> TokenService:
-    """Token creation service — auth-service specific (not shared)."""
-    return TokenService()
 
 
 async def get_current_token(
@@ -147,7 +142,7 @@ async def _check_api_key_revocation(
     Redis first (presence = valid), DB fallback on cache miss.
     Returns True if revoked, False if valid.
     """
-    if await cache_service.is_api_key_valid(token_id):
+    if await cache_service.get_api_key_cache(token_id) is not None:
         return False
 
     repo = APIKeyRepository(db)
@@ -157,7 +152,7 @@ async def _check_api_key_revocation(
 
     ttl = await _remaining_api_key_ttl(db_key)
     if ttl > 0:
-        await cache_service.store_api_key_token(token_id, ttl)
+        await cache_service.set_api_key_cache(token_id, ttl, {})
     return False
 
 
@@ -166,21 +161,29 @@ async def _remaining_api_key_ttl(db_key) -> int:
     return settings.api_key_expire_days * 86400
 
 
+async def get_current_claims(
+    payload: TokenPayload = Depends(get_current_token),
+) -> TokenPayload:
+    """
+    Lightweight dependency for handlers that only need JWT claims
+    (user_id, tenant_id, permission_ids). No DB hit. Use this whenever
+    a route handler does not need a full User ORM row.
+    """
+    return payload
+
+
 async def get_current_user(
     payload: TokenPayload = Depends(get_current_token),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Resolve the authenticated user from the token payload."""
+    """
+    Resolve the authenticated user (full ORM row) from the token payload.
+    Hits the DB. Prefer get_current_claims for handlers that only need claims.
+    """
     repo = UserRepository(db)
     user = await repo.get_by_id(UUID(payload.sub))
     if not user:
         raise UserNotFoundError()
     if not user.is_active:
         raise UserInactiveError()
-    return user
-
-
-async def get_current_active_user(
-    user: User = Depends(get_current_user),
-) -> User:
     return user

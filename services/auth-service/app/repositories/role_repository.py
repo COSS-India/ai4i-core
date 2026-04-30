@@ -24,10 +24,6 @@ class RoleRepository(BaseRepository):
         result = await self._db.execute(select(Role).where(Role.name == normalized))
         return result.scalar_one_or_none()
 
-    async def get_role_by_id(self, role_id: int) -> Optional[Role]:
-        result = await self._db.execute(select(Role).where(Role.id == role_id))
-        return result.scalar_one_or_none()
-
     async def list_roles(self) -> list[Role]:
         result = await self._db.execute(select(Role).order_by(Role.name))
         return list(result.scalars().all())

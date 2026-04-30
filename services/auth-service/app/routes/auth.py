@@ -4,12 +4,12 @@ and email activation (provision + set-password).
 """
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends
 
 from app.core.config import settings
 from app.core.redis import get_redis
 from app.core.responses import success_response
-from app.dependencies.auth import get_current_active_user
+from app.dependencies.auth import get_current_user
 from app.dependencies.rate_limit import enforce_rate_limit
 from app.dependencies.services import get_auth_service
 from app.models.user import User
@@ -17,7 +17,6 @@ from app.schemas.auth import (
     ForgotPasswordRequest,
     LoginRequest,
     LoginResponse,
-    LogoutRequest,
     LogoutResponse,
     PasswordChangeRequest,
     ProvisionUserRequest,
@@ -170,7 +169,7 @@ async def refresh_token(
 
 @router.post("/logout")
 async def logout(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     svc: AuthService = Depends(get_auth_service),
 ):
     await svc.logout(user_id=current_user.id)
@@ -181,7 +180,7 @@ async def logout(
 async def change_password(
     body: PasswordChangeRequest,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     svc: AuthService = Depends(get_auth_service),
 ):
     await svc.change_password(

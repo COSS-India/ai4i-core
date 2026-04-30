@@ -245,7 +245,7 @@ class OAuthService:
 
         # Issue JWT pair via the same path used by /auth/login.
         tenant_id = str(user.tenant_id) if user.tenant_id else None
-        permission_ids = await self._roles.get_user_permission_ids_cached(user.id)
+        permission_ids = await self._roles.get_user_permission_ids(user.id)
 
         jwt_access = self._tokens.create_access_token(
             user_id=str(user.id),

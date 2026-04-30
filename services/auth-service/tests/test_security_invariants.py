@@ -10,7 +10,6 @@ These must ALL pass before go/no-go cutover:
 5. Shared lib verifies auth-service tokens
 6. Service/action/ownership checks on validate-api-key
 7. Production fail-fast on missing keys
-8. CORS blocked in production with wildcard
 """
 
 import os
@@ -472,19 +471,5 @@ class TestProductionFailFast:
             shutil.rmtree(dev_dir, ignore_errors=True)
 
 
-# ═══════════════════════════════════════════════
-# 8. CORS production gating
-# ═══════════════════════════════════════════════
-
-class TestCORSGating:
-    def test_config_defaults_to_wildcard(self):
-        from app.core.config import AuthSettings
-        s = AuthSettings(
-            _env_file=None,
-            cors_origins="*",
-            environment="development",
-        )
-        assert s.cors_origins == "*"
-
-    # NOTE: Production CORS enforcement is in main.py lifespan.
-    # Full integration test requires starting the app in production mode.
+# CORS is now handled at the nginx gateway, not in auth-service.
+# The previous in-service CORS gating tests have been removed.

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.exceptions import EntityNotFoundError
 from app.core.responses import success_response
-from app.dependencies.auth import get_current_active_user
+from app.dependencies.auth import get_current_user
 from app.core.roles import Roles
 from app.dependencies.services import get_auth_service
 from app.models.tenant import Tenant, TenantStatus
@@ -99,7 +99,7 @@ def _user_response(user: User) -> dict:
 async def create_tenant(
     body: TenantCreate,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     auth_svc: AuthService = Depends(get_auth_service),
 ):
@@ -157,7 +157,7 @@ async def list_tenants(
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     status_filter: Optional[TenantStatus] = Query(None, alias="status"),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     repo = TenantRepository(db)
@@ -174,7 +174,7 @@ async def list_tenants(
 @router.get("/{tenant_id}")
 async def get_tenant(
     tenant_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     await _enforce_tenant_scope(current_user, tenant_id, db)
@@ -188,7 +188,7 @@ async def get_tenant(
 async def update_tenant(
     tenant_id: int,
     body: TenantUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     repo = TenantRepository(db)
@@ -211,7 +211,7 @@ async def update_tenant(
 async def update_tenant_status(
     tenant_id: int,
     body: TenantStatusUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     repo = TenantRepository(db)
@@ -231,7 +231,7 @@ async def list_tenant_users(
     tenant_id: int,
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     await _enforce_tenant_scope(current_user, tenant_id, db)
@@ -244,7 +244,7 @@ async def create_tenant_user(
     tenant_id: int,
     body: TenantUserCreate,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     auth_svc: AuthService = Depends(get_auth_service),
 ):
@@ -272,7 +272,7 @@ async def update_tenant_user_status(
     tenant_id: int,
     user_id: UUID,
     body: TenantUserStatusUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     await _enforce_tenant_scope(current_user, tenant_id, db)
@@ -291,7 +291,7 @@ async def update_tenant_user(
     tenant_id: int,
     user_id: UUID,
     body: TenantUserUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     await _enforce_tenant_scope(current_user, tenant_id, db)
@@ -309,7 +309,7 @@ async def update_tenant_user(
 async def delete_tenant_user(
     tenant_id: int,
     user_id: UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     await _enforce_tenant_scope(current_user, tenant_id, db)

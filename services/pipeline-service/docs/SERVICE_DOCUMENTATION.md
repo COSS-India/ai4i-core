@@ -229,12 +229,6 @@ All configuration is done via environment variables. See `env.template` for the 
 |----------|-------------|---------|
 | `HTTP_CLIENT_TIMEOUT` | HTTP client timeout (seconds) | `300` |
 
-#### CORS Configuration
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `CORS_ORIGINS` | CORS allowed origins | `*` |
-
 ---
 
 ## API Reference

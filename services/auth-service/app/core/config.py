@@ -55,7 +55,6 @@ class AuthSettings(BaseSettings):
     redis_password: Optional[str] = None
     redis_db: int = 0
     redis_timeout: int = 10
-    revocation_endpoint_cooldown_seconds: int = 30
 
     # ── RS256 JWT ──
     rs256_key_directory: str = "keys"
@@ -76,38 +75,16 @@ class AuthSettings(BaseSettings):
     )
 
     # ── Password hashing (argon2) ──
-    argon2_time_cost: int = 3
-    argon2_memory_cost: int = 65536
-    argon2_parallelism: int = 4
-    argon2_hash_length: int = 32
     argon2_salt_length: int = 16
     default_hash_rounds: int = 12
-
-    # ── APISIX ──
-    apisix_validation_enabled: bool = True
-
-    # ── CORS ──
-    # In production, MUST be set to specific origins (comma-separated).
-    # "*" is only allowed in development/testing.
-    cors_origins: str = "*"
-
-    # ── Logging / Observability ──
-    log_level: str = "INFO"
-    jaeger_endpoint: Optional[str] = None
-    telemetry_enabled: bool = True
 
     # ── OAuth ──
     google_client_id: Optional[str] = None
     google_client_secret: Optional[str] = None
-    github_client_id: Optional[str] = None
-    github_client_secret: Optional[str] = None
     oauth_redirect_base_url: Optional[str] = None
     # Comma-separated allowlist of allowed OAuth client redirect URIs.
     # Prevents open redirect / token leakage attacks.
     oauth_allowed_redirect_uris: str = ""
-
-    # ── Swagger ──
-    swagger_server_url: Optional[str] = None
 
     # ── Guest login (POST /auth/guest/login) — must match guest user email seeded in auth_db ──
     guest_email: Optional[str] = None

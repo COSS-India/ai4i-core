@@ -100,12 +100,7 @@ class APIKeyService:
         logger.info("API key created: name=%s user=%s", key_name, user_id)
         return raw_key, api_key
 
-    async def validate_api_key(
-        self,
-        token: str,
-        required_service: Optional[str] = None,
-        required_action: Optional[str] = None,
-    ) -> dict:
+    async def validate_api_key(self, token: str) -> dict:
         """
         Validate a hex API key. Redis-only — zero DB calls.
         Raises InvalidAPIKeyError when the key is absent from Redis (revoked or never existed).
@@ -117,29 +112,10 @@ class APIKeyService:
         if cached is None:
             raise InvalidAPIKeyError()
 
-        permission_ids: list[int] = cached.get("permissions", [])
-
-        if required_service and required_action:
-            id_to_name = await self._repo.get_permission_names_by_ids(permission_ids)
-            permission_names = list(id_to_name.values())
-            required_permission = f"{required_service}.{required_action}"
-            inference_permission = f"{required_service}.inference"
-            has_permission = (
-                required_permission in permission_names
-                or (required_action == "read" and inference_permission in permission_names)
-            )
-            if not has_permission:
-                return {
-                    "valid": False,
-                    "message": f"API key missing '{required_permission}' permission.",
-                    "user_id": cached.get("user_id"),
-                    "permissions": permission_names,
-                }
-
         return {
             "valid": True,
             "user_id": cached.get("user_id"),
-            "permission_ids": permission_ids,
+            "permission_ids": cached.get("permissions", []),
             "tenant_id": cached.get("tenant_id"),
         }
 

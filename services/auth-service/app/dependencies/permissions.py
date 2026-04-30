@@ -14,32 +14,10 @@ from ai4icore_auth.permission_checker import PermissionChecker
 
 from app.core.database import get_db
 from app.core.exceptions import InsufficientPermissionsError
-from app.dependencies.auth import get_current_active_user
+from app.dependencies.auth import get_current_user
 from app.models.role_name import RoleName, role_name_to_str
 from app.models.user import User
 from app.repositories.role_repository import RoleRepository
-
-
-def require_permission(resource: str, action: str) -> Callable:
-    """
-    Dependency factory: requires current user to have (resource.action) permission.
-    Uses shared PermissionChecker — same logic across all services.
-    """
-
-    async def _check(
-        current_user: User = Depends(get_current_active_user),
-        db: AsyncSession = Depends(get_db),
-    ) -> User:
-        repo = RoleRepository(db)
-        permission_names = await repo.get_user_permission_names(current_user.id)
-        required = f"{resource}.{action}"
-
-        if not PermissionChecker.has_permission(required, permission_names):
-            raise InsufficientPermissionsError(resource, action)
-
-        return current_user
-
-    return _check
 
 
 def require_any_role(*role_names: RoleName | str) -> Callable:
@@ -51,7 +29,7 @@ def require_any_role(*role_names: RoleName | str) -> Callable:
 
     async def _check(
         request: Request,
-        current_user: User = Depends(get_current_active_user),
+        current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
     ) -> User:
         repo = RoleRepository(db)

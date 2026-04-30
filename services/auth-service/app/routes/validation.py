@@ -7,7 +7,6 @@ import logging
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4icore_auth.jwt_verifier import AuthClaims, JWTExpiredError, JWTVerificationError
@@ -31,8 +30,6 @@ USER_PLAN_JWT: str = "P1"
 USER_PLAN_APIKEY: str = "P2"
 
 router = APIRouter(prefix="/auth", tags=["Validation"])
-
-security = HTTPBearer(auto_error=False)
 
 
 def is_jwt_strict(token: str) -> bool:
@@ -63,7 +60,6 @@ def _user_inactive_message(user_status: str) -> str:
 async def validate_token(
     request: Request,
     response: Response,
-    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     cache_svc: CacheService = Depends(get_cache_service),
     user_svc: UserService = Depends(get_user_service),
     api_key_svc: APIKeyService = Depends(get_api_key_service),
@@ -75,8 +71,6 @@ async def validate_token(
         token = raw_auth[7:].strip()
     elif raw_auth:
         token = raw_auth
-    elif credentials is not None:
-        token = credentials.credentials
     else:
         raise AuthenticationRequiredError()
 

@@ -12,7 +12,6 @@ All tokens include: iss, iat, kid, alg=RS256
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-import uuid
 
 from jose import jwt, JWTError, ExpiredSignatureError
 from cryptography.hazmat.primitives import serialization

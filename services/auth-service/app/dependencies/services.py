@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as aioredis
 
 from app.core.database import get_db
-from app.core.redis import get_redis_api_keys
+from app.core.redis import get_redis
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.credentials_repository import CredentialsRepository
 from app.repositories.refresh_token_repository import RefreshTokenRepository
@@ -28,7 +28,6 @@ from app.services.api_key_service import APIKeyService
 from app.services.auth_service import AuthService
 from app.services.cache_service import CacheService
 from app.services.oauth_service import OAuthService
-from app.services.password_service import PasswordService
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
 from app.services.user_service import UserService
@@ -44,7 +43,7 @@ def get_email_client() -> EmailClient:
 
 
 async def get_cache_service(
-    redis: aioredis.Redis = Depends(get_redis_api_keys),
+    redis: aioredis.Redis = Depends(get_redis),
 ) -> CacheService:
     return CacheService(redis)
 
@@ -71,7 +70,6 @@ async def get_auth_service(
         user_repo=UserRepository(db),
         role_service=RoleService(RoleRepository(db), cache),
         token_service=TokenService(),
-        password_service=PasswordService(),
         credentials_repo=CredentialsRepository(db),
         refresh_token_repo=RefreshTokenRepository(db),
         verification_repo=VerificationRepository(db),

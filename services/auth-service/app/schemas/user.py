@@ -2,7 +2,6 @@
 User request/response schemas.
 """
 
-from datetime import datetime
 from enum import Enum
 from typing import Optional
 from uuid import UUID
@@ -24,43 +23,6 @@ class UserUpdate(BaseSchema):
     phone_number: Optional[str] = Field(None, max_length=20)
     timezone: Optional[str] = Field(None, max_length=50)
     avatar_url: Optional[str] = Field(None, max_length=500)
-
-
-class UserResponse(BaseSchema):
-    user_id: UUID = Field(validation_alias=AliasChoices("user_id", "id"))
-    email: EmailStr
-    username: str
-    full_name: Optional[str] = None
-    is_active: bool
-    is_delete: Optional[bool] = None
-    is_tenant_active: Optional[bool] = None
-    creation_type: Optional[CreationType] = None
-    tenant_id: Optional[int] = Field(None, description="Tenant identifier")
-    last_login: Optional[datetime] = None
-    avatar_url: Optional[str] = None
-    phone_number: Optional[str] = None
-    timezone: Optional[str] = None
-    roles: list[str] = []
-    created_at: datetime
-    created_by: Optional[str] = None
-    updated_at: Optional[datetime] = None
-    updated_by: Optional[str] = None
-
-
-class UserDetailResponse(BaseSchema):
-    """Admin view of user details."""
-    user_id: UUID = Field(validation_alias=AliasChoices("user_id", "id"))
-    username: str
-    email: EmailStr
-    phone_number: Optional[str] = None
-    full_name: Optional[str] = None
-    is_active: bool
-    is_delete: Optional[bool] = None
-    is_tenant_active: Optional[bool] = None
-    creation_type: Optional[CreationType] = None
-    tenant_id: Optional[int] = None
-    created_at: datetime
-    last_login: Optional[datetime] = None
 
 
 class UserListResponse(BaseSchema):
