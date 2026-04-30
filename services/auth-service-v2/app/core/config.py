@@ -59,6 +59,7 @@ class AuthSettings(BaseSettings):
     redis_timeout: int = 10
     role_cache_ttl_seconds: int = 3600
     api_perms_cache_ttl_seconds: int = 3600
+    revocation_endpoint_cooldown_seconds: int = 30
 
     # ── RS256 JWT ──
     rs256_key_directory: str = "keys"
@@ -110,6 +111,10 @@ class AuthSettings(BaseSettings):
 
     # ── Swagger ──
     swagger_server_url: Optional[str] = None
+
+    # ── Guest login (POST /auth/guest/login) — must match guest user email seeded in auth_db ──
+    guest_email: Optional[str] = None
+    guest_password: Optional[str] = None
 
     # ── Derived helpers ──
 

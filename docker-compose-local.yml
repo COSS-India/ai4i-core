@@ -219,7 +219,8 @@ services:
         aliases:
           - api-gateway-service
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"]
+      # Use 127.0.0.1 so wget does not prefer IPv6 (::1) where nginx may not listen.
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -931,6 +932,43 @@ services:
       interval: 30s
       timeout: 5s
 
+  policy-service:
+    build:
+      context: .
+      dockerfile: ./services/policy-service/Dockerfile
+    container_name: ai4v-policy-service
+    ports:
+      - "8107:8099"
+    environment:
+      - APP_DB_USER=${POSTGRES_USER}
+      - APP_DB_PASSWORD=${POSTGRES_PASSWORD}
+      - APP_DB_HOST=postgres
+      - APP_DB_PORT=5432
+      - APP_DB_NAME=policy_db
+      - JWKS_URL=http://auth-service:8081/api/v1/auth/.well-known/jwks.json
+      - AUTH_SERVICE_URL=http://auth-service:8081
+      - MULTI_TENANT_SERVICE_URL=http://multi-tenant-service:8001
+      - AUTO_CREATE_TABLES=true
+      - PYTHONPATH=/app:/app/libs
+    volumes:
+      - ./services/policy-service/app:/app/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    networks:
+      microservices-network:
+        aliases:
+          - policy-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8099/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
   pay-per-use-service:
     build:
       context: .
@@ -1056,6 +1094,10 @@ services:
     environment:
       - ENV_FILE=.env
       - POLICY_ENGINE_URL=http://policy-engine:8095
+      # Override host-oriented .env (localhost:6381) — in-container Redis is the compose service
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     env_file:
       - ./services/multi-tenant-feature/.env
     volumes:
@@ -1288,15 +1330,18 @@ services:
     restart: unless-stopped
 
 
+  # simple-ui: browsers use NEXT_PUBLIC_* at runtime/build time. Compose injects them from repo-root .env
+  # (${NEXT_PUBLIC_API_URL:-http://localhost:8080}), not from frontend/simple-ui/.env. For public access, tunnel
+  # the API gateway (e.g. cloudflared/ngrok to :8080) and set NEXT_PUBLIC_API_URL in repo-root .env, e.g.:
+  #   NEXT_PUBLIC_API_URL=https://<your-api-tunnel>.trycloudflare.com
+  #   NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://<telemetry-tunnel>.ngrok-free.app   # optional
+  # Then: docker compose -f docker-compose-local.yml up -d --build simple-ui-frontend
   simple-ui-frontend:
     build:
       context: ./frontend/simple-ui
       dockerfile: Dockerfile.dev
       args:
-        # Browser talks directly to the API Gateway on host port 8080
-        # NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
-        
-        NEXT_PUBLIC_API_URL: http://localhost:8080
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
         # Service-specific API keys from .env file (no hardcoding)
         NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
         NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
@@ -1304,9 +1349,9 @@ services:
         NEXT_PUBLIC_NMT_API_KEY: ${NMT_API_KEY}
         NEXT_PUBLIC_PIPELINE_API_KEY: ${PIPELINE_API_KEY}
         NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
-        # Telemetry/Observability service URL (logs and traces) - same as API Gateway
-        # NEXT_PUBLIC_TELEMETRY_SERVICE_URL: https://core-v1.ai4inclusion.org
-        NEXT_PUBLIC_TELEMETRY_SERVICE_URL: http://localhost:8084
+        NEXT_PUBLIC_TELEMETRY_SERVICE_URL: ${NEXT_PUBLIC_TELEMETRY_SERVICE_URL:-http://localhost:8084}
+        # Real pay-per-use data unless explicitly enabled (see frontend/simple-ui/src/utils/usageDemoMock.ts)
+        NEXT_PUBLIC_USAGE_DEMO: ${NEXT_PUBLIC_USAGE_DEMO:-}
 
     container_name: ai4v-simple-ui
     ports:
@@ -1314,9 +1359,7 @@ services:
     environment:
       # HOSTNAME=0.0.0.0 tells Next.js standalone server to listen on all interfaces
       - HOSTNAME=0.0.0.0
-      # Route all frontend API calls through the API Gateway on host
-      # - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
-      - NEXT_PUBLIC_API_URL=http://localhost:8080
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}
 
       - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
       # Service-specific API keys for API Gateway authentication / RBAC
@@ -1325,10 +1368,11 @@ services:
       - NEXT_PUBLIC_NMT_API_KEY=${NMT_API_KEY}
       - NEXT_PUBLIC_PIPELINE_API_KEY=${PIPELINE_API_KEY}
       - NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${MODEL_MANAGEMENT_API_KEY}
-      # Telemetry/Observability service URL (logs and traces) - routed through API Gateway
-      # - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://core-v1.ai4inclusion.org
-      - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
-      - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
+      - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=${NEXT_PUBLIC_TELEMETRY_SERVICE_URL:-http://localhost:8084}
+      # Browser cannot resolve Docker service names; use host ports or public WSS URLs for remote demos
+      - NEXT_PUBLIC_ASR_STREAM_URL=${NEXT_PUBLIC_ASR_STREAM_URL:-ws://localhost:8087/socket.io/asr}
+      - NEXT_PUBLIC_TTS_STREAM_URL=${NEXT_PUBLIC_TTS_STREAM_URL:-ws://localhost:8088/socket.io/tts}
+      - NEXT_PUBLIC_USAGE_DEMO=${NEXT_PUBLIC_USAGE_DEMO:-}
     env_file:
       - ./.env
     volumes:

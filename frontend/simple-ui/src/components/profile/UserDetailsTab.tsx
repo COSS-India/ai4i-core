@@ -1,5 +1,6 @@
 import React from "react";
 import {
+  Box,
   Card,
   CardBody,
   CardHeader,
@@ -27,6 +28,8 @@ export default function UserDetailsTab() {
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
   const inputReadOnlyBg = useColorModeValue("gray.50", "gray.700");
+  const sectionBg = useColorModeValue("gray.50", "gray.900");
+  const sectionBorder = useColorModeValue("gray.100", "gray.700");
 
   const ud = useUserDetails({
     user: user ?? null,
@@ -38,11 +41,16 @@ export default function UserDetailsTab() {
 
   return (
     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
-      <CardHeader>
-        <HStack justify="space-between">
-          <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-            User Details
-          </Heading>
+      <CardHeader pb={3}>
+        <HStack justify="space-between" align="flex-start">
+          <Box>
+            <Heading size="md" color="gray.700" userSelect="none" cursor="default">
+              User Details
+            </Heading>
+            <Text fontSize="sm" color="gray.500" mt={1}>
+              Manage your profile information and preferences.
+            </Text>
+          </Box>
           {!ud.isEditingUser ? (
             <Button
               leftIcon={<FiEdit2 />}
@@ -78,8 +86,10 @@ export default function UserDetailsTab() {
           )}
         </HStack>
       </CardHeader>
-      <CardBody>
-        <VStack spacing={4} align="stretch">
+      <CardBody pt={2}>
+        <VStack spacing={5} align="stretch">
+          <Box bg={sectionBg} borderWidth="1px" borderColor={sectionBorder} borderRadius="md" p={4}>
+            <VStack spacing={4} align="stretch">
           <FormControl>
             <FormLabel fontWeight="semibold">Full Name</FormLabel>
             <Input
@@ -93,44 +103,22 @@ export default function UserDetailsTab() {
 
           <FormControl>
             <FormLabel fontWeight="semibold">Username</FormLabel>
-            {ud.isEditingUser ? (
-              <>
-                <Text fontSize="md" color="gray.700" py={1}>
-                  {user.username || "N/A"}
-                </Text>
-                <Text fontSize="xs" color="gray.500" mt={1}>
-                  Username cannot be changed
-                </Text>
-              </>
-            ) : (
-              <>
-                <Input value={user.username || "N/A"} isReadOnly bg={inputReadOnlyBg} />
-                <Text fontSize="xs" color="gray.500" mt={1}>
-                  Username cannot be changed
-                </Text>
-              </>
-            )}
+            <Text fontSize="md" color="gray.700" py={1}>
+              {user.username || "N/A"}
+            </Text>
+            <Text fontSize="xs" color="gray.500" mt={1}>
+              Username cannot be changed
+            </Text>
           </FormControl>
 
           <FormControl>
             <FormLabel fontWeight="semibold">Email</FormLabel>
-            {ud.isEditingUser ? (
-              <>
-                <Text fontSize="md" color="gray.700" py={1}>
-                  {user.email || "N/A"}
-                </Text>
-                <Text fontSize="xs" color="gray.500" mt={1}>
-                  Email cannot be changed
-                </Text>
-              </>
-            ) : (
-              <>
-                <Input value={user.email || "N/A"} isReadOnly bg={inputReadOnlyBg} />
-                <Text fontSize="xs" color="gray.500" mt={1}>
-                  Email cannot be changed
-                </Text>
-              </>
-            )}
+            <Text fontSize="md" color="gray.700" py={1}>
+              {user.email || "N/A"}
+            </Text>
+            <Text fontSize="xs" color="gray.500" mt={1}>
+              Email cannot be changed
+            </Text>
           </FormControl>
 
           <FormControl isInvalid={!!ud.errors.phone_number}>
@@ -175,44 +163,15 @@ export default function UserDetailsTab() {
               )}
             </FormControl>
           </HStack>
-
-          <HStack spacing={4}>
-            <FormControl flex={1}>
-              <FormLabel fontWeight="semibold">Status</FormLabel>
-              {ud.isEditingUser ? (
-                <Text fontSize="md" color="gray.700" py={1}>
-                  {user.is_active ? "Active" : "Inactive"}
-                </Text>
-              ) : (
-                <Input value={user.is_active ? "Active" : "Inactive"} isReadOnly bg={inputReadOnlyBg} />
-              )}
-            </FormControl>
-            <FormControl flex={1}>
-              <FormLabel fontWeight="semibold">Verified</FormLabel>
-              {ud.isEditingUser ? (
-                <Text fontSize="md" color="gray.700" py={1}>
-                  {user.is_verified ? "Yes" : "No"}
-                </Text>
-              ) : (
-                <Input value={user.is_verified ? "Yes" : "No"} isReadOnly bg={inputReadOnlyBg} />
-              )}
-            </FormControl>
-          </HStack>
+            </VStack>
+          </Box>
 
           {user.created_at && (
             <FormControl>
               <FormLabel fontWeight="semibold">Account Created On</FormLabel>
-              {ud.isEditingUser ? (
-                <Text fontSize="md" color="gray.700" py={1}>
-                  {new Date(user.created_at).toLocaleDateString()}
-                </Text>
-              ) : (
-                <Input
-                  value={new Date(user.created_at).toLocaleDateString()}
-                  isReadOnly
-                  bg={inputReadOnlyBg}
-                />
-              )}
+              <Text fontSize="md" color="gray.700" py={1}>
+                {new Date(user.created_at).toLocaleDateString()}
+              </Text>
             </FormControl>
           )}
         </VStack>

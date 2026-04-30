@@ -266,7 +266,7 @@ const LanguageDiarizationPage: React.FC = () => {
                   isRecording={isRecording}
                   onRecordingChange={handleRecordingChange}
                   sampleRate={16000}
-                  disabled={fetching}
+                  disabled={fetching || !serviceId}
                   timer={timer}
                   onClear={handleClearAudioInput}
                   clearToken={audioClearToken}

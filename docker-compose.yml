@@ -1316,7 +1316,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-# Policy Engine
+# Policy Engine (quotas / rate limits / plan APIs)
   policy-engine:
     build:
       context: .
@@ -1334,6 +1334,42 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
       interval: 30s
       timeout: 5s
+
+  # PII policy module (admin policies / pii-types). Required for /api/v1/policy-service/* via APISIX.
+  policy-service:
+    build:
+      context: .
+      dockerfile: ./services/policy-service/Dockerfile
+    container_name: ai4v-policy-service
+    ports:
+      - "8107:8099"
+    environment:
+      - APP_DB_USER=${POSTGRES_USER}
+      - APP_DB_PASSWORD=${POSTGRES_PASSWORD}
+      - APP_DB_HOST=postgres
+      - APP_DB_PORT=5432
+      - APP_DB_NAME=policy_db
+      - JWKS_URL=http://auth-service:8081/api/v1/auth/.well-known/jwks.json
+      - AUTH_SERVICE_URL=http://auth-service:8081
+      - MULTI_TENANT_SERVICE_URL=http://multi-tenant-service:8001
+      # Dev convenience: create tables if migrations not applied yet (disable in production).
+      - AUTO_CREATE_TABLES=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    networks:
+      microservices-network:
+        aliases:
+          - policy-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8099/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
 
   pay-per-use-service:
     build:
@@ -1381,8 +1417,6 @@ services:
     env_file:
       - ./services/smr-service/.env
     depends_on:
-      policy-engine:
-        condition: service_started
       model-management-service:
         condition: service_started
     networks:

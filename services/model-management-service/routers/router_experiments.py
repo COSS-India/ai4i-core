@@ -25,13 +25,8 @@ from db_operations import (
     track_experiment_metric,
 )
 from middleware.auth_provider import AuthProvider
+from utils.request_helpers import get_user_id
 from logger import logger
-
-
-def get_user_id_from_request(request: Request) -> Optional[str]:
-    """Extract user_id from request state (set by AuthProvider or Kong) as string."""
-    user_id = getattr(request.state, 'user_id', None)
-    return str(user_id) if user_id is not None else None
 
 
 router_experiments = APIRouter(
@@ -49,7 +44,7 @@ async def create_experiment_endpoint(payload: ExperimentCreateRequest, request: 
     Requires at least 2 variants with traffic percentages summing to 100.
     """
     try:
-        user_id = get_user_id_from_request(request)
+        user_id = get_user_id(request)
         experiment_id = await create_experiment(payload, created_by=user_id)
         
         # Fetch and return the created experiment
@@ -178,7 +173,7 @@ async def update_experiment_endpoint(
     Note: Cannot update variants of a RUNNING experiment.
     """
     try:
-        user_id = get_user_id_from_request(request)
+        user_id = get_user_id(request)
         result = await update_experiment(experiment_id, payload, updated_by=user_id)
         
         if result == 0:
@@ -225,7 +220,7 @@ async def update_experiment_status_endpoint(
     - 'cancel': Cancel a non-RUNNING experiment (changes to CANCELLED)
     """
     try:
-        user_id = get_user_id_from_request(request)
+        user_id = get_user_id(request)
         result = await update_experiment_status(experiment_id, payload.action, updated_by=user_id)
         
         if result == 0:

@@ -1002,6 +1002,79 @@ routes:
         time_window: 60
         allow_degradation: false
         count: 120
+  # PII policies / pii-types (backend serves full path /api/v1/policy-service/*; no strip).
+  - uri: /api/v1/policy-service/*
+    name: policy-service-route
+    priority: 100
+    methods:
+    - GET
+    - POST
+    - PUT
+    - PATCH
+    - DELETE
+    - OPTIONS
+    upstream:
+      hash_on: vars
+      scheme: http
+      timeout:
+        send: 60
+        connect: 60
+        read: 60
+      nodes:
+        policy-service${APISIX_UPSTREAM_SUFFIX}:8099: 1
+      pass_host: pass
+      type: roundrobin
+    plugins:
+      serverless-pre-function:
+        phase: rewrite
+        functions:
+        - |
+          return function(conf, ctx)
+            ngx.req.set_header("X-User-Id", nil)
+          end
+      forward-auth:
+        uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
+        request_headers:
+          - Authorization
+          - X-API-Key
+          - x-api-key
+          - apikey
+        upstream_headers:
+          - X-User-ID
+        client_headers:
+          - WWW-Authenticate
+        timeout: 3000
+        keepalive: true
+        keepalive_timeout: 60000
+        keepalive_pool: 5
+      cors:
+        allow_origins: ${APISIX_PUBLIC_ORIGIN}
+        allow_methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
+        max_age: 3600
+        allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,request-starttime,sec-ch-ua,sec-ch-ua-mobile,sec-ch-ua-platform,Referer
+        expose_headers: X-Auth-Token,X-Correlation-ID,X-Request-ID
+        allow_credential: true
+      proxy-rewrite:
+        headers:
+          add:
+            X-Correlation-ID: $request_id
+            X-Gateway: apisix
+        use_real_request_uri_unsafe: false
+      response-rewrite:
+        body_base64: false
+        headers:
+          set:
+            X-Served-By: APISIX-Gateway
+            X-Service: policy-service
+      limit-count:
+        policy: local
+        key_type: var
+        rejected_code: 429
+        show_limit_quota_header: true
+        key: http_x_user_id
+        time_window: 60
+        allow_degradation: false
+        count: 120
   - uri: /api/v1/pay-per-use/*
     name: pay-per-use-route
     priority: 100

@@ -1,11 +1,31 @@
 from __future__ import annotations
 
+import base64
+import json
+import logging
 import os
 from typing import Any, Dict, Optional
 
 import httpx
 
 from ai4icore_env import app_env
+
+logger = logging.getLogger(__name__)
+
+
+def _decode_jwt_payload_unverified(token: str) -> Optional[Dict[str, Any]]:
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        payload_b64 = parts[1]
+        padding = 4 - len(payload_b64) % 4
+        if padding != 4:
+            payload_b64 += "=" * padding
+        payload_bytes = base64.urlsafe_b64decode(payload_b64)
+        return json.loads(payload_bytes.decode("utf-8"))
+    except Exception:
+        return None
 
 
 def resolve_pay_per_use_base_url(explicit: Optional[str] = None) -> str:
@@ -35,6 +55,19 @@ def ppu_actor_key(http_request: Any) -> Optional[str]:
         uid = getattr(claims, "user_id", None)
         if uid is not None:
             return f"jwt-user-{uid}"
+    # Bearer JWT without populated state (some gateway paths) — derive billing key from sub.
+    try:
+        hdr = http_request.headers.get("Authorization") or http_request.headers.get("authorization") or ""
+        if hdr.startswith("Bearer "):
+            token = hdr[7:].strip()
+            if token.count(".") == 2:
+                payload = _decode_jwt_payload_unverified(token)
+                if payload:
+                    sub = payload.get("sub") or payload.get("user_id")
+                    if sub is not None and str(sub).strip():
+                        return f"jwt-user-{sub}"
+    except Exception:
+        pass
     return None
 
 
@@ -88,5 +121,14 @@ class PayPerUseClient:
         }
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.post(url, json=payload)
+        if r.status_code >= 400:
+            body = (r.text or "")[:500]
+            logger.warning(
+                "pay_per_use record failed status=%s tenant_id=%s service_id=%s body=%s",
+                r.status_code,
+                tenant_id,
+                service_id,
+                body,
+            )
         r.raise_for_status()
         return r.json()

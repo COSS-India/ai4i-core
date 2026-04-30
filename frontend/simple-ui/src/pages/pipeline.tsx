@@ -27,7 +27,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
 import { useRouter } from "next/router";
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { FaMicrophone, FaMicrophoneSlash, FaUpload } from "react-icons/fa";
 import ContentLayout from "../components/common/ContentLayout";
 import AudioInputPreview from "../components/common/AudioInputPreview";
@@ -89,6 +89,16 @@ const PipelinePage: React.FC = () => {
     queryFn: listTTSServices,
     staleTime: 5 * 60 * 1000,
   });
+  const targetLanguageOptions = useMemo(
+    () => TTS_SUPPORTED_LANGUAGES.filter((lang) => lang.code !== sourceLanguage),
+    [sourceLanguage]
+  );
+
+  useEffect(() => {
+    if (targetLanguage && targetLanguage === sourceLanguage) {
+      setTargetLanguage("");
+    }
+  }, [sourceLanguage, targetLanguage]);
 
   const hasRequiredConfig = () =>
     !!sourceLanguage?.trim() &&
@@ -294,7 +304,7 @@ const PipelinePage: React.FC = () => {
                     onChange={(e) => setTargetLanguage(e.target.value)}
                     placeholder="Select"
                   >
-                    {TTS_SUPPORTED_LANGUAGES.map((lang) => (
+                    {targetLanguageOptions.map((lang) => (
                       <option key={lang.code} value={lang.code}>
                         {lang.label}
                       </option>

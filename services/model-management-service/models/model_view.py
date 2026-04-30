@@ -18,6 +18,7 @@ class ModelViewResponse(BaseModel):
     uuid: str
     name: str
     version: str
+    submittedOn: Optional[int] = None
     versionStatus: Optional[str] = None  # Version status (ACTIVE or DEPRECATED)
     versionStatusUpdatedAt: Optional[str] = None  # Version status update timestamp
     description: str
@@ -26,7 +27,7 @@ class ModelViewResponse(BaseModel):
     submitter: Submitter
     license: str
     inferenceEndPoint: InferenceEndPoint
-    source: Optional[str]  ## ask value for this field
+    source: Optional[str] = None  ## ask value for this field
     task: TaskResponse  # Use TaskResponse to allow invalid task types from DB
     createdBy: Optional[str] = None  # User ID (string) who created this model
     updatedBy: Optional[str] = None  # User ID (string) who last updated this model

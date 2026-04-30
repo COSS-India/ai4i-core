@@ -17,6 +17,9 @@ _API_KEY_PREFIX = "auth:apikey:"
 _REFRESH_PREFIX = "auth:refresh:"
 _ROLE_PERMS_PREFIX = "auth:role:"
 _API_PERMS_KEY = "auth:api_perms"
+_TENANT_STATUS_PREFIX = "auth:tenant_status:"
+_TENANT_USER_STATUS_PREFIX = "auth:tenant_user_status:"
+_REVOCATION_COOLDOWN_PREFIX = "auth:revocation_cooldown:"
 
 
 class CacheService(_BaseCacheService):
@@ -83,3 +86,80 @@ class CacheService(_BaseCacheService):
 
     async def revoke_refresh_token(self, token_id: str) -> None:
         await self._redis_refresh_tokens.delete(f"{_REFRESH_PREFIX}{token_id}")
+
+    async def revoke_refresh_tokens(self, token_ids: list[str]) -> None:
+        """Revoke multiple refresh token_ids in a single Redis pipeline."""
+        if not token_ids:
+            return
+        keys = [f"{_REFRESH_PREFIX}{token_id}" for token_id in token_ids if token_id]
+        if not keys:
+            return
+        async with self._redis_refresh_tokens.pipeline(transaction=False) as pipe:
+            for key in keys:
+                pipe.delete(key)
+            await pipe.execute()
+
+    # ── Tenant status caches (short TTL for validate path) ──
+
+    async def get_tenant_status(self, tenant_id: str) -> Optional[str]:
+        data = await self._redis_api_permissions.get(f"{_TENANT_STATUS_PREFIX}{tenant_id}")
+        if not data:
+            return None
+        if isinstance(data, bytes):
+            return data.decode()
+        return str(data)
+
+    async def set_tenant_status(self, tenant_id: str, status: str, ttl_seconds: int) -> None:
+        await self._redis_api_permissions.setex(
+            f"{_TENANT_STATUS_PREFIX}{tenant_id}",
+            ttl_seconds,
+            status,
+        )
+
+    async def delete_tenant_status(self, tenant_id: str) -> None:
+        tenant_id_norm = (tenant_id or "").strip().lower()
+        if not tenant_id_norm:
+            return
+        await self._redis_api_permissions.delete(f"{_TENANT_STATUS_PREFIX}{tenant_id_norm}")
+
+    async def get_tenant_user_status(self, tenant_id: str, user_id: int) -> Optional[str]:
+        data = await self._redis_api_permissions.get(
+            f"{_TENANT_USER_STATUS_PREFIX}{tenant_id}:{user_id}"
+        )
+        if not data:
+            return None
+        if isinstance(data, bytes):
+            return data.decode()
+        return str(data)
+
+    async def set_tenant_user_status(
+        self,
+        tenant_id: str,
+        user_id: int,
+        status: str,
+        ttl_seconds: int,
+    ) -> None:
+        await self._redis_api_permissions.setex(
+            f"{_TENANT_USER_STATUS_PREFIX}{tenant_id}:{user_id}",
+            ttl_seconds,
+            status,
+        )
+
+    # ── Revocation endpoint cooldown (anti-DoS guard) ──
+
+    async def acquire_revocation_cooldown(self, scope: str, ttl_seconds: int) -> bool:
+        """
+        Acquire a short-lived cooldown key.
+        Returns True only for the first caller during the cooldown window.
+        """
+        key = f"{_REVOCATION_COOLDOWN_PREFIX}{scope}"
+        result = await self._redis_api_permissions.set(key, "1", ex=ttl_seconds, nx=True)
+        return bool(result)
+
+    async def get_revocation_cooldown_ttl(self, scope: str) -> int:
+        """Return remaining cooldown in seconds for a scope (0 when absent)."""
+        key = f"{_REVOCATION_COOLDOWN_PREFIX}{scope}"
+        ttl = await self._redis_api_permissions.ttl(key)
+        if ttl is None or ttl < 0:
+            return 0
+        return int(ttl)

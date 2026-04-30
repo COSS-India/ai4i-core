@@ -2,12 +2,15 @@
  * Authentication hook
  */
 import { useState, useEffect, useCallback } from 'react';
-import { User, AuthState, LoginRequest, RegisterRequest } from '../types/auth';
+import { User, AuthState, LoginRequest, LoginResponse, RegisterRequest } from '../types/auth';
 import authService from '../services/authService';
 import { useTokenRefresh } from './useTokenRefresh';
 
 // Broadcast auth state changes so other hook instances (e.g., Header) can react immediately
 const AUTH_UPDATED_EVENT = 'auth:updated';
+
+/** Written when the app ends the session locally so other tabs on the same origin clear auth too */
+const AUTH_SESSION_REVOKED_STORAGE_KEY = 'ai4i:auth:session-revoked';
 
 // Shared init promise: only one getCurrentUser() + listApiKeys() run for all useAuth() instances.
 // This prevents N components (Header, Sidebar, AuthGuard, pages, useFeatureFlag hooks) from each
@@ -49,6 +52,24 @@ export function resetAuthInitPromise(): void {
   authInitPromise = null;
 }
 
+/**
+ * End the session in this browser only: clear tokens and stored user, do not call the auth logout API.
+ * Other tabs receive a storage event and sign out as well.
+ */
+export function forceFrontendSessionEnd(): void {
+  if (typeof window === 'undefined') return;
+  authService.clearAuthTokens();
+  authService.clearStoredUser();
+  resetAuthInitPromise();
+  window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
+  try {
+    localStorage.setItem(AUTH_SESSION_REVOKED_STORAGE_KEY, String(Date.now()));
+  } catch {
+    // private mode / blocked storage — still redirect below
+  }
+  window.location.assign('/auth');
+}
+
 export const useAuth = () => {
   const [authState, setAuthState] = useState<AuthState>({
     user: null,
@@ -56,6 +77,8 @@ export const useAuth = () => {
     refreshToken: null,
     isAuthenticated: false,
     isLoading: true,
+    isLoginLoading: false,
+    isGuestLoginLoading: false,
     error: null,
   });
 
@@ -79,6 +102,8 @@ export const useAuth = () => {
           refreshToken: authService.getRefreshToken(),
           isAuthenticated: !!hasToken && !!storedUser,
           isLoading: false,
+          isLoginLoading: false,
+          isGuestLoginLoading: false,
           error: null,
         }));
       } catch {
@@ -100,6 +125,8 @@ export const useAuth = () => {
         refreshToken: authService.getRefreshToken(),
         isAuthenticated: !!hasToken && !!storedUser,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: null,
       });
     };
@@ -116,91 +143,121 @@ export const useAuth = () => {
       }
     };
 
+    const handleSessionRevokedFromStorage = (event: StorageEvent) => {
+      if (event.key !== AUTH_SESSION_REVOKED_STORAGE_KEY || event.newValue == null) return;
+      authService.clearAuthTokens();
+      authService.clearStoredUser();
+      resetAuthInitPromise();
+      setAuthState({
+        user: null,
+        accessToken: null,
+        refreshToken: null,
+        isAuthenticated: false,
+        isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
+        error: null,
+      });
+      window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
+      const path = window.location?.pathname ?? '';
+      if (!path.startsWith('/auth')) {
+        window.location.assign('/auth');
+      }
+    };
+
     initializeAuth();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', handleSessionRevokedFromStorage);
+    }
     return () => {
       if (typeof window !== 'undefined') {
         window.removeEventListener(AUTH_UPDATED_EVENT, handleAuthUpdated as EventListener);
+        window.removeEventListener('storage', handleSessionRevokedFromStorage);
       }
     };
   }, []);
 
-  const login = useCallback(async (credentials: LoginRequest) => {
-    setAuthState(prev => ({ ...prev, isLoading: true, error: null }));
+  const completeLogin = useCallback(async (response: LoginResponse) => {
+    // Verify tokens are stored before proceeding
+    const accessToken = authService.getAccessToken();
+    if (!accessToken) {
+      throw new Error('Access token was not stored after login. Please try again.');
+    }
 
+    // Small delay to ensure tokens are fully stored (especially for sessionStorage)
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Use /me endpoint to validate token and get user data in one call
     try {
-      const response = await authService.login(credentials);
+      const user = await authService.getCurrentUser();
 
-      // Verify tokens are stored before proceeding
-      const accessToken = authService.getAccessToken();
-      const refreshToken = authService.getRefreshToken();
-
-      if (!accessToken) {
-        throw new Error('Access token was not stored after login. Please try again.');
+      // Store user data and tokens immediately before state update
+      authService.setStoredUser(user);
+      if (!authService.getAccessToken() || !authService.getRefreshToken()) {
+        console.warn('useAuth: Tokens not found in storage after login');
       }
-      
-      // Small delay to ensure tokens are fully stored (especially for sessionStorage)
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // Use /me endpoint to validate token and get user data in one call
-      try {
-        const user = await authService.getCurrentUser();
 
-        // Store user data and tokens immediately before state update
-        // This ensures all data is in localStorage before React re-renders
-        authService.setStoredUser(user);
-        // Tokens are already stored by authService.login(), but ensure they're there
-        if (!authService.getAccessToken() || !authService.getRefreshToken()) {
-          console.warn('useAuth: Tokens not found in storage after login');
-        }
+      setAuthState({
+        user,
+        accessToken: response.access_token,
+        refreshToken: response.refresh_token,
+        isAuthenticated: true,
+        isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
+        error: null,
+      });
 
-        setAuthState(prev => {
-          return {
-            user: user,
-            accessToken: response.access_token,
-            refreshToken: response.refresh_token,
-            isAuthenticated: true,
-            isLoading: false,
-            error: null,
-          };
-        });
+      // Notify other components/hooks to refresh their view immediately
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
+      }
 
-        // Notify other components/hooks to refresh their view immediately
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
-        }
+      return response;
+    } catch (meError) {
+      console.error('useAuth: Failed to fetch user data / token validation failed:', meError);
+      const errorMessage = meError instanceof Error ? meError.message : 'Token validation failed';
+      console.error('useAuth: Error details:', {
+        message: errorMessage,
+        hasToken: !!authService.getAccessToken(),
+        tokenLength: authService.getAccessToken()?.length || 0,
+      });
 
-        return response;
-      } catch (meError) {
-        console.error('useAuth: Failed to fetch user data / token validation failed:', meError);
-        const errorMessage = meError instanceof Error ? meError.message : 'Token validation failed';
-        console.error('useAuth: Error details:', {
-          message: errorMessage,
-          hasToken: !!authService.getAccessToken(),
-          tokenLength: authService.getAccessToken()?.length || 0,
-        });
-
-        if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
-          setAuthState(prev => ({
-            ...prev,
-            isLoading: false,
-            error:
-              'Request timeout. You stay signed in — try again or refresh the page if the profile does not load.',
-          }));
-          throw new Error(errorMessage);
-        }
-
-        // Clear tokens if /me fails (token is invalid or expired)
-        authService.clearAuthTokens();
+      if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
         setAuthState(prev => ({
           ...prev,
           isLoading: false,
+          isLoginLoading: false,
+          isGuestLoginLoading: false,
           error:
-            errorMessage.includes('401') || errorMessage.includes('Unauthorized')
-              ? 'Invalid credentials. Please check your username and password.'
-              : `Token validation failed: ${errorMessage}. Please try logging in again.`,
+            'Request timeout. You stay signed in — try again or refresh the page if the profile does not load.',
         }));
         throw new Error(errorMessage);
       }
+
+      // Clear tokens if /me fails (token is invalid or expired)
+      authService.clearAuthTokens();
+      setAuthState(prev => ({
+        ...prev,
+        isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
+        error: errorMessage.includes('timeout')
+          ? 'Request timeout. The server is taking too long to respond. Please try again.'
+          : errorMessage.includes('401') || errorMessage.includes('Unauthorized')
+          ? 'Invalid credentials. Please check your username and password.'
+          : `Token validation failed: ${errorMessage}. Please try logging in again.`,
+      }));
+      throw new Error(errorMessage);
+    }
+  }, []);
+
+  const login = useCallback(async (credentials: LoginRequest) => {
+    setAuthState(prev => ({ ...prev, isLoading: true, isLoginLoading: true, isGuestLoginLoading: false, error: null }));
+
+    try {
+      const response = await authService.login(credentials);
+      return completeLogin(response);
     } catch (error) {
       console.error('useAuth: Login failed:', error);
       let errorMessage = error instanceof Error ? error.message : 'Login failed';
@@ -222,11 +279,33 @@ export const useAuth = () => {
       setAuthState(prev => ({
         ...prev,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: errorMessage,
       }));
       throw new Error(errorMessage);
     }
-  }, []);
+  }, [completeLogin]);
+
+  const guestLogin = useCallback(async () => {
+    setAuthState(prev => ({ ...prev, isLoading: true, isLoginLoading: false, isGuestLoginLoading: true, error: null }));
+
+    try {
+      const response = await authService.guestLogin();
+      return await completeLogin(response);
+    } catch (error) {
+      console.error('useAuth: Guest login failed:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Guest login failed';
+      setAuthState(prev => ({
+        ...prev,
+        isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
+        error: errorMessage,
+      }));
+      throw new Error(errorMessage);
+    }
+  }, [completeLogin]);
 
   const register = useCallback(async (userData: RegisterRequest) => {
     setAuthState(prev => ({ ...prev, isLoading: true, error: null }));
@@ -264,6 +343,8 @@ export const useAuth = () => {
         refreshToken: null,
         isAuthenticated: false,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: null,
       });
 
@@ -286,6 +367,8 @@ export const useAuth = () => {
         refreshToken: null,
         isAuthenticated: false,
         isLoading: false,
+        isLoginLoading: false,
+        isGuestLoginLoading: false,
         error: null,
       });
       authService.clearStoredUser();
@@ -381,6 +464,7 @@ export const useAuth = () => {
   return {
     ...authState,
     login,
+    guestLogin,
     register,
     logout,
     refreshToken,

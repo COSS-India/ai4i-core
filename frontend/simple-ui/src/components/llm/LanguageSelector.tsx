@@ -1,6 +1,6 @@
 // Language selector component for LLM
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   Stack,
   FormControl,
@@ -20,6 +20,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   onInputLanguageChange,
   onOutputLanguageChange,
   availableLanguages,
+  disabled = false,
 }) => {
   const handleSwapLanguages = () => {
     const temp = inputLanguage;
@@ -32,6 +33,11 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
     const labelB = LANG_CODE_TO_LABEL[b] || b;
     return labelA.localeCompare(labelB);
   });
+  const targetLanguageOptions = useMemo(
+    () => sortedLanguages.filter((lang) => lang !== inputLanguage),
+    [sortedLanguages, inputLanguage]
+  );
+  const safeOutputLanguage = targetLanguageOptions.includes(outputLanguage) ? outputLanguage : '';
 
   return (
     <Stack spacing={4}>
@@ -45,6 +51,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
             value={inputLanguage}
             onChange={(e) => onInputLanguageChange(e.target.value)}
             placeholder="Select"
+            isDisabled={disabled}
           >
             {sortedLanguages.map((lang) => (
               <option key={lang} value={lang}>
@@ -61,6 +68,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
           size="md"
           colorScheme="orange"
           variant="outline"
+          isDisabled={disabled}
         />
 
         <FormControl flex={1}>
@@ -69,11 +77,12 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
             <Text as="span" color="red.500">*</Text>
           </FormLabel>
           <Select
-            value={outputLanguage}
+            value={safeOutputLanguage}
             onChange={(e) => onOutputLanguageChange(e.target.value)}
             placeholder="Select"
+            isDisabled={disabled}
           >
-            {sortedLanguages.map((lang) => (
+            {targetLanguageOptions.map((lang) => (
               <option key={lang} value={lang}>
                 {LANG_CODE_TO_LABEL[lang] || lang}
               </option>

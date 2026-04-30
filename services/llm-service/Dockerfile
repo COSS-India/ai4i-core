@@ -23,7 +23,7 @@ COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
 COPY libs/ai4icore_env /app/libs/ai4icore_env
 COPY libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
 COPY libs/ai4icore_auth /app/libs/ai4icore_auth
-
+COPY libs/ai4icore_service_base /app/libs/ai4icore_service_base
 # Copy service requirements
 COPY services/llm-service/requirements.txt .
 
@@ -40,6 +40,7 @@ RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_constants
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_exceptions
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_service_base
 # Install packaging explicitly with --user --force-reinstall to ensure it's in user site-packages
 RUN pip install --no-cache-dir --user --force-reinstall packaging
 # -----------------------------
@@ -73,7 +74,7 @@ COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model
 COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
 COPY --from=builder /app/libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
 COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
-
+COPY --from=builder /app/libs/ai4icore_service_base /app/libs/ai4icore_service_base
 # Copy application code and shared constants
 COPY services/llm-service .
 COPY --from=builder /app/libs/ai4icore_constants /app/libs/ai4icore_constants
@@ -91,4 +92,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 
 # Run the application
 # Disable uvicorn access logs since we use RequestLoggingMiddleware with trace_id
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8090", "--no-access-log"]
+ENTRYPOINT ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8090", "--no-access-log"]

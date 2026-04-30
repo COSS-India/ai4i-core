@@ -30,6 +30,7 @@ import {
   setStoredRefreshToken,
   clearTokenStorage,
 } from '../utils/tokenStorage';
+import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 
 /** ngrok free tier can serve an interstitial to browsers; without this header, fetch may fail (often POST/login). */
 function ngrokTunnelHeaders(url: string): Record<string, string> {
@@ -99,6 +100,21 @@ class AuthService {
         } catch (e) {
           // If JSON parsing fails, use empty object
           errorData = {};
+        }
+
+        if (
+          typeof window !== 'undefined' &&
+          responseIndicatesTenantSuspendedOrInactive(response.status, errorData)
+        ) {
+          try {
+            const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+            forceFrontendSessionEnd();
+          } catch {
+            this.clearAuthTokens();
+            this.clearStoredUser();
+            window.location.assign('/auth');
+          }
+          throw new Error('Your organization account is no longer active. Please sign in again.');
         }
         
         // Extract error message from various possible formats (avoid [object Object] when detail is an object)
@@ -216,6 +232,22 @@ class AuthService {
     this.setRefreshToken(response.refresh_token, rememberMe);
 
     return response;
+  }
+
+  async guestLogin(): Promise<LoginResponse> {
+    const response = await this.requestWithoutAuth<LoginResponse>('/guest/login', {
+      method: 'POST',
+    });
+
+    // Guest sessions should stay in session storage by default.
+    this.setAccessToken(response.access_token, false);
+    this.setRefreshToken(response.refresh_token, false);
+
+    return response;
+  }
+
+  async getGuestEnabledServices(): Promise<any> {
+    return this.request<any>('/roles/list/guest/services');
   }
 
   // Request method without authentication header (for login/register)
