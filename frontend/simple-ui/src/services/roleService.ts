@@ -1,7 +1,8 @@
 /**
  * Role management service for RBAC
  */
-import { API_BASE_URL } from './api';
+import { AxiosRequestConfig } from 'axios';
+import { API_BASE_URL, apiClient } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import authService from './authService';
 
@@ -46,29 +47,33 @@ class RoleService {
     };
 
     try {
-      const response = await fetch(url, config);
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const detail = errorData.detail;
-        const message =
-          typeof detail === 'object' && detail !== null && typeof detail.message === 'string'
-            ? detail.message
-            : typeof detail === 'string'
-              ? detail
-              : `HTTP error! status: ${response.status}`;
-        throw new Error(message);
-      }
-
-      const json = await response.json();
+      const axiosConfig: AxiosRequestConfig = {
+        url,
+        method: (config.method || 'GET') as AxiosRequestConfig['method'],
+        headers: config.headers as Record<string, string>,
+        data: config.body,
+      };
+      const response = await apiClient.request(axiosConfig);
+      const json = response.data;
       // Unwrap v2 response envelope: { success: true, data: {...} }
       if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
         return json.data as T;
       }
       return json as T;
-    } catch (error) {
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const errorData = error?.response?.data ?? {};
+      const detail = errorData?.detail;
+      const message =
+        typeof detail === 'object' && detail !== null && typeof detail.message === 'string'
+          ? detail.message
+          : typeof detail === 'string'
+            ? detail
+            : status
+              ? `HTTP error! status: ${status}`
+              : 'Request failed';
       console.error('Role service request failed:', error);
-      throw error;
+      throw new Error(message);
     }
   }
 

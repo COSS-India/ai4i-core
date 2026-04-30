@@ -2,7 +2,8 @@
  * Alerting service — Alert Definitions, Receivers, Routing Rules, and read-only Alert History.
  * Follows the same request pattern as authService (fetch + Bearer token).
  */
-import { API_BASE_URL } from './api';
+import { AxiosRequestConfig } from 'axios';
+import { API_BASE_URL, apiClient } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import authService from './authService';
 import type {
@@ -54,54 +55,40 @@ class AlertingService {
     };
 
     const timeoutMs = 15000;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const response = await fetch(url, {
-        ...config,
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        let errorData: any = {};
-        try {
-          const text = await response.text();
-          if (text) {
-            errorData = JSON.parse(text);
-          }
-        } catch {
-          errorData = {};
-        }
-
-        let errorMessage = `HTTP error! status: ${response.status}`;
-        if (errorData?.detail) {
-          const d = errorData.detail;
-          if (typeof d === 'string') {
-            errorMessage = d;
-          } else if (typeof d === 'object' && d !== null) {
-            errorMessage =
-              (d as any).message != null
-                ? String((d as any).message)
-                : JSON.stringify(d);
-          }
-        } else if (errorData?.message) {
-          errorMessage = String(errorData.message);
-        }
-
-        const error = new Error(errorMessage);
-        (error as any).status = response.status;
-        throw error;
-      }
-
-      return await response.json();
+      const axiosConfig: AxiosRequestConfig = {
+        url,
+        method: (config.method || 'GET') as AxiosRequestConfig['method'],
+        headers: config.headers as Record<string, string>,
+        data: config.body,
+        timeout: timeoutMs,
+      };
+      const response = await apiClient.request(axiosConfig);
+      return response.data as T;
     } catch (error: any) {
-      clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
+      if (error?.code === 'ECONNABORTED') {
         throw new Error('Request timeout: Alerting service is not responding');
       }
-      throw error;
+      const status = error?.response?.status;
+      const errorData = error?.response?.data ?? {};
+      let errorMessage = status ? `HTTP error! status: ${status}` : 'Request failed';
+      if (errorData?.detail) {
+        const d = errorData.detail;
+        if (typeof d === 'string') {
+          errorMessage = d;
+        } else if (typeof d === 'object' && d !== null) {
+          errorMessage =
+            (d as any).message != null
+              ? String((d as any).message)
+              : JSON.stringify(d);
+        }
+      } else if (errorData?.message) {
+        errorMessage = String(errorData.message);
+      }
+      const normalizedError = new Error(errorMessage);
+      (normalizedError as any).status = status;
+      throw normalizedError;
     }
   }
 
