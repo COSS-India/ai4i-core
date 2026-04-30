@@ -1,6 +1,6 @@
 // Audio Language Detection service API client
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
 import { listServices } from './modelManagementService';
 
 export interface AudioLanguageDetectionServiceDetailsResponse {
@@ -56,11 +56,7 @@ export const listAudioLanguageDetectionServices = async (): Promise<AudioLanguag
         });
       }
       
-      // Extract endpoint and clean it
-      let endpoint = service.endpoint || '';
-      if (endpoint) {
-        endpoint = endpoint.replace('http://', '').replace('https://', '');
-      }
+      const endpoint = service.endpoint || '';
       
       return {
         service_id: service.serviceId || service.service_id,
@@ -101,7 +97,7 @@ export const performAudioLanguageDetectionInference = async (
       },
     };
 
-    const response = await apiClient.post<AudioLanguageDetectionInferenceResponse>(
+    const response = await apiService.post<AudioLanguageDetectionInferenceResponse>(
       apiEndpoints['audio-language-detection'].inference,
       payload
     );

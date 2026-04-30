@@ -1,6 +1,6 @@
 // OCR service API client
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
 import { listServices } from './modelManagementService';
 
 export interface OCRInferenceRequest {
@@ -122,7 +122,7 @@ export const performOCRInference = async (
       },
     };
 
-    const response = await apiClient.post<OCRInferenceResponse>(
+    const response = await apiService.post<OCRInferenceResponse>(
       apiEndpoints.ocr.inference,
       payload
     );

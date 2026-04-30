@@ -2,7 +2,7 @@
 // Allows users to try NMT service without authentication
 // Rate limited to 5 requests per hour per user/IP
 
-import { apiClient } from './api';
+import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import { NMTInferenceRequest, NMTInferenceResponse } from '../types/nmt';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
@@ -31,7 +31,7 @@ export interface TryItRequest {
  * @returns Promise with raw list of services from the API
  */
 export const listTryItNMTServices = async (): Promise<any[]> => {
-  const response = await apiClient.get<any[] | ApiEnvelope<any[]>>(
+  const response = await apiService.get<any[] | ApiEnvelope<any[]>>(
     apiEndpoints.platform.services.tryItList,
     {
       params: { task_type: 'nmt' },
@@ -81,7 +81,7 @@ export const performTryItNMTInference = async (
       payload: nmtPayload,
     };
 
-    const response = await apiClient.post<NMTInferenceResponse>(
+    const response = await apiService.post<NMTInferenceResponse>(
       apiEndpoints.platform.tryIt.execute,
       tryItPayload,
       { headers: getTryItHeaders() }

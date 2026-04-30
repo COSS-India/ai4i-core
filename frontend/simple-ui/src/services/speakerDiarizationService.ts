@@ -1,6 +1,6 @@
 // Speaker Diarization service API client
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
 import { listServices } from './modelManagementService';
 
 export interface SpeakerDiarizationServiceDetailsResponse {
@@ -111,7 +111,7 @@ export const performSpeakerDiarizationInference = async (
       },
     };
 
-    const response = await apiClient.post<SpeakerDiarizationInferenceResponse>(
+    const response = await apiService.post<SpeakerDiarizationInferenceResponse>(
       apiEndpoints['speaker-diarization'].inference,
       payload
     );

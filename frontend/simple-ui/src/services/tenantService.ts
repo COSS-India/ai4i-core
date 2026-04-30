@@ -1,7 +1,7 @@
 // Tenant admin API client.
 // Backed by auth-service tenant endpoints.
 
-import { apiClient } from './api';
+import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import type {
   ListTenantsResponse,
@@ -35,20 +35,20 @@ export async function listTenants(params?: {
   offset?: number;
   limit?: number;
 }): Promise<ListTenantsResponse> {
-  const { data } = await apiClient.get<Envelope<TenantView[]>>(BASE, { params });
+  const { data } = await apiService.get<Envelope<TenantView[]>>(BASE, { params });
   const tenants = data.data ?? [];
   return { count: tenants.length, tenants };
 }
 
 export async function getViewTenant(tenant_id: string): Promise<TenantView> {
-  const { data } = await apiClient.get<Envelope<TenantView>>(`${BASE}/${tenant_id}`);
+  const { data } = await apiService.get<Envelope<TenantView>>(`${BASE}/${tenant_id}`);
   return data.data;
 }
 
 export async function registerTenant(
   payload: TenantRegisterRequest
 ): Promise<TenantRegisterResponse> {
-  const { data } = await apiClient.post<Envelope<TenantView>>(BASE, payload);
+  const { data } = await apiService.post<Envelope<TenantView>>(BASE, payload);
   return data.data;
 }
 
@@ -56,7 +56,7 @@ export async function updateTenant(
   payload: TenantUpdateRequest & { tenant_id: string }
 ): Promise<TenantUpdateResponse> {
   const { tenant_id, ...body } = payload;
-  const { data } = await apiClient.patch<Envelope<TenantView>>(
+  const { data } = await apiService.patch<Envelope<TenantView>>(
     `${BASE}/${tenant_id}`,
     body
   );
@@ -67,7 +67,7 @@ export async function updateTenantStatus(
   payload: TenantStatusUpdateRequest & { tenant_id: string }
 ): Promise<TenantStatusUpdateResponse> {
   const { tenant_id, status } = payload;
-  const { data } = await apiClient.patch<Envelope<TenantView>>(
+  const { data } = await apiService.patch<Envelope<TenantView>>(
     `${BASE}/${tenant_id}/status`,
     { status }
   );
@@ -75,7 +75,7 @@ export async function updateTenantStatus(
 }
 
 export async function listUsers(tenant_id: string): Promise<ListUsersResponse> {
-  const { data } = await apiClient.get<Envelope<TenantUserView[]>>(
+  const { data } = await apiService.get<Envelope<TenantUserView[]>>(
     `${BASE}/${tenant_id}/users`
   );
   const users = data.data ?? [];
@@ -83,7 +83,7 @@ export async function listUsers(tenant_id: string): Promise<ListUsersResponse> {
 }
 
 export async function getViewUser(user_id: string): Promise<TenantUserView> {
-  const { data } = await apiClient.get<Envelope<TenantUserView>>(
+  const { data } = await apiService.get<Envelope<TenantUserView>>(
     apiEndpoints.auth.user(user_id)
   );
   return data.data;
@@ -93,7 +93,7 @@ export async function registerUser(
   payload: UserRegisterRequest & { tenant_id: string }
 ): Promise<UserRegisterResponse> {
   const { tenant_id, ...body } = payload;
-  const { data } = await apiClient.post<Envelope<UserRegisterResponse>>(
+  const { data } = await apiService.post<Envelope<UserRegisterResponse>>(
     `${BASE}/${tenant_id}/users`,
     body
   );
@@ -104,7 +104,7 @@ export async function updateUserStatus(
   payload: TenantUserStatusUpdateRequest & { tenant_id: string; user_id: string }
 ): Promise<TenantUserStatusUpdateResponse> {
   const { tenant_id, user_id, ...body } = payload;
-  const { data } = await apiClient.patch<Envelope<TenantUserView>>(
+  const { data } = await apiService.patch<Envelope<TenantUserView>>(
     `${BASE}/${tenant_id}/users/${user_id}/status`,
     body
   );
@@ -115,7 +115,7 @@ export async function updateUser(
   payload: TenantUserUpdateRequest & { tenant_id: string; user_id: string }
 ): Promise<TenantUserUpdateResponse> {
   const { tenant_id, user_id, ...body } = payload;
-  const { data } = await apiClient.patch<Envelope<TenantUserView>>(
+  const { data } = await apiService.patch<Envelope<TenantUserView>>(
     `${BASE}/${tenant_id}/users/${user_id}`,
     body
   );
@@ -127,7 +127,7 @@ export async function deleteUser(payload: {
   user_id: string;
 }): Promise<{ user_id: string; deleted: boolean }> {
   const { tenant_id, user_id } = payload;
-  const { data } = await apiClient.delete<
+  const { data } = await apiService.delete<
     Envelope<{ user_id: string; deleted: boolean }>
   >(`${BASE}/${tenant_id}/users/${user_id}`);
   return data.data;

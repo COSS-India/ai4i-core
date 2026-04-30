@@ -1,6 +1,6 @@
 // Feature flag service for interacting with config service
 
-import { apiClient } from './api';
+import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 
 // Types
@@ -63,7 +63,7 @@ export const evaluateFeatureFlag = async (
       ? request.default_value 
       : (typeof request.default_value === 'boolean' ? true : request.default_value);
     
-    const response = await apiClient.post<FeatureFlagEvaluationResponse>(
+    const response = await apiService.post<FeatureFlagEvaluationResponse>(
       apiEndpoints.featureFlags.evaluate,
       {
         ...request,
@@ -94,7 +94,7 @@ export const evaluateBooleanFlag = async (
   userId?: string,
   context?: Record<string, any>
 ): Promise<{ flag_name: string; value: boolean; reason: string }> => {
-  const response = await apiClient.post<{ flag_name: string; value: boolean; reason: string }>(
+  const response = await apiService.post<{ flag_name: string; value: boolean; reason: string }>(
     apiEndpoints.featureFlags.evaluateBoolean,
     {
       flag_name: flagName,
@@ -113,7 +113,7 @@ export const evaluateBooleanFlag = async (
 export const bulkEvaluateFlags = async (
   request: BulkEvaluationRequest
 ): Promise<{ results: Record<string, FeatureFlagEvaluationResponse> }> => {
-  const response = await apiClient.post<{ results: Record<string, FeatureFlagEvaluationResponse> }>(
+  const response = await apiService.post<{ results: Record<string, FeatureFlagEvaluationResponse> }>(
     apiEndpoints.featureFlags.evaluateBulk,
     request
   );
@@ -127,7 +127,7 @@ export const getFeatureFlag = async (
   name: string,
   environment: string
 ): Promise<FeatureFlagResponse> => {
-  const response = await apiClient.get<FeatureFlagResponse>(
+  const response = await apiService.get<FeatureFlagResponse>(
     apiEndpoints.featureFlags.byName(name),
     {
       params: { environment },
@@ -144,7 +144,7 @@ export const listFeatureFlags = async (
   limit: number = 50,
   offset: number = 0
 ): Promise<FeatureFlagListResponse> => {
-  const response = await apiClient.get<FeatureFlagListResponse>(
+  const response = await apiService.get<FeatureFlagListResponse>(
     apiEndpoints.featureFlags.list,
     {
       params: { environment, limit, offset },
@@ -159,7 +159,7 @@ export const listFeatureFlags = async (
 export const syncFeatureFlags = async (
   environment: string
 ): Promise<{ synced_count: number; environment: string }> => {
-  const response = await apiClient.post<{ synced_count: number; environment: string }>(
+  const response = await apiService.post<{ synced_count: number; environment: string }>(
     apiEndpoints.featureFlags.sync,
     null,
     {

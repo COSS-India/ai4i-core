@@ -4,6 +4,7 @@ import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestCo
 import { getStoredAccessToken } from '../utils/tokenStorage';
 import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 import { apiEndpoints, API_URL_PATH_MARKERS } from './apiEndpoints';
+import BaseApiService from './baseApiService';
 
 // API Base URL from environment.
 // For production this should be set to the browser-facing API gateway URL
@@ -33,6 +34,11 @@ export const resolveRequestHeaders = (
   ...(baseHeaders || {}),
   ...(customHeaders || {}),
 });
+
+const normalizeHeaders = (headers?: InternalAxiosRequestConfig['headers']): ApiRequestHeaders => {
+  if (!headers) return {};
+  return axios.AxiosHeaders.from(headers).toJSON() as ApiRequestHeaders;
+};
 
 // Create shared Axios instance
 const apiClient: AxiosInstance = axios.create({
@@ -139,7 +145,10 @@ const getEndpointContext = (rawUrl: string): EndpointContext => {
 // Request interceptor for authentication and timing
 apiClient.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
-    config.headers = config.headers || {};
+    // Keep JSON defaults, but allow request-level headers to override them.
+    config.headers = axios.AxiosHeaders.from(
+      resolveRequestHeaders(normalizeHeaders(config.headers))
+    );
     // Add request start time for timing calculation
     config.headers['request-startTime'] = new Date().getTime().toString();
     
@@ -401,5 +410,7 @@ apiClient.interceptors.response.use(
 );
 
 // Export API client and endpoints
-export { apiClient, API_BASE_URL };
+const apiService = new BaseApiService(apiClient);
+
+export { apiClient, apiService, API_BASE_URL };
 export default apiClient;

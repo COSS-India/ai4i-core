@@ -1,6 +1,6 @@
 // NMT service API client with typed methods
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
 import { listServices } from './modelManagementService';
 import {
   NMTInferenceRequest,
@@ -54,7 +54,7 @@ export const performNMTInference = async (
       },
     };
 
-    const response = await apiClient.post<NMTInferenceResponse>(
+    const response = await apiService.post<NMTInferenceResponse>(
       apiEndpoints.nmt.inference,
       payload
     );
@@ -78,7 +78,7 @@ export const performNMTInference = async (
  */
 export const listNMTModels = async (): Promise<NMTModelDetailsResponse[]> => {
   try {
-    const response = await apiClient.get<{ models: NMTModelDetailsResponse[]; total_models: number }>(
+    const response = await apiService.get<{ models: NMTModelDetailsResponse[]; total_models: number }>(
       apiEndpoints.nmt.models
     );
 
@@ -394,7 +394,7 @@ export const getNMTLanguagesForService = async (
  */
 export const checkNMTHealth = async (): Promise<NMTHealthResponse> => {
   try {
-    const response = await apiClient.get<NMTHealthResponse>(
+    const response = await apiService.get<NMTHealthResponse>(
       apiEndpoints.nmt.health
     );
 
@@ -411,7 +411,7 @@ export const checkNMTHealth = async (): Promise<NMTHealthResponse> => {
  */
 export const getNMTConfig = async () => {
   try {
-    const response = await apiClient.get(apiEndpoints.nmt.config);
+    const response = await apiService.get(apiEndpoints.nmt.config);
     return response.data;
   } catch (error) {
     console.error('Failed to fetch NMT config:', error);
