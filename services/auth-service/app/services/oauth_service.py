@@ -186,13 +186,22 @@ class OAuthService:
             username = f"{base_username}{counter}"
             counter += 1
 
+        # Map provider to CreationType. Known providers get their own enum
+        # value; unknown providers fall back to DEFAULT until an OTHERS
+        # variant is added to the creation_type_enum in the DB.
+        creation_type = (
+            CreationType(provider_name.lower())
+            if provider_name.lower() in CreationType._value2member_map_
+            else CreationType.DEFAULT
+        )
+
         user = User(
             email=email,
             username=username,
             full_name=full_name,
             avatar_url=avatar_url,
             is_active=True,  # OAuth identity = email already verified by provider
-            creation_type=CreationType.GOOGLE,
+            creation_type=creation_type,
         )
         await self._users.create(user)
 

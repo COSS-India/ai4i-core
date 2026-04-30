@@ -124,8 +124,13 @@ async def authorize(
         json.dumps({"provider": provider, "redirect_uri": redirect_uri or ""}),
     )
 
+    if not settings.oauth_redirect_base_url:
+        raise EntityNotFoundError(
+            "OAUTH_REDIRECT_BASE_URL must be configured for OAuth"
+        )
+
     callback_url = (
-        f"{settings.oauth_redirect_base_url or ''}"
+        f"{settings.oauth_redirect_base_url}"
         f"/api/v1/auth/oauth2/{provider}/callback"
     )
     params = {
@@ -174,8 +179,13 @@ async def callback(
     if state_data.get("provider") != provider:
         raise AuthenticationRequiredError("OAuth provider mismatch.")
 
+    if not settings.oauth_redirect_base_url:
+        raise EntityNotFoundError(
+            "OAUTH_REDIRECT_BASE_URL must be configured for OAuth"
+        )
+
     callback_url = (
-        f"{settings.oauth_redirect_base_url or ''}"
+        f"{settings.oauth_redirect_base_url}"
         f"/api/v1/auth/oauth2/{provider}/callback"
     )
     result = await svc.complete_oauth_login(
