@@ -17,7 +17,8 @@ class UserSession(Base):
     refresh_token = Column(Text, unique=True, index=True, nullable=True)
     token_id = Column(String(36), unique=True, index=True, nullable=True)
     device_info = Column(JSON, nullable=True)
-    ip_address = Column(String(45), nullable=True)
+    # X-Forwarded-For can be a chain (IPv6 + commas + spaces) — longer than 45 chars.
+    ip_address = Column(String(512), nullable=True)
     user_agent = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

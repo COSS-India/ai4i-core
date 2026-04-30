@@ -9,9 +9,12 @@ TEMPLATE="${APISIX_CONFIG_TEMPLATE:-$CONF_DIR/apisix.yaml.template}"
 OUTPUT="$CONF_DIR/apisix.yaml"
 
 APISIX_PUBLIC_ORIGIN="${APISIX_PUBLIC_ORIGIN:-http://localhost:3000}"
-# Keep default suffix empty for Docker service discovery (e.g. "pii-guard-service").
-# A "." default creates hostnames like "service." which can fail DNS resolution locally.
-APISIX_UPSTREAM_SUFFIX="${APISIX_UPSTREAM_SUFFIX-}"
+# Trailing dot on short names (e.g. auth-service.:8081) makes the resolver treat them
+# as fully-qualified and stops libc from appending the host DNS search domains.
+# Without this, names like "auth-service" can resolve to wrong public IPs → APISIX 504.
+# Override for Kubernetes: APISIX_UPSTREAM_SUFFIX=.svc.cluster.local (no leading dot in env;
+# template is auth-service${APISIX_UPSTREAM_SUFFIX} — set suffix to ".svc.cluster.local").
+APISIX_UPSTREAM_SUFFIX="${APISIX_UPSTREAM_SUFFIX:-.}"
 
 if [ ! -f "$TEMPLATE" ]; then
     echo "Error: APISIX template not found at $TEMPLATE" >&2

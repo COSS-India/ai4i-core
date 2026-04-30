@@ -38,14 +38,16 @@ from models.db_models import (
 )
 from models.auth_models import Role, UserRole, UserDB
 
-from models.enum_tenant import  (
-    SubscriptionType, 
-    TenantStatus, 
-    AuditAction , 
-    BillingStatus , 
-    AuditActorType , 
-    TenantUserStatus
-    )
+from models.enum_tenant import (
+    SubscriptionType,
+    TenantStatus,
+    AuditAction,
+    BillingStatus,
+    AuditActorType,
+    TenantUserStatus,
+    ServiceUnitType,
+    ServiceCurrencyType,
+)
 
 from models.tenant_create import TenantRegisterRequest, TenantRegisterResponse
 from models.tenant_subscription import TenantSubscriptionResponse
@@ -1558,6 +1560,18 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     admin_username_str = str(tenant.temp_admin_username) if tenant.temp_admin_username else admin_username
     password_str = str(plain_password)
 
+    # TODO(remove): local POC debug — plaintext in process stdout / logs
+    print(
+        f"[DEBUG tenant verify] tenant_id={tenant.tenant_id} username={admin_username_str} password={password_str}",
+        flush=True,
+    )
+    logger.debug(
+        "[DEBUG tenant verify] tenant_id=%s username=%s password=%s",
+        tenant.tenant_id,
+        admin_username_str,
+        password_str,
+    )
+
     if getattr(app_env, "log_tenant_generated_passwords", False):
         logger.warning(
             "Tenant admin credentials (LOG_TENANT_GENERATED_PASSWORDS=true): tenant_id=%s username=%s password=%s",
@@ -1858,41 +1872,67 @@ async def delete_service(
     )
 
 
+def _coerce_service_unit_type(raw) -> ServiceUnitType:
+    if isinstance(raw, ServiceUnitType):
+        return raw
+    s = (str(raw) if raw is not None else "").strip().lower()
+    for m in ServiceUnitType:
+        if m.value == s:
+            return m
+    logger.warning("list_service: unknown unit_type %r, using minute", raw)
+    return ServiceUnitType.MINUTE
+
+
+def _coerce_service_currency(raw) -> ServiceCurrencyType:
+    if isinstance(raw, ServiceCurrencyType):
+        return raw
+    c = (str(raw) if raw is not None else "INR").strip().upper()
+    for m in ServiceCurrencyType:
+        if m.value == c:
+            return m
+    logger.warning("list_service: unknown currency %r, using INR", raw)
+    return ServiceCurrencyType.INR
+
+
 async def list_service(db: AsyncSession) -> ListServicesResponse:
     """
     List all active services with their configuration details.
-    
-    Args:
-        db: Database session
-    Returns:
-        ListServicesResponse: List of active services and their details 
+
+    Coerces unknown enum-like DB values so `/internal/list/services` never 500s on bad legacy rows.
     """
 
-    result = await db.execute(
-        select(ServiceConfig)
-    )
-
+    result = await db.execute(select(ServiceConfig))
     services = result.scalars().all()
 
-    return ListServicesResponse(
-        count=len(services),
-        services=[
-            ServiceResponse(
-                id=s.id,
-                service_name=s.service_name,
-                unit_type=s.unit_type,
-                price_per_unit=s.price_per_unit,
-                currency=s.currency,
-                is_active=s.is_active,
-                cost_per_unit=s.cost_per_unit,
-                tier=s.tier,
-                billing_unit_type=s.billing_unit_type,
-                created_at=s.created_at,
-                updated_at=s.updated_at,
+    out: List[ServiceResponse] = []
+    for s in services:
+        try:
+            out.append(
+                ServiceResponse(
+                    id=int(s.id),
+                    service_name=str(s.service_name),
+                    unit_type=_coerce_service_unit_type(s.unit_type),
+                    price_per_unit=s.price_per_unit
+                    if s.price_per_unit is not None
+                    else Decimal("0"),
+                    currency=_coerce_service_currency(s.currency),
+                    is_active=bool(s.is_active) if s.is_active is not None else True,
+                    cost_per_unit=s.cost_per_unit,
+                    tier=s.tier,
+                    billing_unit_type=s.billing_unit_type,
+                    created_at=s.created_at,
+                    updated_at=s.updated_at,
+                )
             )
-            for s in services
-        ],
-    )
+        except Exception as e:  # noqa: BLE001
+            logger.exception(
+                "list_service: skip service_config id=%s name=%s: %s",
+                getattr(s, "id", None),
+                getattr(s, "service_name", None),
+                e,
+            )
+
+    return ListServicesResponse(count=len(out), services=out)
 
 
 
@@ -2313,6 +2353,18 @@ async def register_user(
 
     logger.info(
         f"User registered successfully | tenant={tenant.tenant_id} | user={payload.username}"
+    )
+
+    # TODO(remove): local POC debug — plaintext in process stdout / logs
+    print(
+        f"[DEBUG tenant user register] tenant_id={tenant.tenant_id} username={payload.username} password={user_password}",
+        flush=True,
+    )
+    logger.debug(
+        "[DEBUG tenant user register] tenant_id=%s username=%s password=%s",
+        tenant.tenant_id,
+        payload.username,
+        user_password,
     )
 
     if getattr(app_env, "log_tenant_generated_passwords", False):
