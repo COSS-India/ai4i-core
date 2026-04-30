@@ -43,7 +43,6 @@ import { extractErrorInfo } from "../../utils/errorHandler";
 import {
   applyDemoAdopterUsage,
   applyDemoTenantUsage,
-  DEMO_ACTIVE_SERVICES,
   USAGE_DEMO_ENABLED,
 } from "../../utils/usageDemoMock";
 
@@ -95,11 +94,11 @@ export default function UsageDashboardPage() {
   const [tenantData, setTenantData] = useState<TenantUsageDetailResponse | null>(null);
   const [topup, setTopup] = useState("100");
 
+  // Prefer tenant usage when the user is a tenant admin with a tenant in the JWT (even if they also have ADMIN).
   useEffect(() => {
-    if (!isAdopterAdmin && isTenantAdmin && tenantIdFromToken) {
+    if (isTenantAdmin && tenantIdFromToken) {
       setViewMode("tenant");
-    }
-    if (isAdopterAdmin && !isTenantAdmin) {
+    } else if (isAdopterAdmin) {
       setViewMode("adopter");
     }
   }, [isAdopterAdmin, isTenantAdmin, tenantIdFromToken]);
@@ -212,9 +211,11 @@ export default function UsageDashboardPage() {
                 <Card variant="outline">
                   <CardBody>
                     <Stat>
-                      <StatLabel>Active services</StatLabel>
-                      <StatNumber fontSize="3xl">{formatIn(DEMO_ACTIVE_SERVICES)}</StatNumber>
-                      <StatHelpText color="gray.500">Across the platform</StatHelpText>
+                      <StatLabel>Services with usage (month)</StatLabel>
+                      <StatNumber fontSize="3xl">
+                        {formatIn((adopterData.service_usage || []).length)}
+                      </StatNumber>
+                      <StatHelpText color="gray.500">Distinct services with recorded usage</StatHelpText>
                     </Stat>
                   </CardBody>
                 </Card>

@@ -1,6 +1,10 @@
 /**
  * Demo-only overlay for Usage dashboards. Preserves API tenant IDs for drill-down;
  * keeps real active_tenants count from the API.
+ *
+ * Demo data is OFF unless NEXT_PUBLIC_USAGE_DEMO=true at build/dev startup.
+ * Do not flip a source constant here — Docker cached `.next` / stale bundles otherwise look “broken”
+ * when the API returns real rows but the UI still shows demo numbers.
  */
 import type {
   AdopterUsageResponse,
@@ -10,7 +14,8 @@ import type {
   TenantServiceUsageRow,
 } from "../services/usageService";
 
-export const USAGE_DEMO_ENABLED = true;
+export const USAGE_DEMO_ENABLED: boolean =
+  typeof process !== "undefined" && process.env.NEXT_PUBLIC_USAGE_DEMO === "true";
 
 export const DEMO_ADOPTER_COST_TOTAL = 124_856;
 export const DEMO_TOP_TENANT_COSTS = [38_420, 43_218, 43_218] as const;
