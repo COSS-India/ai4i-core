@@ -138,3 +138,7 @@ services/auth-service-v2/keys/
 
 # Skills (internal review checklists)
 skills/
+
+# LLMs
+.cursor/
+.claude/
