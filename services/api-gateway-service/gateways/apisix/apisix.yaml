@@ -1025,176 +1025,6 @@
         then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
         charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
         \ end\nend\n"
-- uri: /api/v1/policy-engine/*
-  name: policy-engine-route
-  priority: 100
-  methods:
-  - GET
-  - POST
-  - PUT
-  - PATCH
-  - DELETE
-  - OPTIONS
-  upstream:
-    hash_on: vars
-    scheme: http
-    timeout:
-      send: 60
-      connect: 60
-      read: 60
-    nodes:
-      policy-engine${APISIX_UPSTREAM_SUFFIX}:8095: 1
-    pass_host: pass
-    type: roundrobin
-  plugins:
-    serverless-pre-function:
-      phase: rewrite
-      functions:
-      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\n  ngx.req.set_header(\"X-Original-URI\", ngx.var.uri)\n  ngx.req.set_header(\"X-Original-Method\", ngx.req.get_method())\n  ngx.req.set_header(\"X-Forwarded-For\", ngx.var.remote_addr)\nend\n"
-    forward-auth:
-      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
-      request_headers:
-      - Authorization
-      - X-API-Key
-      - x-api-key
-      - apikey
-      - X-Original-URI
-      - X-Original-Method
-      upstream_headers:
-      - X-User-ID
-      - X-Auth-Type
-      - X-User-Plan
-      - X-User-Roles
-      client_headers:
-      - WWW-Authenticate
-      - X-Auth-Error
-      timeout: 3000
-      keepalive: true
-      keepalive_timeout: 60000
-      keepalive_pool: 5
-    cors:
-      allow_origins: ${APISIX_PUBLIC_ORIGIN}
-      allow_methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
-      max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token,X-Correlation-ID,X-Request-ID
-      allow_credential: true
-    proxy-rewrite:
-      regex_uri:
-      - ^/api/v1/policy-engine/(.*)
-      - /$1
-      headers:
-        add:
-          X-Correlation-ID: $request_id
-          X-Gateway: apisix
-      use_real_request_uri_unsafe: false
-    response-rewrite:
-      body_base64: false
-      headers:
-        set:
-          X-Served-By: APISIX-Gateway
-          X-Service: policy-engine
-    limit-count:
-      policy: local
-      key_type: var
-      rejected_code: 429
-      show_limit_quota_header: true
-      key: http_x_user_id
-      time_window: 60
-      allow_degradation: false
-      count: 120
-    serverless-post-function:
-      phase: header_filter
-      functions:
-      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
-        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
-        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
-        \ end\nend\n"
-- uri: /api/v1/pay-per-use/*
-  name: pay-per-use-route
-  priority: 100
-  methods:
-  - GET
-  - POST
-  - PUT
-  - PATCH
-  - DELETE
-  - OPTIONS
-  upstream:
-    hash_on: vars
-    scheme: http
-    timeout:
-      send: 60
-      connect: 60
-      read: 60
-    nodes:
-      pay-per-use-service${APISIX_UPSTREAM_SUFFIX}:8006: 1
-    pass_host: pass
-    type: roundrobin
-  plugins:
-    serverless-pre-function:
-      phase: rewrite
-      functions:
-      - "return function(conf, ctx)\n  ngx.req.set_header(\"X-User-Id\", nil)\n  ngx.req.set_header(\"X-Original-URI\", ngx.var.uri)\n  ngx.req.set_header(\"X-Original-Method\", ngx.req.get_method())\n  ngx.req.set_header(\"X-Forwarded-For\", ngx.var.remote_addr)\nend\n"
-    forward-auth:
-      uri: http://auth-service${APISIX_UPSTREAM_SUFFIX}:8081/api/v1/auth/validate
-      request_headers:
-      - Authorization
-      - X-API-Key
-      - x-api-key
-      - apikey
-      - X-Original-URI
-      - X-Original-Method
-      upstream_headers:
-      - X-User-ID
-      - X-Auth-Type
-      - X-User-Plan
-      - X-User-Roles
-      client_headers:
-      - WWW-Authenticate
-      - X-Auth-Error
-      timeout: 3000
-      keepalive: true
-      keepalive_timeout: 60000
-      keepalive_pool: 5
-    cors:
-      allow_origins: ${APISIX_PUBLIC_ORIGIN}
-      allow_methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
-      max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
-      expose_headers: X-Auth-Token,X-Correlation-ID,X-Request-ID
-      allow_credential: true
-    proxy-rewrite:
-      regex_uri:
-      - ^/api/v1/pay-per-use/(.*)
-      - /$1
-      headers:
-        add:
-          X-Correlation-ID: $request_id
-          X-Gateway: apisix
-      use_real_request_uri_unsafe: false
-    response-rewrite:
-      body_base64: false
-      headers:
-        set:
-          X-Served-By: APISIX-Gateway
-          X-Service: pay-per-use
-    limit-count:
-      policy: local
-      key_type: var
-      rejected_code: 429
-      show_limit_quota_header: true
-      key: http_x_user_id
-      time_window: 60
-      allow_degradation: false
-      count: 120
-    serverless-post-function:
-      phase: header_filter
-      functions:
-      - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]
-        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
-        charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
-        \ end\nend\n"
 - uri: /api/v1/multi-tenant/email/verify
   name: multi-tenant-email-verify-route
   priority: 210
@@ -2118,6 +1948,30 @@
     type: roundrobin
 - uri: /alerts-management/*
   name: frontend-alerts-management-prefix
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /admin
+  name: frontend-admin
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /admin/*
+  name: frontend-admin-prefix
   priority: 3
   methods:
   - GET
