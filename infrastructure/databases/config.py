@@ -25,15 +25,25 @@ except ModuleNotFoundError:
 class MigrationConfig:
     """Configuration for database migrations"""
 
+    # Maps the CLI's logical database keys to the env-var that holds the real
+    # PostgreSQL database name.  If the env var is unset the key itself is used
+    # as the fallback, which matches the default naming convention.
+    _DB_NAME_ENV_MAP: Dict[str, str] = {
+        'ai4i_platform': 'AI4I_PLATFORM_DB_NAME',
+    }
+
     @staticmethod
     def get_postgres_config(database: str = 'auth_db') -> Dict[str, Any]:
         """Get PostgreSQL configuration"""
+        import os
+        env_key = MigrationConfig._DB_NAME_ENV_MAP.get(database)
+        resolved_database = (os.getenv(env_key) or database) if env_key else database
         return {
             'host': app_env.postgres_host,
             'port': app_env.postgres_port,
             'user': app_env.postgres_user,
             'password': app_env.postgres_password,
-            'database': database,
+            'database': resolved_database,
             'async': False
         }
 

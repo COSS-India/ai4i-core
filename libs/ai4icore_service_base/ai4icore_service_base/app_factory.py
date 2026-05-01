@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+import httpx
 import redis.asyncio as aioredis
 import redis as redis_sync
 from fastapi import APIRouter, FastAPI
@@ -178,11 +179,24 @@ def _build_lifespan(config: InferenceServiceConfig, db_base: Any):
         async with db_engine.begin() as conn:
             await conn.run_sync(db_base.metadata.create_all)
 
+        # ── PII Guardrail HTTP client ──
+        pii_http_client: Optional[httpx.AsyncClient] = None
+        pii_service_url = (app_env.pii_service_url or "").strip()
+        if pii_service_url:
+            pii_http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(app_env.pii_redact_timeout),
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            )
+            svc_logger.info("PII Guardrail client initialised (url=%s)", pii_service_url)
+
         # ── Store in app.state ──
         app.state.redis_client = redis_client
         app.state.db_engine = db_engine
         app.state.db_session_factory = db_session_factory
         app.state.triton_api_key = app_env.triton_api_key
+        app.state.pii_service_url = pii_service_url
+        app.state.pii_redact_timeout = app_env.pii_redact_timeout
+        app.state.pii_http_client = pii_http_client
 
         # Service-specific extra state
         for key, value in config.extra_state.items():
@@ -258,6 +272,8 @@ def _build_lifespan(config: InferenceServiceConfig, db_base: Any):
             pass
         if instance_id:
             await registry_client.deregister(service_name, instance_id)
+        if pii_http_client:
+            await pii_http_client.aclose()
         if redis_client:
             await redis_client.close()
         if db_engine:
