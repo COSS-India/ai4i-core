@@ -590,7 +590,9 @@ services:
       - PAY_PER_USE_SERVICE_URL=http://pay-per-use-service:8006
       - PYTHONPATH=/app:/app/libs/ai4icore_multi_tenant:/app/libs/ai4icore_observability:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry:/app/libs/ai4icore_model_management:/home/app/.local/lib/python3.11/site-packages
     env_file:
-      - ./services/nmt-service/.env
+      - ./services/nmt-service/.env.defaults
+      - path: ./services/nmt-service/.env
+        required: false
     volumes:
       - ./services/nmt-service:/app
       - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
@@ -602,6 +604,7 @@ services:
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
       - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_service_base:/app/libs/ai4icore_service_base
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -744,7 +747,8 @@ services:
       - KAFKA_AUDIT_TOPIC=${KAFKA_PII_AUDIT_TOPIC:-pii_audit_logs}
       - OTEL_SERVICE_NAME=pii-guardrail
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
-      - NER_SERVICE_URL=${EXTERNAL_GPU_NER_URL}
+      - NER_SERVICE_URL=${PII_NER_URL:-http://13.206.126.62:8005/ner}
+      - LLM_SERVICE_URL=${PII_LLM_URL:-http://13.206.126.62:8000/api/query}
       - AUTH_SERVICE_URL=${AUTH_SERVICE_URL}
       - JWKS_URL=${JWKS_URL}
     depends_on:
