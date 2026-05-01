@@ -110,7 +110,7 @@ class LLMTritonClient:
                 headers["Authorization"] = f"Bearer {self.api_key}"
 
             payload = self.get_llm_io_for_triton(inputs, input_language, output_language)
-            endpoint_url = f"{self.triton_url}/services/inference/{model_name}"
+            endpoint_url = f"{self.triton_url.rstrip('/')}/v2/models/{model_name}/infer"
 
             logger.info(f"Sending LLM inference request to {endpoint_url}")
 
