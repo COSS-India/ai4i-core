@@ -2030,6 +2030,30 @@
       simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
     pass_host: pass
     type: roundrobin
+- uri: /dashboard
+  name: frontend-dashboard-usage-billing
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
+- uri: /dashboard/*
+  name: frontend-dashboard-usage-billing-prefix
+  priority: 3
+  methods:
+  - GET
+  upstream:
+    hash_on: vars
+    scheme: http
+    nodes:
+      simple-ui${APISIX_UPSTREAM_SUFFIX}:3000: 1
+    pass_host: pass
+    type: roundrobin
 - uri: /api-key-management
   name: frontend-api-key-management
   priority: 3
