@@ -6,6 +6,8 @@ import re
 import os
 import json
 import time
+import hashlib
+import hmac
 import asyncpg
 import httpx
 import redis.asyncio as aioredis
@@ -26,8 +28,10 @@ DB_HOST = os.getenv("DB_HOST", "postgres")
 DB_NAME = os.getenv("DB_NAME", "pii_guardrail")
 DB_USER = os.getenv("DB_USER", "admin")
 DB_PASS = os.getenv("DB_PASS", "secret")
+PII_HASH_KEY = os.getenv("PII_HASH_KEY", "changeme").encode()
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
-NER_SERVICE_URL = os.getenv("NER_SERVICE_URL", "http://localhost:9001/ner")
+NER_SERVICE_URL = os.getenv("NER_SERVICE_URL", "http://localhost:8005/ner")
+LLM_SERVICE_URL = os.getenv("LLM_SERVICE_URL", "http://localhost:8000/api/query")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 KAFKA_AUDIT_TOPIC = os.getenv("KAFKA_AUDIT_TOPIC", "pii_audit_logs")
 
@@ -565,6 +569,9 @@ async def redact_text(
         elif rule["action"] == "MASK":
             char = rule["config"].get("mask_char", "X")
             rep = char * len(ent.text_segment)
+        elif rule["action"] == "HASH":
+            digest = hmac.new(PII_HASH_KEY, ent.text_segment.encode(), hashlib.sha256).hexdigest()[:10]
+            rep = f"{digest}..."
         redacted = redacted[: ent.start_index] + rep + redacted[ent.end_index :]
 
     ms = int((time.time() - start) * 1000)
@@ -631,8 +638,7 @@ async def activate(req: BulkActivateRequest, auth=Depends(AuthProvider)):
 @app.post("/admin/generate-regex")
 async def gen_regex(req: GenerateRegexRequest, auth=Depends(AuthProvider)):
     require_pii_admin(auth)
-    base_ip = NER_SERVICE_URL.split(":")[1].replace("//", "")
-    llm_url = f"http://{base_ip}:8000/api/query"
+    llm_url = LLM_SERVICE_URL
     prompt = (
         f"Generate a general python regex pattern to EXTRACT data similar to this example: '{req.example_text}'. "
         "Use word boundaries (\\b). Return only the raw regex string."
