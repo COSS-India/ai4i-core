@@ -40,6 +40,7 @@ from ai4icore_constants.exceptions import (
 from ai4icore_multi_tenant import (
     get_tenant_db_session_factory,
     enforce_tenant_and_service_checks,
+    tenant_db_session_scope,
 )
 from utils.nmt_pay_per_use import (
     _effective_service_id_for_ppu,
@@ -1215,107 +1216,107 @@ async def run_inference(
                             }
                         )
                         
-                        # Get database session for fallback service
+                        # Get database session for fallback service (scoped so pool connections return)
                         from repositories.nmt_repository import NMTRepository
                         from services.text_service import TextService
 
-                        fallback_db = await get_tenant_db_session(http_request)
-                        fallback_repository = NMTRepository(fallback_db)
-                        fallback_text_service = TextService()
-                        
-                        # Get cache TTL from Model Management client config
-                        cache_ttl_seconds = getattr(model_management_client, "cache_ttl_seconds", 300)
-                        pii_url = getattr(http_request.app.state, "pii_service_url", None)
-                        pii_timeout = float(getattr(http_request.app.state, "pii_redact_timeout", 20.0))
-                        pii_http_client = getattr(http_request.app.state, "pii_http_client", None)
+                        async with tenant_db_session_scope(http_request) as fallback_db:
+                            fallback_repository = NMTRepository(fallback_db)
+                            fallback_text_service = TextService()
+                            
+                            # Get cache TTL from Model Management client config
+                            cache_ttl_seconds = getattr(model_management_client, "cache_ttl_seconds", 300)
+                            pii_url = getattr(http_request.app.state, "pii_service_url", None)
+                            pii_timeout = float(getattr(http_request.app.state, "pii_redact_timeout", 20.0))
+                            pii_http_client = getattr(http_request.app.state, "pii_http_client", None)
 
-                        # Create fallback NMT service with Model Management client (required for dynamic endpoint resolution)
-                        fallback_nmt_service = NMTService(
-                            repository=fallback_repository,
-                            text_service=fallback_text_service,
-                            get_triton_client_func=get_fallback_triton_client_for_endpoint,
-                            model_management_client=model_management_client,
-                            redis_client=redis_client,
-                            cache_ttl_seconds=cache_ttl_seconds,
-                            pii_redact_base_url=pii_url,
-                            pii_redact_timeout=pii_timeout,
-                            pii_http_client=pii_http_client,
-                        )
-                        
-                        # Pre-populate the fallback service cache with the already-resolved endpoint
-                        # This avoids another Model Management call when get_triton_client is invoked
-                        # The cache will be used by get_triton_client, and the verification step will
-                        # also use the cached service registry entry, avoiding Model Management calls
-                        import time
-                        expires_at = time.time() + cache_ttl_seconds
-                        fallback_triton_client = get_fallback_triton_client_for_endpoint(triton_endpoint)
-                        
-                        # Pre-populate Triton client cache
-                        fallback_nmt_service._triton_clients[fallback_service_id] = (
-                            fallback_triton_client,
-                            triton_endpoint,
-                            expires_at
-                        )
-                        
-                        # Pre-populate service registry cache (used by _get_service_registry_entry)
-                        # This is critical - it prevents Model Management calls during endpoint verification
-                        fallback_nmt_service._service_registry_cache[fallback_service_id] = (
-                            triton_endpoint,
-                            triton_model_name,
-                            expires_at
-                        )
-                        
-                        # Also pre-populate service info cache (used by _get_service_info)
-                        # This provides an additional layer of protection
-                        from utils.model_management_client import ServiceInfo
-                        fallback_service_info = ServiceInfo(
-                            service_id=fallback_service_id,
-                            model_id="",  # Not needed for fallback
-                            endpoint=triton_endpoint,
-                            api_key=triton_api_key,
-                            triton_model=triton_model_name,
-                            model_name=triton_model_name,
-                        )
-                        fallback_nmt_service._service_info_cache[fallback_service_id] = (
-                            fallback_service_info,
-                            expires_at
-                        )
-                        
-                        logger.info(
-                            "NMT: Pre-populated fallback service cache",
-                            extra={
+                            # Create fallback NMT service with Model Management client (required for dynamic endpoint resolution)
+                            fallback_nmt_service = NMTService(
+                                repository=fallback_repository,
+                                text_service=fallback_text_service,
+                                get_triton_client_func=get_fallback_triton_client_for_endpoint,
+                                model_management_client=model_management_client,
+                                redis_client=redis_client,
+                                cache_ttl_seconds=cache_ttl_seconds,
+                                pii_redact_base_url=pii_url,
+                                pii_redact_timeout=pii_timeout,
+                                pii_http_client=pii_http_client,
+                            )
+                            
+                            # Pre-populate the fallback service cache with the already-resolved endpoint
+                            # This avoids another Model Management call when get_triton_client is invoked
+                            # The cache will be used by get_triton_client, and the verification step will
+                            # also use the cached service registry entry, avoiding Model Management calls
+                            import time
+                            expires_at = time.time() + cache_ttl_seconds
+                            fallback_triton_client = get_fallback_triton_client_for_endpoint(triton_endpoint)
+                            
+                            # Pre-populate Triton client cache
+                            fallback_nmt_service._triton_clients[fallback_service_id] = (
+                                fallback_triton_client,
+                                triton_endpoint,
+                                expires_at
+                            )
+                            
+                            # Pre-populate service registry cache (used by _get_service_registry_entry)
+                            # This is critical - it prevents Model Management calls during endpoint verification
+                            fallback_nmt_service._service_registry_cache[fallback_service_id] = (
+                                triton_endpoint,
+                                triton_model_name,
+                                expires_at
+                            )
+                            
+                            # Also pre-populate service info cache (used by _get_service_info)
+                            # This provides an additional layer of protection
+                            from utils.model_management_client import ServiceInfo
+                            fallback_service_info = ServiceInfo(
+                                service_id=fallback_service_id,
+                                model_id="",  # Not needed for fallback
+                                endpoint=triton_endpoint,
+                                api_key=triton_api_key,
+                                triton_model=triton_model_name,
+                                model_name=triton_model_name,
+                            )
+                            fallback_nmt_service._service_info_cache[fallback_service_id] = (
+                                fallback_service_info,
+                                expires_at
+                            )
+                            
+                            logger.info(
+                                "NMT: Pre-populated fallback service cache",
+                                extra={
+                                    "fallback_service_id": fallback_service_id,
+                                    "triton_endpoint": triton_endpoint,
+                                    "triton_model_name": triton_model_name,
+                                }
+                            )
+                            
+                            # Retry inference with fallback service
+                            logger.info(
+                                "NMT: Retrying inference with fallback service",
+                                extra={"fallback_service_id": fallback_service_id}
+                            )
+                            
+                            response = await fallback_nmt_service.run_inference(
+                                request=request,
+                                user_id=user_id,
+                                api_key_id=api_key_id,
+                                session_id=session_id,
+                                auth_headers=extract_auth_headers(http_request),
+                                http_request=http_request,
+                            )
+                            
+                            using_fallback = True
+                            span.add_event("nmt.fallback.success", {
                                 "fallback_service_id": fallback_service_id,
-                                "triton_endpoint": triton_endpoint,
-                                "triton_model_name": triton_model_name,
-                            }
-                        )
-                        
-                        # Retry inference with fallback service
-                        logger.info(
-                            "NMT: Retrying inference with fallback service",
-                            extra={"fallback_service_id": fallback_service_id}
-                        )
-                        
-                        response = await fallback_nmt_service.run_inference(
-                            request=request,
-                            user_id=user_id,
-                            api_key_id=api_key_id,
-                            session_id=session_id,
-                            auth_headers=extract_auth_headers(http_request),
-                            http_request=http_request,
-                        )
-                        
-                        using_fallback = True
-                        span.add_event("nmt.fallback.success", {
-                            "fallback_service_id": fallback_service_id,
-                        })
-                        span.set_attribute("nmt.fallback_used", True)
-                        span.set_attribute("nmt.fallback_service_id", fallback_service_id)
-                        
-                        logger.info(
-                            "NMT: Fallback service succeeded",
-                            extra={"fallback_service_id": fallback_service_id}
-                        )
+                            })
+                            span.set_attribute("nmt.fallback_used", True)
+                            span.set_attribute("nmt.fallback_service_id", fallback_service_id)
+                            
+                            logger.info(
+                                "NMT: Fallback service succeeded",
+                                extra={"fallback_service_id": fallback_service_id}
+                            )
                         
                     except Exception as fallback_error:
                         # Fallback also failed - create detailed error message
