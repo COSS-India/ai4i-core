@@ -283,6 +283,7 @@ apiClient.interceptors.request.use(
     const isLLMEndpoint = url.includes('/api/v1/llm');
     const isPipelineEndpoint = url.includes('/api/v1/pipeline');
     const isNEREndpoint = url.includes('/api/v1/ner');
+    const isPIIEndpoint = url.includes('/api/v1/pii');
     const isOCREndpoint = url.includes('/api/v1/ocr');
     const isTransliterationEndpoint = url.includes('/api/v1/transliteration');
     const isLanguageDetectionEndpoint = url.includes('/api/v1/language-detection');
@@ -305,7 +306,7 @@ apiClient.interceptors.request.use(
                         isTTSEndpoint || isLLMEndpoint || isPipelineEndpoint ||
                         isAudioLangDetectionEndpoint || isLanguageDetectionEndpoint ||
                         isLanguageDiarizationEndpoint || isSpeakerDiarizationEndpoint ||
-                        isNEREndpoint || isOCREndpoint || isTransliterationEndpoint ||
+                        isNEREndpoint || isPIIEndpoint || isOCREndpoint || isTransliterationEndpoint ||
                         isObservabilityEndpoint ||
                         isMultiTenantEndpoint ||
                         isFeatureFlagsEndpoint ||
