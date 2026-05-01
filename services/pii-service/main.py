@@ -311,6 +311,7 @@ class PolicySyncAgent:
             async for message in pubsub.listen():
                 if message["type"] == "message":
                     await self.refresh_policies()
+                    await KB.refresh()
         except asyncio.CancelledError:
             pass
         except Exception as exc:
