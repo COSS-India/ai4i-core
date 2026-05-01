@@ -13,6 +13,7 @@ from app.dependencies.services import get_nmt_service
 from app.schemas.inference import NMTInferenceRequest, NMTInferenceResponse, TranslationOutput
 from app.services.nmt_service import NMTService
 from app.services.smr_service import SMRService
+from app.utils.auth_utils import extract_auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,7 @@ async def run_inference(
         user_id=user_id,
         api_key_id=api_key_id,
         session_id=session_id,
+        auth_headers=extract_auth_headers(http_request),
         http_request=http_request,
     )
 
