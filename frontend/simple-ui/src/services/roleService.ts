@@ -5,6 +5,8 @@ import { API_BASE_URL, apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import authService from './authService';
 
+const rolePath = apiEndpoints.auth.rolePaths;
+
 export interface Role {
   id: number;
   name: string;
@@ -79,21 +81,21 @@ class RoleService {
    * List all available roles
    */
   async listRoles(): Promise<Role[]> {
-    return this.request<Role[]>('/list');
+    return this.request<Role[]>(rolePath.list);
   }
 
   /**
    * Get roles for a specific user
    */
   async getUserRoles(userId: string): Promise<UserRole> {
-    return this.request<UserRole>(`/user/${userId}`);
+    return this.request<UserRole>(rolePath.user(userId));
   }
 
   /**
    * Assign a role to a user
    */
   async assignRole(userId: string, roleName: string): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/assign', {
+    return this.request<{ message: string }>(rolePath.assign, {
       method: 'POST',
       body: JSON.stringify({ user_id: userId, role_name: roleName }),
     });
@@ -103,7 +105,7 @@ class RoleService {
    * Remove a role from a user
    */
   async removeRole(userId: string, roleName: string): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/remove', {
+    return this.request<{ message: string }>(rolePath.remove, {
       method: 'POST',
       body: JSON.stringify({ user_id: userId, role_name: roleName }),
     });

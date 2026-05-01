@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { Box, Spinner, Text, VStack, Alert, AlertIcon, AlertTitle, AlertDescription } from '@chakra-ui/react';
 import authService from '../../services/authService';
+import { getRememberMeFromStorage } from '../../utils/tokenStorage';
 
 const OAuthCallback = () => {
   const router = useRouter();
@@ -28,7 +29,7 @@ const OAuthCallback = () => {
           return;
         }
 
-        const rememberMe = typeof window !== 'undefined' && localStorage.getItem('remember_me') === 'true';
+        const rememberMe = typeof window !== 'undefined' && getRememberMeFromStorage();
         let nextAccessToken = typeof access_token === 'string' ? access_token : '';
         let nextRefreshToken = typeof refresh_token === 'string' ? refresh_token : '';
         let nextUser: any = null;

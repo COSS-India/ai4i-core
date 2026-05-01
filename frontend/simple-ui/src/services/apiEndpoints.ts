@@ -36,6 +36,43 @@ export const apiEndpoints = {
     oauthGoogleAuthorize: `${API_V1}/auth/oauth2/google/authorize`,
     rolesBase: `${API_V1}/auth/roles`,
     user: (userId: string) => `${API_V1}/auth/users/${userId}`,
+    /** Relative to `base` (prefix: `${API_BASE_URL}${auth.base}`). */
+    paths: {
+      register: '/register',
+      login: '/login',
+      guestLogin: '/guest/login',
+      rolesListGuestServices: '/roles/list/guest/services',
+      refresh: '/refresh',
+      validate: '/validate',
+      me: '/me',
+      logout: '/logout',
+      changePassword: '/change-password',
+      forgotPassword: '/forgot-password',
+      resetPassword: '/reset-password',
+      setPassword: '/set-password',
+      setPasswordStatus: (token: string) =>
+        `/set-password/status?token=${encodeURIComponent(token)}`,
+      verifyEmail: '/verify-email',
+      resendVerification: '/resend-verification',
+      resendSetupLink: '/resend-setup-link',
+      apiKeys: '/api-keys',
+      apiKeysAll: '/api-keys/all',
+      apiKeyById: (keyId: number) => `/api-keys/${keyId}`,
+      oauth2Providers: '/oauth2/providers',
+      oauth2Exchange: '/oauth2/exchange',
+      usersInitial: '/users?limit=500&offset=0',
+      usersPage: (offset: number, limit: number) =>
+        `/users?limit=${limit}&offset=${offset}`,
+      userById: (userId: string) => `/users/${userId}`,
+      inferencePermissions: '/inference/permissions',
+    },
+    /** Relative to `rolesBase`. */
+    rolePaths: {
+      list: '/list',
+      user: (userId: string) => `/user/${userId}`,
+      assign: '/assign',
+      remove: '/remove',
+    },
   },
 
   tenants: {
@@ -44,6 +81,18 @@ export const apiEndpoints = {
 
   alerts: {
     base: `${API_V1}/alerts`,
+    /** Relative to `alerts.base`. */
+    paths: {
+      definitions: '/definitions',
+      definition: (id: number) => `/definitions/${id}`,
+      definitionEnabled: (id: number) => `/definitions/${id}/enabled`,
+      receivers: '/receivers',
+      receiver: (id: number) => `/receivers/${id}`,
+      routingRules: '/routing-rules',
+      routingRule: (id: number) => `/routing-rules/${id}`,
+      routingRulesTiming: '/routing-rules/timing',
+      history: '/history',
+    },
   },
 
   platform: {
@@ -147,11 +196,31 @@ export const apiEndpoints = {
     base: `${API_V1}/pii`,
     redact: `${API_V1}/pii/redact`,
     domains: `${API_V1}/pii/domains`,
+    policyByDomain: (domainId: string) =>
+      `${API_V1}/pii/policy/${encodeURIComponent(domainId)}`,
+    admin: {
+      allDomains: `${API_V1}/pii/admin/all-domains`,
+      activateDomains: `${API_V1}/pii/admin/activate-domains`,
+      domain: `${API_V1}/pii/admin/domain`,
+      deploy: `${API_V1}/pii/admin/deploy`,
+      generateRegex: `${API_V1}/pii/admin/generate-regex`,
+      tenantDomains: `${API_V1}/pii/admin/tenant-domains`,
+      tenantDomain: `${API_V1}/pii/admin/tenant-domain`,
+      tenantDomainDelete: `${API_V1}/pii/admin/tenant-domain/delete`,
+      auditLogs: `${API_V1}/pii/admin/audit-logs`,
+    },
   },
   policy: {
     /** Gateway prefix; service mounts routes at /v1 (see policy-service main.py). */
     base: `${API_V1}/policy-service`,
     health: `${API_V1}/policy-service/health`,
+    piiTypes: `${API_V1}/policy-service/pii-types`,
+    piiTypeById: (id: string) => `${API_V1}/policy-service/pii-types/${id}`,
+    policies: `${API_V1}/policy-service/policies`,
+    policyById: (id: string) => `${API_V1}/policy-service/policies/${id}`,
+    policyStatus: (id: string) => `${API_V1}/policy-service/policies/${id}/status`,
+    auditLogs: `${API_V1}/policy-service/audit-logs`,
+    auditLogById: (id: string) => `${API_V1}/policy-service/audit-logs/${id}`,
   },
 } as const;
 

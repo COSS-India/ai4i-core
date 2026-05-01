@@ -12,13 +12,23 @@ const DEFAULT_API_HEADERS: ApiRequestHeaders = {
   Accept: 'application/json',
 };
 
+/**
+ * Request config accepted by the base API wrapper.
+ * Keeps axios options available while standardizing header shape.
+ */
 export interface BaseApiRequestConfig<D = any> extends AxiosRequestConfig<D> {
   headers?: ApiRequestHeaders;
 }
 
+/**
+ * Reusable API wrapper layer for all service calls.
+ * Delegates transport/auth interceptor logic to the shared axios client
+ * and centralizes error normalization plus convenience methods.
+ */
 class BaseApiService {
   constructor(private readonly client: AxiosInstance) {}
 
+  /** Merge caller headers over shared JSON defaults. */
   private withResolvedHeaders<D = any>(
     config?: BaseApiRequestConfig<D>
   ): BaseApiRequestConfig<D> {
@@ -35,6 +45,10 @@ class BaseApiService {
     };
   }
 
+  /**
+   * Normalize transport/runtime errors to a consistent Error shape.
+   * Adds `status` and `response` when available for UI-level handling.
+   */
   private normalizeError(error: unknown): never {
     if (error instanceof AxiosError) {
       if (error.response) {
@@ -60,6 +74,9 @@ class BaseApiService {
     throw error as Error;
   }
 
+  /**
+   * Generic request entrypoint used by all verb helpers.
+   */
   async request<T = any, D = any>(
     method: Method,
     url: string,
@@ -78,6 +95,7 @@ class BaseApiService {
     }
   }
 
+  /** Perform a GET request. */
   get<T = any, D = any>(
     url: string,
     config?: BaseApiRequestConfig<D>
@@ -85,6 +103,7 @@ class BaseApiService {
     return this.request<T, D>('GET', url, undefined, config);
   }
 
+  /** Perform a POST request. */
   post<T = any, D = any>(
     url: string,
     data?: D,
@@ -93,6 +112,7 @@ class BaseApiService {
     return this.request<T, D>('POST', url, data, config);
   }
 
+  /** Perform a PUT request. */
   put<T = any, D = any>(
     url: string,
     data?: D,
@@ -101,6 +121,7 @@ class BaseApiService {
     return this.request<T, D>('PUT', url, data, config);
   }
 
+  /** Perform a DELETE request. */
   delete<T = any, D = any>(
     url: string,
     config?: BaseApiRequestConfig<D>
@@ -108,6 +129,7 @@ class BaseApiService {
     return this.request<T, D>('DELETE', url, undefined, config);
   }
 
+  /** Perform a PATCH request. */
   patch<T = any, D = any>(
     url: string,
     data?: D,

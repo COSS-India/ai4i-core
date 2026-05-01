@@ -1,7 +1,5 @@
-import api, { apiEndpoints } from "./api";
-
-/** Matches Postman `POLICY_BASE_URL` + path (e.g. `/pii-types`), no `/v1` segment. */
-const POLICY_API = apiEndpoints.policy.base;
+import { apiService } from "./api";
+import { apiEndpoints } from "./apiEndpoints";
 
 export interface PolicyListMeta {
   total: number;
@@ -68,23 +66,25 @@ export interface AuditLogListResponse {
 
 export type MaskFormat = "full" | "partial" | "redact";
 
+const ep = apiEndpoints.policy;
+
 export const policyService = {
-  health: () => api.get<{ status: string }>(`${POLICY_API}/health`),
+  health: () => apiService.get<{ status: string }>(ep.health),
 
   listPiiTypes: (params?: {
     search?: string;
     page?: number;
     limit?: number;
-  }) => api.get<PiiTypeListResponse>(`${POLICY_API}/pii-types`, { params }),
+  }) => apiService.get<PiiTypeListResponse>(ep.piiTypes, { params }),
 
-  getPiiType: (id: string) => api.get<PiiTypeOut>(`${POLICY_API}/pii-types/${id}`),
+  getPiiType: (id: string) => apiService.get<PiiTypeOut>(ep.piiTypeById(id)),
 
   createPiiType: (body: {
     pii_type_label: string;
     regex_pattern: string;
     example_values: string[];
     mask_format: MaskFormat;
-  }) => api.post<PiiTypeOut>(`${POLICY_API}/pii-types`, body),
+  }) => apiService.post<PiiTypeOut>(ep.piiTypes, body),
 
   updatePiiType: (
     id: string,
@@ -94,9 +94,9 @@ export const policyService = {
       example_values: string[];
       mask_format: MaskFormat;
     }>
-  ) => api.put<PiiTypeOut>(`${POLICY_API}/pii-types/${id}`, body),
+  ) => apiService.put<PiiTypeOut>(ep.piiTypeById(id), body),
 
-  deletePiiType: (id: string) => api.delete<void>(`${POLICY_API}/pii-types/${id}`),
+  deletePiiType: (id: string) => apiService.delete<void>(ep.piiTypeById(id)),
 
   listPolicies: (params?: {
     is_global?: boolean;
@@ -104,9 +104,9 @@ export const policyService = {
     search?: string;
     page?: number;
     limit?: number;
-  }) => api.get<PolicyListResponse>(`${POLICY_API}/policies`, { params }),
+  }) => apiService.get<PolicyListResponse>(ep.policies, { params }),
 
-  getPolicy: (id: string) => api.get<PolicyOut>(`${POLICY_API}/policies/${id}`),
+  getPolicy: (id: string) => apiService.get<PolicyOut>(ep.policyById(id)),
 
   /**
    * API expects `pii_types: [{ pii_type_id }]`, not Postman’s `pii_type_ids`.
@@ -119,7 +119,7 @@ export const policyService = {
     supported_languages: string[];
     tenant_ids?: string[];
     pii_types?: { pii_type_id: string }[];
-  }) => api.post<PolicyOut>(`${POLICY_API}/policies`, body),
+  }) => apiService.post<PolicyOut>(ep.policies, body),
 
   updatePolicy: (
     id: string,
@@ -131,12 +131,12 @@ export const policyService = {
       tenant_ids: string[];
       pii_types: { pii_type_id: string }[] | null;
     }>
-  ) => api.put<PolicyOut>(`${POLICY_API}/policies/${id}`, body),
+  ) => apiService.put<PolicyOut>(ep.policyById(id), body),
 
-  deletePolicy: (id: string) => api.delete<void>(`${POLICY_API}/policies/${id}`),
+  deletePolicy: (id: string) => apiService.delete<void>(ep.policyById(id)),
 
   setPolicyStatus: (id: string, is_active: boolean) =>
-    api.patch<{ is_active: boolean }>(`${POLICY_API}/policies/${id}/status`, {
+    apiService.patch<{ is_active: boolean }>(ep.policyStatus(id), {
       is_active,
     }),
 
@@ -149,8 +149,8 @@ export const policyService = {
     min_pii_count?: number;
     page?: number;
     limit?: number;
-  }) => api.get<AuditLogListResponse>(`${POLICY_API}/audit-logs`, { params }),
+  }) => apiService.get<AuditLogListResponse>(ep.auditLogs, { params }),
 
   getAuditLog: (id: string) =>
-    api.get<AuditLogDetailOut>(`${POLICY_API}/audit-logs/${id}`),
+    apiService.get<AuditLogDetailOut>(ep.auditLogById(id)),
 };

@@ -1,14 +1,14 @@
-import api from "./api";
+import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 
-const BASE_URL = apiEndpoints.pii.base;
+const admin = apiEndpoints.pii.admin;
 
 export const piiService = {
-  getDomains: () => api.get<string[]>(`${BASE_URL}/domains`),
+  getDomains: () => apiService.get<string[]>(apiEndpoints.pii.domains),
 
   getPolicy: (domainId: string) =>
-    api.get<{ meta?: unknown; rules?: unknown[] }>(
-      `${BASE_URL}/policy/${encodeURIComponent(domainId)}`
+    apiService.get<{ meta?: unknown; rules?: unknown[] }>(
+      apiEndpoints.pii.policyByDomain(domainId)
     ),
 
   redact: (
@@ -17,7 +17,7 @@ export const piiService = {
     lang: string,
     tenantId?: string | null
   ) =>
-    api.post(`${BASE_URL}/redact`, payload, {
+    apiService.post(apiEndpoints.pii.redact, payload, {
       headers: {
         "X-Target": target,
         "X-Language": lang,
@@ -26,47 +26,47 @@ export const piiService = {
     }),
 
   getAllDomains: () =>
-    api.get<
+    apiService.get<
       { domain_id: string; is_active: boolean; description?: string | null }[]
-    >(`${BASE_URL}/admin/all-domains`),
+    >(admin.allDomains),
 
   activateDomains: (domainIds: string[]) =>
-    api.post(`${BASE_URL}/admin/activate-domains`, {
+    apiService.post(admin.activateDomains, {
       domain_ids: domainIds,
     }),
 
   createDomain: (domainId: string, description?: string) =>
-    api.post(`${BASE_URL}/admin/domain`, {
+    apiService.post(admin.domain, {
       domain_id: domainId,
       description: description?.trim() || `Policy scope: ${domainId}`,
     }),
 
   deployRules: (domainId: string, rules: unknown[]) =>
-    api.post(`${BASE_URL}/admin/deploy`, { domain_id: domainId, rules }),
+    apiService.post(admin.deploy, { domain_id: domainId, rules }),
 
   generateRegex: (exampleText: string) =>
-    api.post(`${BASE_URL}/admin/generate-regex`, {
+    apiService.post(admin.generateRegex, {
       example_text: exampleText,
     }),
 
   listTenantDomainMappings: () =>
-    api.get<
+    apiService.get<
       { tenant_id: string; domain_id: string; updated_at?: string }[]
-    >(`${BASE_URL}/admin/tenant-domains`),
+    >(admin.tenantDomains),
 
   upsertTenantDomainMapping: (tenantId: string, domainId: string) =>
-    api.post(`${BASE_URL}/admin/tenant-domain`, {
+    apiService.post(admin.tenantDomain, {
       tenant_id: tenantId,
       domain_id: domainId,
     }),
 
   deleteTenantDomainMapping: (tenantId: string) =>
-    api.post(`${BASE_URL}/admin/tenant-domain/delete`, {
+    apiService.post(admin.tenantDomainDelete, {
       tenant_id: tenantId,
     }),
 
   getAuditLogs: (limit = 50) =>
-    api.get<
+    apiService.get<
       {
         id: number;
         trace_id: string;
@@ -78,5 +78,5 @@ export const piiService = {
         trace_json: unknown;
         created_at: string;
       }[]
-    >(`${BASE_URL}/admin/audit-logs`, { params: { limit } }),
+    >(admin.auditLogs, { params: { limit } }),
 };

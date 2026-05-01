@@ -136,15 +136,15 @@ export const shouldWarnAboutRateLimit = (): boolean => {
   if (typeof window === 'undefined') return false;
   
   try {
-    const count = parseInt(localStorage.getItem(key) || '0');
-    const firstRequestTime = parseInt(localStorage.getItem(timestampKey) || '0');
+    const count = parseInt(sessionStorage.getItem(key) || '0');
+    const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
     
     // Reset if more than an hour has passed
     if (now - firstRequestTime > oneHour) {
-      localStorage.setItem(key, '0');
-      localStorage.removeItem(timestampKey);
+      sessionStorage.setItem(key, '0');
+      sessionStorage.removeItem(timestampKey);
       return false;
     }
     
@@ -165,20 +165,20 @@ export const trackTryItRequest = (): void => {
   if (typeof window === 'undefined') return;
   
   try {
-    const count = parseInt(localStorage.getItem(key) || '0');
-    const firstRequestTime = parseInt(localStorage.getItem(timestampKey) || '0');
+    const count = parseInt(sessionStorage.getItem(key) || '0');
+    const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
     
     // Reset if more than an hour has passed
     if (now - firstRequestTime > oneHour || !firstRequestTime) {
-      localStorage.setItem(key, '1');
-      localStorage.setItem(timestampKey, now.toString());
+      sessionStorage.setItem(key, '1');
+      sessionStorage.setItem(timestampKey, now.toString());
     } else {
-      localStorage.setItem(key, (count + 1).toString());
+      sessionStorage.setItem(key, (count + 1).toString());
     }
   } catch (e) {
-    // Ignore localStorage errors
+    // Ignore sessionStorage errors
   }
 };
 
@@ -194,8 +194,8 @@ export const getRemainingTryItRequests = (): number => {
   if (typeof window === 'undefined') return limit;
   
   try {
-    const count = parseInt(localStorage.getItem(key) || '0');
-    const firstRequestTime = parseInt(localStorage.getItem(timestampKey) || '0');
+    const count = parseInt(sessionStorage.getItem(key) || '0');
+    const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
     

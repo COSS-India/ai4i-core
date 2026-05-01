@@ -26,17 +26,19 @@ import {
   OAuth2Provider,
   Permission,
 } from '../types/auth';
-import { AxiosRequestConfig } from 'axios';
-import { API_BASE_URL, apiClient } from './api';
+import { API_BASE_URL, apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import {
   getStoredAccessToken,
   getStoredRefreshToken,
+  getRememberMeFromStorage,
   setStoredAccessToken,
   setStoredRefreshToken,
   clearTokenStorage,
 } from '../utils/tokenStorage';
 import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
+
+const authPath = apiEndpoints.auth.paths;
 
 class AuthService {
   private baseUrl: string;
@@ -73,14 +75,15 @@ class AuthService {
     const timeoutMs = 10000;
     
     try {
-      const axiosConfig: AxiosRequestConfig = {
+      const response = await apiService.request(
+        (config.method || 'GET') as any,
         url,
-        method: (config.method || 'GET') as AxiosRequestConfig['method'],
-        headers: config.headers as Record<string, string>,
-        data: config.body,
-        timeout: timeoutMs,
-      };
-      const response = await apiClient.request(axiosConfig);
+        config.body,
+        {
+          headers: config.headers as Record<string, string>,
+          timeout: timeoutMs,
+        }
+      );
       const responseData = response.data;
       
       const json = responseData;
@@ -182,7 +185,7 @@ class AuthService {
   // Authentication methods
   async register(data: RegisterRequest): Promise<{ id: number; email: string; username: string; message: string }> {
     // Register endpoint doesn't require authentication
-    return this.requestWithoutAuth<{ id: number; email: string; username: string; message: string }>('/register', {
+    return this.requestWithoutAuth<{ id: number; email: string; username: string; message: string }>(authPath.register, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -190,7 +193,7 @@ class AuthService {
 
   async login(data: LoginRequest): Promise<LoginResponse> {
     // Login endpoint doesn't require authentication
-    const response = await this.requestWithoutAuth<LoginResponse>('/login', {
+    const response = await this.requestWithoutAuth<LoginResponse>(authPath.login, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -204,7 +207,7 @@ class AuthService {
   }
 
   async guestLogin(): Promise<LoginResponse> {
-    const response = await this.requestWithoutAuth<LoginResponse>('/guest/login', {
+    const response = await this.requestWithoutAuth<LoginResponse>(authPath.guestLogin, {
       method: 'POST',
     });
 
@@ -216,7 +219,7 @@ class AuthService {
   }
 
   async getGuestEnabledServices(): Promise<any> {
-    return this.request<any>('/roles/list/guest/services');
+    return this.request<any>(authPath.rolesListGuestServices);
   }
 
   // Request method without authentication header (for login/register)
@@ -239,13 +242,12 @@ class AuthService {
     };
 
     try {
-      const axiosConfig: AxiosRequestConfig = {
+      const response = await apiService.request(
+        (config.method || 'GET') as any,
         url,
-        method: (config.method || 'GET') as AxiosRequestConfig['method'],
-        headers: config.headers as Record<string, string>,
-        data: config.body,
-      };
-      const response = await apiClient.request(axiosConfig);
+        config.body,
+        { headers: config.headers as Record<string, string> }
+      );
       const json = response.data;
       // Unwrap v2 response envelope: { success: true, data: {...} }
       if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
@@ -306,7 +308,7 @@ class AuthService {
     }
 
     try {
-      const response = await this.request<LogoutResponse>('/logout', {
+      const response = await this.request<LogoutResponse>(authPath.logout, {
         method: 'POST',
         body: JSON.stringify({
           refresh_token: data.refresh_token || refreshToken,
@@ -340,12 +342,12 @@ class AuthService {
 
     this.refreshPromise = (async () => {
       try {
-        const response = await this.requestWithoutAuth<TokenRefreshResponse>('/refresh', {
+        const response = await this.requestWithoutAuth<TokenRefreshResponse>(authPath.refresh, {
           method: 'POST',
           body: JSON.stringify({ refresh_token: refreshToken }),
         });
 
-        const rememberMe = typeof window !== 'undefined' && localStorage.getItem('remember_me') === 'true';
+        const rememberMe = getRememberMeFromStorage();
         this.setAccessToken(response.access_token, rememberMe);
 
         return response;
@@ -358,12 +360,12 @@ class AuthService {
   }
 
   async validateToken(): Promise<TokenValidationResponse> {
-    return this.request<TokenValidationResponse>('/validate');
+    return this.request<TokenValidationResponse>(authPath.validate);
   }
 
   async getCurrentUser(): Promise<User> {
     // Use a longer timeout for /me endpoint as it's critical for auth validation
-    return this.requestWithTimeout<User>('/me', {}, 20000);
+    return this.requestWithTimeout<User>(authPath.me, {}, 20000);
   }
 
   // Request method with custom timeout
@@ -393,14 +395,15 @@ class AuthService {
     };
 
     try {
-      const axiosConfig: AxiosRequestConfig = {
+      const response = await apiService.request(
+        (config.method || 'GET') as any,
         url,
-        method: (config.method || 'GET') as AxiosRequestConfig['method'],
-        headers: config.headers as Record<string, string>,
-        data: config.body,
-        timeout: timeoutMs,
-      };
-      const response = await apiClient.request(axiosConfig);
+        config.body,
+        {
+          headers: config.headers as Record<string, string>,
+          timeout: timeoutMs,
+        }
+      );
       const json = response.data;
       // Unwrap v2 response envelope: { success: true, data: {...} }
       if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
@@ -434,14 +437,14 @@ class AuthService {
   }
 
   async updateCurrentUser(data: Partial<User>): Promise<User> {
-    return this.request<User>('/me', {
+    return this.request<User>(authPath.me, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   async changePassword(data: PasswordChangeRequest): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/change-password', {
+    return this.request<{ message: string }>(authPath.changePassword, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -451,7 +454,7 @@ class AuthService {
     // Public endpoint — no auth header. Always returns 200 with generic message
     // (anti-enumeration). Backend rate-limits to 3 per email per hour; on 429
     // the user sees a "try again later" error.
-    return this.requestWithoutAuth<{ message: string }>('/forgot-password', {
+    return this.requestWithoutAuth<{ message: string }>(authPath.forgotPassword, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -460,7 +463,7 @@ class AuthService {
   async resetPassword(data: PasswordResetConfirm): Promise<{ message: string; sign_out_other_sessions?: boolean }> {
     // Public endpoint — token in body authenticates the request. Single-use,
     // 30-minute expiry. Other sessions are revoked server-side.
-    return this.requestWithoutAuth<{ message: string; sign_out_other_sessions?: boolean }>('/reset-password', {
+    return this.requestWithoutAuth<{ message: string; sign_out_other_sessions?: boolean }>(authPath.resetPassword, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -472,12 +475,9 @@ class AuthService {
     // Bypasses the requestWithoutAuth helper on purpose: this endpoint does NOT
     // return the v2 {success, data} envelope (route uses response_model=
     // SetPasswordStatusResponse), so the helper's auto-unwrap would mangle it.
-    const url = `${this.baseUrl}/set-password/status?token=${encodeURIComponent(token)}`;
+    const url = `${this.baseUrl}${authPath.setPasswordStatus(token)}`;
     try {
-      const res = await apiClient.request<SetPasswordStatusResponse>({
-        url,
-        method: 'GET',
-      });
+      const res = await apiService.request<SetPasswordStatusResponse>('GET', url);
       return res.data;
     } catch (error: any) {
       const status = error?.response?.status;
@@ -486,7 +486,7 @@ class AuthService {
   }
 
   async setPasswordWithToken(data: SetPasswordRequest): Promise<{ message: string }> {
-    return this.requestWithoutAuth<{ message: string }>('/set-password', {
+    return this.requestWithoutAuth<{ message: string }>(authPath.setPassword, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -495,14 +495,21 @@ class AuthService {
   // ── Email verification (one-time token from /auth/register's verify email) ──
 
   async verifyEmail(data: VerifyEmailRequest): Promise<{ message: string }> {
-    return this.requestWithoutAuth<{ message: string }>('/verify-email', {
+    return this.requestWithoutAuth<{ message: string }>(authPath.verifyEmail, {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   async resendVerification(data: ResendVerificationRequest): Promise<{ message: string }> {
-    return this.requestWithoutAuth<{ message: string }>('/resend-verification', {
+    return this.requestWithoutAuth<{ message: string }>(authPath.resendVerification, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async resendSetupLink(data: { email: string }): Promise<{ message: string }> {
+    return this.requestWithoutAuth<{ message: string }>(authPath.resendSetupLink, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -510,7 +517,7 @@ class AuthService {
 
   // API Key management
   async createApiKey(data: APIKeyCreate): Promise<APIKeyResponse> {
-    return this.request<APIKeyResponse>('/api-keys', {
+    return this.request<APIKeyResponse>(authPath.apiKeys, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -523,14 +530,14 @@ class AuthService {
       expires_days: data.expires_days,
       user_id: data.user_id,
     };
-    return this.request<APIKeyResponse>('/api-keys', {
+    return this.request<APIKeyResponse>(authPath.apiKeys, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
   }
 
   async listApiKeys(): Promise<APIKeyListResponse> {
-    const data = await this.request<APIKeyListResponse | APIKeyResponse[]>('/api-keys');
+    const data = await this.request<APIKeyListResponse | APIKeyResponse[]>(authPath.apiKeys);
     if (Array.isArray(data)) {
       return { api_keys: data };
     }
@@ -538,17 +545,17 @@ class AuthService {
   }
 
   async listAllApiKeys(): Promise<AdminAPIKeyWithUserResponse[]> {
-    return this.request<AdminAPIKeyWithUserResponse[]>('/api-keys/all');
+    return this.request<AdminAPIKeyWithUserResponse[]>(authPath.apiKeysAll);
   }
 
   async revokeApiKey(keyId: number): Promise<{ message: string }> {
-    return this.request<{ message: string }>(`/api-keys/${keyId}`, {
+    return this.request<{ message: string }>(authPath.apiKeyById(keyId), {
       method: 'DELETE',
     });
   }
 
   async updateApiKey(keyId: number, updateData: APIKeyUpdate): Promise<APIKeyResponse> {
-    return this.request<APIKeyResponse>(`/api-keys/${keyId}`, {
+    return this.request<APIKeyResponse>(authPath.apiKeyById(keyId), {
       method: 'PATCH',
       body: JSON.stringify(updateData),
     });
@@ -556,11 +563,11 @@ class AuthService {
 
   // OAuth2
   async getOAuth2Providers(): Promise<OAuth2Provider[]> {
-    return this.request<OAuth2Provider[]>('/oauth2/providers');
+    return this.request<OAuth2Provider[]>(authPath.oauth2Providers);
   }
 
   async exchangeOAuthCode(code: string): Promise<LoginResponse> {
-    return this.requestWithoutAuth<LoginResponse>('/oauth2/exchange', {
+    return this.requestWithoutAuth<LoginResponse>(authPath.oauth2Exchange, {
       method: 'POST',
       body: JSON.stringify({ code }),
     });
@@ -568,21 +575,21 @@ class AuthService {
 
   // User management (Admin / Mod / Tenant Admin)
   async getAllUsers(): Promise<User[]> {
-    return this.request<User[]>('/users?limit=500&offset=0');
+    return this.request<User[]>(authPath.usersInitial);
   }
 
   /** Paginated user list (same endpoint as getAllUsers; for infinite-scroll pickers). */
   async listUsersPage(offset: number, limit: number = 100): Promise<User[]> {
-    return this.request<User[]>(`/users?limit=${limit}&offset=${offset}`);
+    return this.request<User[]>(authPath.usersPage(offset, limit));
   }
 
   async getUserById(userId: string): Promise<User> {
-    return this.request<User>(`/users/${userId}`);
+    return this.request<User>(authPath.userById(userId));
   }
 
   // Permissions management (inference-only)
   async getAllPermissions(): Promise<Permission[]> {
-    return this.request<Permission[]>('/inference/permissions');
+    return this.request<Permission[]>(authPath.inferencePermissions);
   }
 
   // Utility methods
@@ -592,23 +599,15 @@ class AuthService {
 
   getStoredUser(): User | null {
     if (typeof window === 'undefined') return null;
-    // Check both storages (for backward compatibility)
-    const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
+    const userStr = sessionStorage.getItem('user');
     return userStr ? JSON.parse(userStr) : null;
   }
 
   setStoredUser(user: User): void {
     if (typeof window === 'undefined') return;
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
-    // Clear from both storages first
     localStorage.removeItem('user');
     sessionStorage.removeItem('user');
-    // Store in appropriate storage
-    if (rememberMe) {
-      localStorage.setItem('user', JSON.stringify(user));
-    } else {
-      sessionStorage.setItem('user', JSON.stringify(user));
-    }
+    sessionStorage.setItem('user', JSON.stringify(user));
   }
 
   clearStoredUser(): void {
@@ -752,16 +751,9 @@ class AuthService {
   private setLoginTimestamp(): void {
     if (typeof window === 'undefined') return;
     const timestamp = Date.now().toString();
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
-    // Clear from both storages first
     localStorage.removeItem('login_timestamp');
     sessionStorage.removeItem('login_timestamp');
-    // Store in appropriate storage
-    if (rememberMe) {
-      localStorage.setItem('login_timestamp', timestamp);
-    } else {
-      sessionStorage.setItem('login_timestamp', timestamp);
-    }
+    sessionStorage.setItem('login_timestamp', timestamp);
   }
 
   /**
@@ -769,7 +761,7 @@ class AuthService {
    */
   public getLoginTimestamp(): number | null {
     if (typeof window === 'undefined') return null;
-    const timestampStr = localStorage.getItem('login_timestamp') || sessionStorage.getItem('login_timestamp');
+    const timestampStr = sessionStorage.getItem('login_timestamp');
     return timestampStr ? parseInt(timestampStr, 10) : null;
   }
 
@@ -785,7 +777,7 @@ class AuthService {
       return true;
     }
     const now = Date.now();
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
+    const rememberMe = getRememberMeFromStorage();
     const sessionDurationMs = rememberMe 
       ? 7 * 24 * 60 * 60 * 1000  // 7 days
       : 24 * 60 * 60 * 1000;      // 24 hours
@@ -803,7 +795,7 @@ class AuthService {
       return null;
     }
     const now = Date.now();
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
+    const rememberMe = getRememberMeFromStorage();
     const sessionDurationMs = rememberMe 
       ? 7 * 24 * 60 * 60 * 1000  // 7 days
       : 24 * 60 * 60 * 1000;      // 24 hours
