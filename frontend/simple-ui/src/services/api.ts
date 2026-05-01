@@ -4,13 +4,7 @@ import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestCo
 import { getStoredAccessToken } from '../utils/tokenStorage';
 import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 
-// API Base URL from environment (inlined at `next build` for NEXT_PUBLIC_*).
-// If the image was built without NEXT_PUBLIC_API_URL, axios/auth would use relative
-// URLs and the browser would call localhost:3000 — wrong. Browser fallback: gateway 8080.
-const _raw = (process.env.NEXT_PUBLIC_API_URL ?? "").trim();
-const API_BASE_URL =
-  _raw ||
-  (typeof window !== "undefined" ? "http://localhost:8080" : "");
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "").trim();
 
 // Debug: Log the API base URL in development
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
