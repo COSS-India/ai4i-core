@@ -386,6 +386,8 @@ case "$COMMAND" in
     fi
     if [[ "$DATABASE" == "all" ]]; then
       run_for_all_databases upgrade "${EXTRA_ARGS[@]}"
+      echo "🌱 Seeding databases after upgrade..."
+      "$PYTHON_BIN" "$PROJECT_ROOT/infrastructure/databases/cli.py" seed:all
     else
       validate_database "$DATABASE"
       if [[ "${EXTRA_ARGS[0]}" == "head" ]]; then

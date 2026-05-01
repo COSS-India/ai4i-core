@@ -39,7 +39,7 @@ RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_multi_tenant
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_exceptions
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
-RUN pip install --no-cache-dir --user /app/libs/ai4icore_service_base
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_service_base
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
