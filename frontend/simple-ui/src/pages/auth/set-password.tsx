@@ -26,7 +26,6 @@ import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
-import { apiClient } from "../../services/api";
 import { authService } from "../../services/authService";
 import { SetPasswordStatusResponse } from "../../types/auth";
 import PasswordRequirements, { passwordPasses } from "../../components/auth/password/PasswordRequirements";
@@ -55,15 +54,10 @@ const ResendSetupLinkForm: React.FC = () => {
     if (!email) return;
     setPhase({ kind: "submitting" });
     try {
-      const url = `${(authService as any).baseUrl}/resend-setup-link`;
-      const res = await apiClient.request({
-        url,
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        data: { email },
-      });
-      const json = res.data;
-      const msg = json?.data?.message || "If the account exists and isn't activated yet, a new setup link has been sent.";
+      const res = await authService.resendSetupLink({ email });
+      const msg =
+        res?.message ||
+        "If the account exists and isn't activated yet, a new setup link has been sent.";
       setPhase({ kind: "sent", message: msg });
     } catch (err: any) {
       const data = err?.response?.data;

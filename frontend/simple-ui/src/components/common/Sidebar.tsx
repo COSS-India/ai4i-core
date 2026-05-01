@@ -13,11 +13,10 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
-import React, { useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { IconType } from "react-icons";
 import { FaMicrophone } from "react-icons/fa";
 import {
-  IoGitNetworkOutline,
   IoHomeOutline,
   IoKeyOutline,
   IoLanguageOutline,
@@ -32,7 +31,6 @@ import {
   IoPricetagOutline,
   IoAppsOutline,
   IoChevronDownOutline,
-  IoAnalyticsOutline,
   IoPulseOutline,
   IoNotificationsOutline,
   IoShieldCheckmarkOutline,
@@ -170,13 +168,8 @@ const safeColorMap = {
 
 const getColor = (serviceId: string, shade: 50 | 300 | 400 | 600) => {
   if (!serviceId) return undefined;
-  
-  // prefer safeColorMap hex values (most robust)
-  if (safeColorMap[serviceId as keyof typeof safeColorMap] && safeColorMap[serviceId as keyof typeof safeColorMap][shade]) {
-    return safeColorMap[serviceId as keyof typeof safeColorMap][shade];
-  }
-  
-  // final fallback to sensible neutral
+  const entry = safeColorMap[serviceId as keyof typeof safeColorMap];
+  if (entry?.[shade]) return entry[shade];
   return shade === 50 ? "#F7FAFC" : shade === 300 ? "#CBD5E1" : shade === 400 ? "#A0AEC0" : "#1A202C";
 };
 
@@ -185,7 +178,7 @@ interface NavItem {
   label: string;
   path: string;
   icon: IconType;
-  iconSize: Number;
+  iconSize: number;
   iconColor: string;
   requiresAuth?: boolean;
 }
@@ -420,59 +413,102 @@ const Sidebar: React.FC = () => {
   // Get tenant_id from JWT token
   const tenantId = getTenantIdFromToken();
 
-  // Filter top nav items (Home and Model Management)
-  const topItems = topNavItems.filter((item) => {
-    if (item.id === "home") return true;
-    // Hide traces for all users
-    if (item.id === "traces") {
-      return false;
-    }
-    // Hide Model Management and Services Management for GUEST, USER, and TENANT ADMIN users
-    if ((isGuest || isUser || isTenantAdmin) && (item.id === "model-management" || item.id === "services-management")) {
-      return false;
-    }
-    // Hide Tenant Management for users who are not superuser or tenant
-    if (item.id === "tenant-management" && !showTenantManagement) {
-      return false;
-    }
-    // Hide admin-only items for non-ADMIN users (only alerts-management is admin-only now)
-    if (item.id === "alerts-management" && !isAdmin) {
-      return false;
-    }
-    if (item.id === "pii-management" && !(isAdmin || isTenantAdmin)) {
-      return false;
-    }
-    if (
-      item.id === "policy-management" &&
-      !isAdmin
-    ) {
-      return false;
-    }
+  const topItems = useMemo(
+    () =>
+      topNavItems.filter((item) => {
+        if (item.id === "home") return true;
+        if (item.id === "traces") return false;
+        if (
+          (isGuest || isUser || isTenantAdmin) &&
+          (item.id === "model-management" || item.id === "services-management")
+        ) {
+          return false;
+        }
+        if (item.id === "tenant-management" && !showTenantManagement) return false;
+        if (item.id === "alerts-management" && !isAdmin) return false;
+        if (item.id === "pii-management" && !(isAdmin || isTenantAdmin)) return false;
+        if (item.id === "policy-management" && !isAdmin) return false;
+        if (item.id === "api-key-management" && !(isAdmin || isTenantAdmin)) return false;
+        if (item.id === "logs" && (isUser || isGuest)) return false;
+        if (item.id === "logs" && !tenantId && !isAdmin) return false;
+        return true;
+      }),
+    [
+      isAdmin,
+      isGuest,
+      isUser,
+      isTenantAdmin,
+      showTenantManagement,
+      tenantId,
+    ],
+  );
 
-    // Hide API Key Management for users who are neither ADMIN nor TENANT ADMIN
-    if (item.id === "api-key-management" && !(isAdmin || isTenantAdmin)) {
-      return false;
-    }
-    // Hide logs for users with USER or GUEST role (regardless of tenant_id)
-    if (item.id === "logs" && (isUser || isGuest)) {
-      return false;
-    }
-    // Hide logs for users without tenant_id (but allow admins to see it)
-    if (item.id === "logs" && !tenantId && !isAdmin) {
-      return false;
-    }
-    return true;
-  });
+  const serviceItems = useMemo(
+    () =>
+      baseNavItems.filter((item) => {
+        if (isGuestFromAccess || isGuest) {
+          if (guestServicesLoading) return false;
+          if (!allowedServiceIds?.has(item.id)) return false;
+        }
+        return true;
+      }),
+    [
+      allowedServiceIds,
+      guestServicesLoading,
+      isGuest,
+      isGuestFromAccess,
+    ],
+  );
 
-  // Filter service items based on guest access
-  const serviceItems = baseNavItems.filter((item) => {
-    if (isGuestFromAccess || isGuest) {
-      if (guestServicesLoading) return false;
-      if (!allowedServiceIds?.has(item.id)) return false;
-    }
-    return true;
-  });
+  const handleSidebarMouseEnter = useCallback(() => {
+    setIsExpanded(true);
+    setIsServicesExpanded(true);
+  }, []);
 
+  const handleSidebarMouseLeave = useCallback(() => {
+    setIsExpanded(false);
+    setIsServicesExpanded(false);
+  }, []);
+
+  const goHome = useCallback(() => {
+    router.push("/");
+  }, [router]);
+
+  const onTopNavClick = useCallback(
+    (e: React.MouseEvent, path: string, requiresAuth: boolean) => {
+      e.preventDefault();
+      if (isLoading) return;
+      if (path === "/") {
+        router.push("/");
+        return;
+      }
+      if (requiresAuth && !checkSessionExpiry()) return;
+      router.push(path);
+    },
+    [checkSessionExpiry, isLoading, router],
+  );
+
+  const onServiceNavClick = useCallback(
+    (e: React.MouseEvent, path: string, requiresAuth: boolean) => {
+      e.preventDefault();
+      if (isLoading) return;
+      if (requiresAuth && !checkSessionExpiry()) return;
+      router.push(path);
+    },
+    [checkSessionExpiry, isLoading, router],
+  );
+
+  const handleServicesSectionMouseEnter = useCallback(() => {
+    if (isExpanded) setIsServicesExpanded(true);
+  }, [isExpanded]);
+
+  const handleServicesSectionMouseLeave = useCallback(() => {
+    if (!isExpanded) setIsServicesExpanded(false);
+  }, [isExpanded]);
+
+  const toggleServicesExpanded = useCallback(() => {
+    if (isExpanded) setIsServicesExpanded((open) => !open);
+  }, [isExpanded]);
 
   const bgColor = useColorModeValue("light.100", "dark.100");
   const borderColor = useColorModeValue("gray.200", "gray.700");
@@ -490,14 +526,8 @@ const Sidebar: React.FC = () => {
       boxShadow="md"
       zIndex={60}
       transition="width 0.2s ease"
-      onMouseEnter={() => {
-        setIsExpanded(true);
-        setIsServicesExpanded(true);
-      }}
-      onMouseLeave={() => {
-        setIsExpanded(false);
-        setIsServicesExpanded(false);
-      }}
+      onMouseEnter={handleSidebarMouseEnter}
+      onMouseLeave={handleSidebarMouseLeave}
       borderRight="1px"
       borderColor={borderColor}
       sx={{
@@ -511,7 +541,7 @@ const Sidebar: React.FC = () => {
         <VStack spacing={2} w="full">
           <Box
             cursor="pointer"
-            onClick={() => router.push("/")}
+            onClick={goHome}
             _hover={{ opacity: 0.8 }}
             transition="opacity 0.2s"
             display="flex"
@@ -536,20 +566,6 @@ const Sidebar: React.FC = () => {
             const isActive = router.pathname === item.path;
             const requiresAuth = item.requiresAuth ?? false;
 
-            const handleClick = async (e: React.MouseEvent) => {
-              e.preventDefault();
-              if (isLoading) return;
-              if (item.path === "/") {
-                router.push("/");
-                return;
-              }
-              // Check session expiry before navigation for authenticated routes
-              if (requiresAuth) {
-                if (!checkSessionExpiry()) return;
-              }
-              router.push(item.path);
-            };
-
             return (
               <Button
                 key={item.id}
@@ -571,7 +587,7 @@ const Sidebar: React.FC = () => {
                 bg={isActive ? "gray.200" : "transparent"}
                 color={isActive ? "gray.800" : "gray.700"}
                 boxShadow={isActive ? "sm" : "none"}
-                onClick={handleClick}
+                onClick={(e) => onTopNavClick(e, item.path, requiresAuth)}
                 _hover={{
                   bg: isActive ? "gray.200" : hoverBgColor,
                   transform: "translateY(-1px)",
@@ -600,18 +616,7 @@ const Sidebar: React.FC = () => {
         {/* Services Section */}
         <VStack spacing={2} w="full" align="stretch" flex={1}>
           {/* Services Header */}
-          <Box
-            onMouseEnter={() => {
-              if (isExpanded) {
-                setIsServicesExpanded(true);
-              }
-            }}
-            onMouseLeave={() => {
-              if (!isExpanded) {
-                setIsServicesExpanded(false);
-              }
-            }}
-          >
+          <Box onMouseEnter={handleServicesSectionMouseEnter} onMouseLeave={handleServicesSectionMouseLeave}>
             <Button
               variant="ghost"
               size="sm"
@@ -643,7 +648,7 @@ const Sidebar: React.FC = () => {
               }}
               transition="all 0.2s"
               px={isExpanded ? 3 : 0}
-              onClick={() => isExpanded && setIsServicesExpanded(!isServicesExpanded)}
+              onClick={toggleServicesExpanded}
             >
               {isExpanded ? (
                 <Heading size="sm" color="gray.800" fontWeight="medium">
@@ -661,16 +666,6 @@ const Sidebar: React.FC = () => {
               {serviceItems.map((item) => {
                 const isActive = router.pathname === item.path;
                 const requiresAuth = item.requiresAuth ?? false;
-
-                const handleClick = async (e: React.MouseEvent) => {
-                  e.preventDefault();
-                  if (isLoading) return;
-                  // Check session expiry before navigation for authenticated routes
-                  if (requiresAuth) {
-                    if (!checkSessionExpiry()) return;
-                  }
-                  router.push(item.path);
-                };
 
                 return (
                   <Button
@@ -694,7 +689,7 @@ const Sidebar: React.FC = () => {
                     borderLeft={isActive ? "3px solid" : "3px solid transparent"}
                     borderLeftColor={isActive ? getColor(item.id, 600) : "transparent"}
                     borderRadius="md"
-                    onClick={handleClick}
+                    onClick={(e) => onServiceNavClick(e, item.path, requiresAuth)}
                     _hover={{
                       bg: isActive ? "gray.200" : hoverBgColor,
                       transform: "translateY(-1px)",

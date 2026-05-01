@@ -1,7 +1,7 @@
 // Axios API client with interceptors for authentication and request tracking
 
 import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestConfig } from 'axios';
-import { getStoredAccessToken } from '../utils/tokenStorage';
+import { getStoredAccessToken, getRememberMeFromStorage } from '../utils/tokenStorage';
 import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 import { apiEndpoints, API_URL_PATH_MARKERS } from './apiEndpoints';
 import BaseApiService from './baseApiService';
@@ -275,7 +275,7 @@ apiClient.interceptors.response.use(
                     // Try to refresh the token
                     const response = await authService.refreshToken();
                     const newAccessToken = response.access_token;
-                    const rememberMe = localStorage.getItem('remember_me') === 'true';
+                    const rememberMe = getRememberMeFromStorage();
                     authService.setAccessToken(newAccessToken, rememberMe);
                     
                     // Retry the request with new token
@@ -349,7 +349,7 @@ apiClient.interceptors.response.use(
                   if (refreshToken) {
                     const response = await authService.refreshToken();
                     const newAccessToken = response.access_token;
-                    const rememberMe = localStorage.getItem('remember_me') === 'true';
+                    const rememberMe = getRememberMeFromStorage();
                     authService.setAccessToken(newAccessToken, rememberMe);
                     
                     originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
