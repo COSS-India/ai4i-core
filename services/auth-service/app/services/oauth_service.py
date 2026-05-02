@@ -122,7 +122,7 @@ class OAuthService:
                 )
         except httpx.RequestError as exc:
             logger.error("OAuth token exchange request failed for %s: %s", provider, exc)
-            raise AuthenticationRequiredError("OAuth provider unreachable.")
+            raise AuthenticationRequiredError("OAuth provider unreachable.") from exc
         if resp.status_code != 200:
             # Provider error body may include client_secret in some configs
             # (e.g. echoed redirect_uri). Don't leak the body — log status only.
@@ -147,7 +147,7 @@ class OAuthService:
                 )
         except httpx.RequestError as exc:
             logger.error("OAuth user info request failed for %s: %s", provider, exc)
-            raise AuthenticationRequiredError("OAuth provider unreachable.")
+            raise AuthenticationRequiredError("OAuth provider unreachable.") from exc
         if resp.status_code != 200:
             raise AuthenticationRequiredError("Failed to fetch user info from provider.")
 

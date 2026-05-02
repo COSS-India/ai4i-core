@@ -37,11 +37,11 @@ async def enforce_target_user_same_tenant(
     jwt_tid = getattr(request.state, "tenant_id", None)
     try:
         caller_tid = int(jwt_tid) if jwt_tid else current_user.tenant_id
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "INVALID_TOKEN", "message": "Stale token."},
-        )
+        ) from exc
 
     if not caller_tid or caller_tid != target.tenant_id:
         raise HTTPException(

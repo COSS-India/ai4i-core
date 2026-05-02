@@ -210,16 +210,16 @@ class TokenService:
 
             return TokenPayload(payload)
 
-        except ExpiredSignatureError:
-            raise TokenExpiredError()
+        except ExpiredSignatureError as exc:
+            raise TokenExpiredError() from exc
         except JWTError as exc:
-            raise TokenInvalidError(f"Invalid token: {exc}")
+            raise TokenInvalidError(f"Invalid token: {exc}") from exc
         except TokenExpiredError:
             raise
         except TokenInvalidError:
             raise
         except ValueError as exc:
-            raise TokenInvalidError(str(exc))
+            raise TokenInvalidError(str(exc)) from exc
 
     # ── Internal ──
 

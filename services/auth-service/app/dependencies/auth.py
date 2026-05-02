@@ -94,10 +94,10 @@ async def get_current_token(
 
     try:
         claims: AuthClaims = await verifier.verify(token)
-    except JWTExpiredError:
-        raise TokenExpiredError()
+    except JWTExpiredError as exc:
+        raise TokenExpiredError() from exc
     except JWTVerificationError as exc:
-        raise TokenInvalidError(exc.message)
+        raise TokenInvalidError(exc.message) from exc
 
     payload = TokenPayload({
         "sub": str(claims.user_id),
