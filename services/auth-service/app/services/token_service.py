@@ -26,23 +26,19 @@ logger = logging.getLogger(__name__)
 
 
 class TokenPayload:
-    """Decoded JWT payload."""
+    """Decoded JWT payload — only the claims auth-service actually reads.
+
+    Other JWT claims (tenant_id, permission_ids, email, exp, iss, aud, kid)
+    are still verified by the JWTVerifier (sig/exp/iss/aud/alg/kid checks)
+    but they're not surfaced here because no consumer reads them off
+    TokenPayload — callers either work from AuthClaims directly (validate
+    flow) or only need sub/token_id/token_type (provision/setup flows).
+    """
 
     def __init__(self, data: dict[str, Any]):
         self.sub: str = str(data.get("sub", ""))
-        self.tenant_id: Optional[str] = data.get("tenant_id")
-        self.permission_ids: list[int] = data.get("permission_ids", [])
         self.token_type: str = data.get("type", "")
         self.token_id: Optional[str] = data.get("token_id")
-        self.email: Optional[str] = data.get("email")
-        self.exp: Optional[datetime] = None
-        self.iss: Optional[str] = data.get("iss")
-        self.aud: Optional[str] = data.get("aud")
-        self.kid: Optional[str] = data.get("kid")
-        self.raw = data
-
-        if "exp" in data:
-            self.exp = datetime.fromtimestamp(data["exp"], tz=timezone.utc)
 
 
 class TokenService:

@@ -196,10 +196,9 @@ key_manager = RS256KeyManager()
 class PasswordHashResult:
     """Result of hashing a password."""
 
-    def __init__(self, hashed: str, salt: str, rounds: int):
+    def __init__(self, hashed: str, salt: str):
         self.hashed = hashed
         self.salt = salt
-        self.rounds = rounds
 
 
 class PasswordManager:
@@ -212,15 +211,11 @@ class PasswordManager:
         self._context = CryptContext(schemes=["argon2"], default="argon2")
 
     def hash_password(self, password: str) -> PasswordHashResult:
-        """Hash a password with a unique salt. Returns hash, salt, and rounds."""
+        """Hash a password with a unique salt. Returns hash + salt."""
         salt = secrets.token_hex(settings.argon2_salt_length)
         salted_password = password + salt
         hashed = self._context.hash(salted_password)
-        return PasswordHashResult(
-            hashed=hashed,
-            salt=salt,
-            rounds=settings.default_hash_rounds,
-        )
+        return PasswordHashResult(hashed=hashed, salt=salt)
 
     def verify_password(self, plain_password: str, hashed_password: str, salt: str) -> bool:
         """Verify a password against its hash using the stored salt."""
