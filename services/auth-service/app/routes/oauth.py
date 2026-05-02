@@ -33,6 +33,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/oauth2", tags=["OAuth2"])
 
+# State token lifetime — bounds how long a user can sit on the provider
+# consent screen before /callback. 10 min keeps the window small enough
+# that a stolen state value is hard to weaponize.
+_OAUTH_STATE_TTL_SECONDS = 10 * 60
+
+# One-time exchange code lifetime — the SPA must POST /exchange this
+# fast. Short TTL keeps the credential exposure window minimal.
+_EXCHANGE_CODE_TTL_SECONDS = 2 * 60
+
 
 def _is_redirect_allowed(uri: str) -> bool:
     """Validate redirect_uri against the configured allowlist.
@@ -110,7 +119,7 @@ async def authorize(
     state = secrets.token_urlsafe(32)
     await redis_client.setex(
         f"auth:oauth_state:{state}",
-        600,  # 10 minutes
+        _OAUTH_STATE_TTL_SECONDS,
         json.dumps({"provider": provider, "redirect_uri": redirect_uri or ""}),
     )
 
@@ -191,13 +200,13 @@ async def callback(
             logger.warning("Blocked redirect to unallowed URI: %s", client_redirect)
             return success_response(data=result)
 
-        # Stash tokens under a single-use 2-minute code; SPA exchanges it via
+        # Stash tokens under a single-use code; SPA exchanges it via
         # POST /exchange. Tokens never appear in URLs, browser history,
         # referrer headers, or server access logs.
         exchange_code = secrets.token_urlsafe(32)
         await redis_client.setex(
             f"auth:oauth_exchange:{exchange_code}",
-            120,  # 2 minutes
+            _EXCHANGE_CODE_TTL_SECONDS,
             json.dumps(result),
         )
         params = urlencode({"code": exchange_code})

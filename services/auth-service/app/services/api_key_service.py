@@ -162,7 +162,7 @@ class APIKeyService:
         if expires_at:
             ttl = max(0, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
         else:
-            ttl = settings.api_key_expire_days * 86400
+            ttl = int(timedelta(days=settings.api_key_expire_days).total_seconds())
         if ttl > 0:
             await self._cache.set_api_key_cache(
                 api_key_value,

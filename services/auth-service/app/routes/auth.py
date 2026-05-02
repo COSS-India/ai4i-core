@@ -3,6 +3,8 @@ Authentication routes: register, login, logout, refresh, password management,
 and email activation (provision + set-password).
 """
 
+from datetime import timedelta
+
 import redis.asyncio as aioredis
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
@@ -104,7 +106,7 @@ async def forgot_password(
         redis,
         f"forgot_password:{body.email.lower()}",
         limit=settings.reset_request_limit_per_hour,
-        window_seconds=3600,
+        window_seconds=int(timedelta(hours=1).total_seconds()),
         error_code="RESET_RATE_LIMITED",
         error_message="Too many reset requests for this email. Try again later.",
     )

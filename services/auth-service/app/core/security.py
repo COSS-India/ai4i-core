@@ -5,6 +5,7 @@ RS256 key management and password hashing (argon2).
 import base64
 import logging
 import secrets
+from dataclasses import dataclass
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -13,6 +14,7 @@ from cryptography.hazmat.backends import default_backend
 from passlib.context import CryptContext
 
 from app.core.config import settings
+from app.core.constants import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH
 from app.core.exceptions import PasswordMismatchError, PasswordValidationError
 
 logger = logging.getLogger(__name__)
@@ -189,12 +191,11 @@ key_manager = RS256KeyManager()
 # ─────────────────────────────────────────────
 
 
+@dataclass(frozen=True, slots=True)
 class PasswordHashResult:
-    """Result of hashing a password."""
-
-    def __init__(self, hashed: str, salt: str):
-        self.hashed = hashed
-        self.salt = salt
+    """Result of hashing a password — argon2 hash + per-user salt."""
+    hashed: str
+    salt: str
 
 
 class PasswordManager:
@@ -223,15 +224,15 @@ class PasswordManager:
         """Validate password meets product password-policy requirements.
 
         Rules (per security spec):
-          - Min 8 chars, max 64 chars
+          - Min PASSWORD_MIN_LENGTH chars, max PASSWORD_MAX_LENGTH chars
           - At least one uppercase, one lowercase, one digit, one special char
           - No spaces (anywhere)
         """
         errors: list[str] = []
-        if len(password) < 8:
-            errors.append("Password must be at least 8 characters long.")
-        if len(password) > 64:
-            errors.append("Password must be at most 64 characters long.")
+        if len(password) < PASSWORD_MIN_LENGTH:
+            errors.append(f"Password must be at least {PASSWORD_MIN_LENGTH} characters long.")
+        if len(password) > PASSWORD_MAX_LENGTH:
+            errors.append(f"Password must be at most {PASSWORD_MAX_LENGTH} characters long.")
         if not any(c.isupper() for c in password):
             errors.append("Password must contain at least one uppercase letter.")
         if not any(c.islower() for c in password):
