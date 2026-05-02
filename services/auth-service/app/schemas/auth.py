@@ -40,18 +40,6 @@ class PasswordChangeRequest(BaseSchema):
     confirm_password: str = Field(..., min_length=8, max_length=64)
 
 
-class ProvisionUserRequest(BaseSchema):
-    email: EmailStr
-    username: str = Field(..., min_length=3, max_length=100)
-    full_name: Optional[str] = Field(None, max_length=255)
-    phone_number: Optional[str] = Field(None, max_length=20)
-    tenant_id: Optional[int] = Field(None, description="Tenant integer ID.")
-    creation_type: str = Field(
-        default="default",
-        description="Legacy values 'tenant'/'direct' normalize to 'default'; only 'default' and 'google' persist.",
-    )
-
-
 class SetPasswordRequest(BaseSchema):
     token: str
     new_password: str = Field(..., min_length=8, max_length=64)
@@ -98,12 +86,6 @@ class TokenRefreshResponse(BaseSchema):
 class LogoutResponse(BaseSchema):
     message: str
     logged_out: bool
-
-
-class ProvisionUserResponse(BaseSchema):
-    user_id: str
-    setup_token: str
-    message: str
 
 
 class SetPasswordStatusResponse(BaseSchema):

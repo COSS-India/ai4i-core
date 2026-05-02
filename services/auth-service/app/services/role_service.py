@@ -20,11 +20,6 @@ def _normalize_service_slug(value: str) -> str:
     return value.strip().lower().replace("_", "-")
 
 
-def _resource_from_permission(perm) -> str:
-    """Return resource for a Permission ORM row."""
-    return perm.resource
-
-
 class RoleService:
     def __init__(self, role_repo: RoleRepository) -> None:
         self._roles = role_repo
@@ -105,7 +100,7 @@ class RoleService:
         managed = await self._managed_guest_inference_permissions()
         by_norm_resource: dict[str, Permission] = {}
         for perm in managed:
-            key = _normalize_service_slug(_resource_from_permission(perm))
+            key = _normalize_service_slug(perm.resource)
             by_norm_resource[key] = perm
 
         managed_ids = [p.id for p in managed]
@@ -157,7 +152,7 @@ class RoleService:
 
         managed = await self._managed_guest_inference_permissions()
         managed_id_set = {p.id for p in managed}
-        id_to_resource = {p.id: _resource_from_permission(p) for p in managed}
+        id_to_resource = {p.id: p.resource for p in managed}
 
         role_perm_ids = await self._roles.get_role_permission_ids(guest.id)
         active = sorted(

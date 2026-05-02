@@ -19,8 +19,6 @@ from app.schemas.auth import (
     LoginResponse,
     LogoutResponse,
     PasswordChangeRequest,
-    ProvisionUserRequest,
-    ProvisionUserResponse,
     RegisterRequest,
     ResendSetupLinkRequest,
     ResendVerificationRequest,
@@ -193,32 +191,6 @@ async def change_password(
 
 
 # ── Email activation ──
-
-@router.post("/internal/provision-user", response_model=ProvisionUserResponse)
-async def provision_user(
-    body: ProvisionUserRequest,
-    background_tasks: BackgroundTasks,
-    svc: AuthService = Depends(get_auth_service),
-):
-    """
-    Internal: provision an inactive user and return a one-time setup token.
-    Used by tenant-user onboarding (POST /api/v1/tenants/{tenant_id}/users).
-    """
-    user_id, setup_token = await svc.provision_user(
-        email=body.email,
-        username=body.username,
-        full_name=body.full_name,
-        phone_number=body.phone_number,
-        tenant_id=body.tenant_id,
-        creation_type=body.creation_type,
-        background_tasks=background_tasks,
-    )
-    return ProvisionUserResponse(
-        user_id=user_id,
-        setup_token=setup_token,
-        message="User provisioned. Setup link can now be sent to the user.",
-    )
-
 
 @router.get("/set-password/status", response_model=SetPasswordStatusResponse)
 async def get_setup_token_status(

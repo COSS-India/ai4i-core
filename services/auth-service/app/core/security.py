@@ -86,7 +86,7 @@ class RS256KeyManager:
             self._generate_keys(key_dir, settings.rs256_min_key_count - len(self._keys))
 
         self._active_index = min(settings.rs256_active_key_index, len(self._keys) - 1)
-        logger.info("RS256 KeyManager: %d key(s) loaded, active kid=%s", len(self._keys), self.active_kid)
+        logger.info("RS256 KeyManager: %d key(s) loaded, active kid=%s", len(self._keys), self.get_signing_kid())
 
     def _load_from_directory(self, key_dir: Path) -> None:
         """Load key pairs from PEM files: key_01_private.pem / key_01_public.pem."""
@@ -146,10 +146,6 @@ class RS256KeyManager:
         logger.info("Generated %d RSA key pair(s) in %s", count, key_dir)
 
     # ── Public API ──
-
-    @property
-    def active_kid(self) -> str:
-        return self._keys[self._active_index].kid
 
     def get_signing_key(self):
         return self._keys[self._active_index].private_key
