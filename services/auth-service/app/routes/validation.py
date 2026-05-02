@@ -9,6 +9,9 @@ Two-step flow:
      required by X-Original-Method:X-Original-URI.
 """
 
+import base64
+import json
+
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,14 +36,12 @@ router = APIRouter(prefix="/auth", tags=["Validation"])
 
 def is_jwt_strict(token: str) -> bool:
     """Return True only when token is a 3-part JWT with alg=RS256 in the header."""
-    import base64
-    import json as _json
     parts = token.split(".")
     if len(parts) != 3:
         return False
     try:
         padding = 4 - len(parts[0]) % 4
-        header = _json.loads(base64.urlsafe_b64decode(parts[0] + "=" * padding))
+        header = json.loads(base64.urlsafe_b64decode(parts[0] + "=" * padding))
         return header.get("alg") == "RS256"
     except Exception:
         return False

@@ -10,6 +10,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
+from passlib.context import CryptContext
 
 from app.core.config import settings
 from app.core.exceptions import PasswordMismatchError, PasswordValidationError
@@ -208,7 +209,6 @@ class PasswordManager:
     """
 
     def __init__(self) -> None:
-        from passlib.context import CryptContext
         self._context = CryptContext(schemes=["argon2"], default="argon2")
 
     def hash_password(self, password: str) -> PasswordHashResult:

@@ -34,7 +34,7 @@ from app.core.redis import close_redis, init_redis
 from app.core.security import key_manager
 from app.dependencies.auth import get_jwt_verifier, init_jwt_verifier
 from app.middleware.request_logging import RequestLoggingMiddleware
-from app.routes import api_router
+from app.routes import api_router, versioning
 from app.services.role_permission_cache import role_permission_cache
 
 
@@ -200,7 +200,6 @@ def create_app() -> FastAPI:
     )
 
     # API versioning — shared middleware for version headers + deprecation
-    from app.routes import versioning
     versioning.register(app)
 
     # Routes

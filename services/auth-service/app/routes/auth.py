@@ -4,7 +4,7 @@ and email activation (provision + set-password).
 """
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.core.config import settings
 from app.core.redis import get_redis
@@ -151,7 +151,6 @@ async def login(
 async def guest_login(
     svc: AuthService = Depends(get_auth_service),
 ):
-    from fastapi import HTTPException
     email = (settings.guest_email or "").strip()
     password = settings.guest_password
     if not email or not password:

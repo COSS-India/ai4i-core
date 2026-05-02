@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives import serialization
 
 from app.core.config import settings
 from app.core.constants import TokenType
+from app.core.exceptions import TokenExpiredError, TokenInvalidError
 from app.core.security import key_manager
 
 logger = logging.getLogger(__name__)
@@ -174,8 +175,6 @@ class TokenService:
         Verifies: signature, expiry, kid, alg, issuer, audience (if configured).
         Raises TokenInvalidError or TokenExpiredError on failure.
         """
-        from app.core.exceptions import TokenExpiredError, TokenInvalidError
-
         try:
             header = jwt.get_unverified_header(token)
             kid = header.get("kid")

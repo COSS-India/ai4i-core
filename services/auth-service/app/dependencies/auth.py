@@ -9,6 +9,7 @@ of the shared lib, not a parallel implementation.
 import logging
 from uuid import UUID
 
+from cryptography.hazmat.primitives import serialization
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,9 +18,12 @@ from ai4icore_auth.jwt_verifier import (
     AuthClaims,
     JWTExpiredError,
     JWTVerificationError,
+    JWTVerifier,
 )
 
+from app.core.config import settings
 from app.core.database import get_db
+from app.core.security import key_manager
 from app.core.exceptions import (
     AuthenticationRequiredError,
     TokenExpiredError,
@@ -56,11 +60,6 @@ async def init_jwt_verifier() -> None:
     Called during app lifespan startup.
     """
     global _jwt_verifier
-    from ai4icore_auth.jwt_verifier import JWTVerifier
-    from cryptography.hazmat.primitives import serialization
-    from app.core.config import settings
-    from app.core.security import key_manager
-
     verifier = JWTVerifier(
         issuer=settings.jwt_issuer,
         audience=settings.jwt_audience,
@@ -157,7 +156,6 @@ async def _check_api_key_revocation(
 
 
 async def _remaining_api_key_ttl(db_key) -> int:
-    from app.core.config import settings
     return settings.api_key_expire_days * 86400
 
 
