@@ -100,6 +100,19 @@ class OAuthService:
             }
         raise EntityNotFoundError(f"OAuth provider '{provider}'")
 
+    def list_configured_providers(self) -> list[dict]:
+        """Return configs only for providers that have credentials wired up.
+
+        Walks the canonical ``_PROVIDER_METADATA`` here so the route layer
+        doesn't need its own provider list — single source of truth.
+        """
+        configured = []
+        for name in _PROVIDER_METADATA:
+            config = self.get_provider_config(name)
+            if config.get("client_id"):
+                configured.append(config)
+        return configured
+
     # ── Provider HTTP ──
 
     async def exchange_code_for_tokens(

@@ -22,7 +22,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from fastapi.responses import RedirectResponse
 
 from app.core.config import settings
-from app.core.exceptions import AuthenticationRequiredError, EntityNotFoundError
+from app.core.exceptions import AuthenticationRequiredError
 from app.core.redis import get_redis
 from app.core.responses import success_response
 from app.dependencies.services import get_oauth_service
@@ -32,10 +32,6 @@ from app.services.oauth_service import OAuthService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/oauth2", tags=["OAuth2"])
-
-# Provider-list iteration order is deliberate: today only Google. Add new
-# providers here when you extend OAuthService.PROVIDER_METADATA.
-_KNOWN_PROVIDERS = ("google",)
 
 
 def _is_redirect_allowed(uri: str) -> bool:
@@ -76,25 +72,16 @@ async def list_providers(svc: OAuthService = Depends(get_oauth_service)):
     """Return providers that are CONFIGURED (have a client_id). Providers
     without credentials are silently omitted so the SPA's UI doesn't render
     a broken button."""
-    providers = []
-    for name in _KNOWN_PROVIDERS:
-        try:
-            config = svc.get_provider_config(name)
-        except EntityNotFoundError:
-            # Provider is in _KNOWN_PROVIDERS but has no metadata configured —
-            # skip it so the SPA's UI doesn't render a broken button.
-            logger.debug("OAuth provider %r not configured; skipping in listing.", name)
-            continue
-        if config.get("client_id"):
-            providers.append(
-                OAuth2ProviderInfo(
-                    provider=name,
-                    client_id=config["client_id"],
-                    authorization_url=config["authorization_url"],
-                    scope=config["scope"],
-                )
-            )
-    return success_response(data=[p.model_dump() for p in providers])
+    providers = [
+        OAuth2ProviderInfo(
+            provider=c["provider"],
+            client_id=c["client_id"],
+            authorization_url=c["authorization_url"],
+            scope=c["scope"],
+        ).model_dump()
+        for c in svc.list_configured_providers()
+    ]
+    return success_response(data=providers)
 
 
 @router.get("/{provider}/authorize")
