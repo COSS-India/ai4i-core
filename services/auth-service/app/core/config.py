@@ -8,7 +8,7 @@ from typing import Optional
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.core.constants import ENV_DEVELOPMENT, ENV_PRODUCTION, ENV_STAGING
+from app.core.constants import ENV_DEVELOPMENT
 
 
 class AuthSettings(BaseSettings):

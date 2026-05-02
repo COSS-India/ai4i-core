@@ -28,7 +28,7 @@ from ai4icore_auth.middleware import AuthMiddleware
 from ai4icore_auth.permission_checker import PermissionChecker, set_global_endpoint_permission_map
 
 from app.core.config import settings
-from app.core.constants import ENV_PRODUCTION, ENV_STAGING
+from app.core.constants import ENV_DEVELOPMENT
 from app.core.database import close_database, init_database
 from app.core.exceptions import register_exception_handlers
 from app.core.redis import close_redis, init_redis
@@ -65,9 +65,9 @@ async def lifespan(app: FastAPI):
 
     logger.info("Starting %s v%s [%s]", settings.service_name, settings.service_version, settings.environment)
 
-    # Production safety checks
-    if settings.environment in (ENV_PRODUCTION, ENV_STAGING) and settings.debug:
-        raise RuntimeError("FATAL: DEBUG=true is not allowed in production/staging.")
+    # Production safety: DEBUG=true only allowed in local dev.
+    if settings.environment != ENV_DEVELOPMENT and settings.debug:
+        raise RuntimeError(f"FATAL: DEBUG=true is not allowed in {settings.environment}.")
 
     # Startup
     await init_database(
@@ -177,7 +177,8 @@ async def _load_api_permissions_with_retry(
 
 def create_app() -> FastAPI:
     """Build and return the FastAPI application."""
-    hide_docs = settings.environment == ENV_PRODUCTION
+    # /docs, /redoc, /openapi.json are dev-only.
+    hide_docs = settings.environment != ENV_DEVELOPMENT
     app = FastAPI(
         title="Auth Service",
         version=settings.service_version,

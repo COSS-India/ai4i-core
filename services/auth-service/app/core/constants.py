@@ -1,9 +1,11 @@
 """Cross-module constants used by schemas, services, and routes."""
 
 
-# ── Environment names — single source of truth ──────────────────────
-ENV_PRODUCTION = "production"
-ENV_STAGING = "staging"
+# ── Environment ──────────────────────────────────────────────────────
+# We only differentiate "development" from everything else. Anything that
+# isn't local dev (production, staging, preprod, anything else) is treated
+# the same: hide /docs, refuse RS256 key autogen, reject http://localhost
+# email links, etc. This is the safer default — staging mirrors prod.
 ENV_DEVELOPMENT = "development"
 
 
