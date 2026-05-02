@@ -25,7 +25,10 @@ class UserService:
             "is_active": user.is_active,
             "is_tenant_active": user.is_tenant_active,
             "creation_type": user.creation_type.value if user.creation_type else None,
-            "tenant_id": user.tenant_id,
+            # Stringify tenant_id so it's consistent with user_id (also a string)
+            # and the JWT tenant_id claim (also a string). Frontends call
+            # .trim()/.includes() on these values.
+            "tenant_id": str(user.tenant_id) if user.tenant_id is not None else None,
             "last_login": user.last_login,
             "avatar_url": user.avatar_url,
             "phone_number": user.phone_number,
