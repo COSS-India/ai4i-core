@@ -28,26 +28,6 @@ class AuthSettings(BaseSettings):
     environment: str = ENV_DEVELOPMENT
     debug: bool = False
 
-    # ── Environment helpers ──
-    # Use these instead of comparing settings.environment to string literals.
-    # Single source of truth for "is this prod-like?" semantics.
-    @property
-    def is_production(self) -> bool:
-        return self.environment == ENV_PRODUCTION
-
-    @property
-    def is_staging(self) -> bool:
-        return self.environment == ENV_STAGING
-
-    @property
-    def is_development(self) -> bool:
-        return self.environment.strip().lower() == ENV_DEVELOPMENT
-
-    @property
-    def is_prod_like(self) -> bool:
-        """True for production OR staging — any env where dev shortcuts are unsafe."""
-        return self.environment in (ENV_PRODUCTION, ENV_STAGING)
-
     # ── Database ──
     database_url: Optional[str] = None
     postgres_user: Optional[str] = None

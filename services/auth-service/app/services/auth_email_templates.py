@@ -13,6 +13,7 @@ from urllib.parse import quote_plus
 from ai4icore_email import EmailMessage, TemplateRenderer
 
 from app.core.config import settings
+from app.core.constants import ENV_DEVELOPMENT
 from app.models.user import User
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "emails"
@@ -35,8 +36,9 @@ def _build_link(base: Optional[str], token: str, *, env_var: str) -> str:
     if not base:
         raise ValueError(f"{env_var} is not configured")
     if not base.startswith("https://"):
+        is_dev = settings.environment.strip().lower() == ENV_DEVELOPMENT
         is_localhost = base.startswith(("http://localhost", "http://127.0.0.1"))
-        if not (settings.is_development and is_localhost):
+        if not (is_dev and is_localhost):
             raise ValueError(
                 f"{env_var} must be HTTPS "
                 "(http://localhost is allowed only in development)"

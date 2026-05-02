@@ -14,7 +14,12 @@ from cryptography.hazmat.backends import default_backend
 from passlib.context import CryptContext
 
 from app.core.config import settings
-from app.core.constants import PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH
+from app.core.constants import (
+    ENV_PRODUCTION,
+    ENV_STAGING,
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
+)
 from app.core.exceptions import PasswordMismatchError, PasswordValidationError
 
 logger = logging.getLogger(__name__)
@@ -57,7 +62,7 @@ class RS256KeyManager:
 
         if key_dir.exists() and any(key_dir.glob("*.pem")):
             self._load_from_directory(key_dir)
-        elif settings.is_prod_like:
+        elif settings.environment in (ENV_PRODUCTION, ENV_STAGING):
             raise RuntimeError(
                 f"FATAL: No RSA keys found at '{key_dir}'. "
                 f"In production/staging, pre-provisioned PEM key pairs are required. "
