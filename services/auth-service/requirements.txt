@@ -30,7 +30,6 @@ cryptography>=41.0.0
 passlib[argon2]>=1.7.4
 
 # ── OAuth ──
-authlib>=1.2.0
 httpx>=0.25.0
 
 # ── Observability (optional) ──
