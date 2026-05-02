@@ -54,11 +54,10 @@ class RS256KeyManager:
         Auto-generation is only allowed in development/testing.
         """
         key_dir = settings.get_rs256_key_path()
-        is_production = settings.environment in ("production", "staging")
 
         if key_dir.exists() and any(key_dir.glob("*.pem")):
             self._load_from_directory(key_dir)
-        elif is_production:
+        elif settings.is_prod_like:
             raise RuntimeError(
                 f"FATAL: No RSA keys found at '{key_dir}'. "
                 f"In production/staging, pre-provisioned PEM key pairs are required. "

@@ -1,6 +1,15 @@
 """Cross-module constants used by schemas, services, and routes."""
 
 
+# ── Environment names ────────────────────────────────────────────────
+# Single source of truth — use settings.is_production / is_prod_like /
+# is_development helpers instead of comparing strings directly.
+ENV_PRODUCTION = "production"
+ENV_STAGING = "staging"
+ENV_DEVELOPMENT = "development"
+ENV_TESTING = "testing"
+
+
 class TokenType:
     ACCESS = "access_token"
     REFRESH = "refresh"

@@ -65,8 +65,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s [%s]", settings.service_name, settings.service_version, settings.environment)
 
     # Production safety checks
-    is_prod = settings.environment in ("production", "staging")
-    if is_prod and settings.debug:
+    if settings.is_prod_like and settings.debug:
         raise RuntimeError("FATAL: DEBUG=true is not allowed in production/staging.")
 
     # Startup
@@ -177,16 +176,15 @@ async def _load_api_permissions_with_retry(
 
 def create_app() -> FastAPI:
     """Build and return the FastAPI application."""
-    is_prod = settings.environment == "production"
-
+    hide_docs = settings.is_production
     app = FastAPI(
         title="Auth Service",
         version=settings.service_version,
         description="Authentication & Authorization microservice",
         lifespan=lifespan,
-        docs_url=None if is_prod else "/docs",
-        redoc_url=None if is_prod else "/redoc",
-        openapi_url=None if is_prod else "/openapi.json",
+        docs_url=None if hide_docs else "/docs",
+        redoc_url=None if hide_docs else "/redoc",
+        openapi_url=None if hide_docs else "/openapi.json",
     )
 
     # Exception handlers
