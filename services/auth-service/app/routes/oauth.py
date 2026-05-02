@@ -22,7 +22,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from fastapi.responses import RedirectResponse
 
 from app.core.config import settings
-from app.core.exceptions import AuthenticationRequiredError
+from app.core.exceptions import AuthenticationRequiredError, EntityNotFoundError
 from app.core.redis import get_redis
 from app.core.responses import success_response
 from app.dependencies.services import get_oauth_service
