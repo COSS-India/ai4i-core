@@ -81,6 +81,9 @@ async def list_providers(svc: OAuthService = Depends(get_oauth_service)):
         try:
             config = svc.get_provider_config(name)
         except EntityNotFoundError:
+            # Provider is in _KNOWN_PROVIDERS but has no metadata configured —
+            # skip it so the SPA's UI doesn't render a broken button.
+            logger.debug("OAuth provider %r not configured; skipping in listing.", name)
             continue
         if config.get("client_id"):
             providers.append(

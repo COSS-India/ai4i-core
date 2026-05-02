@@ -10,6 +10,7 @@ Two-step flow:
 """
 
 import base64
+import binascii
 import json
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -43,7 +44,9 @@ def is_jwt_strict(token: str) -> bool:
         padding = 4 - len(parts[0]) % 4
         header = json.loads(base64.urlsafe_b64decode(parts[0] + "=" * padding))
         return header.get("alg") == "RS256"
-    except Exception:
+    except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+        # binascii.Error: bad base64. JSONDecodeError: bad JSON.
+        # UnicodeDecodeError: non-UTF8 bytes. AttributeError: header isn't a dict.
         return False
 
 
