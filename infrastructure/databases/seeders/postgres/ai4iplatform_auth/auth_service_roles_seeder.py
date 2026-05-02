@@ -352,7 +352,9 @@ class AuthServiceRolesSeeder(BaseSeeder):
               'tts.inference',
               'tenant.read',
               'tenant.users.read',
-              'tenant.users.update'
+              'tenant.users.create',
+              'tenant.users.update',
+              'tenant.users.delete'
             )
             WHERE r.name = 'TENANT ADMIN'
             """
