@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import UserNotFoundError
-from app.core.responses import success_response
+from app.core.responses import success_response, to_response
 from app.dependencies.auth import get_current_user
 from app.dependencies.permissions import require_any_role
 from app.dependencies.tenant_scope import enforce_target_user_same_tenant
@@ -58,10 +58,7 @@ async def list_users(
 ):
     role_set = set(getattr(request.state, "user_roles", []) or [])
     users = await svc.list_users_for_caller(caller, offset, limit, role_set=role_set)
-    items = [
-        UserListResponse.model_validate(u, from_attributes=True).model_dump(mode="json")
-        for u in users
-    ]
+    items = [to_response(u, UserListResponse) for u in users]
     return success_response(data=items)
 
 

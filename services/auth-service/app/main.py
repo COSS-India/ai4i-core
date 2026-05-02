@@ -23,19 +23,17 @@ _uvicorn_access.disabled = True
 _uvicorn_access.setLevel(logging.CRITICAL + 1)
 
 from fastapi import FastAPI
-from sqlalchemy import select
 
 from ai4icore_auth.middleware import AuthMiddleware
 from ai4icore_auth.permission_checker import PermissionChecker, set_global_endpoint_permission_map
 
 from app.core.config import settings
-from app.core.database import close_database, get_db, init_database
+from app.core.database import close_database, init_database
 from app.core.exceptions import register_exception_handlers
 from app.core.redis import close_redis, init_redis
 from app.core.security import key_manager
 from app.dependencies.auth import get_jwt_verifier, init_jwt_verifier
 from app.middleware.request_logging import RequestLoggingMiddleware
-from app.models.role import Permission
 from app.routes import api_router
 from app.services.role_permission_cache import role_permission_cache
 
@@ -44,9 +42,6 @@ logger = logging.getLogger(__name__)
 
 # Raw api_permissions.json payload — loaded once at startup (see load_api_permissions).
 API_PERMISSIONS: dict[str, Any] = {}
-
-# Module-level permission checker — set during startup, used by endpoint guard
-_permission_checker: PermissionChecker | None = None
 
 
 @asynccontextmanager
@@ -83,8 +78,9 @@ async def lifespan(app: FastAPI):
     await key_manager.initialize()
     await init_jwt_verifier()
 
-    # Load API-to-permission mapping (in-memory; legacy Redis key removed)
-    await _load_api_permissions_with_retry()
+    # Load API-to-permission mapping (in-memory; legacy Redis key removed).
+    # Stored on app.state — read by validation.py via request.app.state.
+    await _load_api_permissions_with_retry(app)
 
     # In-memory role -> permission cache with 60s refresh
     await role_permission_cache.start()
@@ -106,23 +102,21 @@ async def lifespan(app: FastAPI):
     logger.info("Shutdown complete.")
 
 
-def get_permission_checker() -> PermissionChecker | None:
-    return _permission_checker
-
-
-async def load_api_permissions() -> None:
+async def load_api_permissions(app: FastAPI) -> None:
     """
     Load api_permissions.json into API_PERMISSIONS and build the
-    endpoint -> permission_id map used by PermissionChecker.
+    endpoint -> permission_id map used by PermissionChecker, then
+    publish it on app.state for routes to read via request.app.state.
 
-    permissionRequired is a permission name string (resolved against the
-    permissions table at startup) or null for public endpoints.
+    permissionRequired is the integer DB id of the permission, baked into
+    the JSON. The IDs are owned by the seeder
+    (infrastructure/databases/seeders/postgres/auth_roles_permissions_seeder.py).
+    Endpoints absent from this list are public.
     """
-    global _permission_checker
-
     json_path = pathlib.Path(__file__).parent.parent / "api_permissions.json"
     if not json_path.exists():
         logger.info("No api_permissions.json found, skipping.")
+        app.state.permission_checker = None
         return
 
     try:
@@ -130,34 +124,20 @@ async def load_api_permissions() -> None:
         API_PERMISSIONS.clear()
         API_PERMISSIONS.update(payload)
 
-        mappings = API_PERMISSIONS.get("apiMappings", [])
-
-        name_to_id: dict[str, int] = {}
-        async for db in get_db():
-            result = await db.execute(select(Permission.name, Permission.id))
-            for name, pid in result.all():
-                name_to_id[name] = pid
-            break
-
-        endpoint_to_id: dict[str, str] = {}
-        for m in mappings:
-            req = m.get("permissionRequired")
-            if req is None:
-                continue
-            perm_id = name_to_id.get(req)
-            if perm_id is not None:
-                endpoint_to_id[m["endpoint"]] = str(perm_id)
-            else:
-                logger.warning("Permission '%s' not found in DB, skipping.", req)
+        endpoint_to_id: dict[str, int] = {
+            m["endpoint"]: int(m["permissionRequired"])
+            for m in API_PERMISSIONS.get("apiMappings", [])
+        }
 
         checker = PermissionChecker()
         checker._api_permission_map = endpoint_to_id
         set_global_endpoint_permission_map(endpoint_to_id)
-        _permission_checker = checker
+        app.state.permission_checker = checker
 
         logger.info("API permission mapping loaded: %d endpoints.", len(endpoint_to_id))
     except (FileNotFoundError, ValueError) as exc:
         logger.warning("Failed to load API permission mapping: %s", exc)
+        app.state.permission_checker = None
         return
     except OSError as exc:
         logger.warning("Failed to load API permission mapping: %s", exc)
@@ -165,6 +145,7 @@ async def load_api_permissions() -> None:
 
 
 async def _load_api_permissions_with_retry(
+    app: FastAPI,
     max_attempts: int = 8,
     base_delay_seconds: float = 1.0,
 ) -> None:
@@ -172,7 +153,7 @@ async def _load_api_permissions_with_retry(
     last_exc: OSError | None = None
     for attempt in range(1, max_attempts + 1):
         try:
-            await load_api_permissions()
+            await load_api_permissions(app)
             return
         except OSError as exc:
             last_exc = exc
@@ -186,6 +167,7 @@ async def _load_api_permissions_with_retry(
 
     if last_exc:
         logger.error("Giving up loading API permission mapping after %d attempts: %s", max_attempts, last_exc)
+        app.state.permission_checker = None
 
 
 def create_app() -> FastAPI:

@@ -10,6 +10,7 @@ All tokens include: iss, iat, kid, alg=RS256
 """
 
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -47,9 +48,14 @@ class TokenService:
     """Creates and validates RS256 JWT tokens with strict iss/aud/alg/kid claims."""
 
     def _base_claims(self) -> dict[str, Any]:
+        # `jti` makes every token unique even when (sub, type, iat) collide —
+        # `iat` has only 1-second precision, so without a nonce two
+        # verify/setup/reset tokens issued in the same second produce
+        # identical JWT bytes and collide on token_verification.token UNIQUE.
         claims: dict[str, Any] = {
             "iss": settings.jwt_issuer,
             "iat": datetime.now(timezone.utc),
+            "jti": uuid.uuid4().hex,
             "kid": key_manager.get_signing_kid(),
         }
         if settings.jwt_audience:
@@ -94,29 +100,6 @@ class TokenService:
             "sub": str(user_id),
             "tenant_id": tenant_id,
             "type": TokenType.REFRESH,
-            "exp": expire,
-        }
-        return self._sign(payload)
-
-    def create_api_key_token(
-        self,
-        user_id: str,
-        token_id: str,
-        tenant_id: Optional[str] = None,
-        permission_ids: list[int] | None = None,
-        expires_delta: Optional[timedelta] = None,
-    ) -> str:
-        """Long-lived API key token. token_id stored in DB for revocation lookups."""
-        expire = datetime.now(timezone.utc) + (
-            expires_delta or timedelta(days=settings.api_key_expire_days)
-        )
-        payload = {
-            **self._base_claims(),
-            "sub": str(user_id),
-            "tenant_id": tenant_id,
-            "permission_ids": permission_ids or [],
-            "type": TokenType.API_KEY,
-            "token_id": token_id,
             "exp": expire,
         }
         return self._sign(payload)

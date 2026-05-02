@@ -29,6 +29,7 @@ from app.services.auth_service import AuthService
 from app.services.cache_service import CacheService
 from app.services.oauth_service import OAuthService
 from app.services.role_service import RoleService
+from app.services.tenant_service import TenantService
 from app.services.token_service import TokenService
 from app.services.user_service import UserService
 
@@ -50,9 +51,8 @@ async def get_cache_service(
 
 async def get_role_service(
     db: AsyncSession = Depends(get_db),
-    cache: CacheService = Depends(get_cache_service),
 ) -> RoleService:
-    return RoleService(RoleRepository(db), cache)
+    return RoleService(RoleRepository(db))
 
 
 async def get_user_service(
@@ -63,12 +63,11 @@ async def get_user_service(
 
 async def get_auth_service(
     db: AsyncSession = Depends(get_db),
-    cache: CacheService = Depends(get_cache_service),
     email_client: EmailClient = Depends(get_email_client),
 ) -> AuthService:
     return AuthService(
         user_repo=UserRepository(db),
-        role_service=RoleService(RoleRepository(db), cache),
+        role_service=RoleService(RoleRepository(db)),
         token_service=TokenService(),
         credentials_repo=CredentialsRepository(db),
         refresh_token_repo=RefreshTokenRepository(db),
@@ -85,15 +84,26 @@ async def get_api_key_service(
     return APIKeyService(APIKeyRepository(db), cache)
 
 
+async def get_tenant_service(
+    db: AsyncSession = Depends(get_db),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> TenantService:
+    return TenantService(
+        tenant_repo=TenantRepository(db),
+        user_repo=UserRepository(db),
+        role_repo=RoleRepository(db),
+        auth_service=auth_service,
+    )
+
+
 async def get_oauth_service(
     db: AsyncSession = Depends(get_db),
-    cache: CacheService = Depends(get_cache_service),
     email_client: EmailClient = Depends(get_email_client),
 ) -> OAuthService:
     return OAuthService(
         user_repo=UserRepository(db),
         refresh_token_repo=RefreshTokenRepository(db),
-        role_service=RoleService(RoleRepository(db), cache),
+        role_service=RoleService(RoleRepository(db)),
         token_service=TokenService(),
         email_client=email_client,
     )

@@ -52,16 +52,6 @@ class APIKeyRepository(BaseRepository):
         )
         return list(result.all())
 
-    async def update(self, api_key: APIKey, data: dict) -> APIKey:
-        for field, value in data.items():
-            if hasattr(api_key, field) and value is not None:
-                setattr(api_key, field, value)
-        await self._db.flush()
-        return api_key
-
-    async def refresh(self, api_key: APIKey) -> None:
-        await self._db.refresh(api_key)
-
     async def revoke(self, api_key: APIKey) -> None:
         api_key.is_active = False
         await self._db.flush()
