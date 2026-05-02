@@ -15,11 +15,9 @@ import json
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai4icore_auth.jwt_verifier import JWTExpiredError, JWTVerificationError
 
-from app.core.database import get_db
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError
 from app.core.security import key_manager
 from app.dependencies.auth import _check_token_revocation, get_jwt_verifier
@@ -135,7 +133,6 @@ async def _validate_jwt(
     request: Request,
     response: Response,
     cache_svc: CacheService,
-    db: AsyncSession,
 ) -> Response:
     """JWT path — verify signature, check revocation, then endpoint authz."""
     try:
@@ -146,7 +143,7 @@ async def _validate_jwt(
         return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_INVALID"})
 
     if claims.token_id and await _check_token_revocation(
-        claims.token_id, claims.token_type, cache_svc, db,
+        claims.token_id, claims.token_type, cache_svc,
     ):
         return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_REVOKED"})
 
@@ -179,14 +176,13 @@ async def validate_token(
     response: Response,
     cache_svc: CacheService = Depends(get_cache_service),
     api_key_svc: APIKeyService = Depends(get_api_key_service),
-    db: AsyncSession = Depends(get_db),
 ):
     """Step 1: identify (anon / API key / JWT). Step 2: each branch authorizes."""
     token = _extract_token(request)
     if not token:
         return await _validate_anonymous(request)
     if is_jwt_strict(token):
-        return await _validate_jwt(token, request, response, cache_svc, db)
+        return await _validate_jwt(token, request, response, cache_svc)
     return await _validate_api_key(token, request, response, api_key_svc)
 
 

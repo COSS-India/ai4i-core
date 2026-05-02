@@ -34,7 +34,6 @@ from app.core.exceptions import (
 )
 from app.dependencies.services import get_cache_service
 from app.models.user import User
-from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.user_repository import UserRepository
 from app.services.cache_service import CacheService
 from app.services.token_service import TokenPayload
@@ -79,11 +78,11 @@ async def init_jwt_verifier() -> None:
 async def get_current_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
     cache_service: CacheService = Depends(get_cache_service),
-    db: AsyncSession = Depends(get_db),
 ) -> TokenPayload:
     """
     Validate the Bearer token using the shared ai4icore_auth JWTVerifier.
-    API key tokens with a token_id are checked for revocation via Redis + DB fallback.
+    API key tokens with a token_id are checked for revocation via Redis only —
+    cache miss = revoked (no DB fallback on the hot path).
     """
     if credentials is None:
         raise AuthenticationRequiredError()
@@ -108,7 +107,7 @@ async def get_current_token(
 
     if payload.token_id:
         revoked = await _check_token_revocation(
-            payload.token_id, payload.token_type, cache_service, db,
+            payload.token_id, payload.token_type, cache_service,
         )
         if revoked:
             raise TokenRevokedError()
@@ -120,43 +119,31 @@ async def _check_token_revocation(
     token_id: str,
     token_type: str | None,
     cache_service: CacheService,
-    db: AsyncSession,
 ) -> bool:
     """
     Generic revocation check. Currently only api_key tokens are tracked;
     other token types are considered non-revocable here.
     """
     if token_type == "api_key":
-        return await _check_api_key_revocation(token_id, cache_service, db)
+        return await _check_api_key_revocation(token_id, cache_service)
     return False
 
 
 async def _check_api_key_revocation(
     token_id: str,
     cache_service: CacheService,
-    db: AsyncSession,
 ) -> bool:
     """
     Check if an API key token_id has been revoked.
-    Redis first (presence = valid), DB fallback on cache miss.
-    Returns True if revoked, False if valid.
+
+    Redis-only — cache is the runtime source of truth. Keys are SETEX'd at
+    creation and DEL'd on revoke; cache miss means the key was never issued,
+    revoked, or its TTL expired — all of which we treat as revoked. No DB
+    fallback: the validate hot path stays Postgres-free, and a flushed
+    Redis fail-closes (forces re-issuance) instead of silently re-allowing
+    keys that had been revoked.
     """
-    if await cache_service.get_api_key_cache(token_id) is not None:
-        return False
-
-    repo = APIKeyRepository(db)
-    db_key = await repo.get_by_api_key(token_id)
-    if not db_key or not db_key.is_active:
-        return True
-
-    ttl = await _remaining_api_key_ttl(db_key)
-    if ttl > 0:
-        await cache_service.set_api_key_cache(token_id, ttl, {})
-    return False
-
-
-async def _remaining_api_key_ttl(db_key) -> int:
-    return settings.api_key_expire_days * 86400
+    return await cache_service.get_api_key_cache(token_id) is None
 
 
 async def get_current_user(
