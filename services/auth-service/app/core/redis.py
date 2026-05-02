@@ -3,12 +3,9 @@ Redis client lifecycle for auth-service.
 
 Single logical DB (default 0). Auth-service uses Redis ONLY for:
   - API key cache (auth:apikey:*)
-  - Tenant status cache (auth:tenant_status:*)
-  - Tenant-user status cache (auth:tenant_user_status:*)
-  - Revocation cooldowns (auth:revocation_cooldown:*)
 
-Roles, permissions, and endpoint→permission_id maps are kept in-process
-(see PermissionChecker and RoleService).
+Roles, permissions, role→permission map, and endpoint→permission_id map
+are kept in-process (see PermissionChecker and RolePermissionCache).
 """
 
 import logging

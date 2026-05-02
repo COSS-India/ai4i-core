@@ -106,17 +106,6 @@ class RoleRepository(BaseRepository):
         )
         return list(result.scalars().all())
 
-    async def get_user_permission_names(self, user_id: UUID) -> list[str]:
-        result = await self._db.execute(
-            select(Permission.name)
-            .join(RolePermission, Permission.id == RolePermission.permission_id)
-            .join(Role, RolePermission.role_id == Role.id)
-            .join(UserRole, Role.id == UserRole.role_id)
-            .where(UserRole.user_id == user_id)
-            .distinct()
-        )
-        return list(result.scalars().all())
-
     async def get_role_permission_ids(self, role_id: int) -> list[int]:
         result = await self._db.execute(
             select(RolePermission.permission_id).where(RolePermission.role_id == role_id)

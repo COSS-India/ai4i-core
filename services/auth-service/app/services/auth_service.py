@@ -13,7 +13,7 @@ from fastapi import BackgroundTasks
 
 from app.core.config import settings
 from app.core.constants import TokenType
-from app.core.roles import Roles
+from app.models.role_name import RoleName
 from app.core.exceptions import (
     DuplicateEntityError,
     EntityNotFoundError,
@@ -483,7 +483,7 @@ class AuthService:
         phone_number: Optional[str] = None,
         tenant_id: Optional[int | str] = None,
         creation_type: str = "default",
-        role_name: str = Roles.USER,
+        role_name: str = RoleName.USER,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> tuple[str, str]:
         """
@@ -491,8 +491,8 @@ class AuthService:
         Used by the tenant-user provisioning route during tenant user onboarding.
         Returns (user_id_str, setup_token).
 
-        ``role_name`` decides which role is assigned. Default ``Roles.USER``
-        for regular tenant members; pass ``Roles.TENANT_ADMIN`` when
+        ``role_name`` decides which role is assigned. Default ``RoleName.USER``
+        for regular tenant members; pass ``RoleName.TENANT_ADMIN`` when
         provisioning the first admin user of a new tenant.
         """
         if await self._users.get_by_email(email):

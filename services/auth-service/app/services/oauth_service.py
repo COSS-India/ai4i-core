@@ -29,7 +29,7 @@ from fastapi import BackgroundTasks
 
 from app.core.config import settings
 from app.core.exceptions import AuthenticationRequiredError, EntityNotFoundError
-from app.core.roles import Roles
+from app.models.role_name import RoleName
 from app.models.user import CreationType, User
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.user_repository import UserRepository
@@ -206,7 +206,7 @@ class OAuthService:
         await self._users.create(user)
 
         try:
-            await self._roles.assign_role(user.id, Roles.USER)
+            await self._roles.assign_role(user.id, RoleName.USER)
         except EntityNotFoundError:
             logger.warning("Default USER role not found, skipping role assignment.")
 

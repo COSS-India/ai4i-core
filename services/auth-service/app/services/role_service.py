@@ -11,7 +11,6 @@ from app.core.exceptions import EntityNotFoundError, ValidationError
 from app.models.role import Permission, Role
 from app.models.role_name import RoleName, role_name_to_str
 from app.repositories.role_repository import RoleRepository
-from app.services.cache_service import CacheService
 from app.services.role_permission_cache import role_permission_cache
 
 logger = logging.getLogger(__name__)
@@ -27,9 +26,8 @@ def _resource_from_permission(perm) -> str:
 
 
 class RoleService:
-    def __init__(self, role_repo: RoleRepository, cache_service: CacheService) -> None:
+    def __init__(self, role_repo: RoleRepository) -> None:
         self._roles = role_repo
-        self._cache = cache_service
 
     @staticmethod
     def _expanded_excluded_resources_for_platform_inference() -> tuple[str, ...]:

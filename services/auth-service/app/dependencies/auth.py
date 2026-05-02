@@ -161,25 +161,11 @@ async def _remaining_api_key_ttl(db_key) -> int:
     return settings.api_key_expire_days * 86400
 
 
-async def get_current_claims(
-    payload: TokenPayload = Depends(get_current_token),
-) -> TokenPayload:
-    """
-    Lightweight dependency for handlers that only need JWT claims
-    (user_id, tenant_id, permission_ids). No DB hit. Use this whenever
-    a route handler does not need a full User ORM row.
-    """
-    return payload
-
-
 async def get_current_user(
     payload: TokenPayload = Depends(get_current_token),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """
-    Resolve the authenticated user (full ORM row) from the token payload.
-    Hits the DB. Prefer get_current_claims for handlers that only need claims.
-    """
+    """Resolve the authenticated user (full ORM row) from the token payload."""
     repo = UserRepository(db)
     user = await repo.get_by_id(UUID(payload.sub))
     if not user:

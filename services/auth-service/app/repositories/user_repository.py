@@ -58,9 +58,3 @@ class UserRepository(BaseRepository):
             .limit(limit)
         )
         return list(result.scalars().all())
-
-    async def count(self) -> int:
-        result = await self._db.execute(
-            select(func.count(User.id)).where(User.is_delete.isnot(True))
-        )
-        return result.scalar_one()

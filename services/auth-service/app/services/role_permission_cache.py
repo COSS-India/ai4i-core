@@ -30,10 +30,6 @@ class RolePermissionCache:
         self._refresh_interval = refresh_interval_seconds
         self._task: Optional[asyncio.Task] = None
 
-    def get_role_permission_ids(self, role_id: int) -> list[int]:
-        """Return cached permission IDs for a role. Empty list on cache miss."""
-        return self._role_perms.get(role_id, [])
-
     def get_user_permission_ids(self, role_ids: list[int]) -> list[int]:
         """Union of permission IDs across the given roles."""
         out: set[int] = set()
