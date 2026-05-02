@@ -37,6 +37,12 @@ from app.middleware.request_logging import RequestLoggingMiddleware
 from app.routes import api_router, versioning
 from app.services.role_permission_cache import role_permission_cache
 
+# Optional dep — guarded so the module still imports without opentelemetry installed.
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+except ImportError:
+    FastAPIInstrumentor = None
+
 
 logger = logging.getLogger(__name__)
 
@@ -85,12 +91,11 @@ async def lifespan(app: FastAPI):
     # In-memory role -> permission cache with 60s refresh
     await role_permission_cache.start()
 
-    # Telemetry (optional)
-    try:
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    # Telemetry (optional — package may not be installed)
+    if FastAPIInstrumentor is not None:
         FastAPIInstrumentor.instrument_app(app, excluded_urls="health,ready,docs,redoc,openapi.json")
         logger.info("OpenTelemetry FastAPI instrumentation enabled.")
-    except ImportError:
+    else:
         logger.info("Telemetry not available, skipping.")
 
     yield
