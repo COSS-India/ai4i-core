@@ -818,11 +818,6 @@
       "description": "List services"
     },
     {
-      "endpoint": "POST:/redact",
-      "permissionRequired": "pii_guard.inference",
-      "description": "PII redaction inference"
-    },
-    {
       "endpoint": "GET:/admin/all-domains",
       "permissionRequired": "pii_guard.admin",
       "description": "List PII domains"

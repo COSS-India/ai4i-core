@@ -57,7 +57,7 @@ if _tracer_setup:
 
 tracer = trace.get_tracer(_pii_service_name)
 
-from middleware.auth_provider import AuthProvider
+from middleware.auth_provider import AuthProvider, OptionalAuthProvider
 
 
 class KnowledgeBase:
@@ -493,7 +493,7 @@ def require_pii_admin(auth_claims):
 async def redact_text(
     request: RedactionRequest,
     background_tasks: BackgroundTasks,
-    auth=Depends(AuthProvider),
+    auth=Depends(OptionalAuthProvider),
     include_original_text: bool = Query(default=False),
     x_target: str = Header("user"),
     x_language: str = Header("en"),
