@@ -365,7 +365,10 @@ async def record_usage(body: RecordRequest, session: AsyncSession = Depends(get_
     if debit_cost > 0:
         new_used = Decimal(str(wb.total_used or 0)) + debit_cost
         wb.total_used = new_used
-        wb.balance = _remaining_balance(wb)
+        # _remaining_balance falls back to wb.balance when total_plan_cost is 0
+        # (top-up-only wallets), so the previous assignment was a no-op there.
+        # Subtract directly so the wallet decrements in both the plan and no-plan paths.
+        wb.balance = Decimal(str(wb.balance or 0)) - debit_cost
 
         session.add(
             WalletTransaction(
