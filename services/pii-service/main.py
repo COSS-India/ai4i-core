@@ -510,6 +510,27 @@ async def redact_text(
             "X-Tenant-Id header does not match token tenant_id.",
         )
     tenant_id = claims_tid or header_tid
+
+    # Propagate tenant_id into the logging contextvar so child spans
+    # (pii_ai_extraction, pii_regex_scan, etc.) created later in this request
+    # are tagged via OrganizationSpanProcessor.on_start. Without this, every
+    # PII child span shows tenant_id="unknown" because no observability
+    # middleware is wired into pii-service.
+    if tenant_id:
+        try:
+            from ai4icore_logging.context import set_tenant_id
+            set_tenant_id(tenant_id)
+        except Exception:
+            # Logging library not available is not fatal — observability
+            # tagging just stays at "unknown" for this request.
+            pass
+        try:
+            current_span = trace.get_current_span()
+            if current_span:
+                current_span.set_attribute("tenant_id", str(tenant_id))
+        except Exception:
+            pass
+
     start = time.time()
     span_ctx = trace.get_current_span().get_span_context()
     otel_trace_id = f"{span_ctx.trace_id:032x}" if getattr(span_ctx, "is_valid", False) else ""
