@@ -6,7 +6,10 @@ Both entrypoints must call these helpers or usage/wallet rows never update.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import asyncio
+import time
+from collections import OrderedDict
+from typing import Any, Optional, Tuple
 
 from fastapi import HTTPException, Request
 
@@ -21,6 +24,68 @@ from ai4icore_multi_tenant import (
 logger = get_logger(__name__)
 
 API_GATEWAY_URL = app_env.api_gateway_url
+
+# In-process cache for /check results to absorb concurrent bursts that were
+# tripping pay-per-use's per-api-key/per-tenant rate limiter and surfacing as
+# 429s on legitimate traffic. Only positive ("allowed") results are cached so
+# a tenant that just topped up doesn't have to wait for the TTL to expire.
+# Per-key locks coalesce concurrent in-flight checks into a single upstream call.
+_PPU_CACHE_TTL_SECONDS = 5.0
+_PPU_CACHE_MAX_ENTRIES = 10_000
+_ppu_check_cache: "OrderedDict[Tuple[str, str, str], Tuple[bool, float]]" = OrderedDict()
+_ppu_check_locks: dict = {}
+_ppu_locks_guard = asyncio.Lock()
+
+
+async def _get_ppu_check_lock(key: Tuple[str, str, str]) -> asyncio.Lock:
+    async with _ppu_locks_guard:
+        lock = _ppu_check_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _ppu_check_locks[key] = lock
+        return lock
+
+
+async def _cached_ppu_check(
+    ppu: PayPerUseClient,
+    tenant_id: str,
+    actor: str,
+    service_id: str,
+    units: float,
+) -> bool:
+    """Wrap PayPerUseClient.check with a short-TTL positive-only cache plus
+    per-key coalescing. Negative results are not cached so denied tenants can
+    recover immediately after a top-up."""
+    key = (tenant_id, actor, str(service_id))
+
+    # Fast path: cache hit, no lock.
+    cached = _ppu_check_cache.get(key)
+    if cached is not None:
+        ok, ts = cached
+        if ok and (time.monotonic() - ts) < _PPU_CACHE_TTL_SECONDS:
+            _ppu_check_cache.move_to_end(key)
+            return True
+
+    # Coalesce concurrent misses on the same key into one upstream call.
+    lock = await _get_ppu_check_lock(key)
+    async with lock:
+        cached = _ppu_check_cache.get(key)
+        if cached is not None:
+            ok, ts = cached
+            if ok and (time.monotonic() - ts) < _PPU_CACHE_TTL_SECONDS:
+                _ppu_check_cache.move_to_end(key)
+                return True
+
+        ok = await ppu.check(tenant_id, actor, service_id, units)
+
+        if ok:
+            _ppu_check_cache[key] = (True, time.monotonic())
+            _ppu_check_cache.move_to_end(key)
+            while len(_ppu_check_cache) > _PPU_CACHE_MAX_ENTRIES:
+                _ppu_check_cache.popitem(last=False)
+        else:
+            _ppu_check_cache.pop(key, None)
+        return ok
 
 
 async def _ppu_tenant_id_nmt(http_request: Request) -> Optional[str]:
@@ -63,7 +128,14 @@ async def _nmt_ppu_check(http_request: Request, service_id: str, units: float) -
         )
         return
     u = max(float(units), 1.0)
-    ok = await ppu.check(tenant_id, actor, str(service_id), u)
+    try:
+        ok = await _cached_ppu_check(ppu, tenant_id, actor, str(service_id), u)
+    except Exception as e:
+        # Fail-open on transient PPU errors so a degraded pay-per-use service
+        # doesn't take down NMT inference. The actual usage row is still
+        # written by _nmt_ppu_record afterwards.
+        logger.error("pay_per_use check error (allowing request): %s", e)
+        return
     if not ok:
         raise HTTPException(status_code=429, detail="Pay-per-use check failed")
 
