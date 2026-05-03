@@ -500,6 +500,7 @@ async def redact_text(
     x_target: str = Header("user"),
     x_language: str = Header("en"),
     x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-Id"),
+    x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
 ):
     claims_tid = getattr(auth, "tenant_id", None) if auth is not None else None
     header_tid = (x_tenant_id or "").strip() or None
@@ -511,7 +512,8 @@ async def redact_text(
     tenant_id = claims_tid or header_tid
     start = time.time()
     span_ctx = trace.get_current_span().get_span_context()
-    trace_id = f"{span_ctx.trace_id:032x}" if getattr(span_ctx, "is_valid", False) else ""
+    otel_trace_id = f"{span_ctx.trace_id:032x}" if getattr(span_ctx, "is_valid", False) else ""
+    trace_id = x_request_id or otel_trace_id
     trace_log = [{"step": "Request", "status": "Success", "details": f"Target: {x_target}, Lang: {x_language}"}]
 
     if not KB.connected:
@@ -745,3 +747,5 @@ async def list_audit_logs(
             limit,
         )
         return [dict(row) for row in rows]
+
+

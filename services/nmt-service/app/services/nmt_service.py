@@ -818,6 +818,7 @@ class NMTService:
                     text=text, lang=lang,
                     auth_headers=auth_headers, tenant_id=tenant_header,
                     timeout=self.pii_redact_timeout, client=self.pii_http_client,
+                    request_id=str(request_id),
                 )
             except Exception as exc:
                 logger.warning("PII redact failed; storing raw: %s", exc)
