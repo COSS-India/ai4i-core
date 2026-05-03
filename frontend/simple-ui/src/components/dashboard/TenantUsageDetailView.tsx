@@ -71,6 +71,9 @@ export default function TenantUsageDetailView({
 }: TenantUsageDetailViewProps) {
   const w = data.wallet;
   const util = w.utilization_percent ?? 0;
+  // No plan budget configured (top-up-only wallet, or tenant_plans row missing).
+  // Avoid showing meaningless "0% of budget used" when total_plan_cost is 0.
+  const hasPlanBudget = (w.total_plan_cost ?? 0) > 0;
 
   return (
     <VStack align="stretch" spacing={6}>
@@ -125,16 +128,24 @@ export default function TenantUsageDetailView({
               <StatLabel>Remaining</StatLabel>
               <StatNumber fontSize="2xl">₹{formatIn(w.remaining)}</StatNumber>
             </Stat>
-            <Progress
-              mt={3}
-              value={Math.min(100, util)}
-              size="sm"
-              colorScheme={util > 80 ? "orange" : "blue"}
-              borderRadius="md"
-            />
-            <Text fontSize="xs" color="gray.600" mt={1}>
-              {util}% of budget used
-            </Text>
+            {hasPlanBudget ? (
+              <>
+                <Progress
+                  mt={3}
+                  value={Math.min(100, util)}
+                  size="sm"
+                  colorScheme={util > 80 ? "orange" : "blue"}
+                  borderRadius="md"
+                />
+                <Text fontSize="xs" color="gray.600" mt={1}>
+                  {util}% of budget used
+                </Text>
+              </>
+            ) : (
+              <Text fontSize="xs" color="gray.600" mt={3}>
+                Wallet top-up only — no plan budget configured
+              </Text>
+            )}
           </CardBody>
         </Card>
       </SimpleGrid>
@@ -169,6 +180,7 @@ export default function TenantUsageDetailView({
           <VStack align="stretch" spacing={4}>
             {(data.service_usage || []).map((s) => {
               const pct = s.quota_percent || 0;
+              const hasQuota = (s.quota_limit ?? 0) > 0;
               return (
                 <Box key={`${s.service_name}-${s.unit_type}`}>
                   <HStack justify="space-between" mb={1}>
@@ -176,15 +188,19 @@ export default function TenantUsageDetailView({
                       {s.service_name} ({s.unit_type})
                     </Text>
                     <Text fontSize="sm" color="gray.600">
-                      {formatIn(s.units_used)} / {formatIn(s.quota_limit)} ({pct.toFixed(0)}%)
+                      {hasQuota
+                        ? `${formatIn(s.units_used)} / ${formatIn(s.quota_limit)} (${pct.toFixed(0)}%)`
+                        : `${formatIn(s.units_used)} used (no quota set)`}
                     </Text>
                   </HStack>
-                  <Progress
-                    value={Math.min(100, pct)}
-                    size="sm"
-                    borderRadius="md"
-                    colorScheme={pct > 80 ? "orange" : pct >= 50 ? "yellow" : "blue"}
-                  />
+                  {hasQuota && (
+                    <Progress
+                      value={Math.min(100, pct)}
+                      size="sm"
+                      borderRadius="md"
+                      colorScheme={pct > 80 ? "orange" : pct >= 50 ? "yellow" : "blue"}
+                    />
+                  )}
                 </Box>
               );
             })}
