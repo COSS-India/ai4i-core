@@ -80,28 +80,29 @@ class PayPerUseClient:
         else:
             self.base_url = resolve_pay_per_use_base_url()
 
-    # async def check(
-    #     self,
-    #     tenant_id: str,
-    #     api_key_id: str,
-    #     service_id: str,
-    #     estimated_units: float,
-    # ) -> bool:
-    #     if not self.base_url:
-    #         return True
-    #     url = f"{self.base_url}/check"
-    #     payload = {
-    #         "tenant_id": tenant_id,
-    #         "api_key_id": api_key_id,
-    #         "service_id": service_id,
-    #         "estimated_units": estimated_units,
-    #     }
-    #     async with httpx.AsyncClient(timeout=15.0) as client:
-    #         r = await client.post(url, json=payload)
-    #     if r.status_code == 200:
-    #         data = r.json()
-    #         return bool(data.get("allowed", False))
-    #     return False
+    async def check(
+        self,
+        tenant_id: str,
+        api_key_id: str,
+        service_id: str,
+        estimated_units: float,
+    ) -> bool:
+        if not self.base_url:
+            return True
+        url = f"{self.base_url}/check"
+        payload = {
+            "tenant_id": tenant_id,
+            "api_key_id": api_key_id,
+            "service_id": service_id,
+            "estimated_units": estimated_units,
+        }
+        return True
+        # async with httpx.AsyncClient(timeout=15.0) as client:
+        #     r = await client.post(url, json=payload)
+        # if r.status_code == 200:
+        #     data = r.json()
+        #     return bool(data.get("allowed", False))
+        # return False
 
     async def record(
         self,
