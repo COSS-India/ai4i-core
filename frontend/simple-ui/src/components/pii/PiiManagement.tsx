@@ -125,7 +125,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const [newMapDomainId, setNewMapDomainId] = useState("");
   const [newEntity, setNewEntity] = useState("");
   const [newAction, setNewAction] = useState("");
-  const [newExample, setNewExample] = useState("");
+  const [newExamples, setNewExamples] = useState(["", "", ""]);
   const [newRegex, setNewRegex] = useState("");
   const [adminDataError, setAdminDataError] = useState<string | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
@@ -296,7 +296,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
 
   const generateRegex = async () => {
     try {
-      const res = await piiService.generateRegex(newExample);
+      const res = await piiService.generateRegex(newExamples.filter(e => e.trim()), newEntity);
       setNewRegex(res.data.regex);
     } catch {
       toast({
@@ -333,7 +333,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
     setEditingRules([...editingRules, rule]);
     setNewEntity("");
     setNewRegex("");
-    setNewExample("");
+    setNewExamples(["", "", ""]);
   };
 
   const saveConfig = async () => {
@@ -734,20 +734,23 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
                           </Select>
                         </GridItem>
                         <GridItem colSpan={{ base: 1, md: 6 }}>
-                          <HStack
-                            spacing={3}
-                            align="stretch"
-                            flexWrap={{ base: "wrap", md: "nowrap" }}
-                          >
-                            <Input
-                              size="sm"
-                              flex="1"
-                              minW={{ base: "100%", md: "140px" }}
-                              placeholder="AI Example (e.g., A1234567)"
-                              value={newExample}
-                              onChange={(e) => setNewExample(e.target.value)}
-                              bg={cardBg}
-                            />
+                          <HStack spacing={2} align="stretch" flexWrap={{ base: "wrap", md: "nowrap" }}>
+                            {newExamples.map((ex, i) => (
+                              <Input
+                                key={i}
+                                size="sm"
+                                flex="1"
+                                minW={{ base: "100%", md: "100px" }}
+                                placeholder={`Example ${i + 1}`}
+                                value={ex}
+                                onChange={(e) => {
+                                  const updated = [...newExamples];
+                                  updated[i] = e.target.value;
+                                  setNewExamples(updated);
+                                }}
+                                bg={cardBg}
+                              />
+                            ))}
                             <Button
                               size="sm"
                               colorScheme="orange"

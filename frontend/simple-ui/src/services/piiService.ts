@@ -43,9 +43,11 @@ export const piiService = {
   deployRules: (domainId: string, rules: unknown[]) =>
     api.post(`${BASE_URL}/admin/deploy`, { domain_id: domainId, rules }),
 
-  generateRegex: (exampleText: string) =>
+  generateRegex: (examples: string[], entityName?: string) =>
     api.post(`${BASE_URL}/admin/generate-regex`, {
-      example_text: exampleText,
+      example_text: examples[0] ?? "",
+      examples,
+      entity_name: entityName || undefined,
     }),
 
   listTenantDomainMappings: () =>
