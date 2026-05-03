@@ -101,43 +101,27 @@ async def assign_plan_to_tenant(
     db: AsyncSession,
 ) -> None:
     """
-    Fetch full plan from policy-engine and stage a TenantPlan snapshot on the
-    given session. The caller is responsible for committing the transaction.
-
-    Raises HTTPException on configuration errors, policy-engine failures, or
-    network errors — silent swallowing previously left tenants registered
-    with no plan, which broke pay-per-use checks for every later request.
+    Fetch full plan from policy-engine and persist a TenantPlan snapshot.
     """
     if not POLICY_ENGINE_URL:
-        logger.error("policy_engine_url is not set; cannot assign plan for tenant %s", tenant_internal_uuid)
-        raise HTTPException(
-            status_code=503,
-            detail="Policy engine is not configured; cannot assign plan to tenant.",
-        )
+        logger.warning("policy_engine_url is not set; skipping plan assignment for tenant %s", tenant_internal_uuid)
+        return
     url = f"{POLICY_ENGINE_URL}/policies/{plan_id}"
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.get(url)
+        if r.status_code != 200:
+            logger.error(
+                "Policy engine GET %s failed: %s %s",
+                url,
+                r.status_code,
+                r.text,
+            )
+            return
+        data = r.json()
     except Exception as e:
         logger.exception("assign_plan_to_tenant HTTP error: %s", e)
-        raise HTTPException(
-            status_code=503,
-            detail=f"Policy engine unreachable while assigning plan {plan_id}.",
-        )
-    if r.status_code != 200:
-        logger.error(
-            "Policy engine GET %s failed: %s %s",
-            url,
-            r.status_code,
-            r.text,
-        )
-        raise HTTPException(
-            status_code=400 if r.status_code == 404 else 502,
-            detail=f"Plan {plan_id} not found in policy engine."
-            if r.status_code == 404
-            else f"Policy engine returned {r.status_code} for plan {plan_id}.",
-        )
-    data = r.json()
+        return
 
     plan_name = str(data.get("plan_name") or data.get("name") or "")
     plan_cost: Optional[Decimal] = None
@@ -172,7 +156,7 @@ async def assign_plan_to_tenant(
         allowed_services=allowed_services if isinstance(allowed_services, list) else [],
     )
     db.add(row)
-    await db.flush()
+    await db.commit()
 
 
 _TIER_LABEL_ORDER = ("Tier-1", "Tier-2", "Tier-3")
@@ -305,22 +289,13 @@ async def assign_plans_bundle_to_tenant(
     plan_ids: List[UUID],
     db: AsyncSession,
 ) -> None:
-    """Fetch multiple plans from policy-engine and stage one merged TenantPlan
-    snapshot on the given session. The caller is responsible for committing
-    the transaction.
-
-    Raises HTTPException on configuration / policy-engine failures so callers
-    don't silently end up with planless tenants.
-    """
+    """Fetch multiple plans from policy-engine and persist one merged TenantPlan snapshot."""
     if not POLICY_ENGINE_URL:
-        logger.error(
-            "policy_engine_url is not set; cannot assign plan bundle for tenant %s",
+        logger.warning(
+            "policy_engine_url is not set; skipping plan bundle assignment for tenant %s",
             tenant_internal_uuid,
         )
-        raise HTTPException(
-            status_code=503,
-            detail="Policy engine is not configured; cannot assign plans to tenant.",
-        )
+        return
     if not plan_ids:
         return
     payloads: List[Dict[str, Any]] = []
@@ -336,30 +311,17 @@ async def assign_plans_bundle_to_tenant(
                         r.status_code,
                         r.text,
                     )
-                    raise HTTPException(
-                        status_code=400 if r.status_code == 404 else 502,
-                        detail=f"Plan {pid} not found in policy engine."
-                        if r.status_code == 404
-                        else f"Policy engine returned {r.status_code} for plan {pid}.",
-                    )
+                    return
                 payloads.append(r.json())
-    except HTTPException:
-        raise
     except Exception as e:
         logger.exception("assign_plans_bundle_to_tenant HTTP error: %s", e)
-        raise HTTPException(
-            status_code=503,
-            detail="Policy engine unreachable while assigning plan bundle.",
-        )
+        return
 
     try:
         merged = _merge_policy_engine_plans(payloads)
     except Exception as e:
         logger.exception("assign_plans_bundle_to_tenant merge failed: %s", e)
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to merge plans returned by policy engine.",
-        )
+        return
 
     row = TenantPlan(
         tenant_id=tenant_internal_uuid,
@@ -372,7 +334,7 @@ async def assign_plans_bundle_to_tenant(
         allowed_services=merged["allowed_services"] if isinstance(merged["allowed_services"], list) else [],
     )
     db.add(row)
-    await db.flush()
+    await db.commit()
 
 _AUTH_TENANT_STATUS_PREFIX = "auth:tenant_status:"
 _AUTH_TENANT_USER_STATUS_PREFIX = "auth:tenant_user_status:"
@@ -1364,24 +1326,6 @@ async def create_new_tenant(
     )
     db.add(audit)
 
-    # Stage plan assignment in the same transaction as tenant creation. If
-    # the policy engine is misconfigured or the plan_id is unknown, the whole
-    # transaction rolls back instead of leaving an orphan tenant with no
-    # tenant_plans row (which silently breaks every later pay-per-use check).
-    plan_ids_payload = getattr(payload, "plan_ids", None)
-    try:
-        if plan_ids_payload:
-            await assign_plans_bundle_to_tenant(created.id, list(plan_ids_payload), db)
-        elif getattr(payload, "plan_id", None):
-            await assign_plan_to_tenant(created.id, payload.plan_id, db)
-    except HTTPException:
-        await db.rollback()
-        raise
-    except Exception as e:
-        logger.exception("Plan assignment failed during tenant creation: %s", e)
-        await db.rollback()
-        raise HTTPException(status_code=500, detail="Plan assignment failed; tenant not created.")
-
     try:
         await db.commit()
     except IntegrityError as e:
@@ -1392,6 +1336,18 @@ async def create_new_tenant(
         logger.exception(f"Error committing tenant creation to database: {e}")
         await db.rollback()
         raise HTTPException(status_code=500,detail="Failed to create tenant")
+
+    plan_ids_payload = getattr(payload, "plan_ids", None)
+    if plan_ids_payload:
+        try:
+            await assign_plans_bundle_to_tenant(created.id, list(plan_ids_payload), db)
+        except Exception as e:
+            logger.exception("Plan bundle assignment after tenant creation failed (tenant was created): %s", e)
+    elif getattr(payload, "plan_id", None):
+        try:
+            await assign_plan_to_tenant(created.id, payload.plan_id, db)
+        except Exception as e:
+            logger.exception("Plan assignment after tenant creation failed (tenant was created): %s", e)
 
     # Snapshot ORM fields before verification send: it rolls back the session and expires instances.
     register_id = created.id
