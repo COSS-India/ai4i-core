@@ -74,7 +74,7 @@ paths:
                         source_text:
                           type: string
                           example: "[PER] is currently working from [LOC]"
-                        translated_text:
+                        target_text:
                           type: string
                           example: "[PER] वर्त मान में [LOC] से काम कर रहा है।"
         "400":

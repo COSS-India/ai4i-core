@@ -38,7 +38,7 @@ async def get_request_result(
         "translations": [
             {
                 "source_text": r.source_text,
-                "translated_text": r.translated_text,
+                "target_text": r.translated_text,
             }
             for r in results
         ],
