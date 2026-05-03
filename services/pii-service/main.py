@@ -187,7 +187,7 @@ class DetectionEngine:
                 if ent_text.lower() in self.FALSE_POSITIVES:
                     continue
                 mapped = "LOCATION" if ent_label in ["GPE", "LOC", "FAC", "ORG"] else ent_label
-                if ent_label == "PERSON":
+                if ent_label in ("PERSON", "PER"):
                     mapped = "PERSON"
                 if mapped in active_types:
                     detected.append(
@@ -503,14 +503,12 @@ async def redact_text(
 ):
     claims_tid = getattr(auth, "tenant_id", None) if auth is not None else None
     header_tid = (x_tenant_id or "").strip() or None
-    if header_tid and header_tid != claims_tid:
-        # Prevent tenant spoofing when token already carries tenant_id.
-        if claims_tid:
-            raise HTTPException(
-                403,
-                "X-Tenant-Id header does not match token tenant_id.",
-            )
-    tenant_id = claims_tid
+    if claims_tid and header_tid and claims_tid != header_tid:
+        raise HTTPException(
+            403,
+            "X-Tenant-Id header does not match token tenant_id.",
+        )
+    tenant_id = claims_tid or header_tid
     start = time.time()
     span_ctx = trace.get_current_span().get_span_context()
     trace_id = f"{span_ctx.trace_id:032x}" if getattr(span_ctx, "is_valid", False) else ""
