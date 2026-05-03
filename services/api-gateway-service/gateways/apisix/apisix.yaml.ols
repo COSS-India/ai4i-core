@@ -1,5 +1,3 @@
-# TEMPORARY: copy of apisix.yaml with all `limit-count` plugins removed for debugging.
-# Restore rate limits by switching back to apisix.yaml. Do not use as default in production.
 - uri: /
   name: root-route
   priority: 1
@@ -104,6 +102,15 @@
       headers:
         X-Served-By: APISIX-Gateway
         X-Service: alert-management-service
+    limit-count:
+      policy: local
+      key_type: var
+      rejected_code: 429
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      allow_degradation: false
+      count: 200
     serverless-post-function:
       phase: header_filter
       functions:
@@ -164,6 +171,15 @@
       headers:
         X-Service: asr-service
       body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -224,6 +240,15 @@
       headers:
         X-Service: audio-lang-detection-service
       body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -259,6 +284,19 @@
           X-Correlation-ID: $request_id
           X-Gateway: apisix
       use_real_request_uri_unsafe: false
+    limit-count:
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
+      key_type: var
+      key: http_x_forwarded_for
+      count: 10
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
 - uri: /api/v1/auth/guest/login
   name: auth-guest-login-route
   priority: 20
@@ -286,6 +324,19 @@
           X-Correlation-ID: $request_id
           X-Gateway: apisix
       use_real_request_uri_unsafe: false
+    limit-count:
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
+      key_type: var
+      key: http_x_forwarded_for
+      count: 10
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
 - uri: /api/v1/auth/register
   name: auth-register-route
   priority: 20
@@ -314,6 +365,19 @@
           X-Correlation-ID: $request_id
           X-Gateway: apisix
       use_real_request_uri_unsafe: false
+    limit-count:
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
+      key_type: var
+      key: http_x_forwarded_for
+      count: 5
+      time_window: 3600
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
 - uri: /api/v1/auth/request-password-reset
   name: auth-request-password-reset-route
   priority: 20
@@ -341,6 +405,19 @@
           X-Correlation-ID: $request_id
           X-Gateway: apisix
       use_real_request_uri_unsafe: false
+    limit-count:
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
+      key_type: var
+      key: http_x_forwarded_for
+      count: 3
+      time_window: 3600
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
 - uri: /api/v1/auth/refresh
   name: auth-refresh-route
   priority: 20
@@ -369,6 +446,19 @@
           X-Correlation-ID: $request_id
           X-Gateway: apisix
       use_real_request_uri_unsafe: false
+    limit-count:
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
+      key_type: var
+      key: http_x_forwarded_for
+      count: 30
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
 - uri: /api/v1/auth/validate
   name: auth-validate-route
   priority: 20
@@ -427,6 +517,19 @@
           X-Correlation-ID: $request_id
           X-Gateway: apisix
       use_real_request_uri_unsafe: false
+    limit-count:
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
+      key_type: var
+      key: http_x_forwarded_for
+      count: 30
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
 - uri: /api/v1/auth/.well-known/*
   name: auth-wellknown-route
   priority: 20
@@ -558,6 +661,15 @@
           X-Correlation-ID: $request_id
           X-Gateway: apisix
       use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      key: http_x_user_id
+      count: 200
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -642,6 +754,15 @@
       headers:
         X-Service: language-detection-service
       body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -706,6 +827,15 @@
       headers:
         X-Service: language-diarization-service
       body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 60
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -766,6 +896,15 @@
       headers:
         X-Service: llm-service
       body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 60
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -870,6 +1009,15 @@
         set:
           X-Served-By: APISIX-Gateway
           X-Service: model-management
+    limit-count:
+      policy: local
+      key_type: var
+      rejected_code: 429
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      allow_degradation: false
+      count: 120
     serverless-post-function:
       phase: header_filter
       functions:
@@ -910,6 +1058,19 @@
       headers:
         X-Service: multi-tenant-service
       body_base64: false
+    limit-count:
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
+      key_type: var
+      key: arg_token
+      count: 5
+      time_window: 3600
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
 - uri: /api/v1/multi-tenant/*
   name: multi-tenant-catch-all-route
   priority: 200
@@ -969,6 +1130,15 @@
       headers:
         X-Service: multi-tenant-service
       body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 200
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -1029,6 +1199,15 @@
       headers:
         X-Service: ner-service
       body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -1088,6 +1267,15 @@
       max_age: 3600
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token,X-Correlation-ID,X-Service,X-Gateway
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -1172,6 +1360,15 @@
       headers:
         X-Service: ocr-service
       body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 60
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -1232,6 +1429,15 @@
       headers:
         X-Service: pipeline-service
       body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 60
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -1293,6 +1499,15 @@
       headers:
         X-Service: pii-guard-service
       body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -1356,6 +1571,15 @@
         set:
           X-Served-By: APISIX-Gateway
           X-Service: policy-service
+    limit-count:
+      policy: local
+      key_type: var
+      rejected_code: 429
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      allow_degradation: false
+      count: 120
     serverless-post-function:
       phase: header_filter
       functions:
@@ -1416,6 +1640,15 @@
           X-Correlation-ID: $request_id
           X-Gateway: apisix
       use_real_request_uri_unsafe: false
+    limit-count:
+      policy: local
+      key_type: var
+      key: http_x_user_id
+      count: 200
+      time_window: 60
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -1476,6 +1709,15 @@
       headers:
         X-Service: speaker-diarization-service
       body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 60
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -1560,6 +1802,15 @@
       headers:
         X-Service: transliteration-service
       body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -1604,6 +1855,16 @@
         set:
           X-Try-It: 'true'
           X-Gateway: apisix
+    limit-count:
+      count: 5
+      key: http_x_try_it_ratelimit_key
+      rejected_msg: Please login to access other services.
+      policy: local
+      key_type: var
+      rejected_code: 403
+      show_limit_quota_header: true
+      allow_degradation: false
+      time_window: 3600
 - uri: /api/v1/tts/*
   name: tts-route
   priority: 0
@@ -1657,6 +1918,15 @@
       headers:
         X-Service: tts-service
       body_base64: false
+    limit-count:
+      policy: local
+      key_type: var
+      count: 120
+      show_limit_quota_header: true
+      key: http_x_user_id
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
     serverless-post-function:
       phase: header_filter
       functions:
@@ -1940,6 +2210,19 @@
       headers:
         X-Service: unleash-service
       body_base64: false
+    limit-count:
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
+      key_type: var
+      count: 200
+      show_limit_quota_header: true
+      key: http_x_forwarded_for
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
 - uri: /grafana/*
   name: grafana-route
   priority: 0
@@ -1964,6 +2247,19 @@
       allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
+    limit-count:
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
+      key_type: var
+      count: 200
+      show_limit_quota_header: true
+      key: http_x_forwarded_for
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
 - uri: /health
   name: health-check-route
   priority: 1
@@ -2008,6 +2304,19 @@
       headers:
         X-Service: jaeger
       body_base64: false
+    limit-count:
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
+      key_type: var
+      count: 100
+      show_limit_quota_header: true
+      key: http_x_forwarded_for
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
 - uri: /language-detection
   name: frontend-language-detection
   priority: 3
@@ -2181,6 +2490,19 @@
       headers:
         X-Service: opensearch-dashboards
       body_base64: false
+    limit-count:
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
+      key_type: var
+      count: 100
+      show_limit_quota_header: true
+      key: http_x_forwarded_for
+      time_window: 60
+      rejected_code: 429
+      allow_degradation: false
 - uri: /pipeline
   name: frontend-pipeline
   priority: 3
@@ -2328,6 +2650,19 @@
       - ^/prometheus/(.*)
       - /prometheus/$1
       use_real_request_uri_unsafe: false
+    limit-count:
+      policy: redis
+      redis_host: redis${APISIX_UPSTREAM_SUFFIX}
+      redis_port: 6379
+      redis_password: ${REDIS_PASSWORD}
+      redis_timeout: 1001
+      key_type: var
+      rejected_code: 429
+      show_limit_quota_header: true
+      allow_degradation: false
+      time_window: 60
+      key: http_x_forwarded_for
+      count: 200
 - uri: /prometheus/query
   name: prometheus-query-page
   priority: 50
