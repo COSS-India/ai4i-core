@@ -416,6 +416,8 @@ class BulkActivateRequest(BaseModel):
 
 class GenerateRegexRequest(BaseModel):
     example_text: str
+    entity_name: Optional[str] = None
+    examples: List[str] = []
 
 
 class NewDomainRequest(BaseModel):
@@ -640,9 +642,13 @@ async def activate(req: BulkActivateRequest, auth=Depends(AuthProvider)):
 async def gen_regex(req: GenerateRegexRequest, auth=Depends(AuthProvider)):
     require_pii_admin(auth)
     llm_url = LLM_SERVICE_URL
+    all_examples = [e for e in req.examples if e.strip()] or [req.example_text]
+    examples_str = ", ".join(f"'{e}'" for e in all_examples)
+    entity_hint = f" for '{req.entity_name}' entities" if req.entity_name else ""
+    example_word = "examples" if len(all_examples) > 1 else "example"
     prompt = (
-        f"Generate a general python regex pattern to EXTRACT data similar to this example: '{req.example_text}'. "
-        "Use word boundaries (\\b). Return only the raw regex string."
+        f"Generate a general python regex pattern to EXTRACT{entity_hint} similar to these {example_word}: {examples_str}. "
+        "Use word boundaries (\\b). Return only the raw regex string, no explanation."
     )
     async with httpx.AsyncClient() as client:
         try:
