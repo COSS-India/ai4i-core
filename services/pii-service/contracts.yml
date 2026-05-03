@@ -33,3 +33,51 @@ paths:
     post:
       summary: Use Local LLM to generate regex from examples
       tags: [Admin]
+
+# ── Cross-service call (NMT Service) ──────────────────────────────────────────
+# Called from the PII audit logs tab to display redacted source and translated texts.
+# trace_id in audit_logs == request_id in NMT — same UUID, one per translation request.
+  /api/v1/nmt/requests/{request_id}:
+    get:
+      summary: Get redacted source and translated texts by request ID
+      tags: [NMT History]
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: NMT request UUID — same value as trace_id in the PII audit log row
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        "200":
+          description: Request found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request_id:
+                    type: string
+                    example: "550e8400-e29b-41d4-a716-446655440000"
+                  source_language:
+                    type: string
+                    example: "en"
+                  target_language:
+                    type: string
+                    example: "hi"
+                  translations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        source_text:
+                          type: string
+                          example: "[PER] is currently working from [LOC]"
+                        translated_text:
+                          type: string
+                          example: "[PER] वर्त मान में [LOC] से काम कर रहा है।"
+        "400":
+          description: Invalid request_id format
+        "404":
+          description: Request not found

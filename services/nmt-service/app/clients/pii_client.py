@@ -31,6 +31,7 @@ async def redact_for_storage(
     tenant_id: Optional[str],
     timeout: float,
     client: Optional[httpx.AsyncClient] = None,
+    request_id: Optional[str] = None,
 ) -> str:
     """
     POST /redact with x-language. Returns redacted_text on success.
@@ -46,6 +47,8 @@ async def redact_for_storage(
         headers.update(auth_headers)
     if tenant_id:
         headers["X-Tenant-Id"] = tenant_id
+    if request_id:
+        headers["X-Request-ID"] = request_id
 
     # Propagate W3C trace context so NMT → PII spans correlate in Jaeger
     try:
