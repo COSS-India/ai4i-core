@@ -42,6 +42,7 @@ from ai4icore_multi_tenant import (
     enforce_tenant_and_service_checks,
     tenant_db_session_scope,
 )
+from utils.billing_display_name import billing_display_name_from_service_info
 from utils.nmt_pay_per_use import (
     _effective_service_id_for_ppu,
     _nmt_ppu_check,
@@ -151,61 +152,63 @@ async def _resolve_triton_from_model_management(
                     "serviceId": service_id,
                 },
             )
-        elif not service_info.endpoint:
-            logger.error(
-                "Service found but has no endpoint configured",
-                extra={
-                    "service_id": service_id,
-                    "service_name": service_info.name,
-                    "model_id": service_info.model_id,
-                },
-            )
-            http_request.state.model_management_error = (
-                f"Service {service_id} found but has no endpoint configured"
-            )
         else:
-            triton_endpoint = service_info.endpoint
-            triton_api_key = service_info.api_key or ""
+            http_request.state.billing_service_name = billing_display_name_from_service_info(service_info)
+            if not service_info.endpoint:
+                logger.error(
+                    "Service found but has no endpoint configured",
+                    extra={
+                        "service_id": service_id,
+                        "service_name": service_info.name,
+                        "model_id": service_info.model_id,
+                    },
+                )
+                http_request.state.model_management_error = (
+                    f"Service {service_id} found but has no endpoint configured"
+                )
+            else:
+                triton_endpoint = service_info.endpoint
+                triton_api_key = service_info.api_key or ""
 
-            triton_model_name = "unknown"
-            if service_info.model_inference_endpoint:
-                inference_endpoint = service_info.model_inference_endpoint
-                if isinstance(inference_endpoint, dict):
-                    triton_model_name = (
-                        inference_endpoint.get("model_name")
-                        or inference_endpoint.get("modelName")
-                        or inference_endpoint.get("model")
-                        or service_info.triton_model
-                        or service_info.model_name
-                        or "unknown"
-                    )
-                    logger.debug(
-                        "Extracted model name from inference endpoint",
-                        extra={
-                            "service_id": service_id,
-                            "model_name": triton_model_name,
-                            "inference_endpoint_keys": list(inference_endpoint.keys())
-                            if isinstance(inference_endpoint, dict)
-                            else None,
-                        },
-                    )
-            elif service_info.model_name:
-                triton_model_name = service_info.model_name
-            elif service_info.triton_model:
-                triton_model_name = service_info.triton_model
+                triton_model_name = "unknown"
+                if service_info.model_inference_endpoint:
+                    inference_endpoint = service_info.model_inference_endpoint
+                    if isinstance(inference_endpoint, dict):
+                        triton_model_name = (
+                            inference_endpoint.get("model_name")
+                            or inference_endpoint.get("modelName")
+                            or inference_endpoint.get("model")
+                            or service_info.triton_model
+                            or service_info.model_name
+                            or "unknown"
+                        )
+                        logger.debug(
+                            "Extracted model name from inference endpoint",
+                            extra={
+                                "service_id": service_id,
+                                "model_name": triton_model_name,
+                                "inference_endpoint_keys": list(inference_endpoint.keys())
+                                if isinstance(inference_endpoint, dict)
+                                else None,
+                            },
+                        )
+                elif service_info.model_name:
+                    triton_model_name = service_info.model_name
+                elif service_info.triton_model:
+                    triton_model_name = service_info.triton_model
 
-            http_request.state.triton_endpoint = triton_endpoint
-            http_request.state.triton_api_key = triton_api_key
-            http_request.state.triton_model_name = triton_model_name
-            logger.info(
-                "Resolved Triton endpoint from Model Management for serviceId",
-                extra={
-                    "service_id": service_id,
-                    "triton_endpoint": triton_endpoint,
-                    "triton_model_name": triton_model_name,
-                    "has_api_key": bool(triton_api_key),
-                },
-            )
+                http_request.state.triton_endpoint = triton_endpoint
+                http_request.state.triton_api_key = triton_api_key
+                http_request.state.triton_model_name = triton_model_name
+                logger.info(
+                    "Resolved Triton endpoint from Model Management for serviceId",
+                    extra={
+                        "service_id": service_id,
+                        "triton_endpoint": triton_endpoint,
+                        "triton_model_name": triton_model_name,
+                        "has_api_key": bool(triton_api_key),
+                    },
+                )
     except HTTPException:
         raise
     except Exception as e:
@@ -741,6 +744,7 @@ async def switch_to_fallback_service(
         http_request.state.triton_endpoint = triton_endpoint
         http_request.state.triton_api_key = triton_api_key
         http_request.state.triton_model_name = triton_model_name
+        http_request.state.billing_service_name = billing_display_name_from_service_info(service_info)
         http_request.state.using_fallback_service = True
         
         logger.info(
