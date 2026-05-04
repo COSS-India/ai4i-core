@@ -230,22 +230,6 @@ class AppEnv(BaseSettings):
     google_redirect_uri: str = ""
     github_client_id: Optional[str] = None        # credential
 
-    # ── Unleash / Feature Flags ──
-    unleash_url: str = ""
-    unleash_api_token: Optional[str] = None       # credential
-    unleash_environment: str = "development"
-    unleash_app_name: str = ""
-    unleash_instance_id: str = ""
-    unleash_refresh_interval: int = 15
-    unleash_metrics_interval: int = 60
-    unleash_disable_metrics: bool = False
-    unleash_auto_sync_on_startup: bool = False
-    unleash_auto_sync_enabled: bool = False
-    unleash_sync_interval: int = 60
-    unleash_sync_environments: str = ""
-    feature_flag_cache_ttl: int = 300
-    feature_flag_kafka_topic: str = ""
-
     # ── ZooKeeper ──
     zookeeper_hosts: str = ""
     zookeeper_base_path: str = ""

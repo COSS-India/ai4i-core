@@ -35,7 +35,6 @@ import {
 import ContentLayout from "../components/common/ContentLayout";
 import { getServiceDescription, getServiceTitle, type ServiceId } from "../config/serviceMetadata";
 import { useAuth } from "../hooks/useAuth";
-import { useFeatureFlagsBulk, ALL_UI_FEATURE_FLAG_NAMES } from "../hooks/useFeatureFlag";
 import DoubleMicrophoneIcon from "../components/common/DoubleMicrophoneIcon";
 import { useGuestServices } from "../hooks/useGuestServices";
 
@@ -162,27 +161,20 @@ const HomePage: React.FC = () => {
     router.push(path);
   };
 
-  // Single bulk request shared with Sidebar (same queryKey = one request for whole app)
-  const { flags, isLoading: flagsLoading } = useFeatureFlagsBulk({
-    flagNames: [...ALL_UI_FEATURE_FLAG_NAMES],
-    defaultValue: true,
-  });
-
   const services = [
-    { id: "nmt" as ServiceId, icon: IoLanguageOutline, path: "/nmt", color: "green", enabled: flags["nmt-enabled"] ?? true },
-    { id: "asr" as ServiceId, icon: FaMicrophone, path: "/asr", color: "orange", enabled: flags["asr-enabled"] ?? true },
-    { id: "tts" as ServiceId, icon: IoVolumeHighOutline, path: "/tts", color: "blue", enabled: flags["tts-enabled"] ?? true },
-    { id: "llm" as ServiceId, icon: IoSparklesOutline, path: "/llm", color: "pink", enabled: flags["llm-enabled"] ?? true },
-    { id: "pipeline" as ServiceId, icon: DoubleMicrophoneIcon, path: "/pipeline", color: "purple", enabled: flags["pipeline-enabled"] ?? true },
-    { id: "ocr" as ServiceId, icon: IoDocumentTextOutline, path: "/ocr", color: "indigo", enabled: flags["ocr-enabled"] ?? true },
-    { id: "transliteration" as ServiceId, icon: IoSwapHorizontalOutline, path: "/transliteration", color: "cyan", enabled: flags["transliteration-enabled"] ?? true },
-    { id: "language-detection" as ServiceId, icon: IoGlobeOutline, path: "/language-detection", color: "teal", enabled: flags["language-detection-enabled"] ?? true },
-    { id: "speaker-diarization" as ServiceId, icon: IoPeopleOutline, path: "/speaker-diarization", color: "red", enabled: flags["speaker-diarization-enabled"] ?? true },
-    { id: "language-diarization" as ServiceId, icon: IoLanguageOutline, path: "/language-diarization", color: "yellow", enabled: flags["language-diarization-enabled"] ?? true },
-    { id: "audio-language-detection" as ServiceId, icon: IoRadioOutline, path: "/audio-language-detection", color: "gray", enabled: flags["audio-language-detection-enabled"] ?? true },
-    { id: "ner" as ServiceId, icon: IoPricetagOutline, path: "/ner", color: "rose", enabled: flags["ner-enabled"] ?? true },
+    { id: "nmt" as ServiceId, icon: IoLanguageOutline, path: "/nmt", color: "green" },
+    { id: "asr" as ServiceId, icon: FaMicrophone, path: "/asr", color: "orange" },
+    { id: "tts" as ServiceId, icon: IoVolumeHighOutline, path: "/tts", color: "blue" },
+    { id: "llm" as ServiceId, icon: IoSparklesOutline, path: "/llm", color: "pink" },
+    { id: "pipeline" as ServiceId, icon: DoubleMicrophoneIcon, path: "/pipeline", color: "purple" },
+    { id: "ocr" as ServiceId, icon: IoDocumentTextOutline, path: "/ocr", color: "indigo" },
+    { id: "transliteration" as ServiceId, icon: IoSwapHorizontalOutline, path: "/transliteration", color: "cyan" },
+    { id: "language-detection" as ServiceId, icon: IoGlobeOutline, path: "/language-detection", color: "teal" },
+    { id: "speaker-diarization" as ServiceId, icon: IoPeopleOutline, path: "/speaker-diarization", color: "red" },
+    { id: "language-diarization" as ServiceId, icon: IoLanguageOutline, path: "/language-diarization", color: "yellow" },
+    { id: "audio-language-detection" as ServiceId, icon: IoRadioOutline, path: "/audio-language-detection", color: "gray" },
+    { id: "ner" as ServiceId, icon: IoPricetagOutline, path: "/ner", color: "rose" },
   ]
-    .filter((service) => flagsLoading || service.enabled)
     .filter((service) => {
       if (!isGuest) return true;
       if (guestServicesLoading) return false;

@@ -42,26 +42,8 @@ import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
-import { useFeatureFlagsBulk, ALL_UI_FEATURE_FLAG_NAMES } from "../../hooks/useFeatureFlag";
 import { getTenantIdFromToken } from "../../utils/helpers";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
-
-// Defensive: use array fallback if ALL_UI_FEATURE_FLAG_NAMES is undefined (e.g. circular dep during init)
-const SIDEBAR_FLAG_NAMES = Array.isArray(ALL_UI_FEATURE_FLAG_NAMES)
-  ? [...ALL_UI_FEATURE_FLAG_NAMES]
-  : [
-      'asr-enabled', 'tts-enabled', 'nmt-enabled', 'llm-enabled', 'pipeline-enabled',
-      'model-management-enabled', 'services-management-enabled', 'ocr-enabled',
-      'transliteration-enabled', 'language-detection-enabled', 'speaker-diarization-enabled',
-      'language-diarization-enabled', 'audio-language-detection-enabled', 'ner-enabled',
-    ];
-
-// Fallback when useFeatureFlagsBulk is undefined (circular dep): return all flags as true
-function useFeatureFlagsBulkFallback(_opts: { flagNames: string[]; defaultValue?: boolean }) {
-  const flags = Object.fromEntries(SIDEBAR_FLAG_NAMES.map((n) => [n, true]));
-  return { flags, isLoading: false, error: null, refetch: () => {} };
-}
-const useBulkFlags = typeof useFeatureFlagsBulk === 'function' ? useFeatureFlagsBulk : useFeatureFlagsBulkFallback;
 
 const safeColorMap = {
   asr: { // Coral → Pastel Coral
@@ -206,7 +188,6 @@ interface NavItem {
   iconSize: Number;
   iconColor: string;
   requiresAuth?: boolean;
-  featureFlag?: string; // Feature flag name to check
 }
 
 // Home and Model Management (always visible)
@@ -228,7 +209,6 @@ const topNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
-    featureFlag: "model-management-enabled",
   },
   {
     id: "services-management",
@@ -238,7 +218,6 @@ const topNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
-    featureFlag: "services-management-enabled",
   },
   {
     id: "tenant-management",
@@ -315,7 +294,6 @@ const baseNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: false, // Allow anonymous access with rate limiting
-    featureFlag: "nmt-enabled",
   },
   {
     id: "asr",
@@ -325,7 +303,6 @@ const baseNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
-    featureFlag: "asr-enabled",
   },
   {
     id: "tts",
@@ -335,7 +312,6 @@ const baseNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
-    featureFlag: "tts-enabled",
   },
   {
     id: "llm",
@@ -345,7 +321,6 @@ const baseNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
-    featureFlag: "llm-enabled",
   },
   {
     id: "pipeline",
@@ -355,7 +330,6 @@ const baseNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
-    featureFlag: "pipeline-enabled",
   },
   {
     id: "ocr",
@@ -365,7 +339,6 @@ const baseNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
-    featureFlag: "ocr-enabled",
   },
   {
     id: "transliteration",
@@ -375,7 +348,6 @@ const baseNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
-    featureFlag: "transliteration-enabled",
   },
   {
     id: "language-detection",
@@ -385,7 +357,6 @@ const baseNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
-    featureFlag: "language-detection-enabled",
   },
   {
     id: "speaker-diarization",
@@ -395,7 +366,6 @@ const baseNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
-    featureFlag: "speaker-diarization-enabled",
   },
   {
     id: "language-diarization",
@@ -405,7 +375,6 @@ const baseNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
-    featureFlag: "language-diarization-enabled",
   },
   {
     id: "audio-language-detection",
@@ -415,7 +384,6 @@ const baseNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
-    featureFlag: "audio-language-detection-enabled",
   },
   {
     id: "ner",
@@ -425,7 +393,6 @@ const baseNavItems: NavItem[] = [
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
-    featureFlag: "ner-enabled",
   },
 ];
 
@@ -449,29 +416,6 @@ const Sidebar: React.FC = () => {
 
   // Show Tenant Management to admins and tenant admins
   const showTenantManagement = isAdmin || isTenantAdmin;
-
-  // Single bulk request shared with home page (same queryKey = one request for whole app)
-  const { flags: sidebarFlags } = useBulkFlags({
-    flagNames: SIDEBAR_FLAG_NAMES,
-    defaultValue: true,
-  });
-
-  const featureFlagMap: Record<string, boolean> = {
-    "asr-enabled": sidebarFlags["asr-enabled"] ?? true,
-    "tts-enabled": sidebarFlags["tts-enabled"] ?? true,
-    "nmt-enabled": sidebarFlags["nmt-enabled"] ?? true,
-    "llm-enabled": sidebarFlags["llm-enabled"] ?? true,
-    "pipeline-enabled": sidebarFlags["pipeline-enabled"] ?? true,
-    "model-management-enabled": sidebarFlags["model-management-enabled"] ?? true,
-    "services-management-enabled": sidebarFlags["services-management-enabled"] ?? true,
-    "ocr-enabled": sidebarFlags["ocr-enabled"] ?? true,
-    "transliteration-enabled": sidebarFlags["transliteration-enabled"] ?? true,
-    "language-detection-enabled": sidebarFlags["language-detection-enabled"] ?? true,
-    "speaker-diarization-enabled": sidebarFlags["speaker-diarization-enabled"] ?? true,
-    "language-diarization-enabled": sidebarFlags["language-diarization-enabled"] ?? true,
-    "audio-language-detection-enabled": sidebarFlags["audio-language-detection-enabled"] ?? true,
-    "ner-enabled": sidebarFlags["ner-enabled"] ?? true,
-  };
 
   // Get tenant_id from JWT token
   const tenantId = getTenantIdFromToken();
@@ -517,20 +461,14 @@ const Sidebar: React.FC = () => {
     if (item.id === "logs" && !tenantId && !isAdmin) {
       return false;
     }
-    if (item.featureFlag) {
-      return featureFlagMap[item.featureFlag] ?? true;
-    }
     return true;
   });
 
-  // Filter service items based on feature flags
+  // Filter service items based on guest access
   const serviceItems = baseNavItems.filter((item) => {
     if (isGuestFromAccess || isGuest) {
       if (guestServicesLoading) return false;
       if (!allowedServiceIds?.has(item.id)) return false;
-    }
-    if (item.featureFlag) {
-      return featureFlagMap[item.featureFlag] ?? true;
     }
     return true;
   });
