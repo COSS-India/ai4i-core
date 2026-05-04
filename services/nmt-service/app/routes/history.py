@@ -1,8 +1,9 @@
 """NMT history endpoints — read-only lookup of stored request/result data."""
 
+from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.auth import AuthProvider
@@ -18,14 +19,22 @@ router = APIRouter(
 
 @router.get("/requests/{request_id}")
 async def get_request_result(
+    request: Request,
     request_id: str,
-    db: AsyncSession = Depends(get_tenant_db_session),
+    tenant_id: Optional[str] = Query(None),
 ):
     """Return stored source and translated texts for a given NMT request ID."""
     try:
         uid = UUID(request_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request_id format")
+
+    # Admin users have tenant_id=null in JWT. Use the tenant_id from the audit log
+    # row (passed as query param) to route the session to the correct tenant schema.
+    if tenant_id and not getattr(request.state, "tenant_id", None):
+        request.state.tenant_id = tenant_id
+
+    db: AsyncSession = await get_tenant_db_session(request)
 
     repository = NMTRepository(db)
     record = await repository.get_request_by_id(uid)

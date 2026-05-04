@@ -495,7 +495,8 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
     }
     if (row.trace_id) {
       try {
-        const res = await api.get(`/api/v1/nmt/requests/${row.trace_id}`);
+        const params = row.tenant_id ? `?tenant_id=${row.tenant_id}` : "";
+        const res = await api.get(`/api/v1/nmt/requests/${row.trace_id}${params}`);
         const t = res.data.translations?.[0];
         if (t) setRedactionTexts({ source_text: t.source_text, target_text: t.target_text });
         else setRedactionTexts(null);
