@@ -44,6 +44,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { DeleteIcon, EditIcon, SearchIcon } from "@chakra-ui/icons";
+import api from "../../services/api";
 import { piiService } from "../../services/piiService";
 import {
   TableFilterToolbar,
@@ -130,6 +131,7 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
   const [adminDataError, setAdminDataError] = useState<string | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
+  const [redactionTexts, setRedactionTexts] = useState<{ source_text: string; target_text: string } | null>(null);
   const [rulesSortDirection, setRulesSortDirection] = useState<"asc" | "desc">("asc");
   const [rulesPage, setRulesPage] = useState(1);
   const [rulesPageSize, setRulesPageSize] = useState(10);
@@ -485,17 +487,28 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
     mappingDetail.onClose();
     setViewMapping(null);
   };
-  const openAuditTraceDetail = (row: AuditLogRow) => {
+  const openAuditTraceDetail = async (row: AuditLogRow) => {
     try {
       setAuditDetailJson(JSON.stringify(row.trace_json ?? row, null, 2));
     } catch {
       setAuditDetailJson(String(row.trace_json ?? ""));
+    }
+    if (row.trace_id) {
+      try {
+        const res = await api.get(`/api/v1/nmt/requests/${row.trace_id}`);
+        const t = res.data.translations?.[0];
+        if (t) setRedactionTexts({ source_text: t.source_text, target_text: t.target_text });
+        else setRedactionTexts(null);
+      } catch {
+        setRedactionTexts(null);
+      }
     }
     auditTraceDetail.onOpen();
   };
   const closeAuditTraceDetail = () => {
     auditTraceDetail.onClose();
     setAuditDetailJson("");
+    setRedactionTexts(null);
   };
 
   if (!isAdmin) {
@@ -1179,6 +1192,18 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
           </HStack>
         }
       >
+        {redactionTexts && (
+          <SimpleGrid columns={2} spacing={4} mb={4}>
+            <FormControl>
+              <FormLabel fontSize="sm">Source Text</FormLabel>
+              <Textarea value={redactionTexts.source_text} readOnly fontSize="sm" rows={4} />
+            </FormControl>
+            <FormControl>
+              <FormLabel fontSize="sm">Target Text</FormLabel>
+              <Textarea value={redactionTexts.target_text} readOnly fontSize="sm" rows={4} />
+            </FormControl>
+          </SimpleGrid>
+        )}
         <FormControl>
           <FormLabel fontSize="sm">Trace JSON</FormLabel>
           <Textarea value={auditDetailJson} readOnly fontFamily="mono" fontSize="xs" rows={18} />
