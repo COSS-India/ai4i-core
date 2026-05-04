@@ -16,6 +16,8 @@ from fastapi import HTTPException, Request
 from ai4icore_env import app_env
 from ai4icore_constants.error_messages import SERVICE_UNPUBLISHED, SERVICE_UNPUBLISHED_MESSAGE
 
+from utils.billing_display_name import billing_display_name_from_service_info
+
 logger = logging.getLogger(__name__)
 
 SMR_SERVICE_URL = app_env.smr_service_url
@@ -281,6 +283,7 @@ class SMRService:
             http_request.state.triton_endpoint = triton_endpoint
             http_request.state.triton_api_key = triton_api_key
             http_request.state.triton_model_name = triton_model_name
+            http_request.state.billing_service_name = billing_display_name_from_service_info(service_info)
             http_request.state.using_fallback_service = True
 
             logger.info(
@@ -328,6 +331,7 @@ class SMRService:
                     status_code=403,
                     detail={"code": SERVICE_UNPUBLISHED, "message": SERVICE_UNPUBLISHED_MESSAGE, "serviceId": service_id},
                 )
+            http_request.state.billing_service_name = billing_display_name_from_service_info(service_info)
             if not service_info.endpoint:
                 http_request.state.model_management_error = f"Service {service_id} found but has no endpoint configured"
                 return

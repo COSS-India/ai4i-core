@@ -394,7 +394,7 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         cached = self._service_info_cache.get(service_id)
         if cached:
             service_info, expires_at = cached
-            if expires_at > time.time():
+            if expires_at > time.time() and (service_info.name or "").strip():
                 return service_info
             self._service_info_cache.pop(service_id, None)
         
@@ -777,6 +777,10 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 )
                 
                 request.state.service_id = service_id
+                if service_info is not None:
+                    display_name = (getattr(service_info, "name", None) or "").strip()
+                    if display_name:
+                        request.state.billing_service_name = display_name
                 if endpoint:
                     request.state.triton_endpoint = endpoint
                     # Log removed - middleware handles request/response logging
