@@ -3,10 +3,11 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.auth import AuthProvider
-from app.dependencies.services import get_nmt_service
-from app.services.nmt_service import NMTService
+from app.dependencies.services import get_tenant_db_session
+from app.repositories.nmt_repository import NMTRepository
 
 router = APIRouter(
     prefix="/api/v1/nmt",
@@ -18,7 +19,7 @@ router = APIRouter(
 @router.get("/requests/{request_id}")
 async def get_request_result(
     request_id: str,
-    nmt_service: NMTService = Depends(get_nmt_service),
+    db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """Return stored source and translated texts for a given NMT request ID."""
     try:
@@ -26,7 +27,8 @@ async def get_request_result(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid request_id format")
 
-    record = await nmt_service.repository.get_request_by_id(uid)
+    repository = NMTRepository(db)
+    record = await repository.get_request_by_id(uid)
     if not record:
         raise HTTPException(status_code=404, detail=f"Request '{request_id}' not found")
 
