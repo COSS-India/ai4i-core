@@ -304,7 +304,9 @@ class ModelManagementClient:
                 if cached:
                     logger.debug(f"Cache hit for service {service_id} (Redis)")
                     data = json.loads(cached)
-                    return ServiceInfo(**data)
+                    svc = ServiceInfo(**data)
+                    if (svc.name or "").strip():
+                        return svc
             except Exception as e:
                 # Cache failures are non-critical - log at debug level to avoid noise
                 logger.debug(f"Redis cache read failed: {e}")
@@ -314,7 +316,8 @@ class ModelManagementClient:
             cached = self._get_from_cache(cache_key)
             if cached:
                 logger.debug(f"Cache hit for service {service_id} (memory)")
-                return cached
+                if (cached.name or "").strip():
+                    return cached
         
         # Fetch from API
         try:

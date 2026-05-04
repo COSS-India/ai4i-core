@@ -190,14 +190,18 @@ class ModelManagementClient:
             try:
                 cached = await redis_client.get(cache_key)
                 if cached:
-                    return ServiceInfo(**json.loads(cached))
+                    svc = ServiceInfo(**json.loads(cached))
+                    # Ignore stale cache entries that predate `name` on ServiceInfo (breaks billing.service_name).
+                    if (svc.name or "").strip():
+                        return svc
             except Exception:
                 pass
 
         if use_cache:
             cached = self._get_from_cache(cache_key)
             if cached:
-                return cached
+                if (cached.name or "").strip():
+                    return cached
 
         try:
             client = await self._get_client()

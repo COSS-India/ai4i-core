@@ -29,7 +29,7 @@ import Head from "next/head";
 import React, { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { SearchIcon, CheckCircleIcon } from "@chakra-ui/icons";
-import { FiCheckCircle, FiClock, FiShield, FiCpu, FiDatabase, FiGlobe, FiSettings, FiEye, FiEyeOff, FiInfo, FiImage, FiLayers } from "react-icons/fi";
+import { FiCheckCircle, FiClock, FiShield, FiCpu, FiDatabase, FiGlobe, FiSettings, FiEye, FiEyeOff, FiInfo, FiImage, FiLayers, FiPieChart } from "react-icons/fi";
 import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
 import { useRouter } from "next/router";
@@ -55,6 +55,48 @@ interface ProcessedSpan {
   relativeStart: number; // milliseconds from trace start
   relativeEnd: number;
   effectiveDuration?: number; // exclusive duration: span.duration minus direct children (used for root/wrapper spans)
+}
+
+/** Jaeger / OTEL may emit refType with different casing */
+function getParentSpanIdFromReferences(span: Span): string | null {
+  if (!span.references?.length) return null;
+  const norm = (ref: { refType?: string }) => String(ref.refType || "").toLowerCase();
+  const childOf = span.references.find((ref) => norm(ref) === "child_of");
+  if (childOf?.spanID) return childOf.spanID;
+  const follows = span.references.find((ref) => norm(ref) === "follows_from");
+  return follows?.spanID ?? null;
+}
+
+/** Pay-per-use check/record: minimal tag panel order and human-readable labels */
+const PAY_PER_USE_METERING_TAG_ORDER = [
+  "organization",
+  "billing.tenant_id",
+  "correlation.id",
+  "billing.service_name",
+  "billing.units",
+  "billing.cost",
+  "billing.remaining_balance",
+  "billing.recorded",
+];
+
+function payPerUseMeteringTagSortRank(key: string): number {
+  const i = PAY_PER_USE_METERING_TAG_ORDER.indexOf(key.toLowerCase());
+  return i === -1 ? 500 : i;
+}
+
+function payPerUseMeteringTagLabel(rawKey: string): string {
+  const k = rawKey.toLowerCase();
+  const labels: Record<string, string> = {
+    "billing.units": "UNITS",
+    "billing.cost": "COST",
+    "billing.remaining_balance": "REMAINING_BALANCE",
+    "billing.tenant_id": "TENANT_ID",
+    "billing.service_name": "SERVICE_NAME",
+    "billing.recorded": "RECORDED",
+    organization: "ORGANIZATION",
+    "correlation.id": "CORRELATION_ID",
+  };
+  return labels[k] ?? rawKey.replace(/\./g, "_").toUpperCase();
 }
 
 const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number): ProcessedSpan => {
@@ -494,8 +536,18 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
   // IMPORTANT: If this span is one of the standardized phase spans, keep its categorization.
   // Do not override it with the generic rules below.
   if (!isStandardPhaseSpan && opName !== "triton.inference") {
-    // Authentication & Authorization - show request.authorize or auth.validate
-    if (opName === "request.authorize" || (opName.includes("authorize") && !opName.includes("decision") && !opName.includes("check"))) {
+    // Pay-per-use / wallet metering (NMT and other services) — must be visible in the step list
+    if (opName === "pay_per_use.check" || opName === "pay_per_use.record") {
+      category = "billing";
+      isImportant = true;
+      isTopLevel = false;
+      icon = FiPieChart;
+      displayName = opName === "pay_per_use.check" ? "Metering" : "Pay Per Use : Usage record";
+      description =
+        opName === "pay_per_use.check"
+          ? "Quota / wallet check before inference. Cost and remaining balance come from the usage record in this trace when present."
+          : "Posts usage (units, cost, wallet balance).";
+    } else if (opName === "request.authorize" || (opName.includes("authorize") && !opName.includes("decision") && !opName.includes("check"))) {
       category = "auth";
       isImportant = true;
       isTopLevel = true;
@@ -937,15 +989,15 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
   trace.spans.forEach(span => {
     spanMap.set(span.spanID, span);
     
-    // Check for parent references
+    // Check for parent references (case-insensitive refType for Jaeger/OTel)
     if (span.references && span.references.length > 0) {
-      const parentRef = span.references.find(ref => ref.refType === "CHILD_OF");
-      if (parentRef) {
-        spanToParent.set(span.spanID, parentRef.spanID);
-        if (!childSpans.has(parentRef.spanID)) {
-          childSpans.set(parentRef.spanID, []);
+      const parentId = getParentSpanIdFromReferences(span);
+      if (parentId) {
+        spanToParent.set(span.spanID, parentId);
+        if (!childSpans.has(parentId)) {
+          childSpans.set(parentId, []);
         }
-        childSpans.get(parentRef.spanID)!.push(span.spanID);
+        childSpans.get(parentId)!.push(span.spanID);
       }
     }
   });
@@ -1695,9 +1747,9 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
   const spanToParent = new Map<string, string>();
   trace.spans.forEach(span => {
     if (span.references && span.references.length > 0) {
-      const parentRef = span.references.find(ref => ref.refType === "CHILD_OF");
-      if (parentRef) {
-        spanToParent.set(span.spanID, parentRef.spanID);
+      const parentId = getParentSpanIdFromReferences(span);
+      if (parentId) {
+        spanToParent.set(span.spanID, parentId);
       }
     }
   });
@@ -2009,14 +2061,13 @@ const TracesPage: React.FC = () => {
       spanMap.set(span.spanID, span);
       
       if (span.references && span.references.length > 0) {
-        const parentRef = span.references.find(ref => ref.refType === "CHILD_OF");
-        if (parentRef) {
-          spanToParent.set(span.spanID, parentRef.spanID);
-          // Build child spans map
-          if (!childSpans.has(parentRef.spanID)) {
-            childSpans.set(parentRef.spanID, []);
+        const parentId = getParentSpanIdFromReferences(span);
+        if (parentId) {
+          spanToParent.set(span.spanID, parentId);
+          if (!childSpans.has(parentId)) {
+            childSpans.set(parentId, []);
           }
-          childSpans.get(parentRef.spanID)!.push(span.spanID);
+          childSpans.get(parentId)!.push(span.spanID);
         }
       }
     });
@@ -2553,6 +2604,63 @@ const TracesPage: React.FC = () => {
                             // But filter out redundant tags to avoid repetition
                             let allTags = [...(processed.span.tags || [])];
                             const childTagKeys = new Set(allTags.map(t => t.key.toLowerCase()));
+
+                            // Pay-per-use check: show debit outcome from the sibling record span (same trace).
+                            const opLower = (processed.span.operationName || "").toLowerCase();
+                            if (opLower === "pay_per_use.check" && traceDetails?.spans?.length) {
+                              const getTagVal = (span: Span, k: string): string | null => {
+                                const found = span.tags?.find((x) => x.key.toLowerCase() === k.toLowerCase());
+                                if (found == null || found.value === undefined || found.value === "") return null;
+                                return String(found.value);
+                              };
+                              const recordSpan = traceDetails.spans.find(
+                                (s) => (s.operationName || "").toLowerCase() === "pay_per_use.record"
+                              );
+                              if (recordSpan) {
+                                const costV = getTagVal(recordSpan, "billing.cost");
+                                const balV = getTagVal(recordSpan, "billing.remaining_balance");
+                                if (costV != null && !childTagKeys.has("billing.cost")) {
+                                  allTags.push({ key: "billing.cost", value: costV });
+                                  childTagKeys.add("billing.cost");
+                                }
+                                if (balV != null && !childTagKeys.has("billing.remaining_balance")) {
+                                  allTags.push({ key: "billing.remaining_balance", value: balV });
+                                  childTagKeys.add("billing.remaining_balance");
+                                }
+                                const svcNameV = getTagVal(recordSpan, "billing.service_name");
+                                if (svcNameV != null && !childTagKeys.has("billing.service_name")) {
+                                  allTags.push({ key: "billing.service_name", value: svcNameV });
+                                  childTagKeys.add("billing.service_name");
+                                }
+                              }
+                            }
+                            if (
+                              (opLower === "pay_per_use.check" || opLower === "pay_per_use.record") &&
+                              traceDetails?.spans?.length &&
+                              !childTagKeys.has("billing.service_name")
+                            ) {
+                              const sidTag = allTags.find((t) => t.key.toLowerCase() === "billing.service_id");
+                              const sidStr =
+                                sidTag?.value != null && String(sidTag.value).trim() !== ""
+                                  ? String(sidTag.value).trim()
+                                  : "";
+                              if (sidStr) {
+                                const getTagValAny = (span: Span, k: string): string | null => {
+                                  const found = span.tags?.find((x) => x.key.toLowerCase() === k.toLowerCase());
+                                  if (found == null || found.value === undefined || found.value === "") return null;
+                                  return String(found.value).trim();
+                                };
+                                for (const s of traceDetails.spans) {
+                                  const idV = getTagValAny(s, "billing.service_id");
+                                  const nameV = getTagValAny(s, "billing.service_name");
+                                  if (idV === sidStr && nameV) {
+                                    allTags.push({ key: "billing.service_name", value: nameV });
+                                    childTagKeys.add("billing.service_name");
+                                    break;
+                                  }
+                                }
+                              }
+                            }
                             
                             // Tags to exclude from parent spans (redundant HTTP metadata)
                             const redundantHttpTags = new Set([
@@ -2732,7 +2840,7 @@ const TracesPage: React.FC = () => {
                               // Move to next parent level
                               currentParentId = spanRelationships.spanToParent.get(currentParentId);
                             }
-                            
+
                             // Traverse down to child spans to collect triton.* and internal.* tags
                             // This is important because triton tags might be on child spans (e.g., triton.inference under ocr.triton_batch)
                             const collectTagsFromChildren = (spanId: string, visited: Set<string>) => {
@@ -2766,13 +2874,71 @@ const TracesPage: React.FC = () => {
                               const visitedChildren = new Set<string>();
                               collectTagsFromChildren(processed.span.spanID, visitedChildren);
                             }
+
+                            if (
+                              processed.category === "billing" &&
+                              (opLower === "pay_per_use.check" || opLower === "pay_per_use.record") &&
+                              !allTags.some((t) => t.key.toLowerCase() === "billing.service_name")
+                            ) {
+                              allTags.push({
+                                key: "billing.service_name",
+                                value: "\u2014",
+                              });
+                              childTagKeys.add("billing.service_name");
+                            }
+
+                            const isPayPerUseMeter =
+                              opLower === "pay_per_use.check" || opLower === "pay_per_use.record";
+                            const allKeysLowerForMeter = new Set(
+                              allTags.map((t: { key: string }) => t.key.toLowerCase())
+                            );
                             
                             const relevantTags = allTags.filter((t: { key: string; value: any }) => {
                               const key = t.key.toLowerCase();
+
+                              if (key === "billing.api_key_id") {
+                                return false;
+                              }
+
+                              if (isPayPerUseMeter) {
+                                if (key === "billing.check_outcome" || key === "billing.check_status") {
+                                  return false;
+                                }
+                                if (key === "tenant_id" && allKeysLowerForMeter.has("billing.tenant_id")) {
+                                  return false;
+                                }
+                                if (key === "billing.service_id") {
+                                  return false;
+                                }
+                                if (
+                                  key.startsWith("otel.") ||
+                                  key.startsWith("internal.") ||
+                                  key.startsWith("http.") ||
+                                  key.startsWith("user.") ||
+                                  key.startsWith("session.") ||
+                                  key.startsWith("api_key") ||
+                                  key.startsWith("triton.")
+                                ) {
+                                  return false;
+                                }
+                                if (
+                                  !key.startsWith("billing.") &&
+                                  key !== "organization" &&
+                                  key !== "correlation.id"
+                                ) {
+                                  return false;
+                                }
+                                return true;
+                              }
                               
                               // PRIORITY: Always include triton.* tags FIRST (important for AI Model Inference spans)
                               // This ensures they're never filtered out by other rules
                               if (key.startsWith("triton.")) {
+                                return true;
+                              }
+
+                              // Pay-per-use / wallet (tenant_id, service_id, units, cost, balance)
+                              if (key.startsWith("billing.")) {
                                 return true;
                               }
                               
@@ -2826,6 +2992,12 @@ const TracesPage: React.FC = () => {
                             
                             // Sort tags to prioritize important ones first
                             relevantTags.sort((a: { key: string; value: any }, b: { key: string; value: any }) => {
+                              if (isPayPerUseMeter) {
+                                const d =
+                                  payPerUseMeteringTagSortRank(a.key) - payPerUseMeteringTagSortRank(b.key);
+                                if (d !== 0) return d;
+                                return String(a.key).localeCompare(String(b.key));
+                              }
                               const aKey = a.key.toLowerCase();
                               const bKey = b.key.toLowerCase();
                               
@@ -2861,6 +3033,9 @@ const TracesPage: React.FC = () => {
                                     key.startsWith("triton."))
                                 ) {
                                   return 0.25;
+                                }
+                                if (processed.category === "billing" && key.startsWith("billing.")) {
+                                  return 0.2;
                                 }
                                 if (
                                   processed.category === "phase.postprocess" &&
@@ -3263,7 +3438,7 @@ const TracesPage: React.FC = () => {
                                                       textTransform="uppercase"
                                                       letterSpacing="0.5px"
                                                     >
-                                                      {tag.key}:
+                                                      {isPayPerUseMeter ? `${payPerUseMeteringTagLabel(tag.key)}:` : `${tag.key}:`}
                                           </Text>
                                                     <Text 
                                                       color="gray.800" 
