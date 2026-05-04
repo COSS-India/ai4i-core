@@ -31,8 +31,11 @@ async def get_request_result(
 
     # Admin users have tenant_id=null in JWT. Use the tenant_id from the audit log
     # row (passed as query param) to route the session to the correct tenant schema.
+    # Also clear needs_tenant_context so get_tenant_db_session skips the API gateway
+    # lookup (which returns None for admins and falls back to the shared schema).
     if tenant_id and not getattr(request.state, "tenant_id", None):
         request.state.tenant_id = tenant_id
+        request.state.needs_tenant_context = False
 
     db: AsyncSession = await get_tenant_db_session(request)
 
