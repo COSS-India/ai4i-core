@@ -27,7 +27,6 @@ import {
   Permission,
 } from '../types/auth';
 import { API_BASE_URL } from './api';
-import { apiEndpoints } from './apiEndpoints';
 import {
   getStoredAccessToken,
   getStoredRefreshToken,
@@ -41,7 +40,7 @@ class AuthService {
   private baseUrl: string;
 
   constructor() {
-    this.baseUrl = `${API_BASE_URL}${apiEndpoints.auth.base}`;
+    this.baseUrl = `${API_BASE_URL}/api/v1/auth`;
   }
 
   private async request<T>(

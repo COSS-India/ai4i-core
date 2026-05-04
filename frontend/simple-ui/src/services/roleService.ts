@@ -2,7 +2,6 @@
  * Role management service for RBAC
  */
 import { API_BASE_URL } from './api';
-import { apiEndpoints } from './apiEndpoints';
 import authService from './authService';
 
 export interface Role {
@@ -22,7 +21,7 @@ class RoleService {
   private baseUrl: string;
 
   constructor() {
-    this.baseUrl = `${API_BASE_URL}${apiEndpoints.auth.rolesBase}`;
+    this.baseUrl = `${API_BASE_URL}/api/v1/auth/roles`;
   }
 
   private async request<T>(

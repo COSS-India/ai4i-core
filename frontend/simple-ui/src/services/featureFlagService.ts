@@ -1,7 +1,6 @@
 // Feature flag service for interacting with config service
 
 import { apiClient } from './api';
-import { apiEndpoints } from './apiEndpoints';
 
 // Types
 export interface FeatureFlagEvaluationRequest {
@@ -47,8 +46,8 @@ export interface BulkEvaluationRequest {
   environment: string;
 }
 
-// API gateway routes feature flag endpoints to config-service.
-// Use apiClient with centralized apiEndpoints constants.
+// API gateway routes /api/v1/feature-flags to config-service
+// So we can use the apiClient which already has the base URL configured
 
 /**
  * Evaluate a single feature flag
@@ -64,7 +63,7 @@ export const evaluateFeatureFlag = async (
       : (typeof request.default_value === 'boolean' ? true : request.default_value);
     
     const response = await apiClient.post<FeatureFlagEvaluationResponse>(
-      apiEndpoints.featureFlags.evaluate,
+      '/api/v1/feature-flags/evaluate',
       {
         ...request,
         default_value: defaultValue,
@@ -95,7 +94,7 @@ export const evaluateBooleanFlag = async (
   context?: Record<string, any>
 ): Promise<{ flag_name: string; value: boolean; reason: string }> => {
   const response = await apiClient.post<{ flag_name: string; value: boolean; reason: string }>(
-    apiEndpoints.featureFlags.evaluateBoolean,
+    '/api/v1/feature-flags/evaluate/boolean',
     {
       flag_name: flagName,
       user_id: userId,
@@ -114,7 +113,7 @@ export const bulkEvaluateFlags = async (
   request: BulkEvaluationRequest
 ): Promise<{ results: Record<string, FeatureFlagEvaluationResponse> }> => {
   const response = await apiClient.post<{ results: Record<string, FeatureFlagEvaluationResponse> }>(
-    apiEndpoints.featureFlags.evaluateBulk,
+    '/api/v1/feature-flags/evaluate/bulk',
     request
   );
   return response.data;
@@ -128,7 +127,7 @@ export const getFeatureFlag = async (
   environment: string
 ): Promise<FeatureFlagResponse> => {
   const response = await apiClient.get<FeatureFlagResponse>(
-    apiEndpoints.featureFlags.byName(name),
+    `/api/v1/feature-flags/${name}`,
     {
       params: { environment },
     }
@@ -145,7 +144,7 @@ export const listFeatureFlags = async (
   offset: number = 0
 ): Promise<FeatureFlagListResponse> => {
   const response = await apiClient.get<FeatureFlagListResponse>(
-    apiEndpoints.featureFlags.list,
+    '/api/v1/feature-flags',
     {
       params: { environment, limit, offset },
     }
@@ -160,7 +159,7 @@ export const syncFeatureFlags = async (
   environment: string
 ): Promise<{ synced_count: number; environment: string }> => {
   const response = await apiClient.post<{ synced_count: number; environment: string }>(
-    apiEndpoints.featureFlags.sync,
+    '/api/v1/feature-flags/sync',
     null,
     {
       params: { environment },

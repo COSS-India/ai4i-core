@@ -1,4 +1,4 @@
-// Tenant Management state + handlers, backed by auth-service tenant endpoints.
+// Tenant Management state + handlers, backed by auth-service /api/v1/tenants/*.
 
 import { useState, useMemo } from "react";
 import { forceFrontendSessionEnd } from "../../../hooks/useAuth";

@@ -1,8 +1,7 @@
 // Tenant admin API client.
-// Backed by auth-service tenant endpoints.
+// Backed by auth-service /api/v1/tenants/*.
 
 import { apiClient } from './api';
-import { apiEndpoints } from './apiEndpoints';
 import type {
   ListTenantsResponse,
   ListUsersResponse,
@@ -22,7 +21,7 @@ import type {
   UserRegisterResponse,
 } from '../types/tenant';
 
-const BASE = apiEndpoints.tenants.base;
+const BASE = '/api/v1/tenants';
 
 interface Envelope<T> {
   success: boolean;
@@ -84,7 +83,7 @@ export async function listUsers(tenant_id: string): Promise<ListUsersResponse> {
 
 export async function getViewUser(user_id: string): Promise<TenantUserView> {
   const { data } = await apiClient.get<Envelope<TenantUserView>>(
-    apiEndpoints.auth.user(user_id)
+    `/api/v1/auth/users/${user_id}`
   );
   return data.data;
 }

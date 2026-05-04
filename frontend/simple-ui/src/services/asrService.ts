@@ -210,7 +210,7 @@ export const checkASRHealth = async (): Promise<ASRHealthResponse> => {
  */
 export const getASRConfig = async () => {
   try {
-    const response = await asrApiClient.get(apiEndpoints.asr.config);
+    const response = await asrApiClient.get('/api/v1/asr/config');
     return response.data;
   } catch (error) {
     console.error('Failed to fetch ASR config:', error);

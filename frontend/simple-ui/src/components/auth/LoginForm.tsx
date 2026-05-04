@@ -28,7 +28,6 @@ import { useAuth } from "../../hooks/useAuth";
 import { LoginRequest } from "../../types/auth";
 import LoadingSpinner from "../common/LoadingSpinner";
 import { API_BASE_URL } from "../../services/api";
-import { apiEndpoints } from "../../services/apiEndpoints";
 
 interface LoginFormProps {
   onSuccess?: () => void;
@@ -292,7 +291,7 @@ const LoginForm: React.FC<LoginFormProps> = ({
                   ? `${window.location.origin}/auth/callback`
                   : "http://localhost:3000/auth/callback";
               const redirect = encodeURIComponent(frontendCallback);
-              window.location.href = `${apiBaseUrl}${apiEndpoints.auth.oauthGoogleAuthorize}?redirect_uri=${redirect}`;
+              window.location.href = `${apiBaseUrl}/api/v1/auth/oauth2/google/authorize?redirect_uri=${redirect}`;
             }}
             leftIcon={
               <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">

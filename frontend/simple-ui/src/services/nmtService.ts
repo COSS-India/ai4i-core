@@ -411,7 +411,7 @@ export const checkNMTHealth = async (): Promise<NMTHealthResponse> => {
  */
 export const getNMTConfig = async () => {
   try {
-    const response = await apiClient.get(apiEndpoints.nmt.config);
+    const response = await apiClient.get('/api/v1/nmt/config');
     return response.data;
   } catch (error) {
     console.error('Failed to fetch NMT config:', error);

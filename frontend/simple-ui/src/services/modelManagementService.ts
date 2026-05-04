@@ -1,7 +1,6 @@
 // Model Management service API client
 
 import { apiClient } from './api';
-import { apiEndpoints } from './apiEndpoints';
 
 export interface ModelDetails {
   modelId?: string;
@@ -62,9 +61,9 @@ export const unpublishModel = async (
   modelId: string
 ): Promise<UnpublishModelResponse> => {
   try {
-    // Platform-core toggles status through the model management PATCH endpoint.
+    // Platform-core toggles status through PATCH /api/v1/models.
     const response = await apiClient.patch<ApiEnvelope<UnpublishModelResponse>>(
-      apiEndpoints.platform.models.base,
+      '/api/v1/models',
       { modelId, versionStatus: 'DEPRECATED' }
     );
     return unwrapData(response.data);
@@ -81,7 +80,7 @@ export const unpublishModel = async (
  */
 export const getAllModels = async (): Promise<ModelDetails[]> => {
   try {
-    const response = await apiClient.get<ModelDetails[] | ApiEnvelope<ModelDetails[]>>(apiEndpoints.platform.models.base);
+    const response = await apiClient.get<ModelDetails[] | ApiEnvelope<ModelDetails[]>>('/api/v1/models');
     return unwrapData(response.data) || [];
   } catch (error: any) {
     console.error('Get models error:', error);
@@ -102,7 +101,7 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
     if (params.versionStatus) queryParams.version_status = params.versionStatus;
     if (params.createdBy) queryParams.created_by = params.createdBy;
 
-    const response = await apiClient.get<ModelDetails[] | ApiEnvelope<ModelDetails[]>>(apiEndpoints.platform.models.base, {
+    const response = await apiClient.get<ModelDetails[] | ApiEnvelope<ModelDetails[]>>('/api/v1/models', {
       params: queryParams,
     });
 
@@ -129,7 +128,7 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
  */
 export const createModel = async (modelData: any): Promise<any> => {
   try {
-    const response = await apiClient.post<any | ApiEnvelope<any>>(apiEndpoints.platform.models.base, modelData);
+    const response = await apiClient.post<any | ApiEnvelope<any>>('/api/v1/models', modelData);
     return unwrapData(response.data);
   } catch (error: any) {
     console.error('Register model error:', error);
@@ -146,7 +145,7 @@ export const createModel = async (modelData: any): Promise<any> => {
 export const getModelById = async (modelId: string): Promise<ModelDetails> => {
   try {
     const response = await apiClient.get<ModelDetails | ApiEnvelope<ModelDetails>>(
-      apiEndpoints.platform.models.byId(modelId)
+      `/api/v1/models/${encodeURIComponent(modelId)}`
     );
     return unwrapData(response.data);
   } catch (error: any) {
@@ -163,7 +162,7 @@ export const getModelById = async (modelId: string): Promise<ModelDetails> => {
  */
 export const updateModel = async (modelData: any): Promise<any> => {
   try {
-    const response = await apiClient.patch<any | ApiEnvelope<any>>(apiEndpoints.platform.models.base, modelData);
+    const response = await apiClient.patch<any | ApiEnvelope<any>>('/api/v1/models', modelData);
     return unwrapData(response.data);
   } catch (error: any) {
     console.error('Update model error:', error);
@@ -179,9 +178,9 @@ export const updateModel = async (modelData: any): Promise<any> => {
  */
 export const publishModel = async (modelId: string): Promise<any> => {
   try {
-    // Platform-core toggles status through the model management PATCH endpoint.
+    // Platform-core toggles status through PATCH /api/v1/models.
     const response = await apiClient.patch<any | ApiEnvelope<any>>(
-      apiEndpoints.platform.models.base,
+      '/api/v1/models',
       { modelId, versionStatus: 'ACTIVE' }
     );
     return unwrapData(response.data);
@@ -203,7 +202,7 @@ export const listServices = async (
   publishedOnly?: boolean
 ): Promise<any[]> => {
   try {
-    const url = apiEndpoints.platform.services.base;
+    const url = '/api/v1/services';
     const params: Record<string, string> = {};
     if (taskType) params.task_type = taskType;
     if (publishedOnly === true) params.is_published = 'true';

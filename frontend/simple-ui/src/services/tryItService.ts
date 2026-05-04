@@ -4,7 +4,6 @@
 
 import axios, { AxiosInstance } from 'axios';
 import { API_BASE_URL } from './api';
-import { apiEndpoints } from './apiEndpoints';
 import { NMTInferenceRequest, NMTInferenceResponse } from '../types/nmt';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
 
@@ -63,12 +62,12 @@ export interface TryItRequest {
 
 /**
  * Fetch NMT services for try-it (anonymous) users.
- * Uses the centralized try-it service-list endpoint with no auth.
+ * Uses GET /api/v1/services/try-it-service-list?task_type=nmt (no auth).
  * @returns Promise with raw list of services from the API
  */
 export const listTryItNMTServices = async (): Promise<any[]> => {
   const response = await tryItClient.get<any[] | ApiEnvelope<any[]>>(
-    apiEndpoints.platform.services.tryItList,
+    '/api/v1/services/try-it-service-list',
     {
       params: { task_type: 'nmt' },
     }
@@ -117,7 +116,7 @@ export const performTryItNMTInference = async (
     };
 
     const response = await tryItClient.post<NMTInferenceResponse>(
-      apiEndpoints.platform.tryIt.execute,
+      '/api/v1/try-it',
       tryItPayload
     );
 

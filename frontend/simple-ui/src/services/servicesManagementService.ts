@@ -1,7 +1,6 @@
 // Services Management service API client
 
 import { apiClient } from './api';
-import { apiEndpoints } from './apiEndpoints';
 
 type ApiEnvelope<T> = {
   success?: boolean;
@@ -82,7 +81,7 @@ export interface Service {
  */
 export const listServices = async (): Promise<Service[]> => {
   try {
-    const response = await apiClient.get<Service[] | ApiEnvelope<Service[]>>(apiEndpoints.platform.services.base);
+    const response = await apiClient.get<Service[] | ApiEnvelope<Service[]>>('/api/v1/services');
     return unwrapData(response.data) || [];
   } catch (error: any) {
     console.error('List services error:', error);
@@ -103,7 +102,7 @@ export const listServicesPaginated = async (params: ServiceListParams = {}): Pro
     if (params.isPublished !== undefined) queryParams.is_published = params.isPublished;
     if (params.createdBy) queryParams.created_by = params.createdBy;
 
-    const response = await apiClient.get<Service[] | ApiEnvelope<Service[]>>(apiEndpoints.platform.services.base, {
+    const response = await apiClient.get<Service[] | ApiEnvelope<Service[]>>('/api/v1/services', {
       params: queryParams,
     });
 
@@ -132,7 +131,7 @@ export const getServiceById = async (serviceId: string): Promise<Service> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
     const response = await apiClient.get<Service | ApiEnvelope<Service>>(
-      apiEndpoints.platform.services.byId(serviceId)
+      `/api/v1/services/${serviceId}`
     );
     return unwrapData(response.data);
   } catch (error: any) {
@@ -178,7 +177,7 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
     // - X-API-Key: <api_key> (if available)
     // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
     const response = await apiClient.post<Service>(
-      apiEndpoints.platform.services.base,
+      '/api/v1/services',
       apiPayload
     );
     return unwrapData(response.data as any);
@@ -237,7 +236,7 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
     }
     
     const response = await apiClient.patch<Service>(
-      apiEndpoints.platform.services.base,
+      '/api/v1/services',
       apiPayload
     );
     return unwrapData(response.data as any);
@@ -257,7 +256,7 @@ export const deleteService = async (serviceId: string): Promise<any> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
     const response = await apiClient.delete<any>(
-      apiEndpoints.platform.services.byId(serviceId)
+      `/api/v1/services/${serviceId}`
     );
     return unwrapData(response.data as any);
   } catch (error: any) {
