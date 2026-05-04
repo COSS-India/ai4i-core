@@ -804,7 +804,6 @@ class NMTService:
             for r in results:
                 rows.append({"translated_text": r.target, "source_text": r.source})
                 stored_results.append({"source_text": r.source, "translated_text": r.target})
-                meta["pii_redacted_translations"].append(r.target)
             if rows:
                 await self.repository.create_results_bulk(request_id=request_id, rows=rows)
                 meta["bulk_row_count"] = len(rows)
@@ -834,7 +833,6 @@ class NMTService:
             )
             rows.append({"translated_text": tgt_stored, "source_text": src_stored})
             stored_results.append({"source_text": src_stored, "translated_text": tgt_stored})
-            meta["pii_redacted_translations"].append(tgt_stored)
         if rows:
             await self.repository.create_results_bulk(request_id=request_id, rows=rows)
             meta["bulk_row_count"] = len(rows)
