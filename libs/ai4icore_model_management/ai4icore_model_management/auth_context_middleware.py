@@ -33,6 +33,18 @@ def _decode_jwt_payload_unverified(token: str) -> dict | None:
         return None
 
 
+def _normalize_user_id_from_jwt_claim(user_id):
+    """Keep int; parse digit-only strings to int; leave UUIDs and other strings as-is."""
+    if isinstance(user_id, int):
+        return user_id
+    if isinstance(user_id, str):
+        s = user_id.strip()
+        if s.isdigit():
+            return int(s)
+        return s
+    return user_id
+
+
 def _extract_user_id_from_jwt(request: Request) -> None:
     """
     If Authorization: Bearer <token> is present, read payload (no signature verify) and set
@@ -57,7 +69,7 @@ def _extract_user_id_from_jwt(request: Request) -> None:
     raw_type = str(payload.get("type") or payload.get("typ") or "").lower()
     if raw_type in ("refresh", "refresh_token"):
         return
-    request.state.user_id = int(user_id) if isinstance(user_id, (str, int)) else user_id
+    request.state.user_id = _normalize_user_id_from_jwt_claim(user_id)
 
 
 class AuthContextMiddleware(BaseHTTPMiddleware):
