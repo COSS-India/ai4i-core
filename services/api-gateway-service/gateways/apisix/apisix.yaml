@@ -843,7 +843,9 @@
         then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json;
         charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n
         \ end\nend\n"
-- uri: /api/v1/chat/completions
+- uris:
+  - /api/v1/chat/completions
+  - /api/v1/chat/completions/
   name: llm-chat-completions-route
   priority: 5
   methods:
@@ -885,8 +887,8 @@
       allow_credential: true
     proxy-rewrite:
       regex_uri:
-      - ^/api/v1/chat/completions$
-      - /api/v1/llm/chat/completions
+      - ^/api/v1/chat/completions/?$
+      - /api/v1/chat/completions
       headers:
         add:
           X-Correlation-ID: $request_id
@@ -909,7 +911,9 @@
       phase: header_filter
       functions:
       - "return function(conf, ctx)\n  if ngx.status == 500 and not ngx.header[\"X-Service\"]\n        then\n    ngx.status = 503\n    ngx.header[\"Content-Type\"] = \"application/json; charset=utf-8\"\n    ngx.header[\"X-Auth-Error\"] = \"auth-service-unavailable\"\n  end\nend\n"
-- uri: /api/v1/completions
+- uris:
+  - /api/v1/completions
+  - /api/v1/completions/
   name: llm-completions-route
   priority: 5
   methods:
@@ -951,8 +955,8 @@
       allow_credential: true
     proxy-rewrite:
       regex_uri:
-      - ^/api/v1/completions$
-      - /api/v1/llm/completions
+      - ^/api/v1/completions/?$
+      - /api/v1/completions
       headers:
         add:
           X-Correlation-ID: $request_id
