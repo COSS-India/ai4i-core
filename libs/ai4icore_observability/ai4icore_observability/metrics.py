@@ -130,11 +130,16 @@ class MetricsCollector:
             registry=self.registry,
         )
 
-        # LLM token tracking
-        self.enterprise_llm_tokens_processed = Counter(
-            "telemetry_obsv_llm_tokens_processed_total",
-            "Total LLM tokens processed",
-            ["organization", "app", "model", "tenant"],
+        # LLM token tracking (Histogram to mirror NMT/TTS payload metrics).
+        # token_type is "prompt" | "completion" | "total" so each can be
+        # queried separately (e.g. p50 prompt vs p50 completion).
+        # endpoint is included so /chat/completion and /generate volumes can
+        # be split apart (cardinality is bounded — only two values).
+        self.enterprise_llm_tokens_processed = Histogram(
+            "telemetry_obsv_llm_tokens_processed",
+            "LLM tokens processed per request, as reported by the inference engine (vLLM 'usage' block)",
+            ["organization", "app", "model", "tenant", "service_id", "endpoint", "token_type"],
+            buckets=(10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000, float("inf")),
             registry=self.registry,
         )
 
@@ -595,14 +600,46 @@ class MetricsCollector:
             self._org_data_totals[organization] = self._org_data_totals.get(organization, 0) + amount
             self._total_data += amount
 
-    def track_llm_tokens(self, organization: str, app: str, model: str, tokens: int, tenant: str = "unknown"):
-        """Track LLM token processing."""
-        self.enterprise_llm_tokens_processed.labels(
-            organization=organization, app=app, model=model, tenant=tenant
-        ).inc(tokens)
+    def track_llm_tokens(
+        self,
+        organization: str,
+        app: str,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        total_tokens: int,
+        tenant: str = "unknown",
+        service_id: str = "",
+        endpoint: str = "",
+    ):
+        """Track LLM token processing as a Histogram observation per token_type.
 
-        # Also track as data processing
-        self.track_data_processing(organization, app, "llm_tokens", tokens, tenant=tenant)
+        Counts come from the inference engine's `usage` block (vLLM / OpenAI
+        compatible response shape). Each call observes three series:
+        token_type="prompt", "completion", and "total". The endpoint label
+        lets queries distinguish /chat/completion from /generate volumes.
+        """
+        if prompt_tokens > 0:
+            self.enterprise_llm_tokens_processed.labels(
+                organization=organization, app=app, model=model,
+                tenant=tenant, service_id=service_id, endpoint=endpoint,
+                token_type="prompt",
+            ).observe(prompt_tokens)
+        if completion_tokens > 0:
+            self.enterprise_llm_tokens_processed.labels(
+                organization=organization, app=app, model=model,
+                tenant=tenant, service_id=service_id, endpoint=endpoint,
+                token_type="completion",
+            ).observe(completion_tokens)
+        if total_tokens > 0:
+            self.enterprise_llm_tokens_processed.labels(
+                organization=organization, app=app, model=model,
+                tenant=tenant, service_id=service_id, endpoint=endpoint,
+                token_type="total",
+            ).observe(total_tokens)
+            # Roll up to the generic data-processing counter the same way
+            # other services do (e.g., track_nmt_characters → data_processed).
+            self.track_data_processing(organization, app, "llm_tokens", total_tokens, tenant=tenant)
 
     def track_tts_characters(
         self, organization: str, app: str, language: str, characters: int, tenant: str = "unknown", service_id: str = ""
