@@ -261,8 +261,30 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # Process request
         response = await call_next(request)
 
+        # For LLM requests, the only authoritative source of token counts is
+        # the inference engine's response (vLLM / OpenAI-compat `usage` block).
+        # Buffer + reconstruct the response so we can read it without
+        # consuming it from the client. Streaming responses (SSE) are skipped.
+        llm_prompt_tokens = 0
+        llm_completion_tokens = 0
+        llm_total_tokens = 0
+        llm_model = ""
+        if service_type == "llm" and self._is_buffered_json_response(response):
+            response, body_bytes = await self._buffer_response(response)
+            (
+                llm_prompt_tokens,
+                llm_completion_tokens,
+                llm_total_tokens,
+                llm_model,
+            ) = self._extract_llm_usage_from_body(body_bytes)
+
         # Extract service_id resolved by model-management middleware (set in request.state)
         service_id = getattr(request.state, "service_id", "") or ""
+        # LLM endpoints don't go through model-management; the request body
+        # has no service_id field. Per spec, the model name from the response
+        # (which echoes the request's `model`) acts as the service identifier.
+        if service_type == "llm" and llm_model:
+            service_id = llm_model
 
         # Calculate duration and track metrics
         duration = time.time() - start_time
@@ -285,8 +307,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             )
 
             # Track additional metrics based on service type
-            self._track_additional_metrics(organization_label, app, tenant, service_type, path, duration, tts_characters, translation_characters, asr_audio_length, ocr_characters, ocr_image_size_kb, transliteration_characters, language_detection_characters, audio_lang_detection_length, ner_tokens, speaker_verification_length, speaker_diarization_length, language_diarization_length, service_id=service_id)
-            
+            self._track_additional_metrics(organization_label, app, tenant, service_type, path, duration, tts_characters, translation_characters, asr_audio_length, ocr_characters, ocr_image_size_kb, transliteration_characters, language_detection_characters, audio_lang_detection_length, ner_tokens, speaker_verification_length, speaker_diarization_length, service_id=service_id, llm_prompt_tokens=llm_prompt_tokens, llm_completion_tokens=llm_completion_tokens, llm_total_tokens=llm_total_tokens, llm_model=llm_model)
+
         except Exception as e:
             # Don't let metrics collection break the request
             if self.config.debug:
@@ -772,7 +794,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         else:
             return "unknown"
     
-    def _track_additional_metrics(self, organization: str, app: str, tenant: str, service_type: str, path: str, duration: float, tts_characters: int = 0, translation_characters: int = 0, asr_audio_length: float = 0, ocr_characters: int = 0, ocr_image_size_kb: float = 0.0, transliteration_characters: int = 0, language_detection_characters: int = 0, audio_lang_detection_length: float = 0, ner_tokens: int = 0, speaker_verification_length: float = 0, speaker_diarization_length: float = 0, language_diarization_length: float = 0, service_id: str = ""):
+    def _track_additional_metrics(self, organization: str, app: str, tenant: str, service_type: str, path: str, duration: float, tts_characters: int = 0, translation_characters: int = 0, asr_audio_length: float = 0, ocr_characters: int = 0, ocr_image_size_kb: float = 0.0, transliteration_characters: int = 0, language_detection_characters: int = 0, audio_lang_detection_length: float = 0, ner_tokens: int = 0, speaker_verification_length: float = 0, speaker_diarization_length: float = 0, language_diarization_length: float = 0, service_id: str = "", llm_prompt_tokens: int = 0, llm_completion_tokens: int = 0, llm_total_tokens: int = 0, llm_model: str = ""):
         """Track additional metrics based on service type."""
         try:
             # Track component latency
@@ -783,18 +805,28 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 duration=duration,
                 tenant=tenant,
             )
-            
+
             # Track data processing based on service type
             if service_type == "llm":
-                # Mock LLM token processing
-                tokens = self._estimate_llm_tokens(path)
-                self.metrics_collector.track_llm_tokens(
-                    organization=organization,
-                    app=app,
-                    model="gpt-3.5-turbo",  # Mock model
-                    tokens=tokens,
-                    tenant=tenant,
-                )
+                # Token counts come from the inference engine's response
+                # (vLLM `usage` block), already extracted upstream in dispatch().
+                if llm_total_tokens > 0 or llm_prompt_tokens > 0 or llm_completion_tokens > 0:
+                    self.metrics_collector.track_llm_tokens(
+                        organization=organization,
+                        app=app,
+                        model=llm_model or "unknown",
+                        prompt_tokens=llm_prompt_tokens,
+                        completion_tokens=llm_completion_tokens,
+                        total_tokens=llm_total_tokens,
+                        tenant=tenant,
+                        service_id=service_id,
+                        endpoint=path,
+                    )
+                    if self.config.debug:
+                        logger.debug(
+                            f"📊 Tracked LLM tokens: prompt={llm_prompt_tokens} "
+                            f"completion={llm_completion_tokens} total={llm_total_tokens} model={llm_model}"
+                        )
             elif service_type == "tts":
                 # Track real TTS character count
                 if tts_characters > 0:
@@ -959,11 +991,66 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if self.config.debug:
                 print(f"⚠️ Additional metrics tracking failed: {e}")
     
-    def _estimate_llm_tokens(self, path: str) -> int:
-        """Estimate LLM tokens based on path."""
-        # Mock estimation - in real implementation, this would analyze request content
-        return 100  # Mock value
-    
+    @staticmethod
+    def _is_buffered_json_response(response: Response) -> bool:
+        """True iff this response can be safely buffered for body inspection.
+
+        Streamed responses (SSE, audio, ndjson, etc.) must be passed through
+        untouched to preserve client-side streaming semantics.
+        """
+        content_type = (response.headers.get("content-type") or "").lower()
+        if "application/json" not in content_type:
+            return False
+        if response.headers.get("transfer-encoding", "").lower() == "chunked":
+            return False
+        return True
+
+    @staticmethod
+    async def _buffer_response(response: Response) -> tuple[Response, bytes]:
+        """Drain a streamed response into a buffered Response we can re-emit.
+
+        Starlette's BaseHTTPMiddleware hands us a StreamingResponse whose
+        body_iterator can only be consumed once. We collect the chunks, then
+        return a fresh Response carrying the same body so downstream clients
+        still receive bytes identical to what the route produced.
+        """
+        chunks: list[bytes] = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk)
+        body = b"".join(chunks)
+        headers = dict(response.headers)
+        # Content-Length is recomputed by Response.__init__; drop the stale one.
+        headers.pop("content-length", None)
+        new_response = Response(
+            content=body,
+            status_code=response.status_code,
+            headers=headers,
+            media_type=response.media_type,
+        )
+        return new_response, body
+
+    def _extract_llm_usage_from_body(self, body_bytes: bytes) -> tuple[int, int, int, str]:
+        """Pull (prompt_tokens, completion_tokens, total_tokens, model) from
+        an OpenAI/vLLM-shaped JSON response.
+
+        Returns zeros + empty model on any parse failure — the request still
+        gets counted, only the token histogram is skipped.
+        """
+        try:
+            if not body_bytes:
+                return 0, 0, 0, ""
+            data = json.loads(body_bytes)
+            usage = data.get("usage") or {}
+            prompt = int(usage.get("prompt_tokens") or 0)
+            completion = int(usage.get("completion_tokens") or 0)
+            total = int(usage.get("total_tokens") or (prompt + completion))
+            model = str(data.get("model") or "")
+            return prompt, completion, total, model
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
+            if self.config.debug:
+                logger.debug(f"LLM usage extraction failed: {e}")
+            return 0, 0, 0, ""
+
     def _extract_tts_characters_from_body(self, body_bytes: bytes) -> int:
         """Extract real character count from TTS request body."""
         try:
