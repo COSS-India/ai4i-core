@@ -13,9 +13,9 @@ Fields follow this convention:
   → Sensible defaults that work out of the box
 """
 
-from typing import Optional
+from typing import Dict, Optional
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -132,9 +132,12 @@ class AppEnv(BaseSettings):
     # Global default for TLS certificate verification on inference clients.
     inference_ssl_verify: bool = True
 
-    # ── Direct OpenAI HTTP proxy (llm-service); upstream URLs only — payload forwarded as-is ──
-    chat_completions_endpoint: str = ""
-    completions_endpoint: str = ""
+    # ── Direct OpenAI HTTP proxy (llm-service); base URLs keyed by model name ──
+    # Map of model name → upstream base URL (e.g. {"llama-3-8b": "http://10.0.0.5:8001"}).
+    # Routes append /v1/chat/completions or /v1/completions to the resolved base URL.
+    llm_model_endpoints: Dict[str, str] = Field(default_factory=dict)
+    # Fallback base URL when the request's model is not present in the map.
+    llm_default_endpoint: str = ""
     inference_timeout: int = 60
 
     # ── Per-service Triton endpoints (seeded into model_management_db) ──
