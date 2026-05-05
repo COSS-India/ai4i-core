@@ -35,7 +35,7 @@ docker compose -f docker-compose-local.yml build
 ### 3. Start Infrastructure
 
 ```bash
-docker compose -f docker-compose-local.yml up -d postgres redis kafka zookeeper influxdb unleash
+docker compose -f docker-compose-local.yml up -d postgres redis kafka zookeeper influxdb
 ```
 
 ### 4. Initialize Databases
@@ -44,9 +44,6 @@ docker compose -f docker-compose-local.yml up -d postgres redis kafka zookeeper 
 cd infrastructure/databases
 pip3 install -r requirements.txt
 cd ../..
-
-# Create external databases (Unleash)
-python3 infrastructure/databases/cli.py init:external
 
 # Run all migrations
 python3 infrastructure/databases/cli.py migrate:all
@@ -71,17 +68,11 @@ docker compose -f docker-compose-local.yml up -d
 | Grafana | http://localhost:8097 |
 | Prometheus | http://localhost:9090 |
 | Jaeger | http://localhost:16686 |
-| Unleash | http://localhost:4242/feature-flags |
-
 ## Default Credentials
 
 **Admin User:**
 - Email: `admin@ai4inclusion.org`
 - Password: `Admin@123`
-
-**Unleash:**
-- Username: `admin`
-- Password: `unleash4all`
 
 ## Quick Commands
 
@@ -134,7 +125,6 @@ python3 infrastructure/databases/cli.py seed:all
 - **20+ microservices** (AI/ML, Core, Observability)
 - **Direct service communication** (no API gateway overhead in local dev)
 - **Full monitoring stack** (Prometheus, Grafana, Jaeger, OpenSearch)
-- **Feature flags** with Unleash
 - **Custom migration framework** (Laravel-style)
 
 ---

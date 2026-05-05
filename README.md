@@ -12,7 +12,7 @@ The current version of platform consists of 8 microservices, 1 frontend applicat
 
 - **API Gateway Service** (Port 8080) - Central entry point with routing, rate limiting, and authentication
 - **Authentication & Authorization Service** (Port 8081) - Identity management with JWT and OAuth2 | [Documentation](services/auth-service/docs/SERVICE_DOCUMENTATION.md)
-- **Configuration Management Service** (Port 8082) - Centralized configuration, feature flags with Unleash, and service registry | [Documentation](services/config-service/docs/SERVICE_DOCUMENTATION.md)
+- **Configuration Management Service** (Port 8082) - Centralized configuration and service registry | [Documentation](services/config-service/docs/SERVICE_DOCUMENTATION.md)
 - **ASR Service** (Port 8087) - Speech-to-Text with 22+ Indic languages | [Documentation](services/asr-service/docs/SERVICE_DOCUMENTATION.md)
 - **TTS Service** (Port 8088) - Text-to-Speech with multiple voice options | [Documentation](services/tts-service/docs/SERVICE_DOCUMENTATION.md)
 - **NMT Service** (Port 8091) - Neural Machine Translation for Indic languages | [Documentation](services/nmt-service/docs/SERVICE_DOCUMENTATION.md)
@@ -31,12 +31,9 @@ The current version of platform consists of 8 microservices, 1 frontend applicat
 - **Elasticsearch** (Port 9203) - Log storage and search engine
 - **Kafka** (Port 9093) - Event streaming and message queuing
 - **Zookeeper** (Port 2181) - Kafka coordination service
-- **Unleash** (Port 4242) - Feature flag management and progressive delivery (uses shared PostgreSQL)
 
 **Features**:
 
-- Feature flags with Unleash and OpenFeature for progressive delivery
-- Boolean, variant, and gradual rollout support
 - Modern, responsive web interface built with Next.js 13 and Chakra UI
 - ASR testing with microphone recording and file upload
 - TTS testing with text input and voice selection
