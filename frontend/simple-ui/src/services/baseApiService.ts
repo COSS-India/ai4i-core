@@ -5,6 +5,8 @@ import {
   AxiosResponse,
   Method,
 } from 'axios';
+import type { ZodTypeAny } from 'zod';
+import { parseResponseData } from './dto/parseResponseData';
 
 type ApiRequestHeaders = Record<string, string>;
 const DEFAULT_API_HEADERS: ApiRequestHeaders = {
@@ -18,6 +20,8 @@ const DEFAULT_API_HEADERS: ApiRequestHeaders = {
  */
 export interface BaseApiRequestConfig<D = any> extends AxiosRequestConfig<D> {
   headers?: ApiRequestHeaders;
+  /** When set, `response.data` is validated (and replaced with the parsed value). */
+  responseSchema?: ZodTypeAny;
 }
 
 /**
@@ -27,6 +31,13 @@ export interface BaseApiRequestConfig<D = any> extends AxiosRequestConfig<D> {
  */
 class BaseApiService {
   constructor(private readonly client: AxiosInstance) {}
+
+  /** Omit Zod-only options before passing config to axios. */
+  private toAxiosConfig<D = any>(config?: BaseApiRequestConfig<D>): AxiosRequestConfig<D> {
+    if (!config) return {};
+    const { responseSchema: _omit, ...rest } = config;
+    return rest as AxiosRequestConfig<D>;
+  }
 
   /** Merge caller headers over shared JSON defaults. */
   private withResolvedHeaders<D = any>(
@@ -83,13 +94,24 @@ class BaseApiService {
     data?: D,
     config?: BaseApiRequestConfig<D>
   ): Promise<AxiosResponse<T>> {
+    const schema = config?.responseSchema;
     try {
-      return await this.client.request<T, AxiosResponse<T>, D>({
-        ...(this.withResolvedHeaders(config) as AxiosRequestConfig<D>),
+      const resolved = this.withResolvedHeaders(
+        this.toAxiosConfig(config) as BaseApiRequestConfig<D>
+      ) as AxiosRequestConfig<D>;
+      const response = await this.client.request<T, AxiosResponse<T>, D>({
+        ...resolved,
         method,
         url,
         data,
       });
+      if (schema) {
+        response.data = parseResponseData(response.data, schema, {
+          method,
+          url,
+        }) as T;
+      }
+      return response;
     } catch (error) {
       this.normalizeError(error);
     }

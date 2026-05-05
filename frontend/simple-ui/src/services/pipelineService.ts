@@ -2,6 +2,7 @@
 
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
+import { pipelineInferenceResponseSchema, pipelineInfoOrHealthSchema } from './dto/schemas/pipeline';
 import { 
   PipelineInferenceRequest, 
   PipelineInferenceResponse 
@@ -18,7 +19,8 @@ export const runPipelineInference = async (
   try {
     const response = await apiService.post(
       PIPELINE_ENDPOINTS.inference,
-      request
+      request,
+      { responseSchema: pipelineInferenceResponseSchema }
     );
     return response.data;
   } catch (error) {
@@ -31,7 +33,9 @@ export const runPipelineInference = async (
  * Get pipeline service information
  */
 export const getPipelineInfo = async (): Promise<any> => {
-  const response = await apiService.get(PIPELINE_ENDPOINTS.info);
+  const response = await apiService.get(PIPELINE_ENDPOINTS.info, {
+    responseSchema: pipelineInfoOrHealthSchema,
+  });
   return response.data;
 };
 
@@ -39,7 +43,9 @@ export const getPipelineInfo = async (): Promise<any> => {
  * Check pipeline service health
  */
 export const checkPipelineHealth = async (): Promise<any> => {
-  const response = await apiService.get(PIPELINE_ENDPOINTS.health);
+  const response = await apiService.get(PIPELINE_ENDPOINTS.health, {
+    responseSchema: pipelineInfoOrHealthSchema,
+  });
   return response.data;
 };
 

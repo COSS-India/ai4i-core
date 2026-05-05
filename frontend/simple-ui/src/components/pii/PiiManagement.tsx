@@ -154,8 +154,9 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
 
   const fetchAllDomains = async () => {
     const res = await piiService.getAllDomains();
-    setAllDomains(res.data);
-    const active = new Set(res.data.filter((d: Domain) => d.is_active).map((d: Domain) => d.domain_id));
+    const rows = res.data as Domain[];
+    setAllDomains(rows);
+    const active = new Set(rows.filter((d) => d.is_active).map((d) => d.domain_id));
     setCheckedDomains(active);
   };
 

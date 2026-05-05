@@ -1,6 +1,7 @@
 // NER service API client
 
 import { apiService, apiEndpoints } from './api';
+import { nerInferenceResponseSchema } from './dto/schemas/inference';
 import { listServices } from './modelManagementService';
 
 export interface NERServiceDetailsResponse {
@@ -106,10 +107,9 @@ export const performNERInference = async (
       config,
     };
 
-    const response = await apiService.post<NERInferenceResponse>(
-      apiEndpoints.ner.inference,
-      payload
-    );
+    const response = await apiService.post(apiEndpoints.ner.inference, payload, {
+      responseSchema: nerInferenceResponseSchema,
+    });
 
     const responseTime = parseInt(response.headers['request-duration'] || '0');
 

@@ -1,6 +1,7 @@
 // Language Diarization service API client
 
 import { apiService, apiEndpoints } from './api';
+import { languageDiarizationInferenceResponseSchema } from './dto/schemas/inference';
 import { listServices } from './modelManagementService';
 
 export interface LanguageDiarizationServiceDetailsResponse {
@@ -110,9 +111,10 @@ export const performLanguageDiarizationInference = async (
       },
     };
 
-    const response = await apiService.post<LanguageDiarizationInferenceResponse>(
+    const response = await apiService.post(
       apiEndpoints['language-diarization'].inference,
-      payload
+      payload,
+      { responseSchema: languageDiarizationInferenceResponseSchema }
     );
 
     const responseTime = parseInt(response.headers['request-duration'] || '0');

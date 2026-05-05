@@ -1,20 +1,9 @@
 // Services Management service API client
 
+import { z } from 'zod';
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
-
-type ApiEnvelope<T> = {
-  success?: boolean;
-  data?: T;
-  meta?: Record<string, any>;
-};
-
-const unwrapData = <T>(payload: T | ApiEnvelope<T>): T => {
-  if (payload && typeof payload === 'object' && 'data' in (payload as any)) {
-    return ((payload as ApiEnvelope<T>).data ?? null) as T;
-  }
-  return payload as T;
-};
+import { serviceRecordSchema, serviceSingleSchema, servicesListSchema } from './dto/schemas/platform';
 
 export interface ServiceListParams {
   offset?: number;
@@ -82,8 +71,10 @@ export interface Service {
  */
 export const listServices = async (): Promise<Service[]> => {
   try {
-    const response = await apiService.get<Service[] | ApiEnvelope<Service[]>>(apiEndpoints.platform.services.base);
-    return unwrapData(response.data) || [];
+    const response = await apiService.get(apiEndpoints.platform.services.base, {
+      responseSchema: servicesListSchema,
+    });
+    return response.data || [];
   } catch (error: any) {
     console.error('List services error:', error);
     throw error;
@@ -103,12 +94,13 @@ export const listServicesPaginated = async (params: ServiceListParams = {}): Pro
     if (params.isPublished !== undefined) queryParams.is_published = params.isPublished;
     if (params.createdBy) queryParams.created_by = params.createdBy;
 
-    const response = await apiService.get<Service[] | ApiEnvelope<Service[]>>(apiEndpoints.platform.services.base, {
+    const response = await apiService.get(apiEndpoints.platform.services.base, {
       params: queryParams,
+      responseSchema: servicesListSchema,
     });
 
     const total = parseInt(response.headers['x-total-count'] ?? '0', 10);
-    const payload = unwrapData(response.data);
+    const payload = response.data;
     const items = Array.isArray(payload) ? payload : [];
 
     return {
@@ -131,10 +123,10 @@ export const listServicesPaginated = async (params: ServiceListParams = {}): Pro
 export const getServiceById = async (serviceId: string): Promise<Service> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
-    const response = await apiService.get<Service | ApiEnvelope<Service>>(
-      apiEndpoints.platform.services.byId(serviceId)
-    );
-    return unwrapData(response.data);
+    const response = await apiService.get(apiEndpoints.platform.services.byId(serviceId), {
+      responseSchema: serviceSingleSchema,
+    });
+    return response.data;
   } catch (error: any) {
     console.error('Get service error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -177,11 +169,12 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
     // - Authorization: Bearer <token>
     // - X-API-Key: <api_key> (if available)
     // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
-    const response = await apiService.post<Service>(
+    const response = await apiService.post(
       apiEndpoints.platform.services.base,
-      apiPayload
+      apiPayload,
+      { responseSchema: serviceSingleSchema }
     );
-    return unwrapData(response.data as any);
+    return response.data;
   } catch (error: any) {
     console.error('Create service error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -236,11 +229,12 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
       }
     }
     
-    const response = await apiService.patch<Service>(
+    const response = await apiService.patch(
       apiEndpoints.platform.services.base,
-      apiPayload
+      apiPayload,
+      { responseSchema: serviceSingleSchema }
     );
-    return unwrapData(response.data as any);
+    return response.data;
   } catch (error: any) {
     console.error('Update service error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -256,10 +250,10 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
 export const deleteService = async (serviceId: string): Promise<any> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
-    const response = await apiService.delete<any>(
-      apiEndpoints.platform.services.byId(serviceId)
-    );
-    return unwrapData(response.data as any);
+    const response = await apiService.delete(apiEndpoints.platform.services.byId(serviceId), {
+      responseSchema: z.unknown(),
+    });
+    return response.data;
   } catch (error: any) {
     console.error('Delete service error:', error);
     // Don't transform the error - let extractErrorInfo handle it

@@ -2,6 +2,14 @@
 
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
+import {
+  modelsListSchema,
+  modelSingleSchema,
+  servicesListSchema,
+  unknownPlatformPayloadSchema,
+  unpublishModelResponseSchema,
+  withPlatformEnvelope,
+} from './dto/schemas/platform';
 
 export interface ModelDetails {
   modelId?: string;
@@ -40,19 +48,6 @@ export interface UnpublishModelResponse {
   success: boolean;
 }
 
-type ApiEnvelope<T> = {
-  success?: boolean;
-  data?: T;
-  meta?: Record<string, any>;
-};
-
-const unwrapData = <T>(payload: T | ApiEnvelope<T>): T => {
-  if (payload && typeof payload === 'object' && 'data' in (payload as any)) {
-    return ((payload as ApiEnvelope<T>).data ?? null) as T;
-  }
-  return payload as T;
-};
-
 /**
  * Unpublish a model
  * @param modelId - The ID of the model to unpublish
@@ -63,11 +58,12 @@ export const unpublishModel = async (
 ): Promise<UnpublishModelResponse> => {
   try {
     // Platform-core toggles status through the model management PATCH endpoint.
-    const response = await apiService.patch<ApiEnvelope<UnpublishModelResponse>>(
+    const response = await apiService.patch(
       apiEndpoints.platform.models.base,
-      { modelId, versionStatus: 'DEPRECATED' }
+      { modelId, versionStatus: 'DEPRECATED' },
+      { responseSchema: withPlatformEnvelope(unpublishModelResponseSchema) }
     );
-    return unwrapData(response.data);
+    return response.data;
   } catch (error: any) {
     console.error('Unpublish model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -81,8 +77,10 @@ export const unpublishModel = async (
  */
 export const getAllModels = async (): Promise<ModelDetails[]> => {
   try {
-    const response = await apiService.get<ModelDetails[] | ApiEnvelope<ModelDetails[]>>(apiEndpoints.platform.models.base);
-    return unwrapData(response.data) || [];
+    const response = await apiService.get(apiEndpoints.platform.models.base, {
+      responseSchema: modelsListSchema,
+    });
+    return response.data || [];
   } catch (error: any) {
     console.error('Get models error:', error);
     throw error;
@@ -102,12 +100,13 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
     if (params.versionStatus) queryParams.version_status = params.versionStatus;
     if (params.createdBy) queryParams.created_by = params.createdBy;
 
-    const response = await apiService.get<ModelDetails[] | ApiEnvelope<ModelDetails[]>>(apiEndpoints.platform.models.base, {
+    const response = await apiService.get(apiEndpoints.platform.models.base, {
       params: queryParams,
+      responseSchema: modelsListSchema,
     });
 
     const total = parseInt(response.headers['x-total-count'] ?? '0', 10);
-    const payload = unwrapData(response.data);
+    const payload = response.data;
     const items = Array.isArray(payload) ? payload : [];
 
     return {
@@ -129,8 +128,10 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
  */
 export const createModel = async (modelData: any): Promise<any> => {
   try {
-    const response = await apiService.post<any | ApiEnvelope<any>>(apiEndpoints.platform.models.base, modelData);
-    return unwrapData(response.data);
+    const response = await apiService.post(apiEndpoints.platform.models.base, modelData, {
+      responseSchema: unknownPlatformPayloadSchema,
+    });
+    return response.data;
   } catch (error: any) {
     console.error('Register model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -145,10 +146,10 @@ export const createModel = async (modelData: any): Promise<any> => {
  */
 export const getModelById = async (modelId: string): Promise<ModelDetails> => {
   try {
-    const response = await apiService.get<ModelDetails | ApiEnvelope<ModelDetails>>(
-      apiEndpoints.platform.models.byId(modelId)
-    );
-    return unwrapData(response.data);
+    const response = await apiService.get(apiEndpoints.platform.models.byId(modelId), {
+      responseSchema: modelSingleSchema,
+    });
+    return response.data;
   } catch (error: any) {
     console.error('Get model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -163,8 +164,10 @@ export const getModelById = async (modelId: string): Promise<ModelDetails> => {
  */
 export const updateModel = async (modelData: any): Promise<any> => {
   try {
-    const response = await apiService.patch<any | ApiEnvelope<any>>(apiEndpoints.platform.models.base, modelData);
-    return unwrapData(response.data);
+    const response = await apiService.patch(apiEndpoints.platform.models.base, modelData, {
+      responseSchema: unknownPlatformPayloadSchema,
+    });
+    return response.data;
   } catch (error: any) {
     console.error('Update model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -180,11 +183,12 @@ export const updateModel = async (modelData: any): Promise<any> => {
 export const publishModel = async (modelId: string): Promise<any> => {
   try {
     // Platform-core toggles status through the model management PATCH endpoint.
-    const response = await apiService.patch<any | ApiEnvelope<any>>(
+    const response = await apiService.patch(
       apiEndpoints.platform.models.base,
-      { modelId, versionStatus: 'ACTIVE' }
+      { modelId, versionStatus: 'ACTIVE' },
+      { responseSchema: unknownPlatformPayloadSchema }
     );
-    return unwrapData(response.data);
+    return response.data;
   } catch (error: any) {
     console.error('Publish model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
@@ -207,8 +211,11 @@ export const listServices = async (
     const params: Record<string, string> = {};
     if (taskType) params.task_type = taskType;
     if (publishedOnly === true) params.is_published = 'true';
-    const response = await apiService.get<any[] | ApiEnvelope<any[]>>(url, { params });
-    return unwrapData(response.data) || [];
+    const response = await apiService.get(url, {
+      params,
+      responseSchema: servicesListSchema,
+    });
+    return response.data || [];
   } catch (error: any) {
     console.error('List services error:', error);
     const errorMessage =

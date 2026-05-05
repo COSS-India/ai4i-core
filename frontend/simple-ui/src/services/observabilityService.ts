@@ -2,6 +2,13 @@
 
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
+import {
+  logAggregationResponseSchema,
+  logSearchResponseSchema,
+  telemetryServicesNamesSchema,
+  traceSchema,
+  traceSearchResponseSchema,
+} from './dto/schemas/observability';
 
 // Telemetry service runs on port 8084 (different from API gateway on 8080)
 const TELEMETRY_SERVICE_URL = process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL ;
@@ -94,9 +101,9 @@ export const searchLogs = async (
     queryParams.append('page', String(params.page || 1));
     queryParams.append('size', String(params.size || 50));
 
-    const response = await apiService.get<LogSearchResponse>(
+    const response = await apiService.get(
       telemetryUrl(`${apiEndpoints.telemetry.logsSearch}?${queryParams.toString()}`),
-      { timeout: 30000 }
+      { timeout: 30000, responseSchema: logSearchResponseSchema }
     );
 
     console.log('searchLogs: Response received:', {
@@ -156,7 +163,10 @@ export const getLogAggregations = async (
     if (params?.end_time) queryParams.append('end_time', params.end_time);
 
     const url = `${apiEndpoints.telemetry.logsAggregate}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
-    const response = await apiService.get<LogAggregationResponse>(telemetryUrl(url), { timeout: 30000 });
+    const response = await apiService.get(telemetryUrl(url), {
+      timeout: 30000,
+      responseSchema: logAggregationResponseSchema,
+    });
 
     return response.data;
   } catch (error: any) {
@@ -184,30 +194,16 @@ export const getLogAggregations = async (
  */
 export const getServicesWithLogs = async (): Promise<string[]> => {
   try {
-    const response = await apiService.get<{services: string[]} | string[]>(
-      telemetryUrl(apiEndpoints.telemetry.logsServices),
-      { timeout: 30000 }
-    );
-
-    console.log('getServicesWithLogs: Response received:', {
-      dataType: typeof response.data,
-      isArray: Array.isArray(response.data),
-      hasServices: response.data && typeof response.data === 'object' && 'services' in response.data,
-      rawData: response.data,
+    const response = await apiService.get(telemetryUrl(apiEndpoints.telemetry.logsServices), {
+      timeout: 30000,
+      responseSchema: telemetryServicesNamesSchema,
     });
 
-    // Handle both response formats: {"services": [...]} or [...]
-    const data = response.data;
-    if (Array.isArray(data)) {
-      console.log('getServicesWithLogs: Returning array directly, count:', data.length);
-      return data;
-    } else if (data && typeof data === 'object' && 'services' in data && Array.isArray(data.services)) {
-      console.log('getServicesWithLogs: Extracting services from object, count:', data.services.length);
-      return data.services;
-    } else {
-      console.warn('getServicesWithLogs: Unexpected services response format:', data);
-      return [];
-    }
+    console.log('getServicesWithLogs: Response received:', {
+      count: response.data?.length ?? 0,
+    });
+
+    return response.data;
   } catch (error: any) {
     console.error('Failed to get services with logs:', {
       message: error?.message,
@@ -259,9 +255,9 @@ export const searchTraces = async (
       });
     }
 
-    const response = await apiService.get<TraceSearchResponse>(
+    const response = await apiService.get(
       telemetryUrl(`${apiEndpoints.telemetry.tracesSearch}?${queryParams.toString()}`),
-      { timeout: 30000 }
+      { timeout: 30000, responseSchema: traceSearchResponseSchema }
     );
 
     return response.data;
@@ -290,10 +286,10 @@ export const searchTraces = async (
  */
 export const getTraceById = async (traceId: string): Promise<Trace> => {
   try {
-    const response = await apiService.get<Trace>(
-      telemetryUrl(apiEndpoints.telemetry.traceById(traceId)),
-      { timeout: 30000 }
-    );
+    const response = await apiService.get(telemetryUrl(apiEndpoints.telemetry.traceById(traceId)), {
+      timeout: 30000,
+      responseSchema: traceSchema,
+    });
 
     return response.data;
   } catch (error: any) {
@@ -321,21 +317,12 @@ export const getTraceById = async (traceId: string): Promise<Trace> => {
  */
 export const getServicesWithTraces = async (): Promise<string[]> => {
   try {
-    const response = await apiService.get<{services: string[]} | string[]>(
-      telemetryUrl(apiEndpoints.telemetry.tracesServices),
-      { timeout: 30000 }
-    );
+    const response = await apiService.get(telemetryUrl(apiEndpoints.telemetry.tracesServices), {
+      timeout: 30000,
+      responseSchema: telemetryServicesNamesSchema,
+    });
 
-    // Handle both response formats: {"services": [...]} or [...]
-    const data = response.data;
-    if (Array.isArray(data)) {
-      return data;
-    } else if (data && typeof data === 'object' && 'services' in data && Array.isArray(data.services)) {
-      return data.services;
-    } else {
-      console.warn('Unexpected services response format:', data);
-      return [];
-    }
+    return response.data;
   } catch (error: any) {
     console.error('Failed to get services with traces:', error);
     // Extract error message from detail object
@@ -361,9 +348,9 @@ export const getServicesWithTraces = async (): Promise<string[]> => {
  */
 export const getOperationsForService = async (serviceName: string): Promise<string[]> => {
   try {
-    const response = await apiService.get<string[]>(
+    const response = await apiService.get(
       telemetryUrl(apiEndpoints.telemetry.traceServiceOperations(serviceName)),
-      { timeout: 30000 }
+      { timeout: 30000, responseSchema: telemetryServicesNamesSchema }
     );
 
     return response.data;

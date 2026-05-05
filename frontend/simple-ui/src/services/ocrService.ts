@@ -1,6 +1,7 @@
 // OCR service API client
 
 import { apiService, apiEndpoints } from './api';
+import { ocrInferenceResponseSchema } from './dto/schemas/inference';
 import { listServices } from './modelManagementService';
 
 export interface OCRInferenceRequest {
@@ -122,10 +123,9 @@ export const performOCRInference = async (
       },
     };
 
-    const response = await apiService.post<OCRInferenceResponse>(
-      apiEndpoints.ocr.inference,
-      payload
-    );
+    const response = await apiService.post(apiEndpoints.ocr.inference, payload, {
+      responseSchema: ocrInferenceResponseSchema,
+    });
 
     const responseTime = parseInt(response.headers['request-duration'] || '0');
 

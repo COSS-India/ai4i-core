@@ -1,6 +1,7 @@
 // Transliteration service API client
 
 import { apiService, apiEndpoints } from './api';
+import { transliterationInferenceResponseSchema } from './dto/schemas/inference';
 import { listServices } from './modelManagementService';
 
 export interface TransliterationServiceDetailsResponse {
@@ -119,10 +120,9 @@ export const performTransliterationInference = async (
       },
     };
 
-    const response = await apiService.post<TransliterationInferenceResponse>(
-      apiEndpoints.transliteration.inference,
-      payload
-    );
+    const response = await apiService.post(apiEndpoints.transliteration.inference, payload, {
+      responseSchema: transliterationInferenceResponseSchema,
+    });
 
     const responseTime = parseInt(response.headers['request-duration'] || '0');
 

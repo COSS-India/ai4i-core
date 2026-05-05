@@ -1,5 +1,16 @@
+import { z } from "zod";
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
+import {
+  auditLogDetailOutSchema,
+  auditLogListResponseSchema,
+  piiTypeListResponseSchema,
+  piiTypeOutSchema,
+  policyHealthSchema,
+  policyListResponseSchema,
+  policyOutSchema,
+  policyStatusPatchSchema,
+} from "./dto/schemas/policy";
 
 export interface PolicyListMeta {
   total: number;
@@ -69,22 +80,24 @@ export type MaskFormat = "full" | "partial" | "redact";
 const ep = apiEndpoints.policy;
 
 export const policyService = {
-  health: () => apiService.get<{ status: string }>(ep.health),
+  health: () =>
+    apiService.get(ep.health, { responseSchema: policyHealthSchema }),
 
   listPiiTypes: (params?: {
     search?: string;
     page?: number;
     limit?: number;
-  }) => apiService.get<PiiTypeListResponse>(ep.piiTypes, { params }),
+  }) => apiService.get(ep.piiTypes, { params, responseSchema: piiTypeListResponseSchema }),
 
-  getPiiType: (id: string) => apiService.get<PiiTypeOut>(ep.piiTypeById(id)),
+  getPiiType: (id: string) =>
+    apiService.get(ep.piiTypeById(id), { responseSchema: piiTypeOutSchema }),
 
   createPiiType: (body: {
     pii_type_label: string;
     regex_pattern: string;
     example_values: string[];
     mask_format: MaskFormat;
-  }) => apiService.post<PiiTypeOut>(ep.piiTypes, body),
+  }) => apiService.post(ep.piiTypes, body, { responseSchema: piiTypeOutSchema }),
 
   updatePiiType: (
     id: string,
@@ -94,9 +107,10 @@ export const policyService = {
       example_values: string[];
       mask_format: MaskFormat;
     }>
-  ) => apiService.put<PiiTypeOut>(ep.piiTypeById(id), body),
+  ) => apiService.put(ep.piiTypeById(id), body, { responseSchema: piiTypeOutSchema }),
 
-  deletePiiType: (id: string) => apiService.delete<void>(ep.piiTypeById(id)),
+  deletePiiType: (id: string) =>
+    apiService.delete(ep.piiTypeById(id), { responseSchema: z.unknown() }),
 
   listPolicies: (params?: {
     is_global?: boolean;
@@ -104,9 +118,10 @@ export const policyService = {
     search?: string;
     page?: number;
     limit?: number;
-  }) => apiService.get<PolicyListResponse>(ep.policies, { params }),
+  }) => apiService.get(ep.policies, { params, responseSchema: policyListResponseSchema }),
 
-  getPolicy: (id: string) => apiService.get<PolicyOut>(ep.policyById(id)),
+  getPolicy: (id: string) =>
+    apiService.get(ep.policyById(id), { responseSchema: policyOutSchema }),
 
   /**
    * API expects `pii_types: [{ pii_type_id }]`, not Postman’s `pii_type_ids`.
@@ -119,7 +134,7 @@ export const policyService = {
     supported_languages: string[];
     tenant_ids?: string[];
     pii_types?: { pii_type_id: string }[];
-  }) => apiService.post<PolicyOut>(ep.policies, body),
+  }) => apiService.post(ep.policies, body, { responseSchema: policyOutSchema }),
 
   updatePolicy: (
     id: string,
@@ -131,14 +146,15 @@ export const policyService = {
       tenant_ids: string[];
       pii_types: { pii_type_id: string }[] | null;
     }>
-  ) => apiService.put<PolicyOut>(ep.policyById(id), body),
+  ) => apiService.put(ep.policyById(id), body, { responseSchema: policyOutSchema }),
 
-  deletePolicy: (id: string) => apiService.delete<void>(ep.policyById(id)),
+  deletePolicy: (id: string) =>
+    apiService.delete(ep.policyById(id), { responseSchema: z.unknown() }),
 
   setPolicyStatus: (id: string, is_active: boolean) =>
-    apiService.patch<{ is_active: boolean }>(ep.policyStatus(id), {
+    apiService.patch(ep.policyStatus(id), {
       is_active,
-    }),
+    }, { responseSchema: policyStatusPatchSchema }),
 
   listAuditLogs: (params?: {
     tenant_id?: string;
@@ -149,8 +165,8 @@ export const policyService = {
     min_pii_count?: number;
     page?: number;
     limit?: number;
-  }) => apiService.get<AuditLogListResponse>(ep.auditLogs, { params }),
+  }) => apiService.get(ep.auditLogs, { params, responseSchema: auditLogListResponseSchema }),
 
   getAuditLog: (id: string) =>
-    apiService.get<AuditLogDetailOut>(ep.auditLogById(id)),
+    apiService.get(ep.auditLogById(id), { responseSchema: auditLogDetailOutSchema }),
 };

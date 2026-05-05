@@ -1,15 +1,25 @@
+import { z } from "zod";
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
+import {
+  piiAuditRowSchema,
+  piiDomainRowSchema,
+  piiPolicySchema,
+  piiRedactResponseSchema,
+  piiTenantDomainMappingSchema,
+  stringArraySchema,
+} from "./dto/schemas/pii";
 
 const admin = apiEndpoints.pii.admin;
 
 export const piiService = {
-  getDomains: () => apiService.get<string[]>(apiEndpoints.pii.domains),
+  getDomains: () =>
+    apiService.get(apiEndpoints.pii.domains, { responseSchema: stringArraySchema }),
 
   getPolicy: (domainId: string) =>
-    apiService.get<{ meta?: unknown; rules?: unknown[] }>(
-      apiEndpoints.pii.policyByDomain(domainId)
-    ),
+    apiService.get(apiEndpoints.pii.policyByDomain(domainId), {
+      responseSchema: piiPolicySchema,
+    }),
 
   redact: (
     payload: { text: string; domain?: string | null },
@@ -23,60 +33,68 @@ export const piiService = {
         "X-Language": lang,
         ...(tenantId ? { "X-Tenant-Id": tenantId } : {}),
       },
+      responseSchema: piiRedactResponseSchema,
     }),
 
   getAllDomains: () =>
-    apiService.get<
-      { domain_id: string; is_active: boolean; description?: string | null }[]
-    >(admin.allDomains),
+    apiService.get(admin.allDomains, { responseSchema: z.array(piiDomainRowSchema) }),
 
   activateDomains: (domainIds: string[]) =>
-    apiService.post(admin.activateDomains, {
-      domain_ids: domainIds,
-    }),
+    apiService.post(
+      admin.activateDomains,
+      {
+        domain_ids: domainIds,
+      },
+      { responseSchema: z.unknown() }
+    ),
 
   createDomain: (domainId: string, description?: string) =>
-    apiService.post(admin.domain, {
-      domain_id: domainId,
-      description: description?.trim() || `Policy scope: ${domainId}`,
-    }),
+    apiService.post(
+      admin.domain,
+      {
+        domain_id: domainId,
+        description: description?.trim() || `Policy scope: ${domainId}`,
+      },
+      { responseSchema: z.unknown() }
+    ),
 
   deployRules: (domainId: string, rules: unknown[]) =>
-    apiService.post(admin.deploy, { domain_id: domainId, rules }),
+    apiService.post(admin.deploy, { domain_id: domainId, rules }, { responseSchema: z.unknown() }),
 
   generateRegex: (exampleText: string) =>
-    apiService.post(admin.generateRegex, {
-      example_text: exampleText,
-    }),
+    apiService.post(
+      admin.generateRegex,
+      {
+        example_text: exampleText,
+      },
+      { responseSchema: z.unknown() }
+    ),
 
   listTenantDomainMappings: () =>
-    apiService.get<
-      { tenant_id: string; domain_id: string; updated_at?: string }[]
-    >(admin.tenantDomains),
+    apiService.get(admin.tenantDomains, { responseSchema: z.array(piiTenantDomainMappingSchema) }),
 
   upsertTenantDomainMapping: (tenantId: string, domainId: string) =>
-    apiService.post(admin.tenantDomain, {
-      tenant_id: tenantId,
-      domain_id: domainId,
-    }),
+    apiService.post(
+      admin.tenantDomain,
+      {
+        tenant_id: tenantId,
+        domain_id: domainId,
+      },
+      { responseSchema: z.unknown() }
+    ),
 
   deleteTenantDomainMapping: (tenantId: string) =>
-    apiService.post(admin.tenantDomainDelete, {
-      tenant_id: tenantId,
-    }),
+    apiService.post(
+      admin.tenantDomainDelete,
+      {
+        tenant_id: tenantId,
+      },
+      { responseSchema: z.unknown() }
+    ),
 
   getAuditLogs: (limit = 50) =>
-    apiService.get<
-      {
-        id: number;
-        trace_id: string;
-        tenant_id: string;
-        domain_id: string;
-        target_context: string;
-        pii_count: number;
-        processing_ms: number;
-        trace_json: unknown;
-        created_at: string;
-      }[]
-    >(admin.auditLogs, { params: { limit } }),
+    apiService.get(admin.auditLogs, {
+      params: { limit },
+      responseSchema: z.array(piiAuditRowSchema),
+    }),
 };

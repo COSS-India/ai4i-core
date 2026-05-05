@@ -1,6 +1,7 @@
 // Audio Language Detection service API client
 
 import { apiService, apiEndpoints } from './api';
+import { audioLanguageDetectionInferenceResponseSchema } from './dto/schemas/inference';
 import { listServices } from './modelManagementService';
 
 export interface AudioLanguageDetectionServiceDetailsResponse {
@@ -97,9 +98,10 @@ export const performAudioLanguageDetectionInference = async (
       },
     };
 
-    const response = await apiService.post<AudioLanguageDetectionInferenceResponse>(
+    const response = await apiService.post(
       apiEndpoints['audio-language-detection'].inference,
-      payload
+      payload,
+      { responseSchema: audioLanguageDetectionInferenceResponseSchema }
     );
 
     const responseTime = parseInt(response.headers['request-duration'] || '0');
