@@ -132,6 +132,11 @@ class AppEnv(BaseSettings):
     # Global default for TLS certificate verification on inference clients.
     inference_ssl_verify: bool = True
 
+    # ── Direct OpenAI HTTP proxy (llm-service); upstream URLs only — payload forwarded as-is ──
+    chat_completions_endpoint: str = ""
+    completions_endpoint: str = ""
+    inference_timeout: int = 60
+
     # ── Per-service Triton endpoints (seeded into model_management_db) ──
     triton_endpoint_asr: str = ""
     triton_endpoint_tts: str = ""
