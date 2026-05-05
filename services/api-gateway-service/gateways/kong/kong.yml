@@ -530,6 +530,50 @@ services:
               redis_host: redis
               redis_port: 6379
               redis_password: ${REDIS_PASSWORD}
+      - name: llm-openai-chat-completions-route
+        paths:
+          - /api/v1/chat/completions
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              api_key: "${LLM_API_KEY}"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+                - "http://localhost:8085"
+              enable_rate_limit: true
+              rate_limit: 50
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+      - name: llm-openai-completions-route
+        paths:
+          - /api/v1/completions
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              api_key: "${LLM_API_KEY}"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+                - "http://localhost:8085"
+              enable_rate_limit: true
+              rate_limit: 50
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
 
 # ============================================
 # CONFIG SERVICE (Feature Flags) - Protected endpoint
