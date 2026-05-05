@@ -32,6 +32,15 @@ SERVICE_UNPUBLISHED_MESSAGE = (
 )
 
 
+# Paths that must never run model-resolution (direct OpenAI HTTP proxy on llm-service, etc.).
+_MODEL_RESOLUTION_BYPASS_PATHS = frozenset(
+    (
+        "/api/v1/chat/completions",
+        "/api/v1/completions",
+    )
+)
+
+
 from ai4icore_exceptions import UnpublishedServiceError  # noqa: F401
 
 
@@ -601,12 +610,16 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         """Process request and resolve service if needed. Supports A/B testing via select-variant."""
         start_time = time.time()
         try:
-            # Only process enabled paths
-            if not self._should_process(request.url.path):
-                logger.debug(f"Middleware skipping path: {request.url.path} (not in enabled_paths)")
+            path = request.url.path
+            if path in _MODEL_RESOLUTION_BYPASS_PATHS:
                 return await call_next(request)
 
-            logger.debug(f"Model Resolution Middleware processing: {request.method} {request.url.path}")
+            # Only process enabled paths
+            if not self._should_process(path):
+                logger.debug(f"Middleware skipping path: {path} (not in enabled_paths)")
+                return await call_next(request)
+
+            logger.debug(f"Model Resolution Middleware processing: {request.method} {path}")
             
             # For POST requests, try to extract serviceId from body
             service_id = None

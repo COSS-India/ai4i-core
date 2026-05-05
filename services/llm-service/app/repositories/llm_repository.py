@@ -5,11 +5,11 @@ Provides CRUD operations for LLM requests and results.
 """
 
 import logging
-from typing import List, Optional
+from typing import Optional
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.models.llm import LLMRequestDB, LLMResultDB
@@ -36,6 +36,9 @@ class LLMRepository:
         user_id: Optional[int] = None,
         api_key_id: Optional[int] = None,
         session_id: Optional[int] = None,
+        endpoint_type: Optional[str] = None,
+        openai_model: Optional[str] = None,
+        request_payload: Optional[str] = None,
     ) -> LLMRequestDB:
         """Create new LLM request record."""
         try:
@@ -44,6 +47,9 @@ class LLMRepository:
                 api_key_id=api_key_id,
                 session_id=session_id,
                 model_id=model_id,
+                endpoint_type=endpoint_type,
+                openai_model=openai_model,
+                request_payload=request_payload,
                 input_language=input_language,
                 output_language=output_language,
                 text_length=text_length,
