@@ -195,7 +195,7 @@ const LLMPage: React.FC = () => {
                 <Tab fontWeight="semibold">Inference</Tab>
               )}
               <Tab fontWeight="semibold">Chat Completions</Tab>
-              <Tab fontWeight="semibold">Generate</Tab>
+              <Tab fontWeight="semibold">Completions</Tab>
             </TabList>
 
             <TabPanels>
@@ -471,14 +471,14 @@ const LLMPage: React.FC = () => {
                         <Textarea
                           value={generateInputText}
                           onChange={(e) => setGenerateInputText(e.target.value)}
-                          placeholder="Enter the request payload for Generate"
+                          placeholder="Enter the request payload for Completions"
                           minH="180px"
                           isDisabled={generateFetching}
                         />
                       </FormControl>
 
                       <Text fontSize="sm" color="gray.600">
-                        Click &quot;Submit&quot; to show the sample Generate response.
+                        Click &quot;Submit&quot; to show the sample Completions response.
                       </Text>
 
                       <HStack spacing={3}>
@@ -540,7 +540,7 @@ const LLMPage: React.FC = () => {
                             fontWeight="semibold"
                             color="gray.700"
                           >
-                            Generate Response
+                            Completions Response
                           </FormLabel>
                           <Box
                             p={4}

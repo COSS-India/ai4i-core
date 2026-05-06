@@ -389,7 +389,7 @@ apiClient.interceptors.response.use(
           // Unauthorized - handle based on endpoint type
           if (typeof window !== 'undefined') {
             const url = (error.config?.url || '').toLowerCase();
-            const path401 = (url.split('?')[0] || '');
+            const requestPathWithoutQuery = (url.split('?')[0] || '');
             const isModelManagementEndpoint = url.includes('/model-management');
             const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
             
@@ -399,8 +399,8 @@ apiClient.interceptors.response.use(
                                      url.includes('/api/v1/tts') ||
                                      url.includes('/api/v1/nmt') ||
                                      url.includes('/api/v1/llm') ||
-                                     path401.includes('/api/v1/chat/completions') ||
-                                     path401.endsWith('/api/v1/completions') ||
+                                     requestPathWithoutQuery.includes('/api/v1/chat/completions') ||
+                                     requestPathWithoutQuery.endsWith('/api/v1/completions') ||
                                      url.includes('/api/v1/pipeline') ||
                                      url.includes('/api/v1/ocr') ||
                                      url.includes('/api/v1/ner') ||
