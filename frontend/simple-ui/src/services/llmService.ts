@@ -172,45 +172,39 @@ export const checkLLMHealth = async (): Promise<LLMHealthResponse> => {
   }
 };
 
-export const performLLMChatCompletion = async (
-  payload: LLMChatCompletionRequest
-): Promise<any> => {
+/** `POST /api/v1/chat/completions` (OpenAI-style body: `model`, `messages`, …). */
+export const postOpenAIChatCompletions = async (payload: object): Promise<unknown> => {
   try {
     const response = await llmApiClient.post(
-      apiEndpoints.llm.chatCompletion,
-      payload,
-      {
-        headers: {
-          'X-Try-It': 'true',
-        },
-      }
+      apiEndpoints.llm.openaiChatCompletions,
+      payload
     );
-
     return response.data;
   } catch (error) {
-    console.error('LLM chat completion error:', error);
+    console.error('Chat completions error:', error);
     throw error;
   }
 };
+
+/** `POST /api/v1/completions` (OpenAI-style body: `model`, `prompt`, …). */
+export const postOpenAITextCompletions = async (payload: object): Promise<unknown> => {
+  try {
+    const response = await llmApiClient.post(
+      apiEndpoints.llm.openaiCompletions,
+      payload
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Text completions error:', error);
+    throw error;
+  }
+};
+
+export const performLLMChatCompletion = async (
+  payload: LLMChatCompletionRequest
+): Promise<any> => postOpenAIChatCompletions(payload);
 
 export const performLLMGenerate = async (
   payload: LLMGenerateRequest
-): Promise<any> => {
-  try {
-    const response = await llmApiClient.post(
-      apiEndpoints.llm.generate,
-      payload,
-      {
-        headers: {
-          'X-Try-It': 'true',
-        },
-      }
-    );
-
-    return response.data;
-  } catch (error) {
-    console.error('LLM generate error:', error);
-    throw error;
-  }
-};
+): Promise<any> => postOpenAITextCompletions(payload);
 

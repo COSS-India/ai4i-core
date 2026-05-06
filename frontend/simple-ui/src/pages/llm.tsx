@@ -36,40 +36,18 @@ import { useLLM } from "../hooks/useLLM";
 import {
   listLLMModels,
   listLLMServices,
+  postOpenAIChatCompletions,
+  postOpenAITextCompletions,
 } from "../services/llmService";
+import { extractErrorInfo } from "../utils/errorHandler";
 
 /** Set to true to show the translation / dual-inference UI again. */
 const SHOW_LLM_INFERENCE_TAB = false;
 
 const LLMPage: React.FC = () => {
   const [serviceId, setServiceId] = useState<string>("");
-  const [chatInputText, setChatInputText] = useState<string>(
-    JSON.stringify(
-      {
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: "You are a helpful assistant." },
-          { role: "user", content: "What is the capital of France?" },
-        ],
-        temperature: 0.7,
-        max_tokens: 100,
-      },
-      null,
-      2
-    )
-  );
-  const [generateInputText, setGenerateInputText] = useState<string>(
-    JSON.stringify(
-      {
-        model: "gpt-3.5-turbo-instruct",
-        prompt: "List three uses for baking soda:\n1.",
-        max_tokens: 60,
-        temperature: 0.7,
-      },
-      null,
-      2
-    )
-  );
+  const [chatInputText, setChatInputText] = useState<string>("");
+  const [generateInputText, setGenerateInputText] = useState<string>("");
   const [chatOutputText, setChatOutputText] = useState<string>("");
   const [generateOutputText, setGenerateOutputText] = useState<string>("");
   const [chatFetching, setChatFetching] = useState<boolean>(false);
@@ -117,48 +95,6 @@ const LLMPage: React.FC = () => {
 
   const availableLanguages = LLM_SUPPORTED_LANGUAGES.map((lang) => lang.code);
 
-  const hardcodedChatResponse = {
-    id: "chatcmpl-9k2xQpL4mN8vR3wY",
-    object: "chat.completion",
-    created: 1730000000,
-    model: "gpt-4o-mini",
-    choices: [
-      {
-        index: 0,
-        message: {
-          role: "assistant",
-          content: "The capital of France is Paris.",
-        },
-        finish_reason: "stop",
-        logprobs: null,
-      },
-    ],
-    usage: {
-      prompt_tokens: 24,
-      completion_tokens: 8,
-      total_tokens: 32,
-    },
-  };
-  const hardcodedGenerateResponse = {
-    id: "cmpl-9k2xQpL4mN8vR3wY",
-    object: "text_completion",
-    created: 1730000000,
-    model: "gpt-3.5-turbo-instruct",
-    choices: [
-      {
-        text: " Cleaning kitchen surfaces and removing stubborn stains\n2. Neutralizing odors in the refrigerator or trash can\n3. Soothing insect bites and minor skin irritations",
-        index: 0,
-        logprobs: null,
-        finish_reason: "stop",
-      },
-    ],
-    usage: {
-      prompt_tokens: 10,
-      completion_tokens: 35,
-      total_tokens: 45,
-    },
-  };
-
   const MAX_LLM_INPUT_LENGTH = 512;
   const canTranslate =
     !!serviceId?.trim() &&
@@ -178,18 +114,24 @@ const LLMPage: React.FC = () => {
     swapLanguages();
   };
 
-  const canSubmitChatCompletions = true;
-  const canSubmitGenerate = true;
+  const canSubmitChatCompletions = chatInputText.trim().length > 0;
+  const canSubmitGenerate = generateInputText.trim().length > 0;
 
   const handleChatCompletionsSubmit = async () => {
     if (!canSubmitChatCompletions || chatFetching) return;
     try {
       setChatFetching(true);
       setChatError(null);
-      JSON.parse(chatInputText);
-      setChatOutputText(JSON.stringify(hardcodedChatResponse, null, 2));
+      const payload = JSON.parse(chatInputText) as Record<string, unknown>;
+      const data = await postOpenAIChatCompletions(payload);
+      setChatOutputText(JSON.stringify(data, null, 2));
     } catch (err) {
-      setChatError("Invalid JSON payload. Please update the request payload.");
+      if (err instanceof SyntaxError) {
+        setChatError("Invalid JSON payload. Please fix the request body.");
+      } else {
+        const { message } = extractErrorInfo(err);
+        setChatError(message);
+      }
     } finally {
       setChatFetching(false);
     }
@@ -200,10 +142,16 @@ const LLMPage: React.FC = () => {
     try {
       setGenerateFetching(true);
       setGenerateError(null);
-      JSON.parse(generateInputText);
-      setGenerateOutputText(JSON.stringify(hardcodedGenerateResponse, null, 2));
+      const payload = JSON.parse(generateInputText) as Record<string, unknown>;
+      const data = await postOpenAITextCompletions(payload);
+      setGenerateOutputText(JSON.stringify(data, null, 2));
     } catch (err) {
-      setGenerateError("Invalid JSON payload. Please update the request payload.");
+      if (err instanceof SyntaxError) {
+        setGenerateError("Invalid JSON payload. Please fix the request body.");
+      } else {
+        const { message } = extractErrorInfo(err);
+        setGenerateError(message);
+      }
     } finally {
       setGenerateFetching(false);
     }
