@@ -90,7 +90,7 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
 
         # Phase 3: model.inference (forward to upstream HTTP endpoint)
         status_code, body = None, None
-        with llm_spans.model_inference() as model_span:
+        with llm_spans.triton_inference() as model_span:
             try:
                 status_code, body = await InferenceProxyClient().forward(
                     upstream_url=url, payload=payload
@@ -123,10 +123,6 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
 
         # Phase 5: persist (not applicable for proxy — zero-duration span)
         with llm_spans.persist():
-            pass
-
-        # Phase 6: redact (not applicable for proxy — zero-duration span)
-        with llm_spans.redact():
             pass
 
         # Finalize parent span with status
