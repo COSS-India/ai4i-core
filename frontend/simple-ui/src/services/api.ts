@@ -47,6 +47,9 @@ export const apiEndpoints = {
   },
   llm: {
     inference: '/api/v1/llm/inference',
+    /** OpenAI-compatible proxy (gateway): same as `POST …/api/v1/chat/completions` / `…/completions` curls. */
+    openaiChatCompletions: '/api/v1/chat/completions',
+    openaiCompletions: '/api/v1/completions',
     models: '/api/v1/llm/models',
     health: '/api/v1/llm/health',
   },
@@ -132,7 +135,11 @@ llmApiClient.interceptors.request.use(
     
     // Check endpoint type to determine authentication method (case-insensitive)
     const url = (config.url || '').toLowerCase();
-    const isLLMEndpoint = url.includes('/api/v1/llm');
+    const pathNoQuery = (url.split('?')[0] || '').toLowerCase();
+    const isLLMEndpoint =
+      pathNoQuery.includes('/api/v1/llm') ||
+      pathNoQuery.endsWith('/api/v1/chat/completions') ||
+      pathNoQuery.endsWith('/api/v1/completions');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
     
@@ -292,12 +299,15 @@ apiClient.interceptors.request.use(
     const isPolicyServiceEndpoint = url.includes('/api/v1/policy-service');
     const pathNoQuery = (url.split('?')[0] || '').toLowerCase();
     const isPolicyServiceHealthPath = pathNoQuery.endsWith('/api/v1/policy-service/health');
+    const isOpenAILLMGatewayEndpoint =
+      pathNoQuery.endsWith('/api/v1/chat/completions') ||
+      pathNoQuery.endsWith('/api/v1/completions');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
     
     // Services that require JWT tokens (gateway forward-auth validates Bearer / API key)
     const requiresJWT = isModelManagementEndpoint || isASREndpoint || isNMSEndpoint || 
-                        isTTSEndpoint || isLLMEndpoint || isPipelineEndpoint ||
+                        isTTSEndpoint || isLLMEndpoint || isOpenAILLMGatewayEndpoint || isPipelineEndpoint ||
                         isAudioLangDetectionEndpoint || isLanguageDetectionEndpoint ||
                         isLanguageDiarizationEndpoint || isSpeakerDiarizationEndpoint ||
                         isNEREndpoint || isPIIEndpoint || isOCREndpoint || isTransliterationEndpoint ||
@@ -379,6 +389,7 @@ apiClient.interceptors.response.use(
           // Unauthorized - handle based on endpoint type
           if (typeof window !== 'undefined') {
             const url = (error.config?.url || '').toLowerCase();
+            const requestPathWithoutQuery = (url.split('?')[0] || '');
             const isModelManagementEndpoint = url.includes('/model-management');
             const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
             
@@ -388,6 +399,8 @@ apiClient.interceptors.response.use(
                                      url.includes('/api/v1/tts') ||
                                      url.includes('/api/v1/nmt') ||
                                      url.includes('/api/v1/llm') ||
+                                     requestPathWithoutQuery.includes('/api/v1/chat/completions') ||
+                                     requestPathWithoutQuery.endsWith('/api/v1/completions') ||
                                      url.includes('/api/v1/pipeline') ||
                                      url.includes('/api/v1/ocr') ||
                                      url.includes('/api/v1/ner') ||
