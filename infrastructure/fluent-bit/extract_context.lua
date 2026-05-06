@@ -295,13 +295,11 @@ function filter_dashboard_logs(tag, timestamp, record)
         ["llm-service"] = {
             "/llm/inference",
             "/api/v1/llm/inference",
-            "/v1/chat/completions",
             "/api/v1/chat/completions",
-            "/v1/completions",
             "/api/v1/completions"
         },
         ["ner-service"] = {
-            "/ner/inference",
+            "/ner/inference",infrastructure/fluent-bit/fluent-bit.conf
             "/api/v1/ner/inference"
         },
         ["nmt-service"] = {
@@ -640,7 +638,6 @@ function filter_dashboard_logs(tag, timestamp, record)
         return -1, timestamp, record
     end
 end
-
 
 
 
