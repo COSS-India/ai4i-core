@@ -299,7 +299,7 @@ function filter_dashboard_logs(tag, timestamp, record)
             "/api/v1/completions"
         },
         ["ner-service"] = {
-            "/ner/inference",infrastructure/fluent-bit/fluent-bit.conf
+            "/ner/inference",
             "/api/v1/ner/inference"
         },
         ["nmt-service"] = {
