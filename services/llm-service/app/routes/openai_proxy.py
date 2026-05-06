@@ -97,6 +97,7 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
                 )
                 set_model_inference_attrs(
                     model_span,
+                    model_name=model or "",
                     status_code=status_code,
                     user_id=user_id,
                     tenant_id=tenant_id,

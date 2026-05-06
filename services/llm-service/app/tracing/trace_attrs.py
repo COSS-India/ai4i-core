@@ -19,6 +19,7 @@ class LLMAttrs:
     RESOLVE_UPSTREAM = "upstream_url"
 
     # On llm.model.inference
+    MI_MODEL_NAME = "model_name"
     MI_STATUS_CODE = "status_code"
     MI_USER_ID = "user.id"
     MI_TENANT_ID = "tenant_id"
@@ -45,11 +46,14 @@ def set_resolve_model_attrs(
 def set_model_inference_attrs(
     span: Any,
     *,
+    model_name: Optional[str] = None,
     status_code: Optional[int] = None,
     user_id: Optional[Any] = None,
     tenant_id: Optional[Any] = None,
 ) -> None:
     """Set model.inference span attributes."""
+    if model_name:
+        span.set_attribute(LLMAttrs.MI_MODEL_NAME, model_name)
     if status_code is not None:
         span.set_attribute(LLMAttrs.MI_STATUS_CODE, str(status_code))
     if user_id is not None:
