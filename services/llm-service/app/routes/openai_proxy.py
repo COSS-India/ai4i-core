@@ -56,10 +56,12 @@ async def _read_json_body(request: Request) -> Any:
 
 
 async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSONResponse:
+    print(f">>> [openai_proxy] Request received: endpoint={endpoint}, method={request.method}")
     payload = await _read_json_body(request)
     model = payload.get("model") if isinstance(payload, dict) else None
     user_id = getattr(request.state, "user_id", None)
     tenant_id = getattr(request.state, "tenant_id", None)
+    print(f">>> [openai_proxy] Parsed payload: model={model}, user_id={user_id}, tenant_id={tenant_id}")
 
     with llm_spans.inference(
         model_name=model,
@@ -78,11 +80,14 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
 
         # Phase 2: resolve_model (look up upstream URL)
         url = None
+        print(f">>> [openai_proxy] Resolving upstream URL for model={model}, path={path}")
         with llm_spans.resolve_model() as resolve_span:
             try:
                 url = _resolve_upstream_url(model=model, path=path)
+                print(f">>> [openai_proxy] Resolved upstream URL: {url}")
                 set_resolve_model_attrs(resolve_span, model=model or "", url=url)
             except ValueError as exc:
+                print(f">>> [openai_proxy] ERROR: Failed to resolve upstream: {exc}")
                 resolve_span.set_status(Status(StatusCode.ERROR, str(exc)))
                 resolve_span.record_exception(exc)
                 parent_span.set_attribute(LLMAttrs.LLM_STATUS, "error")
@@ -96,6 +101,7 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
                 status_code, body = await InferenceProxyClient().forward(
                     upstream_url=url, payload=payload
                 )
+                print(f">>> [openai_proxy] Upstream response: status_code={status_code}")
                 set_model_inference_attrs(
                     model_span,
                     model_name=model or "",
@@ -107,8 +113,10 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
                 )
 
                 if status_code and status_code >= 400:
+                    print(f">>> [openai_proxy] ERROR: Upstream returned {status_code}, body={body}")
                     model_span.set_status(Status(StatusCode.ERROR, f"HTTP {status_code}"))
             except httpx.RequestError as exc:
+                print(f">>> [openai_proxy] ERROR: Upstream request failed: {exc}")
                 logger.warning("Upstream %s proxy failed: %s", path, exc)
                 model_span.set_status(Status(StatusCode.ERROR, str(exc)))
                 model_span.record_exception(exc)
@@ -123,6 +131,7 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
         with llm_spans.postprocess() as post_span:
             if isinstance(body, dict):
                 usage = body.get("usage")
+                print(f">>> [openai_proxy] Phase 4 postprocess: token usage={usage}")
                 set_postprocess_attrs(post_span, usage=usage)
 
         # Phase 5: persist (not applicable for proxy — zero-duration span)
@@ -130,6 +139,7 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
             pass
 
         # Finalize parent span with status
+        print(f">>> [openai_proxy] Finalizing span: status_code={status_code}, user_id={user_id}, tenant_id={tenant_id}")
         finalize_inference_span(
             parent_span,
             status_code=status_code,
@@ -138,6 +148,7 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
             service_id="openai-proxy",
         )
 
+    print(f">>> [openai_proxy] Returning response: status_code={status_code}")
     return JSONResponse(status_code=status_code, content=body)
 
 

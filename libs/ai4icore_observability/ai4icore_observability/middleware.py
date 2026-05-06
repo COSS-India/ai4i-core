@@ -286,6 +286,15 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         if service_type == "llm" and llm_model:
             service_id = llm_model
 
+        # Prefer the auth dependency's resolved tenant_id (set on request.state by
+        # ai4icore_auth's AuthProvider dependency, which ran inside call_next).
+        # Our own JWT-only extraction at the top of dispatch returns None for
+        # API-key-authenticated requests; the auth dependency handles both
+        # JWT and API-key flows, so its value is canonical when present.
+        state_tenant_id = getattr(request.state, "tenant_id", None)
+        if state_tenant_id and str(state_tenant_id):
+            tenant = str(state_tenant_id)
+
         # Calculate duration and track metrics
         duration = time.time() - start_time
         # Track request

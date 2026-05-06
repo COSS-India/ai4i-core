@@ -19,6 +19,27 @@ export interface LLMServiceDetailsResponse {
   supported_languages: string[];
 }
 
+export interface LLMChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface LLMChatCompletionRequest {
+  model: string;
+  messages: LLMChatMessage[];
+  temperature?: number;
+  max_tokens?: number;
+  stream?: boolean;
+}
+
+export interface LLMGenerateRequest {
+  model: string;
+  prompt: string;
+  temperature?: number;
+  max_tokens?: number;
+  stream?: boolean;
+}
+
 /**
  * Get list of available LLM services from model management service
  * @returns Promise with LLM services response
@@ -150,4 +171,40 @@ export const checkLLMHealth = async (): Promise<LLMHealthResponse> => {
     throw new Error('Failed to check LLM service health');
   }
 };
+
+/** `POST /api/v1/chat/completions` (OpenAI-style body: `model`, `messages`, …). */
+export const postOpenAIChatCompletions = async (payload: object): Promise<unknown> => {
+  try {
+    const response = await llmApiClient.post(
+      apiEndpoints.llm.openaiChatCompletions,
+      payload
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Chat completions error:', error);
+    throw error;
+  }
+};
+
+/** `POST /api/v1/completions` (OpenAI-style body: `model`, `prompt`, …). */
+export const postOpenAITextCompletions = async (payload: object): Promise<unknown> => {
+  try {
+    const response = await llmApiClient.post(
+      apiEndpoints.llm.openaiCompletions,
+      payload
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Text completions error:', error);
+    throw error;
+  }
+};
+
+export const performLLMChatCompletion = async (
+  payload: LLMChatCompletionRequest
+): Promise<any> => postOpenAIChatCompletions(payload);
+
+export const performLLMGenerate = async (
+  payload: LLMGenerateRequest
+): Promise<any> => postOpenAITextCompletions(payload);
 
