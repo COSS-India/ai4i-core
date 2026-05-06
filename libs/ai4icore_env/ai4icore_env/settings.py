@@ -140,11 +140,11 @@ class AppEnv(BaseSettings):
     llm_default_endpoint: str = ""
     inference_timeout: int = 60
 
-    # ── LLM pay-per-use billing (llm-service; values from env / setup-env) ──
-    llm_ppu_enabled: bool = False
-    llm_ppu_service_id: str = "llm"
-    llm_ppu_billing_tier: str = "standard"
-    llm_ppu_cost_per_token: float = 0.000002
+    # ── LLM pay-per-use billing (llm-service only; no defaults — set LLM_PPU_* in .env) ──
+    llm_ppu_enabled: Optional[bool] = None
+    llm_ppu_service_id: Optional[str] = None
+    llm_ppu_billing_tier: Optional[str] = None
+    llm_ppu_cost_per_token: Optional[float] = None
 
     # ── Per-service Triton endpoints (seeded into model_management_db) ──
     triton_endpoint_asr: str = ""

@@ -3,21 +3,19 @@
 Uses the same ``PayPerUseClient`` check/record flow for ``POST /api/v1/llm/inference`` and
 ``POST /api/v1/chat/completions`` / ``POST /api/v1/completions`` when ``LLM_PPU_ENABLED=true``.
 
-All configurable values are read from the environment at call time via ``os.getenv``.
+Configurable values come from ``ai4icore_env.app_env`` (same as the rest of llm-service).
 """
 
 from __future__ import annotations
 
 import inspect
-import logging
-import os
-import traceback
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, Request
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
+from ai4icore_env import app_env
 from ai4icore_logging import get_logger
 from ai4icore_multi_tenant import PayPerUseClient, ppu_actor_key
 
@@ -42,38 +40,37 @@ tracer = trace.get_tracer("llm-service")
 
 
 def _llm_ppu_enabled() -> bool:
-    return os.getenv("LLM_PPU_ENABLED", "false").lower() == "true"
+    return app_env.llm_ppu_enabled is True
 
 
 def _llm_ppu_service_url() -> str:
-    raw = (os.getenv("PAY_PER_USE_SERVICE_URL") or os.getenv("PAY_PER_USE_URL") or "").strip()
+    raw = (app_env.pay_per_use_service_url or "").strip()
     if not raw:
         logger.warning("PAY_PER_USE_SERVICE_URL is not set")
     return raw
 
 
 def _llm_ppu_billing_tier() -> str:
-    return (os.getenv("LLM_PPU_BILLING_TIER") or "standard").strip() or "standard"
+    raw = app_env.llm_ppu_billing_tier
+    if raw is None or str(raw).strip() == "":
+        return "standard"
+    return str(raw).strip()
 
 
 def _llm_ppu_cost_per_token() -> float:
-    """Fallback cost rate per token until Model Management pricing is seeded."""
-    raw = os.getenv("LLM_PPU_COST_PER_TOKEN")
+    """Cost rate per token from env; missing or non-positive values fall back to 0.02."""
+    raw = app_env.llm_ppu_cost_per_token
     if raw is None:
-        logger.warning("LLM_PPU_COST_PER_TOKEN is not set, using default 0.000002")
-        return 0.000002
-    raw = raw.strip()
-    if raw == "":
-        logger.warning("LLM_PPU_COST_PER_TOKEN is empty, using default 0.000002")
-        return 0.000002
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
+        logger.warning("LLM_PPU_COST_PER_TOKEN is not set, using default 0.02")
+        return 0.02
+    v = float(raw)
+    if v <= 0:
         logger.warning(
-            "LLM_PPU_COST_PER_TOKEN is not a valid float (%r), using default 0.000002",
-            raw,
+            "LLM_PPU_COST_PER_TOKEN is non-positive (%s), using default 0.02",
+            v,
         )
-        return 0.000002
+        return 0.02
+    return v
 
 
 def _effective_service_id_for_ppu() -> str:
@@ -82,11 +79,7 @@ def _effective_service_id_for_ppu() -> str:
     Must match ``service_id`` in the tenant plan's ``allowed_services`` (e.g. ``llm``),
     not an OpenAI model name. Model slugs (containing ``/``) are rejected and mapped to ``llm``.
     """
-    if "LLM_PPU_SERVICE_ID" not in os.environ:
-        logger.warning(
-            "LLM_PPU_SERVICE_ID is not explicitly set; defaulting billing service id to 'llm' for PPU",
-        )
-    raw = (os.getenv("LLM_PPU_SERVICE_ID") or "").strip()
+    raw = (app_env.llm_ppu_service_id or "").strip()
     if not raw or "/" in raw:
         if raw and "/" in raw:
             logger.warning(
