@@ -42,6 +42,7 @@ async def redact_for_storage(
         "Content-Type": "application/json",
         "x-language": lang,
         "x-target": "user",
+        "X-Source-Service": "nmt",
     }
     if auth_headers:
         headers.update(auth_headers)

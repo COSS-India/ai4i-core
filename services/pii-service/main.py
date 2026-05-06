@@ -337,7 +337,7 @@ policy_agent = PolicySyncAgent()
 
 
 class AuditLogger:
-    async def log_event(self, trace_id, tenant_id, domain, target, pii_count, processing_ms, trace_log):
+    async def log_event(self, trace_id, tenant_id, domain, target, pii_count, processing_ms, trace_log, source_service=None):
         global db_pool, kafka_producer
         payload = {
             "trace_id": trace_id,
@@ -347,6 +347,7 @@ class AuditLogger:
             "pii_count": pii_count,
             "processing_ms": processing_ms,
             "trace_json": trace_log,
+            "source_service": source_service,
         }
 
         # Primary sink for admin UI: persist directly to audit_logs table.
@@ -362,9 +363,10 @@ class AuditLogger:
                             target_context,
                             pii_count,
                             processing_ms,
-                            trace_json
+                            trace_json,
+                            source_service
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
                         """,
                         trace_id,
                         tenant_id,
@@ -373,6 +375,7 @@ class AuditLogger:
                         pii_count,
                         processing_ms,
                         json.dumps(trace_log),
+                        source_service,
                     )
         except Exception as exc:
             print(f"Audit DB insert failed: {exc}")
@@ -501,6 +504,7 @@ async def redact_text(
     x_language: str = Header("en"),
     x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-Id"),
     x_request_id: Optional[str] = Header(None, alias="X-Request-ID"),
+    x_source_service: Optional[str] = Header(None, alias="X-Source-Service"),
 ):
     claims_tid = getattr(auth, "tenant_id", None) if auth is not None else None
     header_tid = (x_tenant_id or "").strip() or None
@@ -600,7 +604,7 @@ async def redact_text(
 
     ms = int((time.time() - start) * 1000)
     background_tasks.add_task(
-        audit_logger.log_event, trace_id, tenant_id, effective_domain, x_target, len(entities), ms, trace_log
+        audit_logger.log_event, trace_id, tenant_id, effective_domain, x_target, len(entities), ms, trace_log, x_source_service
     )
     response_payload = {
         "redacted_text": redacted,
@@ -760,7 +764,7 @@ async def list_audit_logs(
     async with db_pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, trace_id, tenant_id, domain_id, target_context, pii_count, processing_ms, trace_json, created_at
+            SELECT id, trace_id, tenant_id, domain_id, target_context, pii_count, processing_ms, trace_json, source_service, created_at
             FROM audit_logs
             ORDER BY created_at DESC
             LIMIT $1
