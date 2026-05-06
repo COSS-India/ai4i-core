@@ -21,6 +21,9 @@ class RecordRequest(BaseModel):
     api_key_id: str
     service_id: str
     units_consumed: float = Field(..., ge=0)
+    # When set and > 0, used as rate (trusted internal callers, e.g. llm-service LLM_PPU_COST_PER_TOKEN).
+    # If omitted, rate is resolved from tenant plan / Redis / model management as before.
+    cost_per_unit: Optional[float] = None
 
 
 class RecordResponse(BaseModel):

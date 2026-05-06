@@ -801,7 +801,8 @@ services:
         aliases:
           - llm-service
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/llm/health"]
+      # Health router is mounted at /health (not under /api/v1/llm — that prefix is inference-only).
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       interval: 10s
       timeout: 10s
       retries: 3
@@ -921,9 +922,8 @@ services:
     container_name: ai4v-policy-engine
     ports:
       - "8102:8095"
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - MULTI_TENANT_SERVICE_URL=http://multi-tenant-service:8001
+    env_file:
+      - ./services/policy-engine/.env
     volumes:
       - ./services/policy-engine:/app
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
@@ -932,9 +932,17 @@ services:
       - microservices-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8095/health', timeout=3)",
+        ]
       interval: 30s
       timeout: 5s
+      retries: 3
+      start_period: 40s
 
   policy-service:
     build:
