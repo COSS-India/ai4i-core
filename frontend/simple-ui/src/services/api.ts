@@ -47,6 +47,8 @@ export const apiEndpoints = {
   },
   llm: {
     inference: '/api/v1/llm/inference',
+    chatCompletion: '/api/v1/llm/chat/completion',
+    generate: '/api/v1/llm/generate',
     models: '/api/v1/llm/models',
     health: '/api/v1/llm/health',
   },

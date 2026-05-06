@@ -19,6 +19,27 @@ export interface LLMServiceDetailsResponse {
   supported_languages: string[];
 }
 
+export interface LLMChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface LLMChatCompletionRequest {
+  model: string;
+  messages: LLMChatMessage[];
+  temperature?: number;
+  max_tokens?: number;
+  stream?: boolean;
+}
+
+export interface LLMGenerateRequest {
+  model: string;
+  prompt: string;
+  temperature?: number;
+  max_tokens?: number;
+  stream?: boolean;
+}
+
 /**
  * Get list of available LLM services from model management service
  * @returns Promise with LLM services response
@@ -148,6 +169,48 @@ export const checkLLMHealth = async (): Promise<LLMHealthResponse> => {
   } catch (error) {
     console.error('Failed to check LLM health:', error);
     throw new Error('Failed to check LLM service health');
+  }
+};
+
+export const performLLMChatCompletion = async (
+  payload: LLMChatCompletionRequest
+): Promise<any> => {
+  try {
+    const response = await llmApiClient.post(
+      apiEndpoints.llm.chatCompletion,
+      payload,
+      {
+        headers: {
+          'X-Try-It': 'true',
+        },
+      }
+    );
+
+    return response.data;
+  } catch (error) {
+    console.error('LLM chat completion error:', error);
+    throw error;
+  }
+};
+
+export const performLLMGenerate = async (
+  payload: LLMGenerateRequest
+): Promise<any> => {
+  try {
+    const response = await llmApiClient.post(
+      apiEndpoints.llm.generate,
+      payload,
+      {
+        headers: {
+          'X-Try-It': 'true',
+        },
+      }
+    );
+
+    return response.data;
+  } catch (error) {
+    console.error('LLM generate error:', error);
+    throw error;
   }
 };
 
