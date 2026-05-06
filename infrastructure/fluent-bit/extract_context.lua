@@ -294,7 +294,11 @@ function filter_dashboard_logs(tag, timestamp, record)
         },
         ["llm-service"] = {
             "/llm/inference",
-            "/api/v1/llm/inference"
+            "/api/v1/llm/inference",
+            "/v1/chat/completions",
+            "/api/v1/chat/completions",
+            "/v1/completions",
+            "/api/v1/completions"
         },
         ["ner-service"] = {
             "/ner/inference",
