@@ -2,10 +2,13 @@
 Core business logic for LLM inference.
 """
 
+import asyncio
 import logging
 import time
-from typing import Optional, List
+from typing import Dict, Optional, List
 
+import httpx
+from fastapi import Request
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
@@ -16,6 +19,7 @@ from app.schemas.inference import (
 )
 from app.repositories.llm_repository import LLMRepository
 from app.clients.triton_client import LLMTritonClient
+from app.clients.pii_client import PII_SUPPORTED_LANG_CODES, pii_language_code, redact_for_storage
 from ai4icore_exceptions import TritonInferenceError
 
 logger = logging.getLogger(__name__)
@@ -40,10 +44,16 @@ class LLMService:
         repository: LLMRepository,
         triton_client: LLMTritonClient,
         model_name: str = "llm",
+        pii_redact_base_url: Optional[str] = None,
+        pii_redact_timeout: float = 20.0,
+        pii_http_client: Optional[httpx.AsyncClient] = None,
     ):
         self.repository = repository
         self.triton_client = triton_client
         self.model_name = model_name
+        self.pii_redact_base_url = (pii_redact_base_url or "").strip() or None
+        self.pii_redact_timeout = pii_redact_timeout
+        self.pii_http_client = pii_http_client
 
     def get_model_name(self, service_id: str) -> str:
         """Get model name based on service ID."""
@@ -55,6 +65,7 @@ class LLMService:
         user_id: Optional[int] = None,
         api_key_id: Optional[int] = None,
         session_id: Optional[int] = None,
+        http_request: Optional[Request] = None,
     ) -> LLMInferenceResponse:
         """Run LLM inference on the given request."""
         start_time = time.time()
@@ -146,15 +157,16 @@ class LLMService:
                         logger.error(f"LLM inference failed for text {i}: {e}")
                         results.append(LLMOutput(source=input_text, target=""))
 
-                response = LLMInferenceResponse(output=results)
+                inference_response = LLMInferenceResponse(output=results)
 
-                # Database logging
-                for result in results:
-                    await self.repository.create_result(
-                        request_id=request_id,
-                        output_text=result.target,
-                        source_text=result.source,
-                    )
+                # Persist results — redact via PII service before writing to DB
+                await self._persist_results(
+                    request_id=request_id,
+                    results=results,
+                    input_lang=input_lang,
+                    output_lang=output_lang,
+                    http_request=http_request,
+                )
 
                 # Update request status
                 processing_time = time.time() - start_time
@@ -165,10 +177,10 @@ class LLMService:
                 )
 
                 span.set_attribute("llm.processing_time_seconds", processing_time)
-                span.set_attribute("llm.output_count", len(response.output))
+                span.set_attribute("llm.output_count", len(inference_response.output))
 
                 logger.info(f"LLM inference completed for request {request_id} in {processing_time:.2f}s")
-                return response
+                return inference_response
 
             except Exception as e:
                 span.set_attribute("error", True)
@@ -188,16 +200,64 @@ class LLMService:
                     except Exception as update_error:
                         logger.error(f"Failed to update request status: {update_error}")
 
-                # Check for static fallback on Triton-related errors
-                is_triton_error = (
-                    isinstance(e, TritonInferenceError)
-                    or "triton" in str(e).lower()
-                    or "connection" in str(e).lower()
-                    or "timeout" in str(e).lower()
-                )
                 if isinstance(e, TritonInferenceError):
                     raise
                 elif isinstance(e, TextProcessingError):
                     raise
                 else:
                     raise TextProcessingError(f"LLM inference failed: {e}")
+
+    async def _persist_results(
+        self,
+        request_id,
+        results: List[LLMOutput],
+        input_lang: Optional[str],
+        output_lang: Optional[str],
+        http_request: Optional[Request],
+    ) -> None:
+        """Persist inference results, redacting PII text before writing to DB."""
+        tenant_id = getattr(http_request.state, "tenant_id", None) if http_request else None
+        tenant_header = str(tenant_id) if tenant_id else None
+
+        auth_headers: Dict[str, str] = {}
+        if http_request:
+            for key in ("Authorization", "X-API-Key", "X-Auth-Source"):
+                val = http_request.headers.get(key) or http_request.headers.get(key.lower())
+                if val:
+                    auth_headers[key] = val
+
+        src_lang = pii_language_code(input_lang or "")
+        tgt_lang = pii_language_code(output_lang or "")
+        src_ok = bool(src_lang) and src_lang in PII_SUPPORTED_LANG_CODES
+        tgt_ok = bool(tgt_lang) and tgt_lang in PII_SUPPORTED_LANG_CODES
+
+        pii_active = self.pii_redact_base_url and (src_ok or tgt_ok)
+
+        async def _maybe_redact(text: str, lang: str, supported: bool) -> str:
+            if not pii_active or not supported or not text:
+                return text
+            try:
+                return await redact_for_storage(
+                    base_url=self.pii_redact_base_url,
+                    text=text,
+                    lang=lang,
+                    auth_headers=auth_headers,
+                    tenant_id=tenant_header,
+                    timeout=self.pii_redact_timeout,
+                    client=self.pii_http_client,
+                    request_id=str(request_id),
+                )
+            except Exception as exc:
+                logger.warning("PII redact failed; storing raw text: %s", exc)
+                return text
+
+        for result in results:
+            src_stored, tgt_stored = await asyncio.gather(
+                _maybe_redact(result.source, src_lang, src_ok),
+                _maybe_redact(result.target, tgt_lang, tgt_ok),
+            )
+            await self.repository.create_result(
+                request_id=request_id,
+                output_text=tgt_stored,
+                source_text=src_stored,
+            )

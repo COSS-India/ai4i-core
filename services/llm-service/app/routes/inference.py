@@ -53,6 +53,7 @@ async def run_inference(
         user_id=user_id,
         api_key_id=api_key_id,
         session_id=session_id,
+        http_request=http_request,
     )
 
 
