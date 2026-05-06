@@ -71,9 +71,6 @@ class LLMRequestDB(Base):
         nullable=True,
     )
     model_id = Column(String(100), nullable=False)
-    endpoint_type = Column(String(50), nullable=True)
-    openai_model = Column(String(100), nullable=True)
-    request_payload = Column(Text, nullable=True)
     input_language = Column(String(10), nullable=True)
     output_language = Column(String(10), nullable=True)
     text_length = Column(Integer, nullable=True)
