@@ -8,26 +8,43 @@ class LLMAttrs:
 
     # On llm.inference (parent span)
     ENDPOINT = "endpoint"
-    SERVICE_STATUS = "service.status"
+    OTEL_SCOPE_NAME = "otel.scope.name"
+    LLM_STATUS = "llm.status"
     HTTP_STATUS_CODE = "http.status_code"
-    MODEL_NAME = "model_name"
+    LLM_MODEL_NAME = "llm.model_name"
     USER_ID = "user.id"
     TENANT_ID = "tenant_id"
+    SERVICE_ID = "service.id"
+
+    # On llm.preprocess
+    PREPROCESS_MODEL_NAME = "llm.model_name"
 
     # On llm.resolve_model
-    RESOLVE_MODEL_NAME = "model_name"
-    RESOLVE_UPSTREAM = "upstream_url"
+    RESOLVE_MODEL_NAME = "llm.model_name"
+    RESOLVE_UPSTREAM = "llm.model_endpoint"
 
     # On llm.model.inference
-    MI_MODEL_NAME = "model_name"
+    MI_MODEL_NAME = "llm.model_name"
+    MI_MODEL_ENDPOINT = "llm.model_endpoint"
     MI_STATUS_CODE = "status_code"
     MI_USER_ID = "user.id"
     MI_TENANT_ID = "tenant_id"
+    MI_SERVICE_ID = "service.id"
 
     # On llm.postprocess
     PROMPT_TOKENS = "output.usage.prompt_tokens"
     COMPLETION_TOKENS = "output.usage.completion_tokens"
     TOTAL_TOKENS = "output.usage.total_tokens"
+
+
+def set_preprocess_attrs(
+    span: Any,
+    *,
+    model_name: Optional[str] = None,
+) -> None:
+    """Set preprocess span attributes."""
+    if model_name:
+        span.set_attribute(LLMAttrs.PREPROCESS_MODEL_NAME, model_name)
 
 
 def set_resolve_model_attrs(
@@ -47,19 +64,25 @@ def set_model_inference_attrs(
     span: Any,
     *,
     model_name: Optional[str] = None,
+    model_endpoint: Optional[str] = None,
     status_code: Optional[int] = None,
     user_id: Optional[Any] = None,
     tenant_id: Optional[Any] = None,
+    service_id: Optional[str] = None,
 ) -> None:
     """Set model.inference span attributes."""
     if model_name:
         span.set_attribute(LLMAttrs.MI_MODEL_NAME, model_name)
+    if model_endpoint:
+        span.set_attribute(LLMAttrs.MI_MODEL_ENDPOINT, model_endpoint)
     if status_code is not None:
         span.set_attribute(LLMAttrs.MI_STATUS_CODE, str(status_code))
     if user_id is not None:
         span.set_attribute(LLMAttrs.MI_USER_ID, str(user_id))
     if tenant_id is not None:
         span.set_attribute(LLMAttrs.MI_TENANT_ID, str(tenant_id))
+    if service_id:
+        span.set_attribute(LLMAttrs.MI_SERVICE_ID, service_id)
 
 
 def set_postprocess_attrs(
@@ -84,14 +107,18 @@ def finalize_inference_span(
     status_code: Optional[int] = None,
     user_id: Optional[Any] = None,
     tenant_id: Optional[Any] = None,
+    service_id: Optional[str] = None,
 ) -> None:
     """Finalize inference span with status and user/tenant context."""
     span.set_attribute(LLMAttrs.HTTP_STATUS_CODE, str(status_code or ""))
     span.set_attribute(
-        LLMAttrs.SERVICE_STATUS,
+        LLMAttrs.LLM_STATUS,
         "success" if (status_code and status_code < 400) else "error",
     )
+    span.set_attribute(LLMAttrs.OTEL_SCOPE_NAME, "llm")
     if user_id is not None:
         span.set_attribute(LLMAttrs.USER_ID, str(user_id))
     if tenant_id is not None:
         span.set_attribute(LLMAttrs.TENANT_ID, str(tenant_id))
+    if service_id:
+        span.set_attribute(LLMAttrs.SERVICE_ID, service_id)

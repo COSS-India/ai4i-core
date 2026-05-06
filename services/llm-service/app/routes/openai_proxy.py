@@ -15,13 +15,14 @@ from typing import Any, Optional
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from opentelemetry.trace import Status, StatusCode
+from opentelemetry.trace import Status, StatusCode, get_current_span
 
 from app.clients.proxy_client import InferenceProxyClient
 from app.core.config import app_env
 from app.tracing.llm_spans import llm_spans
 from app.tracing.trace_attrs import (
     LLMAttrs,
+    set_preprocess_attrs,
     set_resolve_model_attrs,
     set_model_inference_attrs,
     set_postprocess_attrs,
@@ -66,14 +67,14 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
         input_type="text",
         extra_attrs={
             LLMAttrs.ENDPOINT: endpoint,
-            LLMAttrs.MODEL_NAME: model or "",
+            LLMAttrs.LLM_MODEL_NAME: model or "",
         },
         user_id=user_id,
         session_id=getattr(request.state, "session_id", None),
     ) as parent_span:
         # Phase 1: preprocess (not applicable for proxy — zero-duration span)
-        with llm_spans.preprocess():
-            pass
+        with llm_spans.preprocess() as preprocess_span:
+            set_preprocess_attrs(preprocess_span, model_name=model or "")
 
         # Phase 2: resolve_model (look up upstream URL)
         url = None
@@ -84,13 +85,13 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
             except ValueError as exc:
                 resolve_span.set_status(Status(StatusCode.ERROR, str(exc)))
                 resolve_span.record_exception(exc)
-                parent_span.set_attribute(LLMAttrs.SERVICE_STATUS, "error")
+                parent_span.set_attribute(LLMAttrs.LLM_STATUS, "error")
                 parent_span.set_attribute("error.type", type(exc).__name__)
                 return JSONResponse(status_code=503, content={"detail": str(exc)})
 
         # Phase 3: model.inference (forward to upstream HTTP endpoint)
         status_code, body = None, None
-        with llm_spans.triton_inference() as model_span:
+        with llm_spans.inference() as model_span:
             try:
                 status_code, body = await InferenceProxyClient().forward(
                     upstream_url=url, payload=payload
@@ -98,9 +99,11 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
                 set_model_inference_attrs(
                     model_span,
                     model_name=model or "",
+                    model_endpoint=url or "",
                     status_code=status_code,
                     user_id=user_id,
                     tenant_id=tenant_id,
+                    service_id="openai-proxy",
                 )
 
                 if status_code and status_code >= 400:
@@ -109,7 +112,7 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
                 logger.warning("Upstream %s proxy failed: %s", path, exc)
                 model_span.set_status(Status(StatusCode.ERROR, str(exc)))
                 model_span.record_exception(exc)
-                parent_span.set_attribute(LLMAttrs.SERVICE_STATUS, "error")
+                parent_span.set_attribute(LLMAttrs.LLM_STATUS, "error")
                 parent_span.set_attribute("error.type", type(exc).__name__)
                 return JSONResponse(
                     status_code=502,
@@ -132,6 +135,7 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
             status_code=status_code,
             user_id=user_id,
             tenant_id=tenant_id,
+            service_id="openai-proxy",
         )
 
     return JSONResponse(status_code=status_code, content=body)
