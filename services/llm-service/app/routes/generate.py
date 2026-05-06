@@ -39,6 +39,7 @@ async def generate(
     http_request: Request,
     llm_service: LLMService = Depends(get_llm_service),
 ) -> GenerateResponse:
+    print(">>> Generate request received")
     if body.stream:
         return JSONResponse(
             status_code=501,
