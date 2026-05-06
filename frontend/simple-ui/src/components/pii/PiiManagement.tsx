@@ -494,15 +494,24 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       setAuditDetailJson(String(row.trace_json ?? ""));
     }
     if (row.trace_id) {
-      try {
-        const params = row.tenant_id ? `?tenant_id=${row.tenant_id}` : "";
-        const res = await api.get(`/api/v1/nmt/requests/${row.trace_id}${params}`);
-        const t = res.data.translations?.[0];
-        if (t) setRedactionTexts({ source_text: t.source_text, target_text: t.target_text });
-        else setRedactionTexts(null);
-      } catch {
-        setRedactionTexts(null);
+      const params = row.tenant_id ? `?tenant_id=${row.tenant_id}` : "";
+      const endpoints = [
+        `/api/v1/nmt/requests/${row.trace_id}${params}`,
+        `/api/v1/llm/requests/${row.trace_id}${params}`,
+      ];
+      let found = false;
+      for (const url of endpoints) {
+        try {
+          const res = await api.get(url);
+          const t = res.data.translations?.[0];
+          if (t) {
+            setRedactionTexts({ source_text: t.source_text, target_text: t.target_text });
+            found = true;
+            break;
+          }
+        } catch { /* try next */ }
       }
+      if (!found) setRedactionTexts(null);
     }
     auditTraceDetail.onOpen();
   };

@@ -58,4 +58,7 @@ async def get_llm_service(
         repository=repository,
         triton_client=triton_client,
         model_name=model_name,
+        pii_redact_base_url=getattr(request.app.state, "pii_service_url", None),
+        pii_redact_timeout=float(getattr(request.app.state, "pii_redact_timeout", 20.0)),
+        pii_http_client=getattr(request.app.state, "pii_http_client", None),
     )
