@@ -5,12 +5,12 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, Request
 
-from ai4icore_multi_tenant import enforce_tenant_and_service_checks
-
 from app.dependencies.auth import AuthProvider
+from app.dependencies.llm_tenant import enforce_llm_checks
 from app.dependencies.services import get_llm_service
 from app.schemas.inference import LLMInferenceRequest, LLMInferenceResponse
 from app.services.llm_service import LLMService
+from utils.llm_pay_per_use import _llm_ppu_check, _llm_ppu_record, raise_if_ppu_denied
 
 logger = logging.getLogger(__name__)
 
@@ -19,19 +19,6 @@ router = APIRouter(
     tags=["LLM Inference"],
     dependencies=[Depends(AuthProvider)],
 )
-
-
-async def enforce_llm_checks(request: Request):
-    """Enforce tenant and service availability checks."""
-    await enforce_tenant_and_service_checks(
-        request,
-        service_name="llm",
-        service_unavailable_code="SERVICE_UNAVAILABLE",
-        service_inactive_message="LLM service is not active at the moment. Please contact your administrator",
-        cannot_detect_message="Cannot detect LLM service availability. Please contact your administrator",
-        timeout_message="LLM service is temporarily unavailable. Please try again in a few minutes.",
-        generic_unavailable_message="LLM service is temporarily unavailable. Please try again in a few minutes.",
-    )
 
 
 router.dependencies.append(Depends(enforce_llm_checks))
@@ -48,13 +35,19 @@ async def run_inference(
     api_key_id = getattr(http_request.state, "api_key_id", None)
     session_id = getattr(http_request.state, "session_id", None)
 
-    return await llm_service.run_inference(
+    input_texts = [item.source for item in request_body.input]
+    allowed = await _llm_ppu_check(http_request, input_texts)
+    raise_if_ppu_denied(allowed)
+
+    result = await llm_service.run_inference(
         request_body,
         user_id=user_id,
         api_key_id=api_key_id,
         session_id=session_id,
         http_request=http_request,
     )
+    await _llm_ppu_record(http_request, result.raw_response, input_texts)
+    return result
 
 
 @router.get(

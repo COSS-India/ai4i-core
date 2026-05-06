@@ -3,9 +3,10 @@ Core business logic for LLM inference.
 """
 
 import asyncio
+import copy
 import logging
 import time
-from typing import Dict, Optional, List
+from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import Request
@@ -114,6 +115,7 @@ class LLMService:
 
                 # Process each input text
                 results: List[LLMOutput] = []
+                raw_batch: List[Dict[str, Any]] = []
 
                 for i, input_text in enumerate(input_texts):
                     try:
@@ -123,6 +125,7 @@ class LLMService:
                             input_language=input_lang,
                             output_language=output_lang,
                         )
+                        raw_batch.append(copy.deepcopy(response))
 
                         # Extract output text from response
                         outputs = response.get("outputs", [])
@@ -157,7 +160,10 @@ class LLMService:
                         logger.error(f"LLM inference failed for text {i}: {e}")
                         results.append(LLMOutput(source=input_text, target=""))
 
-                inference_response = LLMInferenceResponse(output=results)
+                inference_response = LLMInferenceResponse(
+                    output=results,
+                    raw_response={"batch": raw_batch},
+                )
 
                 # Persist results — redact via PII service before writing to DB
                 await self._persist_results(

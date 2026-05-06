@@ -110,16 +110,20 @@ class PayPerUseClient:
         api_key_id: str,
         service_id: str,
         units_consumed: float,
+        *,
+        cost_per_unit: Optional[float] = None,
     ) -> Dict[str, Any]:
         if not self.base_url:
             return {"recorded": False, "cost": 0.0, "remaining_balance": 0.0}
         url = f"{self.base_url}/record"
-        payload = {
+        payload: Dict[str, Any] = {
             "tenant_id": tenant_id,
             "api_key_id": api_key_id,
             "service_id": service_id,
             "units_consumed": units_consumed,
         }
+        if cost_per_unit is not None:
+            payload["cost_per_unit"] = cost_per_unit
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.post(url, json=payload)
         if r.status_code >= 400:
