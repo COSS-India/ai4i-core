@@ -39,6 +39,7 @@ async def chat_completion(
     http_request: Request,
     llm_service: LLMService = Depends(get_llm_service),
 ) -> ChatCompletionResponse:
+    print(">>> Chat completion request received")
     if body.stream:
         return JSONResponse(
             status_code=501,
