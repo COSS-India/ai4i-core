@@ -8,25 +8,16 @@ import logging
 from uuid import UUID
 
 from cryptography.hazmat.primitives import serialization
-from fastapi import Depends
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.jwt_verifier import (
-    AuthClaims,
-    JWTExpiredError,
-    JWTVerificationError,
-    JWTVerifier,
-)
+from app.core.jwt_verifier import JWTVerifier
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import key_manager
 from app.core.exceptions import (
     AuthenticationRequiredError,
-    TokenExpiredError,
-    TokenInvalidError,
-    TokenRevokedError,
     UserInactiveError,
     UserNotFoundError,
 )
@@ -34,11 +25,8 @@ from app.dependencies.services import get_cache_service
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
 from app.services.cache_service import CacheService
-from app.services.token_service import TokenPayload
 
 logger = logging.getLogger(__name__)
-
-security = HTTPBearer(auto_error=False)
 
 # Module-level shared verifier — initialized during lifespan via init_jwt_verifier()
 _jwt_verifier = None
@@ -73,46 +61,6 @@ async def init_jwt_verifier() -> None:
     logger.info("Shared JWTVerifier initialized with %d public keys.", verifier.loaded_key_count)
 
 
-async def get_current_token(
-    credentials: HTTPAuthorizationCredentials | None = Depends(security),
-    cache_service: CacheService = Depends(get_cache_service),
-) -> TokenPayload:
-    """
-    Validate the Bearer token using the shared ai4icore_auth JWTVerifier.
-    API key tokens with a token_id are checked for revocation via Redis only —
-    cache miss = revoked (no DB fallback on the hot path).
-    """
-    if credentials is None:
-        raise AuthenticationRequiredError()
-
-    token = credentials.credentials
-    verifier = get_jwt_verifier()
-
-    try:
-        claims: AuthClaims = await verifier.verify(token)
-    except JWTExpiredError as exc:
-        raise TokenExpiredError() from exc
-    except JWTVerificationError as exc:
-        raise TokenInvalidError(exc.message) from exc
-
-    payload = TokenPayload({
-        "sub": str(claims.user_id),
-        "tenant_id": claims.tenant_id,
-        "permission_ids": claims.permission_ids,
-        "type": claims.token_type,
-        "token_id": claims.token_id,
-    })
-
-    if payload.token_id:
-        revoked = await _check_token_revocation(
-            payload.token_id, payload.token_type, cache_service,
-        )
-        if revoked:
-            raise TokenRevokedError()
-
-    return payload
-
-
 async def _check_token_revocation(
     token_id: str,
     token_type: str | None,
@@ -145,12 +93,24 @@ async def _check_api_key_revocation(
 
 
 async def get_current_user(
-    payload: TokenPayload = Depends(get_current_token),
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Resolve the authenticated user (full ORM row) from the token payload."""
+    """
+    Resolve the authenticated user from the X-User-ID gateway header.
+    The gateway has already validated the token; this just fetches the User ORM object.
+    """
+    user_id_str = request.headers.get("X-User-ID")
+    if not user_id_str:
+        raise AuthenticationRequiredError()
+
+    try:
+        user_id = UUID(user_id_str)
+    except (ValueError, TypeError):
+        raise AuthenticationRequiredError()
+
     repo = UserRepository(db)
-    user = await repo.get_by_id(UUID(payload.sub))
+    user = await repo.get_by_id(user_id)
     if not user:
         raise UserNotFoundError()
     if not user.is_active:

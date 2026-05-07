@@ -19,7 +19,6 @@ from fastapi.responses import JSONResponse
 from app.core.jwt_verifier import JWTExpiredError, JWTVerificationError
 
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError
-from app.core.security import key_manager
 from app.dependencies.auth import _check_token_revocation, get_jwt_verifier
 from app.dependencies.services import get_api_key_service, get_cache_service
 from app.schemas.api_key import ValidateAPIKeyErrorResponse, ValidateAPIKeyResponse
@@ -184,8 +183,3 @@ async def validate_token(
     if is_jwt_strict(token):
         return await _validate_jwt(token, request, response, cache_svc)
     return await _validate_api_key(token, request, response, api_key_svc)
-
-
-@router.get("/.well-known/jwks.json")
-async def jwks():
-    return key_manager.get_jwks()

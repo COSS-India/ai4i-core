@@ -1,5 +1,5 @@
 {
-  "description": "API endpoint -> permission ID mapping (single source of truth at runtime). permissionRequired is the integer DB id of the permission, baked into JSON. IDs are owned by infrastructure/databases/seeders/postgres/auth_roles_permissions_seeder.py (id=1 'admin' sentinel; ids 2-10 reserved; ids 11+ feature permissions). Endpoints absent from this list are public (login/refresh/oauth/jwks/health/status/try-it).",
+  "description": "API endpoint -> permission ID mapping (single source of truth at runtime). permissionRequired is the integer DB id of the permission, baked into JSON. IDs are owned by infrastructure/databases/seeders/postgres/auth_roles_permissions_seeder.py (id=1 'admin' sentinel; ids 2-10 reserved; ids 11+ feature permissions). Endpoints absent from this list are public (login/refresh/oauth/health/status/try-it).",
   "apiMappings": [
 
     { "endpoint": "POST:/api/v1/auth/change-password",                     "permissionRequired": 17, "description": "Change own password (users.password.change)" },

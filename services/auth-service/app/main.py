@@ -193,14 +193,6 @@ def create_app() -> FastAPI:
     # Middleware (order matters — outermost first)
     # CORS is handled at the nginx gateway, not here.
     app.add_middleware(RequestLoggingMiddleware)
-    # Shared AuthMiddleware with lazy verifier factory —
-    # verifier is initialized in lifespan (after key_manager),
-    # factory resolves it on first request.
-    app.add_middleware(
-        AuthMiddleware,
-        jwt_verifier_factory=get_jwt_verifier,
-        require_auth=False,  # Context extraction only — route deps enforce auth
-    )
 
     # API versioning — shared middleware for version headers + deprecation
     versioning.register(app)
