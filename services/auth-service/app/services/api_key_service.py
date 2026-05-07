@@ -15,7 +15,7 @@ from typing import Optional
 from uuid import UUID
 
 from app.core.config import settings
-from app.core.exceptions import EntityNotFoundError, InvalidAPIKeyError, ValidationError
+from app.core.exceptions import AuthorizationError, EntityNotFoundError, InvalidAPIKeyError, ValidationError
 from app.models.api_key import APIKey
 from app.repositories.api_key_repository import APIKeyRepository
 from app.services.cache_service import CacheService
@@ -128,7 +128,7 @@ class APIKeyService:
         if not db_key:
             raise EntityNotFoundError("API key")
         if user_id is not None and db_key.user_id != user_id:
-            raise EntityNotFoundError("API key")
+            raise AuthorizationError("API key does not belong to you.")
 
         await self._repo.revoke(db_key)
         await self._cache.delete_api_key_cache(api_key_value)
@@ -145,7 +145,7 @@ class APIKeyService:
         if not db_key:
             raise EntityNotFoundError("API key")
         if user_id is not None and db_key.user_id != user_id:
-            raise EntityNotFoundError("API key")
+            raise AuthorizationError("API key does not belong to you.")
 
         expires_days = data.pop("expires_days", None)
         if expires_days is not None:

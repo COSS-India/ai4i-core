@@ -45,3 +45,4 @@ class ValidateAPIKeyResponse(BaseSchema):
 class ValidateAPIKeyErrorResponse(BaseSchema):
     valid: bool = False
     error: str
+    message: str

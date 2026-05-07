@@ -114,12 +114,12 @@ async def _validate_api_key(
     except InvalidAPIKeyError:
         return JSONResponse(
             status_code=401,
-            content=ValidateAPIKeyErrorResponse(error="API key not found or revoked.").model_dump(),
+            content=ValidateAPIKeyErrorResponse(error="API key not found or revoked.", message="API key not found or has been revoked.").model_dump(),
         )
 
     permission_ids = result.get("permission_ids") or []
     if not await _check_endpoint_permission(request, permission_ids):
-        return JSONResponse(status_code=403, content={"valid": False, "error": "INSUFFICIENT_PERMISSIONS"})
+        return JSONResponse(status_code=403, content={"valid": False, "error": "INSUFFICIENT_PERMISSIONS", "message": "You do not have permission to access this endpoint."})
 
     user_id = result.get("user_id")
     tenant_id = result.get("tenant_id")
@@ -142,17 +142,17 @@ async def _validate_jwt(
     try:
         claims = await get_jwt_verifier().verify(token)
     except JWTExpiredError:
-        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_EXPIRED"})
+        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_EXPIRED", "message": "Token has expired."})
     except JWTVerificationError:
-        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_INVALID"})
+        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_INVALID", "message": "Token is invalid."})
 
     if claims.token_id and await _check_token_revocation(
         claims.token_id, claims.token_type, cache_svc,
     ):
-        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_REVOKED"})
+        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_REVOKED", "message": "Token has been revoked."})
 
     if not await _check_endpoint_permission(request, claims.permission_ids):
-        return JSONResponse(status_code=403, content={"valid": False, "error": "INSUFFICIENT_PERMISSIONS"})
+        return JSONResponse(status_code=403, content={"valid": False, "error": "INSUFFICIENT_PERMISSIONS", "message": "You do not have permission to access this endpoint."})
 
     if claims.user_id:
         response.headers["X-User-ID"] = str(claims.user_id)

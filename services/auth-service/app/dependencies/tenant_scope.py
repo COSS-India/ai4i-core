@@ -40,7 +40,7 @@ async def enforce_target_user_same_tenant(
     except (TypeError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "INVALID_TOKEN", "message": "Stale token."},
+            detail={"code": "INVALID_TOKEN", "message": "Your session token contains an invalid tenant context. Please sign in again."},
         ) from exc
 
     if not caller_tid or caller_tid != target.tenant_id:

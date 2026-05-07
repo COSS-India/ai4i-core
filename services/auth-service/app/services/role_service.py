@@ -7,7 +7,7 @@ their permission_ids from the in-process role_permission_cache.
 import logging
 from uuid import UUID
 
-from app.core.exceptions import EntityNotFoundError, ValidationError
+from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
 from app.models.role import Permission, Role
 from app.models.role_name import RoleName, role_name_to_str
 from app.repositories.role_repository import RoleRepository
@@ -64,7 +64,7 @@ class RoleService:
             raise EntityNotFoundError(f"Role '{key}'")
         removed = await self._roles.remove_role(user_id, role.id)
         if not removed:
-            raise EntityNotFoundError("UserRole")
+            raise AppError(message="The user does not have this role assigned.", code="NOT_FOUND", status_code=404)
         await self._roles.commit()
 
     async def get_user_roles(self, user_id: UUID) -> list[str]:

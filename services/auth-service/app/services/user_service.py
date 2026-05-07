@@ -50,7 +50,7 @@ class UserService:
     ) -> set[str]:
         if role_set is not None:
             return role_set
-        roles = await self._roles.get_user_roles(caller.user_id)
+        roles = await self._roles.get_user_roles(caller.id)
         return set(roles)
 
     def _assert_tenant_context(self, caller: User, action: str) -> None:

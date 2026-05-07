@@ -78,7 +78,7 @@ class RS256KeyManager:
             self._generate_keys(key_dir, settings.rs256_min_key_count)
 
         if len(self._keys) < settings.rs256_min_key_count:
-            if is_production:
+            if settings.environment != ENV_DEVELOPMENT:
                 raise RuntimeError(
                     f"FATAL: Only {len(self._keys)} key pair(s) found, "
                     f"minimum required is {settings.rs256_min_key_count}. "

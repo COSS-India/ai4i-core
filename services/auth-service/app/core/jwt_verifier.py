@@ -15,7 +15,6 @@ from jose import jwt, JWTError, ExpiredSignatureError
 
 from ai4icore_exceptions import (
     TokenExpiredError,
-    TokenRevokedError,
     TokenInvalidError,
 )
 
@@ -51,11 +50,6 @@ class JWTVerificationError(TokenInvalidError):
 
 class JWTExpiredError(TokenExpiredError):
     """Extends shared TokenExpiredError (401)."""
-    pass
-
-
-class JWTRevokedError(TokenRevokedError):
-    """Extends shared TokenRevokedError (401)."""
     pass
 
 

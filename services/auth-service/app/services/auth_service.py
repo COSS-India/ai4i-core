@@ -25,7 +25,6 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.models.credentials import UserCredentials
-from app.models.role_name import RoleName
 from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
 from app.repositories.credentials_repository import CredentialsRepository

@@ -156,7 +156,10 @@ async def guest_login(
     email = (settings.guest_email or "").strip()
     password = settings.guest_password
     if not email or not password:
-        raise HTTPException(status_code=503, detail="Guest login is not configured.")
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "SERVICE_UNAVAILABLE", "message": "Guest login is not configured."},
+        )
     return await svc.login(email=email, password=password, background_tasks=background_tasks)
 
 
