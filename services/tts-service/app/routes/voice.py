@@ -78,7 +78,6 @@ async def list_voices(
 )
 async def get_voice_by_id(
     voice_id: str,
-    auth: Dict[str, Any] = Depends(AuthProvider),
 ):
     """Get voice details by ID."""
     try:
@@ -103,7 +102,6 @@ async def get_voice_by_id(
 )
 async def get_voices_by_language(
     language: str,
-    auth: Dict[str, Any] = Depends(AuthProvider),
 ):
     """Get all voices that support a specific language."""
     try:
