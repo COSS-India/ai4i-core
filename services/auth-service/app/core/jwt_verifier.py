@@ -22,6 +22,20 @@ from ai4icore_exceptions import (
     TokenExpiredError,
     TokenInvalidError,
 )
+from app.core.messages import (
+    TOKEN_NO_KEYS,
+    TOKEN_HEADER_INVALID,
+    TOKEN_MISSING,
+    TOKEN_ALGORITHM_UNSUPPORTED,
+    TOKEN_MISSING_SUB,
+    TOKEN_INVALID,
+    JWK_MISSING_FIELDS,
+    LOG_WARN_JWT_NO_KEYS,
+    LOG_WARN_JWK_CONVERT_FAILED,
+    LOG_JWKS_REFRESHED,
+    LOG_ERROR_JWKS_LOAD_FAILED,
+    LOG_ERROR_JWKS_REFRESH_FAILED,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +116,7 @@ class JWTVerifier:
         if self._jwks_url:
             await self._refresh_jwks()
         elif not self._public_keys:
-            logger.warning("JWTVerifier: no JWKS URL configured and no keys loaded.")
+            logger.warning(LOG_WARN_JWT_NO_KEYS)
 
     async def _refresh_jwks(self) -> None:
         """Fetch the JWKS from the auth service."""
@@ -120,18 +134,14 @@ class JWTVerifier:
                         pem = self._jwk_to_pem(jwk)
                         self._public_keys[kid] = pem
                     except (ValueError, KeyError):
-                        logger.warning("Failed to convert JWK kid=%s to PEM", kid)
+                        logger.warning(LOG_WARN_JWK_CONVERT_FAILED, kid)
 
-            logger.info("JWKS refreshed: %d public key(s) loaded from %s", len(self._public_keys), self._jwks_url)
+            logger.info(LOG_JWKS_REFRESHED, len(self._public_keys), self._jwks_url)
 
         except httpx.HTTPError as exc:
             if not self._public_keys:
-                raise RuntimeError(f"Cannot load JWKS from {self._jwks_url}: {exc}") from exc
-            logger.error(
-                "JWKS refresh failed — using %d stale key(s). "
-                "Token verification may accept revoked keys. Error: %s",
-                len(self._public_keys), exc,
-            )
+                raise RuntimeError(LOG_ERROR_JWKS_LOAD_FAILED.format(url=self._jwks_url, error=exc)) from exc
+            logger.error(LOG_ERROR_JWKS_REFRESH_FAILED, len(self._public_keys), exc)
 
     @staticmethod
     def _jwk_to_pem(jwk: dict) -> bytes:
@@ -141,7 +151,7 @@ class JWTVerifier:
             return base64.urlsafe_b64decode(data + "=" * padding)
 
         if "n" not in jwk or "e" not in jwk:
-            raise ValueError("JWK missing required 'n' or 'e' field.")
+            raise ValueError(JWK_MISSING_FIELDS)
         n = int.from_bytes(_b64url_decode(jwk["n"]), byteorder="big")
         e = int.from_bytes(_b64url_decode(jwk["e"]), byteorder="big")
 
@@ -158,24 +168,24 @@ class JWTVerifier:
         Returns AuthClaims on success, raises JWTVerificationError on failure.
         """
         if not self._public_keys:
-            raise JWTVerificationError("No verification keys available.")
+            raise JWTVerificationError(TOKEN_NO_KEYS)
 
         try:
             header = jwt.get_unverified_header(token)
         except JWTError as exc:
-            raise JWTVerificationError("Invalid token header.") from exc
+            raise JWTVerificationError(TOKEN_HEADER_INVALID) from exc
 
         kid = header.get("kid")
         alg = header.get("alg")
 
         if not kid:
-            raise JWTVerificationError("Token header missing 'kid'.")
+            raise JWTVerificationError(TOKEN_MISSING)
         if alg != "RS256":
-            raise JWTVerificationError(f"Unsupported algorithm '{alg}'. Expected RS256.")
+            raise JWTVerificationError(TOKEN_ALGORITHM_UNSUPPORTED)
 
         pem = self._public_keys.get(kid)
         if not pem:
-            raise JWTVerificationError(f"Unknown key ID '{kid}'.")
+            raise JWTVerificationError(TOKEN_INVALID)
 
         decode_kwargs: dict[str, Any] = {
             "algorithms": ["RS256"],
@@ -192,7 +202,7 @@ class JWTVerifier:
             raise JWTExpiredError() from exc
         except JWTError as exc:
             logger.debug("RS256 verification failed: %s", exc)
-            raise JWTVerificationError("Token verification failed.") from exc
+            raise JWTVerificationError(TOKEN_INVALID) from exc
 
         return self._payload_to_claims(payload)
 
@@ -203,7 +213,7 @@ class JWTVerifier:
         if sub is None:
             sub = payload.get("user_id")
         if sub is None:
-            raise JWTVerificationError("Token missing 'sub' claim.")
+            raise JWTVerificationError(TOKEN_MISSING_SUB)
 
         try:
             user_id = int(sub)
