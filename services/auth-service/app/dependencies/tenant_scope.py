@@ -3,7 +3,7 @@
 from fastapi import HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_auth.permission_checker import PermissionChecker
+from app.core.permission_checker import PermissionChecker
 
 from app.core.exceptions import EntityNotFoundError
 from app.models.role_name import RoleName, role_name_to_str

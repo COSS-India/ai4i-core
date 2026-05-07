@@ -1,8 +1,7 @@
 """
 Permission-checking dependency factories.
 
-Uses the shared ai4icore_auth.PermissionChecker for all permission logic.
-No service-local permission implementation.
+Uses the local app.core.permission_checker.PermissionChecker for permission logic.
 """
 
 from collections.abc import Callable
@@ -10,7 +9,7 @@ from collections.abc import Callable
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_auth.permission_checker import PermissionChecker
+from app.core.permission_checker import PermissionChecker
 
 from app.core.database import get_db
 from app.core.exceptions import InsufficientPermissionsError

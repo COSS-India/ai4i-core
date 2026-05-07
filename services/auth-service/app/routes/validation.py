@@ -16,7 +16,7 @@ import json
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
-from ai4icore_auth.jwt_verifier import JWTExpiredError, JWTVerificationError
+from app.core.jwt_verifier import JWTExpiredError, JWTVerificationError
 
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError
 from app.core.security import key_manager

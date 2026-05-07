@@ -1,9 +1,8 @@
 """
 Auth Service — FastAPI application factory.
 
-Auth-service is the FIRST CONSUMER of ai4icore_auth shared library.
-It creates tokens (service-specific), but verifies them through the
-same shared JWTVerifier that every other microservice uses.
+Auth-service is the only service that performs JWT verification.
+It issues tokens and verifies them for the /auth/validate endpoint.
 """
 
 import asyncio
@@ -24,8 +23,7 @@ _uvicorn_access.setLevel(logging.CRITICAL + 1)
 
 from fastapi import FastAPI
 
-from ai4icore_auth.middleware import AuthMiddleware
-from ai4icore_auth.permission_checker import PermissionChecker, set_global_endpoint_permission_map
+from app.core.permission_checker import PermissionChecker, set_global_endpoint_permission_map
 
 from app.core.config import settings
 from app.core.constants import ENV_DEVELOPMENT

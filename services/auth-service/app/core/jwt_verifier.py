@@ -63,15 +63,8 @@ class JWTVerifier:
     """
     RS256 JWT verifier that loads public keys from JWKS endpoint.
 
-    Usage in any microservice::
-
-        from ai4icore_auth.providers import build_jwt_verifier
-
-        verifier = build_jwt_verifier()  # reads JWKS_URL, JWT_ISSUER from env
-        await verifier.initialize()
-
-        claims = await verifier.verify(token)
-        print(claims.user_id, claims.tenant_id, claims.roles)
+    Only used by auth-service to validate tokens for the /auth/validate endpoint.
+    Backend services no longer perform JWT verification; the gateway validates all tokens.
     """
 
     def __init__(
