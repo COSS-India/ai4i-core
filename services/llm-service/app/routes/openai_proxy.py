@@ -7,8 +7,9 @@ resolve the upstream from ``LLM_MODEL_ENDPOINTS[body.model]`` (or
 When ``LLM_PPU_ENABLED=true``, runs the same pay-per-use check/record path as
 ``/api/v1/llm/inference`` so usage and wallet totals update for dashboard calls.
 
-Implements 7-phase tracing lifecycle with spans: preprocess, resolve_model,
-model.inference, postprocess, persist, redact (and parent inference span).
+Implements 7-phase tracing lifecycle with spans: llm.preprocess, llm.resolve_model,
+llm.model_inference (Phase 3 model call via custom tracer), llm.postprocess, llm.persist
+(and parent llm.inference span).
 """
 
 import json
@@ -18,6 +19,7 @@ from typing import Any, List, Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
+from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode, get_current_span
 
 from app.clients.proxy_client import InferenceProxyClient
@@ -158,7 +160,8 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
 
         # Phase 3: model.inference (forward to upstream HTTP endpoint)
         status_code, body = None, None
-        with llm_spans.inference() as model_span:
+        tracer = trace.get_tracer("llm-service")
+        with tracer.start_as_current_span("llm.model_inference") as model_span:
             try:
                 status_code, body = await InferenceProxyClient().forward(
                     upstream_url=url, payload=payload

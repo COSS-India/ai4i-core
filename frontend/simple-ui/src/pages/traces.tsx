@@ -711,6 +711,14 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     displayName = span.operationName;
     description = "Internal processing step";
   }
+  // Model Inference (LLM service model call)
+  else if (opName.includes("model_inference")) {
+    category = "inference";
+    isImportant = true;
+    icon = FiCpu;
+    displayName = span.operationName;  // Shows as llm.model_inference
+    description = "Calls the upstream LLM model to generate inference";
+  }
   // Model/Service resolution
   else if (opName.includes("resolve") || opName.includes("model") || opName.includes("routing")) {
     category = "routing";
