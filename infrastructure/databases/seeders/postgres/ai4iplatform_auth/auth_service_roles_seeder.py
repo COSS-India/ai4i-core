@@ -331,6 +331,7 @@ class AuthServiceRolesSeeder(BaseSeeder):
               'users.password.change',
               'roles.read',
               'roles.assign',
+              'permissions.read',
               'apiKey.create',
               'apiKey.read',
               'apiKey.update',

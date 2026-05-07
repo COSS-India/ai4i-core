@@ -86,13 +86,21 @@ async def get_api_key_service(
 
 async def get_tenant_service(
     db: AsyncSession = Depends(get_db),
-    auth_service: AuthService = Depends(get_auth_service),
+    email_client: EmailClient = Depends(get_email_client),
 ) -> TenantService:
+    """Lightweight tenant service — only injects what's needed for user provisioning.
+
+    Avoids pulling in entire AuthService (8 dependencies) when we only need
+    6 of them for provision_user(). Routes never called this to use other
+    AuthService methods, so this optimization is safe.
+    """
     return TenantService(
         tenant_repo=TenantRepository(db),
         user_repo=UserRepository(db),
-        role_repo=RoleRepository(db),
-        auth_service=auth_service,
+        role_service=RoleService(RoleRepository(db)),
+        verification_repo=VerificationRepository(db),
+        token_service=TokenService(),
+        email_client=email_client,
     )
 
 
