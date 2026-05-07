@@ -369,8 +369,11 @@ class AuthService:
 
     # ── Login ──
 
-    async def login(self, email: str, password: str) -> LoginResponse:
-        """Authenticate a user and return access + refresh tokens."""
+    async def login(self, email: str, password: str, background_tasks: Optional[BackgroundTasks] = None) -> LoginResponse:
+        """Authenticate a user and return access + refresh tokens.
+
+        Last login update is queued as background task — not critical for response.
+        """
         user = await self._users.get_by_email(email)
         if not user:
             raise InvalidCredentialsError()
@@ -400,8 +403,14 @@ class AuthService:
         )
 
         await self._refresh_tokens.upsert(user.id, refresh_token)
-        await self._users.update_last_login(user)
         await self._users.commit()
+
+        # Queue last_login update as background task (not critical for immediate response)
+        if background_tasks:
+            async def update_login_time():
+                user.last_login = datetime.now(timezone.utc)
+                await self._users.commit()
+            background_tasks.add_task(update_login_time)
 
         logger.info("User logged in: %s (id=%s)", email, user.id)
         return LoginResponse(
@@ -414,22 +423,27 @@ class AuthService:
     # ── Refresh ──
 
     async def refresh_token(self, refresh_token_str: str) -> TokenRefreshResponse:
-        """Validate a refresh token via DB and issue a new access token."""
+        """Validate a refresh token via DB and issue a new access token.
+
+        Optimized: Uses lightweight is_active check instead of full user fetch.
+        Tenant ID comes from the original JWT payload (already validated by gateway).
+        """
         payload = self._validate_token_of_type(refresh_token_str, TokenType.REFRESH)
 
         db_token = await self._refresh_tokens.get_by_token(refresh_token_str)
         if not db_token:
             raise TokenRevokedError()
 
-        user = await self._users.get_by_id(UUID(payload.sub))
-        if not user or not user.is_active:
+        user_id = UUID(payload.sub)
+        if not await self._users.is_active(user_id):
             raise UserInactiveError()
 
-        tenant_id = str(user.tenant_id) if user.tenant_id else None
-        permission_ids = await self._roles.get_user_permission_ids(user.id)
+        # Tenant ID is already in the payload (set at login/token creation)
+        tenant_id = payload.tenant_id
+        permission_ids = await self._roles.get_user_permission_ids(user_id)
 
         access_token = self._tokens.create_access_token(
-            user_id=str(user.id),
+            user_id=str(user_id),
             tenant_id=tenant_id,
             permission_ids=permission_ids,
         )

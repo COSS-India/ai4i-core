@@ -23,6 +23,14 @@ class UserRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
+    async def is_active(self, user_id: UUID) -> bool:
+        """Lightweight check: is user active? (no full object fetch)."""
+        result = await self._db.execute(
+            select(User.is_active).where(User.id == user_id, User.is_delete.isnot(True))
+        )
+        is_active = result.scalar_one_or_none()
+        return is_active is True
+
     async def get_by_email(self, email: str) -> Optional[User]:
         result = await self._db.execute(
             select(User).where(User.email == email, User.is_delete.isnot(True))
