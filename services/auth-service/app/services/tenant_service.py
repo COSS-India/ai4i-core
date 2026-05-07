@@ -128,11 +128,7 @@ class TenantService:
             logger.warning("Role %r not found, skipping role assignment.", role_name)
 
         user_id_str = str(user.id)
-        setup_token = self._tokens.create_setup_token(
-            user_id=user_id_str,
-            email=email,
-            expires_delta=timedelta(hours=settings.setup_token_expire_hours),
-        )
+        setup_token = self._tokens.create_setup_token(user_id=user_id_str, email=email)
 
         await persist_token_verification(
             self._verifications,

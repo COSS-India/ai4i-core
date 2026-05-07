@@ -163,11 +163,7 @@ class AuthService:
             logger.warning("Default USER role not found, skipping role assignment.")
 
         user_id_str = str(user.id)
-        verify_token = self._tokens.create_verify_token(
-            user_id=user_id_str,
-            email=email,
-            expires_delta=timedelta(hours=settings.setup_token_expire_hours),
-        )
+        verify_token = self._tokens.create_verify_token(user_id=user_id_str, email=email)
         await persist_token_verification(
             self._verifications,
             verify_token,
@@ -223,11 +219,7 @@ class AuthService:
         user_id_str = str(user.id)
         await self._verifications.deactivate_all_for_user(user_id_str)
 
-        verify_token = self._tokens.create_verify_token(
-            user_id=user_id_str,
-            email=email,
-            expires_delta=timedelta(hours=settings.setup_token_expire_hours),
-        )
+        verify_token = self._tokens.create_verify_token(user_id=user_id_str, email=email)
         await persist_token_verification(
             self._verifications,
             verify_token,
@@ -264,16 +256,13 @@ class AuthService:
         user_id_str = str(user.id)
         await self._verifications.deactivate_all_for_user(user_id_str)
 
-        reset_token = self._tokens.create_reset_token(
-            user_id=user_id_str,
-            email=email,
-            expires_delta=timedelta(minutes=settings.reset_token_expire_minutes),
-        )
+        reset_token = self._tokens.create_reset_token(user_id=user_id_str, email=email)
+        reset_expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.reset_token_expire_minutes)
         await persist_token_verification(
             self._verifications,
             reset_token,
             user.id,
-            datetime.now(timezone.utc) + timedelta(minutes=settings.reset_token_expire_minutes),
+            reset_expires_at,
         )
         await self._users.commit()
 
@@ -480,11 +469,7 @@ class AuthService:
         user_id_str = str(user.id)
         await self._verifications.deactivate_all_for_user(user_id_str)
 
-        setup_token = self._tokens.create_setup_token(
-            user_id=user_id_str,
-            email=email,
-            expires_delta=timedelta(hours=settings.setup_token_expire_hours),
-        )
+        setup_token = self._tokens.create_setup_token(user_id=user_id_str, email=email)
         await persist_token_verification(
             self._verifications,
             setup_token,

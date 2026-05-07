@@ -86,18 +86,13 @@ class TokenService:
         expires_delta: Optional[timedelta] = None,
     ) -> str:
         """Short-lived access token. Contains permission_ids only — no roles."""
-        expire = datetime.now(timezone.utc) + (
-            expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
+        return self._create_token(
+            token_type=TokenType.ACCESS,
+            sub=str(user_id),
+            extra={"tenant_id": tenant_id, "permission_ids": permission_ids or []},
+            default_delta=timedelta(minutes=settings.access_token_expire_minutes),
+            expires_delta=expires_delta,
         )
-        payload = {
-            **self._base_claims(),
-            "sub": str(user_id),
-            "tenant_id": tenant_id,
-            "permission_ids": permission_ids or [],
-            "type": TokenType.ACCESS,
-            "exp": expire,
-        }
-        return self._sign(payload)
 
     def create_refresh_token(
         self,
@@ -106,17 +101,13 @@ class TokenService:
         expires_delta: Optional[timedelta] = None,
     ) -> str:
         """Refresh token. No roles, no token_id — revocation is via DB row deletion."""
-        expire = datetime.now(timezone.utc) + (
-            expires_delta or timedelta(days=settings.refresh_token_expire_days)
+        return self._create_token(
+            token_type=TokenType.REFRESH,
+            sub=str(user_id),
+            extra={"tenant_id": tenant_id},
+            default_delta=timedelta(days=settings.refresh_token_expire_days),
+            expires_delta=expires_delta,
         )
-        payload = {
-            **self._base_claims(),
-            "sub": str(user_id),
-            "tenant_id": tenant_id,
-            "type": TokenType.REFRESH,
-            "exp": expire,
-        }
-        return self._sign(payload)
 
     def create_setup_token(
         self,
@@ -125,17 +116,13 @@ class TokenService:
         expires_delta: Optional[timedelta] = None,
     ) -> str:
         """Short-lived email activation token. Signed JWT, stored in token_verification table."""
-        expire = datetime.now(timezone.utc) + (
-            expires_delta or timedelta(hours=settings.setup_token_expire_hours)
+        return self._create_token(
+            token_type=TokenType.SETUP,
+            sub=str(user_id),
+            extra={"email": email},
+            default_delta=timedelta(hours=settings.setup_token_expire_hours),
+            expires_delta=expires_delta,
         )
-        payload = {
-            **self._base_claims(),
-            "sub": str(user_id),
-            "email": email,
-            "type": TokenType.SETUP,
-            "exp": expire,
-        }
-        return self._sign(payload)
 
     def create_reset_token(
         self,
@@ -146,17 +133,13 @@ class TokenService:
         """Short-lived password-reset token. 30-min default per security spec —
         much shorter than SETUP/VERIFY (48h) since reset is initiated by an
         already-active user and the link is sensitive."""
-        expire = datetime.now(timezone.utc) + (
-            expires_delta or timedelta(minutes=settings.reset_token_expire_minutes)
+        return self._create_token(
+            token_type=TokenType.RESET,
+            sub=str(user_id),
+            extra={"email": email},
+            default_delta=timedelta(minutes=settings.reset_token_expire_minutes),
+            expires_delta=expires_delta,
         )
-        payload = {
-            **self._base_claims(),
-            "sub": str(user_id),
-            "email": email,
-            "type": TokenType.RESET,
-            "exp": expire,
-        }
-        return self._sign(payload)
 
     def create_verify_token(
         self,
@@ -168,17 +151,13 @@ class TokenService:
         token_verification table. Distinct from SETUP: VERIFY only flips
         is_active=True (the user already supplied a password at signup).
         """
-        expire = datetime.now(timezone.utc) + (
-            expires_delta or timedelta(hours=settings.setup_token_expire_hours)
+        return self._create_token(
+            token_type=TokenType.VERIFY,
+            sub=str(user_id),
+            extra={"email": email},
+            default_delta=timedelta(hours=settings.setup_token_expire_hours),
+            expires_delta=expires_delta,
         )
-        payload = {
-            **self._base_claims(),
-            "sub": str(user_id),
-            "email": email,
-            "type": TokenType.VERIFY,
-            "exp": expire,
-        }
-        return self._sign(payload)
 
     # ── Validation ──
 
