@@ -41,7 +41,7 @@ def is_jwt_strict(token: str) -> bool:
     if len(parts) != 3:
         return False
     try:
-        padding = 4 - len(parts[0]) % 4
+        padding = (4 - len(parts[0]) % 4) % 4
         header = json.loads(base64.urlsafe_b64decode(parts[0] + "=" * padding))
         return header.get("alg") == "RS256"
     except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError, AttributeError):
