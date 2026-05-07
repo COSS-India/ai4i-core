@@ -1,8 +1,8 @@
 """
-Client for PII Guardrail /redact -- used only when persisting NMT text to the database.
+Client for PII Guardrail /redact — used only when persisting LLM text to the database.
 
 PII patterns and NER are only reliable for the languages the guardrail ships with (en, hi, mr, ta).
-For other language pairs, we skip redaction and store the raw strings.
+For other language pairs we skip redaction and store the raw strings.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ async def redact_for_storage(
         "Content-Type": "application/json",
         "x-language": lang,
         "x-target": "user",
-        "X-Source-Service": "nmt",
+        "X-Source-Service": "llm",
     }
     if auth_headers:
         headers.update(auth_headers)
@@ -51,7 +51,7 @@ async def redact_for_storage(
     if request_id:
         headers["X-Request-ID"] = request_id
 
-    # Propagate W3C trace context so NMT → PII spans correlate in Jaeger
+    # Propagate W3C trace context so LLM → PII spans correlate in Jaeger
     try:
         from opentelemetry.propagate import inject
 

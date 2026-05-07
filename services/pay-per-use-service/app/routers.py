@@ -173,6 +173,12 @@ async def _resolve_usage_rate(
     rate = _rate_from_policy(policy, service_id, tier)
     if rate > 0:
         return rate
+    # Proxies sometimes send OpenAI model id as service_id; tenant plans key off subscription id "llm".
+    sid = str(service_id).strip()
+    if sid and sid != "llm":
+        rate = _rate_from_policy(policy, "llm", tier)
+        if rate > 0:
+            return rate
     cpu_s = await rds.get(f"pricing:{service_id}:{tier}")
     if cpu_s is None:
         cpu_s = await rds.get(f"pricing:{service_id}:{tier or 'Tier-2'}")
@@ -303,7 +309,17 @@ async def record_usage(body: RecordRequest, session: AsyncSession = Depends(get_
     policy = await _policy_snapshot_safe(body.tenant_id, rds)
     tier = str(policy.get("tier") or "")
 
-    rate = await _resolve_usage_rate(policy, body.service_id, tier, rds)
+    # Trusted internal callers (e.g. llm-service) may supply per-unit rate from their own env.
+    rate = Decimal("0")
+    if body.cost_per_unit is not None:
+        try:
+            co = Decimal(str(body.cost_per_unit))
+            if co > 0:
+                rate = co
+        except Exception:
+            pass
+    if rate <= 0:
+        rate = await _resolve_usage_rate(policy, body.service_id, tier, rds)
 
     units = Decimal(str(body.units_consumed))
     cost = units * rate
@@ -437,13 +453,14 @@ async def usage_tenant(
     total_req = await session.scalar(
         select(func.count()).select_from(UsageRecord).where(UsageRecord.tenant_id == tenant_id)
     )
-    wb = await _wallet_row(session, tenant_id)
+    policy = await _policy_snapshot_safe(tenant_id, rds)
+    wb = await _wallet_row(session, tenant_id, policy)
+    await session.commit()
     await session.refresh(wb)
 
     # Use safe snapshot: strict _policy_snapshot only converts HTTP non-200 to HTTPException;
     # httpx timeouts / connection errors still propagate → dashboard GET returned 500 and
     # looked like "missing" calculations. Safe falls back to {} and we still show wallet + DB aggregates.
-    policy = await _policy_snapshot_safe(tenant_id, rds)
 
     tpc = float(wb.total_plan_cost or 0)
     tu = float(wb.total_used or 0)
@@ -866,7 +883,9 @@ async def topup_wallet(
     session: AsyncSession = Depends(get_session),
 ):
     assert_wallet_access(request, tenant_id)
-    wb = await _wallet_row(session, tenant_id)
+    rds = await get_redis()
+    policy = await _policy_snapshot_safe(tenant_id, rds)
+    wb = await _wallet_row(session, tenant_id, policy)
     wb.balance = Decimal(str(wb.balance)) + body.amount
     if wb.total_plan_cost and wb.total_plan_cost > 0:
         wb.total_plan_cost = Decimal(str(wb.total_plan_cost)) + body.amount
