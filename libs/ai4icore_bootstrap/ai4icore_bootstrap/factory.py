@@ -4,11 +4,12 @@ Service app factory — the single way to create a FastAPI app in AI4I-Core.
 Wires up everything that every service needs:
 1. Standardized exception handlers (from ai4icore_constants)
 2. Structured JSON logging (from ai4icore_logging)
-3. Auth middleware with JWT verification (from ai4icore_auth)
-4. CORS configuration (production-safe)
-5. Request logging middleware
-6. Health endpoint
-7. Telemetry (optional)
+3. CORS configuration (production-safe)
+4. Request logging middleware
+5. Health endpoint
+6. Telemetry (optional)
+
+Auth validation is delegated to API gateway (APISIX/nginx); services read pre-validated headers.
 """
 
 import logging
@@ -124,34 +125,10 @@ def create_service_app(
         logger.warning("[bootstrap] ai4icore_logging not available, using basic logging.")
         logging.basicConfig(level=getattr(logging, config.log_level, logging.INFO))
 
-    # ── 4. Auth middleware (from ai4icore_auth) ──
-    if config.jwks_url:
-        try:
-            from ai4icore_auth import AuthMiddleware, JWTVerifier
-
-            verifier = JWTVerifier(
-                jwks_url=config.jwks_url,
-                issuer=config.jwt_issuer,
-                audience=config.jwt_audience,
-            )
-
-            app.add_middleware(
-                AuthMiddleware,
-                jwt_verifier_factory=lambda: verifier,
-                service_name=config.service_name,
-                skip_paths=config.auth_skip_paths,
-                require_auth=config.require_auth,
-            )
-
-            # Initialize verifier on startup
-            @app.on_event("startup")
-            async def _init_verifier():
-                await verifier.initialize()
-                logger.info("[bootstrap] JWTVerifier initialized with JWKS from %s", config.jwks_url)
-
-            logger.info("[bootstrap] Auth middleware registered (JWKS: %s).", config.jwks_url)
-        except ImportError:
-            logger.warning("[bootstrap] ai4icore_auth not available, auth middleware skipped.")
+    # ── 4. Auth validation delegated to API gateway ──
+    # Services no longer perform JWT verification; APISIX/nginx handles all token validation.
+    # Services read pre-validated identity headers from the gateway.
+    logger.info("[bootstrap] Auth validation delegated to API gateway (APISIX/nginx).")
 
     # ── 5. Telemetry (optional) ──
     if config.telemetry_enabled:

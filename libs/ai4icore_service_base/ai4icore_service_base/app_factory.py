@@ -36,7 +36,6 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from ai4icore_auth.permission_checker import set_global_endpoint_permission_map
 from ai4icore_env import app_env
 from ai4icore_exceptions import register_exception_handlers
 from ai4icore_model_management import (
@@ -91,57 +90,6 @@ def _init_logger(name: str) -> logging.Logger:
 logger = _init_logger(__name__)
 
 
-async def _load_inference_endpoint_permission_map(svc_logger: logging.Logger) -> None:
-    """
-    Resolve api_permissions.json endpoint keys to permission IDs via the auth DB,
-    then publish the map for PermissionChecker (no Redis).
-    """
-    path_str = (app_env.api_permissions_json_path or "").strip()
-    if not path_str:
-        svc_logger.debug(
-            "api_permissions_json_path unset — configure API_PERMISSIONS_JSON_PATH "
-            "if this service enforces endpoint permissions.",
-        )
-        return
-    json_path = Path(path_str)
-    if not json_path.is_file():
-        svc_logger.warning("api_permissions.json not found at %s", json_path)
-        return
-    try:
-        data = json.loads(json_path.read_text(encoding="utf-8"))
-        auth_url = app_env.get_auth_database_url()
-        engine = create_async_engine(auth_url, pool_pre_ping=True)
-        try:
-            name_to_id: dict[str, int] = {}
-            async with engine.connect() as conn:
-                try:
-                    result = await conn.execute(
-                        text("SELECT name, permission_id FROM permissions"),
-                    )
-                except SQLAlchemyError:
-                    await conn.rollback()
-                    result = await conn.execute(
-                        text("SELECT name, id AS permission_id FROM permissions"),
-                    )
-                for row in result.mappings():
-                    name_to_id[str(row["name"])] = int(row["permission_id"])
-            endpoint_to_id: dict[str, str] = {}
-            for m in data.get("apiMappings", []):
-                perm_name = m.get("permissionRequired")
-                if perm_name is None:
-                    continue
-                pid = name_to_id.get(str(perm_name))
-                if pid is not None:
-                    endpoint_to_id[str(m["endpoint"])] = str(pid)
-            set_global_endpoint_permission_map(endpoint_to_id)
-            svc_logger.info(
-                "Inference endpoint permission map loaded (%d endpoints).",
-                len(endpoint_to_id),
-            )
-        finally:
-            await engine.dispose()
-    except OSError as exc:
-        svc_logger.warning("Could not load endpoint permission map: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -240,8 +188,6 @@ def _build_lifespan(config: InferenceServiceConfig, db_base: Any):
         app.state.db_engine = db_engine
         app.state.db_session_factory = db_session_factory
         app.state.triton_api_key = app_env.triton_api_key
-
-        await _load_inference_endpoint_permission_map(svc_logger)
 
         # Service-specific extra state
         for key, value in config.extra_state.items():
