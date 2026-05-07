@@ -47,20 +47,8 @@ def is_jwt_strict(token: str) -> bool:
         padding = (4 - len(parts[0]) % 4) % 4
         header = json.loads(base64.urlsafe_b64decode(parts[0] + "=" * padding))
         return header.get("alg") == "RS256"
-    except binascii.Error as exc:
-        logger.debug("JWT header decode failed: bad base64 encoding: %s", exc.__class__.__name__)
-        return False
-    except json.JSONDecodeError as exc:
-        logger.debug("JWT header decode failed: invalid JSON in header: %s", exc.__class__.__name__)
-        return False
-    except UnicodeDecodeError as exc:
-        logger.debug("JWT header decode failed: non-UTF8 bytes: %s", exc.__class__.__name__)
-        return False
-    except AttributeError as exc:
-        logger.debug("JWT header decode failed: header is not a dict: %s", exc.__class__.__name__)
-        return False
-    except Exception as exc:
-        logger.warning("JWT header decode failed with unexpected error: %s", exc.__class__.__name__)
+    except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError, AttributeError) as exc:
+        logger.debug("JWT header validation failed: %s", exc.__class__.__name__)
         return False
 
 
