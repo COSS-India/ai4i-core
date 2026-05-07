@@ -31,6 +31,8 @@ from app.core.messages import (
     OAUTH_CODE_INVALID,
     LOG_WARN_OAUTH_REDIRECT_INVALID,
     LOG_WARN_OAUTH_REDIRECT_BLOCKED,
+    LOG_WARN_CONFIG_REDIRECT_ALLOWLIST,
+    LOG_ERROR_CONFIG_OAUTH_REDIRECT_URL,
 )
 from app.core.redis import get_redis
 from app.core.responses import success_response
@@ -55,9 +57,7 @@ def _is_redirect_allowed(uri: str) -> bool:
 
     allowed = settings.oauth_allowed_redirect_uris
     if not allowed:
-        logger.warning(
-            "OAUTH_ALLOWED_REDIRECT_URIS not configured — rejecting redirect to %s", uri
-        )
+        logger.warning(LOG_WARN_CONFIG_REDIRECT_ALLOWLIST)
         return False
 
     allowed_list = [u.strip() for u in allowed.split(",") if u.strip()]
@@ -122,9 +122,7 @@ async def authorize(
     )
 
     if not settings.oauth_redirect_base_url:
-        raise EntityNotFoundError(
-            "OAUTH_REDIRECT_BASE_URL must be configured for OAuth"
-        )
+        raise EntityNotFoundError(LOG_ERROR_CONFIG_OAUTH_REDIRECT_URL)
 
     callback_url = (
         f"{settings.oauth_redirect_base_url}"
@@ -177,9 +175,7 @@ async def callback(
         raise AuthenticationRequiredError(OAUTH_PROVIDER_MISMATCH)
 
     if not settings.oauth_redirect_base_url:
-        raise EntityNotFoundError(
-            "OAUTH_REDIRECT_BASE_URL must be configured for OAuth"
-        )
+        raise EntityNotFoundError(LOG_ERROR_CONFIG_OAUTH_REDIRECT_URL)
 
     callback_url = (
         f"{settings.oauth_redirect_base_url}"

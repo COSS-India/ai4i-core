@@ -35,6 +35,7 @@ from app.core.messages import (
     LOG_JWKS_REFRESHED,
     LOG_ERROR_JWKS_LOAD_FAILED,
     LOG_ERROR_JWKS_REFRESH_FAILED,
+    LOG_DEBUG_RS256_VERIFICATION_FAILED,
 )
 
 logger = logging.getLogger(__name__)
@@ -201,7 +202,7 @@ class JWTVerifier:
         except ExpiredSignatureError as exc:
             raise JWTExpiredError() from exc
         except JWTError as exc:
-            logger.debug("RS256 verification failed: %s", exc)
+            logger.debug(LOG_DEBUG_RS256_VERIFICATION_FAILED, exc)
             raise JWTVerificationError(TOKEN_INVALID) from exc
 
         return self._payload_to_claims(payload)

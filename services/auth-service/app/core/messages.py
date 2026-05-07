@@ -107,6 +107,9 @@ LOG_WARN_PERMISSIONS_LOAD_FAILED = "Failed to load API permission mapping: {erro
 LOG_WARN_ROLE_ASSIGNMENT_FAILED = "Role '{role}' not found, skipping role assignment."
 LOG_WARN_ROLE_NAME_MAPPING_FAILED = "Unknown role name {role}, skipping."
 
+# ── Logging: Debug ──
+LOG_DEBUG_RS256_VERIFICATION_FAILED = "RS256 verification failed: %s"
+
 # ── Logging: Errors ──
 LOG_ERROR_DEBUG_IN_PROD = "FATAL: DEBUG=true is not allowed in {environment}."
 LOG_ERROR_JWT_NOT_INITIALIZED = "JWTVerifier not initialized. Call init_jwt_verifier() during startup."
@@ -125,6 +128,8 @@ LOG_ERROR_CACHE_REFRESH_UNEXPECTED = "RolePermissionCache refresh failed with un
 # ── Configuration Errors ──
 CONFIG_MISSING = "{env_var} is not configured"
 CONFIG_DEBUG_NOT_ALLOWED = "FATAL: DEBUG=true is not allowed in {environment}."
+LOG_WARN_CONFIG_REDIRECT_ALLOWLIST = "OAUTH_ALLOWED_REDIRECT_URIS not configured — rejecting redirect"
+LOG_ERROR_CONFIG_OAUTH_REDIRECT_URL = "OAUTH_REDIRECT_BASE_URL must be configured for OAuth"
 
 # ── Generic/Framework Messages ──
 ENTITY_NOT_FOUND = "Entity not found: {entity_type}"
