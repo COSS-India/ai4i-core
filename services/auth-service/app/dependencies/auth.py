@@ -1,9 +1,7 @@
 """
 Authentication dependencies for route injection.
 
-Uses the shared ai4icore_auth library for JWT verification — the SAME
-verifier that every other microservice uses. Auth-service is a consumer
-of the shared lib, not a parallel implementation.
+JWT verification logic is now local to auth-service (no longer shared library).
 """
 
 import logging
@@ -14,7 +12,7 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_auth.jwt_verifier import (
+from app.core.jwt_verifier import (
     AuthClaims,
     JWTExpiredError,
     JWTVerificationError,

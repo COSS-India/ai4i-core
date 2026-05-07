@@ -13,7 +13,6 @@ from app.schemas.pipeline_request import PipelineInferenceRequest
 from app.schemas.pipeline_response import PipelineInferenceResponse
 from app.services.pipeline_service import PipelineService
 from app.clients.http_client import ServiceClient
-from app.dependencies.auth import AuthProvider
 from ai4icore_constants.exceptions import (
     PipelineError,
     PipelineTaskError,
@@ -48,7 +47,6 @@ tracer = trace.get_tracer("pipeline-service") if TRACING_AVAILABLE else None
 pipeline_router = APIRouter(
     prefix="/api/v1/pipeline",
     tags=["Pipeline"],
-    dependencies=[Depends(AuthProvider)]  # Enforce auth and permission checks on all routes
 )
 
 

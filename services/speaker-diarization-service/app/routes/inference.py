@@ -5,7 +5,6 @@ import logging
 from fastapi import APIRouter, Depends, Request
 
 
-from app.dependencies.auth import AuthProvider
 from app.dependencies.services import get_speaker_diarization_service
 from app.schemas.inference import SpeakerDiarizationInferenceRequest, SpeakerDiarizationInferenceResponse
 from app.services.speaker_diarization_service import SpeakerDiarizationService
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/speaker-diarization",
     tags=["Speaker Diarization Inference"],
-    dependencies=[Depends(AuthProvider)],
+    
 )
 
 

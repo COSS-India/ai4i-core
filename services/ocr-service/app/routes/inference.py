@@ -5,7 +5,6 @@ import logging
 from fastapi import APIRouter, Depends, Request
 
 
-from app.dependencies.auth import AuthProvider
 from app.dependencies.services import get_ocr_service
 from app.schemas.inference import OCRInferenceRequest, OCRInferenceResponse
 from app.services.ocr_service import OCRService
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/ocr",
     tags=["OCR Inference"],
-    dependencies=[Depends(AuthProvider)],
+    
 )
 
 

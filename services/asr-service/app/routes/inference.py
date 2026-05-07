@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, Request
 
 from ai4icore_constants.error_messages import SERVICE_UNAVAILABLE, SERVICE_UNAVAILABLE_MESSAGE
 
-from app.dependencies.auth import AuthProvider
 from app.dependencies.services import get_asr_service
 from app.schemas.inference import (
     ASRInferenceRequest,
@@ -21,7 +20,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/asr",
     tags=["ASR Inference"],
-    dependencies=[Depends(AuthProvider)],
 )
 
 smr_service = SMRService()

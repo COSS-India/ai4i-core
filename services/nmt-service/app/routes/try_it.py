@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ai4icore_constants.error_messages import SERVICE_UNPUBLISHED, SERVICE_UNPUBLISHED_MESSAGE
 from ai4icore_bootstrap.database import get_db
 
-from app.dependencies.auth import AuthProvider
 from app.dependencies.services import get_nmt_service
 from app.schemas.inference import (
     NMTInferenceRequest,
@@ -32,7 +31,6 @@ smr_service = SMRService()
 router = APIRouter(
     prefix="/api/v1",
     tags=["Try It"],
-    dependencies=[Depends(AuthProvider)],
 )
 
 
