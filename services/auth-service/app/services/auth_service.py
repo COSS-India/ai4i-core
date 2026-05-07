@@ -602,7 +602,7 @@ class AuthService:
             payload = self._tokens.validate_token(token)
         except TokenExpiredError:
             return {"valid": False, "status": "expired", "message": "Setup link has expired. Request a new one."}
-        except (TokenInvalidError, Exception):
+        except TokenInvalidError:
             return {"valid": False, "status": "invalid", "message": "Setup link is invalid."}
 
         if payload.token_type != TokenType.SETUP:

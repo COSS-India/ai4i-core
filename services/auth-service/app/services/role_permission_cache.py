@@ -15,6 +15,7 @@ import logging
 from typing import Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.database import get_db
 from app.models.role import RolePermission
@@ -83,8 +84,10 @@ class RolePermissionCache:
                 await self.reload()
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                logger.exception("RolePermissionCache refresh failed; will retry next cycle.")
+            except (OSError, SQLAlchemyError) as exc:
+                logger.exception("RolePermissionCache refresh failed (database/network issue); will retry next cycle.")
+            except Exception as exc:
+                logger.exception("RolePermissionCache refresh failed with unexpected error; will retry next cycle.")
 
 
 # Module-level singleton — initialized in lifespan.
