@@ -99,16 +99,46 @@ def _openai_input_texts_for_ppu(payload: Any, upstream_path: str) -> List[str]:
     return [""]
 
 
+def _setup_inference_context(request: Request) -> dict:
+    """Extract user context from request state."""
+    return {
+        "user_id": getattr(request.state, "user_id", None),
+        "tenant_id": getattr(request.state, "tenant_id", None),
+        "session_id": getattr(request.state, "session_id", None),
+    }
+
+
+async def _setup_ppu_checks(request: Request, input_texts: List[str]) -> None:
+    """Validate pay-per-use eligibility before inference."""
+    allowed = await _llm_ppu_check(request, input_texts)
+    raise_if_ppu_denied(allowed)
+
+
+def _setup_resolve_model(model: Optional[str], path: str) -> str:
+    """Resolve upstream endpoint for the model."""
+    try:
+        url = _resolve_upstream_url(model=model, path=path)
+        logger.debug(">>> [openai_proxy] Resolved upstream URL: %s", url)
+        return url
+    except ValueError as exc:
+        logger.debug(">>> [openai_proxy] ERROR: Failed to resolve upstream: %s", exc)
+        raise
+
+
 async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSONResponse:
     logger.debug(
         ">>> [openai_proxy] Request received: endpoint=%s, method=%s",
         endpoint,
         request.method,
     )
+
+    # Phase 1: Business Logic Setup (separate from tracing)
     payload = await _read_json_body(request)
     model = payload.get("model") if isinstance(payload, dict) else None
-    user_id = getattr(request.state, "user_id", None)
-    tenant_id = getattr(request.state, "tenant_id", None)
+    context = _setup_inference_context(request)
+    user_id = context["user_id"]
+    tenant_id = context["tenant_id"]
+    session_id = context["session_id"]
     logger.debug(
         ">>> [openai_proxy] Parsed payload: model=%s, user_id=%s, tenant_id=%s",
         model,
@@ -117,9 +147,25 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
     )
 
     input_texts = _openai_input_texts_for_ppu(payload, path)
-    allowed = await _llm_ppu_check(request, input_texts)
-    raise_if_ppu_denied(allowed)
+    await _setup_ppu_checks(request, input_texts)
 
+    # Phase 2: Resolve model endpoint (business logic before tracing)
+    url = None
+    try:
+        logger.debug(
+            ">>> [openai_proxy] Resolving upstream URL for model=%s, path=%s",
+            model,
+            path,
+        )
+        url = _setup_resolve_model(model=model, path=path)
+    except ValueError as exc:
+        logger.debug(
+            ">>> [openai_proxy] ERROR: Failed to resolve upstream: %s",
+            exc,
+        )
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+    # Phase 3: Pure Tracing (after business logic is validated)
     with llm_spans.inference(
         model_name=model,
         input_count=1,
@@ -129,36 +175,17 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
             LLMAttrs.LLM_MODEL_NAME: model or "",
         },
         user_id=user_id,
-        session_id=getattr(request.state, "session_id", None),
+        session_id=session_id,
     ) as parent_span:
-        # Phase 1: preprocess (not applicable for proxy — zero-duration span)
+        # Preprocess span (not applicable for proxy — zero-duration span)
         with llm_spans.preprocess() as preprocess_span:
             set_preprocess_attrs(preprocess_span, model_name=model or "")
 
-        # Phase 2: resolve_model (look up upstream URL)
-        url = None
-        logger.debug(
-            ">>> [openai_proxy] Resolving upstream URL for model=%s, path=%s",
-            model,
-            path,
-        )
+        # Resolve model span (record the resolved URL)
         with llm_spans.resolve_model() as resolve_span:
-            try:
-                url = _resolve_upstream_url(model=model, path=path)
-                logger.debug(">>> [openai_proxy] Resolved upstream URL: %s", url)
-                set_resolve_model_attrs(resolve_span, model=model or "", url=url)
-            except ValueError as exc:
-                logger.debug(
-                    ">>> [openai_proxy] ERROR: Failed to resolve upstream: %s",
-                    exc,
-                )
-                resolve_span.set_status(Status(StatusCode.ERROR, str(exc)))
-                resolve_span.record_exception(exc)
-                parent_span.set_attribute(LLMAttrs.LLM_STATUS, "error")
-                parent_span.set_attribute("error.type", type(exc).__name__)
-                return JSONResponse(status_code=503, content={"detail": str(exc)})
+            set_resolve_model_attrs(resolve_span, model=model or "", url=url)
 
-        # Phase 3: model.inference (forward to upstream HTTP endpoint)
+        # Model inference span (forward to upstream HTTP endpoint)
         status_code, body = None, None
         tracer = trace.get_tracer("llm-service")
         with tracer.start_as_current_span("llm.model_inference") as model_span:
@@ -202,7 +229,7 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
                     content={"error": {"message": str(exc), "type": "upstream_error"}},
                 )
 
-        # Phase 4: postprocess (extract token usage from response)
+        # Postprocess span (extract token usage from response)
         with llm_spans.postprocess() as post_span:
             if isinstance(body, dict):
                 usage = body.get("usage")
@@ -212,7 +239,7 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
                 )
                 set_postprocess_attrs(post_span, usage=usage)
 
-        # Phase 5: persist (not applicable for proxy — zero-duration span)
+        # Persist span (not applicable for proxy — zero-duration span)
         with llm_spans.persist():
             pass
 
