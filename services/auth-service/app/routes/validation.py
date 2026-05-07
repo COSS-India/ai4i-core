@@ -12,10 +12,13 @@ Two-step flow:
 import base64
 import binascii
 import json
+import logging
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from app.core.jwt_verifier import JWTExpiredError, JWTVerificationError
 from app.core.database import get_db
@@ -44,9 +47,20 @@ def is_jwt_strict(token: str) -> bool:
         padding = (4 - len(parts[0]) % 4) % 4
         header = json.loads(base64.urlsafe_b64decode(parts[0] + "=" * padding))
         return header.get("alg") == "RS256"
-    except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError, AttributeError):
-        # binascii.Error: bad base64. JSONDecodeError: bad JSON.
-        # UnicodeDecodeError: non-UTF8 bytes. AttributeError: header isn't a dict.
+    except binascii.Error as exc:
+        logger.debug("JWT header decode failed: bad base64 encoding: %s", exc.__class__.__name__)
+        return False
+    except json.JSONDecodeError as exc:
+        logger.debug("JWT header decode failed: invalid JSON in header: %s", exc.__class__.__name__)
+        return False
+    except UnicodeDecodeError as exc:
+        logger.debug("JWT header decode failed: non-UTF8 bytes: %s", exc.__class__.__name__)
+        return False
+    except AttributeError as exc:
+        logger.debug("JWT header decode failed: header is not a dict: %s", exc.__class__.__name__)
+        return False
+    except Exception as exc:
+        logger.warning("JWT header decode failed with unexpected error: %s", exc.__class__.__name__)
         return False
 
 
