@@ -37,7 +37,7 @@ from app.schemas.tenant import (
     TenantUserUpdate,
 )
 from app.services.auth_email_templates import render_setup_link
-from app.services.email_helpers import enqueue_email, resolve_tenant_id, setup_token_expires_at
+from app.services.email_helpers import enqueue_email, persist_token_verification, resolve_tenant_id, setup_token_expires_at
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
 
@@ -134,13 +134,12 @@ class TenantService:
             expires_delta=timedelta(hours=settings.setup_token_expire_hours),
         )
 
-        token_obj = TokenVerification(
-            token=setup_token,
-            is_active=True,
-            expires_at=setup_token_expires_at(),
-            created_by=user.id,
+        await persist_token_verification(
+            self._verifications,
+            setup_token,
+            user.id,
+            setup_token_expires_at(),
         )
-        await self._verifications.create(token_obj)
         await self._users.commit()
 
         logger.info("User provisioned (no credentials): %s (id=%s)", email, user.id)

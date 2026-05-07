@@ -20,15 +20,14 @@ needed.
 """
 
 import logging
-from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 import httpx
-from ai4icore_email import EmailClient, EmailMessage
+from ai4icore_email import EmailClient
 from fastapi import BackgroundTasks
 
 from app.core.config import settings
-from app.services.email_helpers import enqueue_email
+from app.services.email_helpers import enqueue_email, issue_session
 from app.core.exceptions import AuthenticationRequiredError, EntityNotFoundError
 from app.core.messages import (
     OAUTH_PROVIDER_UNKNOWN,
@@ -47,7 +46,6 @@ from app.models.role_name import RoleName
 from app.models.user import CreationType, User
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.user_repository import UserRepository
-from app.schemas.auth import LoginResponse
 from app.services.auth_email_templates import render_welcome
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
@@ -252,30 +250,16 @@ class OAuthService:
         )
 
         # Issue JWT pair via the same path used by /auth/login.
-        tenant_id = str(user.tenant_id) if user.tenant_id else None
-        permission_ids = await self._roles.get_user_permission_ids(user.id)
-
-        jwt_access = self._tokens.create_access_token(
-            user_id=str(user.id),
-            tenant_id=tenant_id,
-            permission_ids=permission_ids,
+        login_response = await issue_session(
+            user,
+            self._roles,
+            self._tokens,
+            self._refresh_tokens,
+            self._users,
         )
-        jwt_refresh = self._tokens.create_refresh_token(
-            user_id=str(user.id),
-            tenant_id=tenant_id,
-        )
-
-        await self._refresh_tokens.upsert(user.id, jwt_refresh)
-        user.last_login = datetime.now(timezone.utc)
-        await self._users.commit()
 
         if was_created:
             enqueue_email(background_tasks, self._email, lambda: render_welcome(user))
 
         logger.info(LOG_OAUTH_LOGIN, email, provider, user.id)
-        return LoginResponse(
-            access_token=jwt_access,
-            refresh_token=jwt_refresh,
-            token_type="bearer",
-            expires_in=settings.access_token_expire_minutes * 60,
-        ).model_dump()
+        return login_response.model_dump()

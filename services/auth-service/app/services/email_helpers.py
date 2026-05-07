@@ -43,6 +43,68 @@ def setup_token_expires_at() -> datetime:
     return datetime.now(timezone.utc) + timedelta(hours=settings.setup_token_expire_hours)
 
 
+async def persist_token_verification(
+    verification_repo,
+    token: str,
+    user_id,
+    expires_at: datetime,
+) -> "TokenVerification":
+    """Create and persist a token verification record.
+
+    Caller specifies expires_at to handle different TTL requirements:
+    - setup/verify/resend_setup: setup_token_expire_hours (48h)
+    - reset: reset_token_expire_minutes (30 min)
+    """
+    from app.models.verification import TokenVerification
+
+    obj = TokenVerification(
+        token=token,
+        is_active=True,
+        expires_at=expires_at,
+        created_by=user_id,
+    )
+    await verification_repo.create(obj)
+    return obj
+
+
+async def issue_session(
+    user,
+    roles_svc,
+    tokens_svc,
+    refresh_tokens_repo,
+    users_repo,
+) -> "LoginResponse":
+    """Issue JWT pair and persist refresh token. Used by both /auth/login and OAuth callback.
+
+    Returns LoginResponse object (caller wraps with .model_dump() if needed).
+    """
+    from app.schemas.auth import LoginResponse
+
+    tenant_id = str(user.tenant_id) if user.tenant_id else None
+    permission_ids = await roles_svc.get_user_permission_ids(user.id)
+
+    access_token = tokens_svc.create_access_token(
+        user_id=str(user.id),
+        tenant_id=tenant_id,
+        permission_ids=permission_ids,
+    )
+    refresh_token = tokens_svc.create_refresh_token(
+        user_id=str(user.id),
+        tenant_id=tenant_id,
+    )
+
+    await refresh_tokens_repo.upsert(user.id, refresh_token)
+    user.last_login = datetime.now(timezone.utc)
+    await users_repo.commit()
+
+    return LoginResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        expires_in=settings.access_token_expire_minutes * 60,
+    )
+
+
 async def resolve_tenant_id(explicit: Optional[int | str], tenant_repo) -> Optional[int]:
     """Honor an explicit tenant_id, otherwise fall back to the default tenant."""
     if explicit is not None:

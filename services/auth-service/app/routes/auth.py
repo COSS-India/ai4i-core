@@ -127,15 +127,13 @@ async def reset_password(
 @router.post("/login", response_model=LoginResponse)
 async def login(
     body: LoginRequest,
-    background_tasks: BackgroundTasks,
     svc: AuthService = Depends(get_auth_service),
 ):
-    return await svc.login(email=body.email, password=body.password, background_tasks=background_tasks)
+    return await svc.login(email=body.email, password=body.password)
 
 
 @router.post("/guest/login", response_model=LoginResponse)
 async def guest_login(
-    background_tasks: BackgroundTasks,
     svc: AuthService = Depends(get_auth_service),
 ):
     email = (settings.guest_email or "").strip()
@@ -145,7 +143,7 @@ async def guest_login(
             status_code=503,
             detail={"code": "SERVICE_UNAVAILABLE", "message": "Guest login is not configured."},
         )
-    return await svc.login(email=email, password=password, background_tasks=background_tasks)
+    return await svc.login(email=email, password=password)
 
 
 @router.post("/refresh", response_model=TokenRefreshResponse)

@@ -11,6 +11,7 @@ All tokens include: iss, iat, kid, alg=RS256
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -25,6 +26,7 @@ from app.core.security import key_manager
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
 class TokenPayload:
     """Decoded JWT payload — only the claims auth-service actually reads.
 
@@ -33,17 +35,31 @@ class TokenPayload:
     but they're not surfaced here because no consumer reads them off
     TokenPayload — callers either work from AuthClaims directly (validate
     flow) or only need sub/token_id/token_type (provision/setup flows).
+
+    Frozen: post-creation mutation is forbidden to ensure auth claims immutability.
     """
 
-    def __init__(self, data: dict[str, Any]):
-        self.sub: str = str(data.get("sub", ""))
-        self.token_type: str = data.get("type", "")
-        self.token_id: Optional[str] = data.get("token_id")
-        self.tenant_id: Optional[str] = data.get("tenant_id")
+    sub: str
+    token_type: str
+    token_id: Optional[str] = None
+    tenant_id: Optional[str] = None
 
 
 class TokenService:
     """Creates and validates RS256 JWT tokens with strict iss/aud/alg/kid claims."""
+
+    def _create_token(
+        self,
+        token_type: str,
+        sub: str,
+        extra: dict[str, Any],
+        default_delta: timedelta,
+        expires_delta: Optional[timedelta] = None,
+    ) -> str:
+        """Template method for token creation. All token types follow: expire + payload + sign."""
+        expire = datetime.now(timezone.utc) + (expires_delta or default_delta)
+        payload = {**self._base_claims(), "sub": sub, "type": token_type, "exp": expire, **extra}
+        return self._sign(payload)
 
     def _base_claims(self) -> dict[str, Any]:
         # `jti` makes every token unique even when (sub, type, iat) collide —
@@ -204,7 +220,12 @@ class TokenService:
             if not payload.get("type"):
                 raise TokenInvalidError("Token missing 'type' claim.")
 
-            return TokenPayload(payload)
+            return TokenPayload(
+                sub=str(payload.get("sub", "")),
+                token_type=payload.get("type", ""),
+                token_id=payload.get("token_id"),
+                tenant_id=payload.get("tenant_id"),
+            )
 
         except ExpiredSignatureError as exc:
             raise TokenExpiredError() from exc

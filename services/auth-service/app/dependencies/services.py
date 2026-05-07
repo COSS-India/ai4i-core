@@ -49,6 +49,10 @@ async def get_cache_service(
     return CacheService(redis)
 
 
+def get_token_service() -> TokenService:
+    return TokenService()
+
+
 async def get_role_service(
     db: AsyncSession = Depends(get_db),
 ) -> RoleService:
@@ -63,12 +67,13 @@ async def get_user_service(
 
 async def get_auth_service(
     db: AsyncSession = Depends(get_db),
+    token_service: TokenService = Depends(get_token_service),
     email_client: EmailClient = Depends(get_email_client),
 ) -> AuthService:
     return AuthService(
         user_repo=UserRepository(db),
         role_service=RoleService(RoleRepository(db)),
-        token_service=TokenService(),
+        token_service=token_service,
         credentials_repo=CredentialsRepository(db),
         refresh_token_repo=RefreshTokenRepository(db),
         verification_repo=VerificationRepository(db),
@@ -86,6 +91,7 @@ async def get_api_key_service(
 
 async def get_tenant_service(
     db: AsyncSession = Depends(get_db),
+    token_service: TokenService = Depends(get_token_service),
     email_client: EmailClient = Depends(get_email_client),
 ) -> TenantService:
     """Lightweight tenant service — only injects what's needed for user provisioning.
@@ -99,20 +105,21 @@ async def get_tenant_service(
         user_repo=UserRepository(db),
         role_service=RoleService(RoleRepository(db)),
         verification_repo=VerificationRepository(db),
-        token_service=TokenService(),
+        token_service=token_service,
         email_client=email_client,
     )
 
 
 async def get_oauth_service(
     db: AsyncSession = Depends(get_db),
+    token_service: TokenService = Depends(get_token_service),
     email_client: EmailClient = Depends(get_email_client),
 ) -> OAuthService:
     return OAuthService(
         user_repo=UserRepository(db),
         refresh_token_repo=RefreshTokenRepository(db),
         role_service=RoleService(RoleRepository(db)),
-        token_service=TokenService(),
+        token_service=token_service,
         email_client=email_client,
     )
 

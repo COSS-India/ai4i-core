@@ -4,6 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 T = TypeVar("T")
 
+# Fields that must never be overwritten via update() — PKs, audit fields, SQLAlchemy internals
+_IMMUTABLE_FIELDS = frozenset({"id", "created_at", "created_by", "_sa_instance_state"})
+
 
 class BaseRepository:
     def __init__(self, db: AsyncSession) -> None:
@@ -16,7 +19,7 @@ class BaseRepository:
 
     async def update(self, obj: T, data: dict) -> T:
         for key, value in data.items():
-            if hasattr(obj, key):
+            if key not in _IMMUTABLE_FIELDS and hasattr(obj, key):
                 setattr(obj, key, value)
         await self._db.flush()
         return obj

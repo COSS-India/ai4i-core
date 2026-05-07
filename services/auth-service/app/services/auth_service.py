@@ -5,10 +5,10 @@ change-password, and email-activation (provision + set-password).
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Optional
+from typing import Optional
 from uuid import UUID
 
-from ai4icore_email import EmailClient, EmailMessage
+from ai4icore_email import EmailClient
 from fastapi import BackgroundTasks
 
 from app.core.config import settings
@@ -22,7 +22,6 @@ from app.core.exceptions import (
     TokenInvalidError,
     TokenRevokedError,
     UserInactiveError,
-    ValidationError,
 )
 from app.models.credentials import UserCredentials
 from app.models.user import User, CreationType
@@ -41,7 +40,7 @@ from app.services.auth_email_templates import (
     render_welcome,
 )
 from app.core.security import password_manager
-from app.services.email_helpers import enqueue_email, resolve_tenant_id, setup_token_expires_at
+from app.services.email_helpers import enqueue_email, issue_session, persist_token_verification, resolve_tenant_id, setup_token_expires_at
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
 
@@ -75,6 +74,36 @@ class AuthService:
         if payload.token_type != expected_type:
             raise TokenInvalidError(f"Expected a '{expected_type}' token.")
         return payload
+
+    async def _resolve_verified_token(
+        self, token: str, token_type: str, link_name: str
+    ) -> tuple[TokenVerification, User]:
+        """Validate token and resolve both token record and user.
+
+        Args:
+            token: The JWT token string
+            token_type: Expected token type (VERIFY, RESET, SETUP, etc.)
+            link_name: User-friendly name for error messages (e.g., "verification link")
+
+        Returns:
+            Tuple of (TokenVerification record, User)
+
+        Raises:
+            TokenInvalidError: If token validation fails, record not found, already used, or user not found
+        """
+        payload = self._validate_token_of_type(token, token_type)
+
+        token_obj = await self._verifications.get_by_token(token)
+        if not token_obj:
+            raise TokenInvalidError(f"Invalid {link_name}.")
+        if not token_obj.is_active:
+            raise TokenInvalidError(f"{link_name.capitalize()} has already been used.")
+
+        user = await self._users.get_by_id(UUID(payload.sub))
+        if not user:
+            raise TokenInvalidError(f"Invalid {link_name}.")
+
+        return token_obj, user
 
     # ── Register (direct portal signup) ──
 
@@ -139,13 +168,12 @@ class AuthService:
             email=email,
             expires_delta=timedelta(hours=settings.setup_token_expire_hours),
         )
-        token_obj = TokenVerification(
-            token=verify_token,
-            is_active=True,
-            expires_at=setup_token_expires_at(),
-            created_by=user.id,
+        await persist_token_verification(
+            self._verifications,
+            verify_token,
+            user.id,
+            setup_token_expires_at(),
         )
-        await self._verifications.create(token_obj)
 
         await self._users.commit()
         logger.info("User registered (pending verification): %s (id=%s)", email, user.id)
@@ -163,17 +191,7 @@ class AuthService:
         has credentials (set during register), so this is a pure activation —
         no password change. Sends a welcome email after activation.
         """
-        payload = self._validate_token_of_type(token, TokenType.VERIFY)
-
-        token_obj = await self._verifications.get_by_token(token)
-        if not token_obj:
-            raise TokenInvalidError("Invalid verification link.")
-        if not token_obj.is_active:
-            raise TokenInvalidError("Verification link has already been used.")
-
-        user = await self._users.get_by_id(UUID(payload.sub))
-        if not user:
-            raise TokenInvalidError("Invalid verification link.")
+        token_obj, user = await self._resolve_verified_token(token, TokenType.VERIFY, "verification link")
 
         user.is_active = True
         await self._verifications.deactivate(token_obj)
@@ -210,13 +228,12 @@ class AuthService:
             email=email,
             expires_delta=timedelta(hours=settings.setup_token_expire_hours),
         )
-        token_obj = TokenVerification(
-            token=verify_token,
-            is_active=True,
-            expires_at=setup_token_expires_at(),
-            created_by=user.id,
+        await persist_token_verification(
+            self._verifications,
+            verify_token,
+            user.id,
+            setup_token_expires_at(),
         )
-        await self._verifications.create(token_obj)
         await self._users.commit()
 
         logger.info("Verification link resent for user id=%s", user.id)
@@ -252,13 +269,12 @@ class AuthService:
             email=email,
             expires_delta=timedelta(minutes=settings.reset_token_expire_minutes),
         )
-        token_obj = TokenVerification(
-            token=reset_token,
-            is_active=True,
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.reset_token_expire_minutes),
-            created_by=user.id,
+        await persist_token_verification(
+            self._verifications,
+            reset_token,
+            user.id,
+            datetime.now(timezone.utc) + timedelta(minutes=settings.reset_token_expire_minutes),
         )
-        await self._verifications.create(token_obj)
         await self._users.commit()
 
         logger.info("Password reset link issued for user id=%s", user.id)
@@ -276,17 +292,7 @@ class AuthService:
         out per security spec. Sends a password_changed notification."""
         password_manager.validate_and_confirm(new_password, confirm_password)
 
-        payload = self._validate_token_of_type(token, TokenType.RESET)
-
-        token_obj = await self._verifications.get_by_token(token)
-        if not token_obj:
-            raise TokenInvalidError("Invalid reset link.")
-        if not token_obj.is_active:
-            raise TokenInvalidError("Reset link has already been used.")
-
-        user = await self._users.get_by_id(UUID(payload.sub))
-        if not user:
-            raise TokenInvalidError("Invalid reset link.")
+        token_obj, user = await self._resolve_verified_token(token, TokenType.RESET, "reset link")
 
         creds = await self._credentials.get_by_user_id(user.id)
         if not creds:
@@ -305,11 +311,8 @@ class AuthService:
 
     # ── Login ──
 
-    async def login(self, email: str, password: str, background_tasks: Optional[BackgroundTasks] = None) -> LoginResponse:
-        """Authenticate a user and return access + refresh tokens.
-
-        Last login update is queued as background task — not critical for response.
-        """
+    async def login(self, email: str, password: str) -> LoginResponse:
+        """Authenticate a user and return access + refresh tokens."""
         user = await self._users.get_by_email(email)
         if not user:
             raise InvalidCredentialsError()
@@ -324,31 +327,16 @@ class AuthService:
         if not password_manager.verify_password(password, creds.password_hash, creds.password_salt):
             raise InvalidCredentialsError()
 
-        tenant_id = str(user.tenant_id) if user.tenant_id else None
-
-        permission_ids = await self._roles.get_user_permission_ids(user.id)
-
-        access_token = self._tokens.create_access_token(
-            user_id=str(user.id),
-            tenant_id=tenant_id,
-            permission_ids=permission_ids,
+        login_response = await issue_session(
+            user,
+            self._roles,
+            self._tokens,
+            self._refresh_tokens,
+            self._users,
         )
-        refresh_token = self._tokens.create_refresh_token(
-            user_id=str(user.id),
-            tenant_id=tenant_id,
-        )
-
-        await self._refresh_tokens.upsert(user.id, refresh_token)
-        user.last_login = datetime.now(timezone.utc)
-        await self._users.commit()
 
         logger.info("User logged in: %s (id=%s)", email, user.id)
-        return LoginResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            token_type="bearer",
-            expires_in=settings.access_token_expire_minutes * 60,
-        )
+        return login_response
 
     # ── Refresh ──
 
@@ -430,17 +418,7 @@ class AuthService:
         welcome email."""
         password_manager.validate_and_confirm(new_password, confirm_password)
 
-        payload = self._validate_token_of_type(token, TokenType.SETUP)
-
-        token_obj = await self._verifications.get_by_token(token)
-        if not token_obj:
-            raise TokenInvalidError("Invalid setup link.")
-        if not token_obj.is_active:
-            raise TokenInvalidError("Setup link has already been used.")
-
-        user = await self._users.get_by_id(UUID(payload.sub))
-        if not user:
-            raise TokenInvalidError("Invalid setup link.")
+        token_obj, user = await self._resolve_verified_token(token, TokenType.SETUP, "setup link")
 
         hash_result = password_manager.hash_password(new_password)
         creds = UserCredentials(
@@ -507,13 +485,12 @@ class AuthService:
             email=email,
             expires_delta=timedelta(hours=settings.setup_token_expire_hours),
         )
-        token_obj = TokenVerification(
-            token=setup_token,
-            is_active=True,
-            expires_at=setup_token_expires_at(),
-            created_by=user.id,
+        await persist_token_verification(
+            self._verifications,
+            setup_token,
+            user.id,
+            setup_token_expires_at(),
         )
-        await self._verifications.create(token_obj)
         await self._users.commit()
 
         logger.info("Setup link resent for user id=%s", user.id)
