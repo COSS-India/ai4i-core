@@ -67,12 +67,13 @@ async def get_user_service(
 
 async def get_auth_service(
     db: AsyncSession = Depends(get_db),
+    role_service: RoleService = Depends(get_role_service),
     token_service: TokenService = Depends(get_token_service),
     email_client: EmailClient = Depends(get_email_client),
 ) -> AuthService:
     return AuthService(
         user_repo=UserRepository(db),
-        role_service=RoleService(RoleRepository(db)),
+        role_service=role_service,
         token_service=token_service,
         credentials_repo=CredentialsRepository(db),
         refresh_token_repo=RefreshTokenRepository(db),
@@ -91,6 +92,7 @@ async def get_api_key_service(
 
 async def get_tenant_service(
     db: AsyncSession = Depends(get_db),
+    role_service: RoleService = Depends(get_role_service),
     token_service: TokenService = Depends(get_token_service),
     email_client: EmailClient = Depends(get_email_client),
 ) -> TenantService:
@@ -103,7 +105,7 @@ async def get_tenant_service(
     return TenantService(
         tenant_repo=TenantRepository(db),
         user_repo=UserRepository(db),
-        role_service=RoleService(RoleRepository(db)),
+        role_service=role_service,
         verification_repo=VerificationRepository(db),
         token_service=token_service,
         email_client=email_client,
@@ -112,13 +114,14 @@ async def get_tenant_service(
 
 async def get_oauth_service(
     db: AsyncSession = Depends(get_db),
+    role_service: RoleService = Depends(get_role_service),
     token_service: TokenService = Depends(get_token_service),
     email_client: EmailClient = Depends(get_email_client),
 ) -> OAuthService:
     return OAuthService(
         user_repo=UserRepository(db),
         refresh_token_repo=RefreshTokenRepository(db),
-        role_service=RoleService(RoleRepository(db)),
+        role_service=role_service,
         token_service=token_service,
         email_client=email_client,
     )
