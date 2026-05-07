@@ -15,12 +15,15 @@ import json
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.jwt_verifier import JWTExpiredError, JWTVerificationError
-
+from app.core.database import get_db
+from app.core.redis import get_redis
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError
 from app.dependencies.auth import _check_token_revocation, get_jwt_verifier
 from app.dependencies.services import get_api_key_service, get_cache_service
+from app.repositories.api_key_repository import APIKeyRepository
 from app.schemas.api_key import ValidateAPIKeyErrorResponse, ValidateAPIKeyResponse
 from app.schemas.token import TokenValidationResponse
 from app.services.api_key_service import APIKeyService
@@ -173,13 +176,26 @@ async def _validate_jwt(
 async def validate_token(
     request: Request,
     response: Response,
-    cache_svc: CacheService = Depends(get_cache_service),
-    api_key_svc: APIKeyService = Depends(get_api_key_service),
+    db: AsyncSession = Depends(get_db),
+    redis = Depends(get_redis),
 ):
-    """Step 1: identify (anon / API key / JWT). Step 2: each branch authorizes."""
+    """Step 1: identify (anon / API key / JWT). Step 2: each branch authorizes.
+
+    Optimized: Only instantiate services for the token type we actually have.
+    - No token: zero service instantiation
+    - JWT: only cache_svc
+    - API key: only api_key_svc
+    """
     token = _extract_token(request)
     if not token:
         return await _validate_anonymous(request)
+
     if is_jwt_strict(token):
+        cache_svc = CacheService(redis)
         return await _validate_jwt(token, request, response, cache_svc)
+
+    # API key path: instantiate only api_key_svc
+    cache_svc = CacheService(redis)
+    api_key_repo = APIKeyRepository(db)
+    api_key_svc = APIKeyService(api_key_repo, cache_svc)
     return await _validate_api_key(token, request, response, api_key_svc)
