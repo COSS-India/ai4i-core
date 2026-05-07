@@ -31,7 +31,7 @@ from app.core.database import close_database, init_database
 from app.core.exceptions import register_exception_handlers
 from app.core.redis import close_redis, init_redis
 from app.core.security import key_manager
-from app.dependencies.auth import get_jwt_verifier, init_jwt_verifier
+from app.dependencies.auth import init_jwt_verifier
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.routes import api_router, versioning
 from app.services.role_permission_cache import role_permission_cache
