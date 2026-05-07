@@ -84,9 +84,9 @@ class RolePermissionCache:
                 await self.reload()
             except asyncio.CancelledError:
                 raise
-            except (OSError, SQLAlchemyError) as exc:
+            except (OSError, SQLAlchemyError):
                 logger.exception("RolePermissionCache refresh failed (database/network issue); will retry next cycle.")
-            except Exception as exc:
+            except Exception:
                 logger.exception("RolePermissionCache refresh failed with unexpected error; will retry next cycle.")
 
 

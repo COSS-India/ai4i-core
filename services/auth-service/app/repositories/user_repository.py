@@ -43,10 +43,6 @@ class UserRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
-    async def update_last_login(self, user: User) -> None:
-        user.last_login = datetime.now(timezone.utc)
-        await self._db.flush()
-
     async def list_all(self, offset: int = 0, limit: int = 100) -> list[User]:
         result = await self._db.execute(
             select(User)

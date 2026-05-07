@@ -48,6 +48,7 @@ async def init_jwt_verifier() -> None:
     verifier = JWTVerifier(
         issuer=settings.jwt_issuer,
         audience=settings.jwt_audience,
+        http_timeout_seconds=settings.jwks_http_timeout_seconds,
     )
 
     for pair in key_manager.get_all_public_keys():
@@ -61,7 +62,7 @@ async def init_jwt_verifier() -> None:
     logger.info("Shared JWTVerifier initialized with %d public keys.", verifier.loaded_key_count)
 
 
-async def _check_token_revocation(
+async def check_token_revocation(
     token_id: str,
     token_type: str | None,
     cache_service: CacheService,

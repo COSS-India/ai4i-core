@@ -3,16 +3,11 @@ Authentication routes: register, login, logout, refresh, password management,
 and email activation (provision + set-password).
 """
 
-from datetime import timedelta
-
-import redis.asyncio as aioredis
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from app.core.config import settings
-from app.core.redis import get_redis
 from app.core.responses import success_response
 from app.dependencies.auth import get_current_user
-from app.dependencies.rate_limit import enforce_rate_limit
 from app.dependencies.services import get_auth_service
 from app.models.user import User
 from app.schemas.auth import (
@@ -93,23 +88,13 @@ async def forgot_password(
     body: ForgotPasswordRequest,
     background_tasks: BackgroundTasks,
     svc: AuthService = Depends(get_auth_service),
-    redis: aioredis.Redis = Depends(get_redis),
 ):
     """Request a password-reset link.
 
     Anti-enumeration: returns the same generic 200 message regardless of
-    whether the email matches a real, active account. Rate-limited per email
-    per spec (3 / hour).
+    whether the email matches a real, active account. Rate-limiting is handled
+    at the gateway (APISIX) level.
     """
-    # Per-email rate limit (case-insensitive key)
-    await enforce_rate_limit(
-        redis,
-        f"forgot_password:{body.email.lower()}",
-        limit=settings.reset_request_limit_per_hour,
-        window_seconds=int(timedelta(hours=1).total_seconds()),
-        error_code="RESET_RATE_LIMITED",
-        error_message="Too many reset requests for this email. Try again later.",
-    )
     await svc.request_password_reset(email=body.email, background_tasks=background_tasks)
     return success_response(data={
         "message": "If this email is registered, you'll receive a reset link shortly.",
@@ -233,11 +218,10 @@ async def resend_setup_link(
     svc: AuthService = Depends(get_auth_service),
 ):
     """Invalidate existing setup tokens and issue a new one for the given email."""
-    setup_token = await svc.resend_setup_link(
+    await svc.resend_setup_link(
         email=body.email,
         background_tasks=background_tasks,
     )
     return success_response(data={
         "message": "New setup link issued.",
-        "setup_token": setup_token,
     })

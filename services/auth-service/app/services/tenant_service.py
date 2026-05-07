@@ -37,6 +37,7 @@ from app.schemas.tenant import (
     TenantUserUpdate,
 )
 from app.services.auth_email_templates import render_setup_link
+from app.services.email_helpers import enqueue_email, resolve_tenant_id, setup_token_expires_at
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
 
@@ -81,56 +82,6 @@ class TenantService:
         roles = await self._roles.get_user_roles(user.id)
         return RoleName.ADMIN.value in roles or RoleName.MODERATOR.value in roles
 
-    def _enqueue_email(
-        self,
-        background_tasks: Optional[BackgroundTasks],
-        factory: Callable[[], EmailMessage],
-    ) -> None:
-        """Render and enqueue a send_safe call.
-
-        ``factory`` is a zero-arg callable that returns an EmailMessage. Render
-        is wrapped in try/except so a template/URL bug never 5xx's a request
-        whose DB commit already succeeded — orphan-row prevention. Render
-        failures are logged at ERROR for ops to catch via metrics.
-
-        Silent no-op when no BackgroundTasks available (e.g. tests calling the
-        service directly without a request).
-        """
-        if background_tasks is None:
-            return
-        try:
-            message = factory()
-        except Exception as exc:
-            logger.error(
-                "email render failed: error=%s",
-                exc.__class__.__name__,
-            )
-            return
-        background_tasks.add_task(self._email.send_safe, message)
-
-    def _setup_token_expires_at(self) -> datetime:
-        return datetime.now(timezone.utc) + timedelta(hours=settings.setup_token_expire_hours)
-
-    async def _resolve_tenant_id(self, explicit: Optional[int | str]) -> Optional[int]:
-        """Honor an explicit tenant_id, otherwise fall back to the default tenant."""
-        if explicit is not None:
-            try:
-                return int(explicit)
-            except (TypeError, ValueError) as exc:
-                raise ValidationError(
-                    message="Invalid tenant_id.",
-                    code="INVALID_TENANT_ID",
-                    errors=[f"tenant_id must be an integer, got: {explicit!r}"],
-                ) from exc
-        default = await self._tenants.get_by_organisation(settings.default_tenant_org)
-        if default is None:
-            logger.warning(
-                "Default tenant '%s' not found; user will be created without a tenant_id.",
-                settings.default_tenant_org,
-            )
-            return None
-        return default.id
-
     async def provision_user(
         self,
         email: str,
@@ -154,8 +105,11 @@ class TenantService:
         if await self._users.get_by_username(username):
             raise DuplicateEntityError("User", "username")
 
-        parsed_tenant_id = await self._resolve_tenant_id(tenant_id)
-        creation = CreationType(creation_type) if creation_type in CreationType._value2member_map_ else CreationType.DEFAULT
+        parsed_tenant_id = await resolve_tenant_id(tenant_id, self._tenants)
+        try:
+            creation = CreationType(creation_type)
+        except ValueError:
+            creation = CreationType.DEFAULT
 
         user = User(
             email=email,
@@ -183,14 +137,14 @@ class TenantService:
         token_obj = TokenVerification(
             token=setup_token,
             is_active=True,
-            expires_at=self._setup_token_expires_at(),
+            expires_at=setup_token_expires_at(),
             created_by=user.id,
         )
         await self._verifications.create(token_obj)
         await self._users.commit()
 
         logger.info("User provisioned (no credentials): %s (id=%s)", email, user.id)
-        self._enqueue_email(background_tasks, lambda: render_setup_link(user, setup_token))
+        enqueue_email(background_tasks, self._email, lambda: render_setup_link(user, setup_token))
         return user_id_str, setup_token
 
     async def enforce_scope(self, user: User, target_tenant_id: int) -> None:

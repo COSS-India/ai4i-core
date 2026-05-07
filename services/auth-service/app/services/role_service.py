@@ -93,11 +93,8 @@ class RoleService:
             excluded_resources=self._expanded_excluded_resources_for_platform_inference(),
         )
 
-    async def _managed_guest_inference_permissions(self) -> list[Permission]:
-        return await self.list_inference_permissions()
-
     async def assign_guest_inference_services(self, services: list[str]) -> list[str]:
-        managed = await self._managed_guest_inference_permissions()
+        managed = await self.list_inference_permissions()
         by_norm_resource: dict[str, Permission] = {}
         for perm in managed:
             key = _normalize_service_slug(perm.resource)
@@ -150,7 +147,7 @@ class RoleService:
         if not guest:
             raise EntityNotFoundError(f"Role '{RoleName.GUEST.value}'")
 
-        managed = await self._managed_guest_inference_permissions()
+        managed = await self.list_inference_permissions()
         managed_id_set = {p.id for p in managed}
         id_to_resource = {p.id: p.resource for p in managed}
 

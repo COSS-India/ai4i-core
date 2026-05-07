@@ -33,15 +33,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/oauth2", tags=["OAuth2"])
 
-# State token lifetime — bounds how long a user can sit on the provider
-# consent screen before /callback. 10 min keeps the window small enough
-# that a stolen state value is hard to weaponize.
-_OAUTH_STATE_TTL_SECONDS = 10 * 60
-
-# One-time exchange code lifetime — the SPA must POST /exchange this
-# fast. Short TTL keeps the credential exposure window minimal.
-_EXCHANGE_CODE_TTL_SECONDS = 2 * 60
-
 
 def _is_redirect_allowed(uri: str) -> bool:
     """Validate redirect_uri against the configured allowlist.
@@ -111,15 +102,13 @@ async def authorize(
     # Validate redirect_uri BEFORE persisting in state — never store an
     # untrusted target that we'd later redirect back to.
     if redirect_uri and not _is_redirect_allowed(redirect_uri):
-        raise AuthenticationRequiredError(
-            f"Redirect URI not allowed: {redirect_uri}. "
-            "Configure OAUTH_ALLOWED_REDIRECT_URIS."
-        )
+        logger.warning("OAuth redirect URI not allowed: %s", redirect_uri)
+        raise AuthenticationRequiredError("Redirect URI is not allowed.")
 
     state = secrets.token_urlsafe(32)
     await redis_client.setex(
         f"auth:oauth_state:{state}",
-        _OAUTH_STATE_TTL_SECONDS,
+        settings.oauth_state_ttl_seconds,
         json.dumps({"provider": provider, "redirect_uri": redirect_uri or ""}),
     )
 
@@ -206,7 +195,7 @@ async def callback(
         exchange_code = secrets.token_urlsafe(32)
         await redis_client.setex(
             f"auth:oauth_exchange:{exchange_code}",
-            _EXCHANGE_CODE_TTL_SECONDS,
+            settings.oauth_exchange_code_ttl_seconds,
             json.dumps(result),
         )
         params = urlencode({"code": exchange_code})

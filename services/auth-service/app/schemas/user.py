@@ -2,20 +2,13 @@
 User request/response schemas.
 """
 
-from enum import Enum
 from typing import Optional
 from uuid import UUID
 
 from pydantic import AliasChoices, EmailStr, Field
 
+from app.models.user import CreationType
 from app.schemas.base import BaseSchema
-
-
-class CreationType(str, Enum):
-    """Must match Postgres `creation_type_enum` and ORM `app.models.user.CreationType`."""
-
-    DEFAULT = "default"
-    GOOGLE = "google"
 
 
 class UserUpdate(BaseSchema):

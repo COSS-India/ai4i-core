@@ -7,11 +7,16 @@ Every service imports and uses this — no service-local JWT verification.
 RS256 only — JWKS-based public key verification.
 """
 
+import base64
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicNumbers
 from jose import jwt, JWTError, ExpiredSignatureError
+import httpx
 
 from ai4icore_exceptions import (
     TokenExpiredError,
@@ -66,11 +71,12 @@ class JWTVerifier:
         jwks_url: Optional[str] = None,
         issuer: Optional[str] = None,
         audience: Optional[str] = None,
+        http_timeout_seconds: float = 10.0,
     ) -> None:
         self._jwks_url = jwks_url
         self._issuer = issuer
         self._audience = audience
-        self._jwks: dict[str, Any] = {}
+        self._http_timeout_seconds = http_timeout_seconds
         self._public_keys: dict[str, bytes] = {}  # kid → PEM bytes
 
     # ── Public key management ──
@@ -100,16 +106,14 @@ class JWTVerifier:
 
     async def _refresh_jwks(self) -> None:
         """Fetch the JWKS from the auth service."""
-        import httpx
-
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=self._http_timeout_seconds) as client:
                 resp = await client.get(self._jwks_url)
                 resp.raise_for_status()
-                self._jwks = resp.json()
+                jwks = resp.json()
 
             self._public_keys = {}
-            for jwk in self._jwks.get("keys", []):
+            for jwk in jwks.get("keys", []):
                 kid = jwk.get("kid")
                 if kid:
                     try:
@@ -122,7 +126,7 @@ class JWTVerifier:
 
         except httpx.HTTPError as exc:
             if not self._public_keys:
-                raise RuntimeError(f"Cannot load JWKS from {self._jwks_url}: {exc}")
+                raise RuntimeError(f"Cannot load JWKS from {self._jwks_url}: {exc}") from exc
             logger.error(
                 "JWKS refresh failed — using %d stale key(s). "
                 "Token verification may accept revoked keys. Error: %s",
@@ -132,11 +136,6 @@ class JWTVerifier:
     @staticmethod
     def _jwk_to_pem(jwk: dict) -> bytes:
         """Convert a JWK RSA public key to PEM bytes."""
-        import base64
-        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicNumbers
-        from cryptography.hazmat.primitives import serialization
-        from cryptography.hazmat.backends import default_backend
-
         def _b64url_decode(data: str) -> bytes:
             padding = 4 - len(data) % 4
             return base64.urlsafe_b64decode(data + "=" * padding)
@@ -163,15 +162,15 @@ class JWTVerifier:
 
         try:
             header = jwt.get_unverified_header(token)
-        except JWTError:
-            raise JWTVerificationError("Invalid token header.")
+        except JWTError as exc:
+            raise JWTVerificationError("Invalid token header.") from exc
 
         kid = header.get("kid")
         alg = header.get("alg")
 
         if not kid:
             raise JWTVerificationError("Token header missing 'kid'.")
-        if alg is not None and alg != "RS256":
+        if alg != "RS256":
             raise JWTVerificationError(f"Unsupported algorithm '{alg}'. Expected RS256.")
 
         pem = self._public_keys.get(kid)
@@ -189,11 +188,11 @@ class JWTVerifier:
 
         try:
             payload = jwt.decode(token, pem, **decode_kwargs)
-        except ExpiredSignatureError:
-            raise JWTExpiredError()
+        except ExpiredSignatureError as exc:
+            raise JWTExpiredError() from exc
         except JWTError as exc:
             logger.debug("RS256 verification failed: %s", exc)
-            raise JWTVerificationError("Token verification failed.")
+            raise JWTVerificationError("Token verification failed.") from exc
 
         return self._payload_to_claims(payload)
 

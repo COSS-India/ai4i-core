@@ -80,6 +80,10 @@ class AuthSettings(BaseSettings):
     argon2_salt_length: int = 16
     default_hash_rounds: int = 12
 
+    # ── HTTP Timeouts ──
+    # JWKS endpoint timeout for JWT verification
+    jwks_http_timeout_seconds: float = 10.0
+
     # ── OAuth ──
     google_client_id: Optional[str] = None
     google_client_secret: Optional[str] = None
@@ -87,6 +91,12 @@ class AuthSettings(BaseSettings):
     # Comma-separated allowlist of allowed OAuth client redirect URIs.
     # Prevents open redirect / token leakage attacks.
     oauth_allowed_redirect_uris: str = ""
+    # OAuth state token TTL (seconds) — bounds time on provider consent screen
+    oauth_state_ttl_seconds: int = 600  # 10 minutes
+    # OAuth exchange code TTL (seconds) — SPA must POST /exchange within this time
+    oauth_exchange_code_ttl_seconds: int = 120  # 2 minutes
+    # HTTP request timeout (seconds) for external OAuth provider calls
+    oauth_http_timeout_seconds: int = 10
 
     # ── Guest login (POST /auth/guest/login) — must match guest user email seeded in auth_db ──
     guest_email: Optional[str] = None

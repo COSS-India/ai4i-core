@@ -41,6 +41,7 @@ from app.services.auth_email_templates import (
     render_welcome,
 )
 from app.core.security import password_manager
+from app.services.email_helpers import enqueue_email, resolve_tenant_id, setup_token_expires_at
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
 
@@ -68,62 +69,12 @@ class AuthService:
         self._tenants = tenant_repo
         self._email = email_client
 
-    def _enqueue_email(
-        self,
-        background_tasks: Optional[BackgroundTasks],
-        factory: Callable[[], EmailMessage],
-    ) -> None:
-        """Render and enqueue a send_safe call.
-
-        ``factory`` is a zero-arg callable that returns an EmailMessage. Render
-        is wrapped in try/except so a template/URL bug never 5xx's a request
-        whose DB commit already succeeded — orphan-row prevention. Render
-        failures are logged at ERROR for ops to catch via metrics.
-
-        Silent no-op when no BackgroundTasks available (e.g. tests calling the
-        service directly without a request).
-        """
-        if background_tasks is None:
-            return
-        try:
-            message = factory()
-        except Exception as exc:
-            logger.error(
-                "email render failed: error=%s",
-                exc.__class__.__name__,
-            )
-            return
-        background_tasks.add_task(self._email.send_safe, message)
-
-    def _setup_token_expires_at(self) -> datetime:
-        return datetime.now(timezone.utc) + timedelta(hours=settings.setup_token_expire_hours)
-
     def _validate_token_of_type(self, token: str, expected_type: str):
         """Validate a JWT and assert its type. Raises TokenExpiredError / TokenInvalidError on failure."""
         payload = self._tokens.validate_token(token)
         if payload.token_type != expected_type:
             raise TokenInvalidError(f"Expected a '{expected_type}' token.")
         return payload
-
-    async def _resolve_tenant_id(self, explicit: Optional[int | str]) -> Optional[int]:
-        """Honor an explicit tenant_id, otherwise fall back to the default tenant."""
-        if explicit is not None:
-            try:
-                return int(explicit)
-            except (TypeError, ValueError) as exc:
-                raise ValidationError(
-                    message="Invalid tenant_id.",
-                    code="INVALID_TENANT_ID",
-                    errors=[f"tenant_id must be an integer, got: {explicit!r}"],
-                ) from exc
-        default = await self._tenants.get_by_organisation(settings.default_tenant_org)
-        if default is None:
-            logger.warning(
-                "Default tenant '%s' not found; user will be created without a tenant_id.",
-                settings.default_tenant_org,
-            )
-            return None
-        return default.id
 
     # ── Register (direct portal signup) ──
 
@@ -154,7 +105,7 @@ class AuthService:
         if await self._users.get_by_username(username):
             raise DuplicateEntityError("User", "username")
 
-        parsed_tenant_id = await self._resolve_tenant_id(tenant_id)
+        parsed_tenant_id = await resolve_tenant_id(tenant_id, self._tenants)
 
         user = User(
             email=email,
@@ -191,14 +142,14 @@ class AuthService:
         token_obj = TokenVerification(
             token=verify_token,
             is_active=True,
-            expires_at=self._setup_token_expires_at(),
+            expires_at=setup_token_expires_at(),
             created_by=user.id,
         )
         await self._verifications.create(token_obj)
 
         await self._users.commit()
         logger.info("User registered (pending verification): %s (id=%s)", email, user.id)
-        self._enqueue_email(background_tasks, lambda: render_verify_email(user, verify_token))
+        enqueue_email(background_tasks, self._email, lambda: render_verify_email(user, verify_token))
         return user
 
     # ── Email verification (consumes verify_token) ──
@@ -228,7 +179,7 @@ class AuthService:
         await self._verifications.deactivate(token_obj)
         await self._users.commit()
         logger.info("Email verified for user id=%s", user.id)
-        self._enqueue_email(background_tasks, lambda: render_welcome(user))
+        enqueue_email(background_tasks, self._email, lambda: render_welcome(user))
 
     # ── Email verification: Resend ──
 
@@ -236,33 +187,20 @@ class AuthService:
         self,
         email: str,
         background_tasks: Optional[BackgroundTasks] = None,
-    ) -> str:
+    ) -> None:
         """Invalidate any active verify tokens for this user and issue a new one.
 
-        Eligible only for users who registered via /auth/register but never
-        clicked the verify link — i.e. user has credentials AND is_active=False.
-        Distinct from resend_setup_link, which targets users with NO credentials.
+        Anti-enumeration: always returns successfully. Only sends email to users
+        who registered via /auth/register, have credentials, and are inactive.
+        Silently skips for non-existent users, already-active users, or passwordless accounts.
         """
         user = await self._users.get_by_email(email)
-        if not user:
-            raise EntityNotFoundError("User")
-
-        if user.is_active:
-            raise ValidationError(
-                message="Email already verified.",
-                code="ALREADY_VERIFIED",
-                errors=["This account is already active. Sign in instead."],
-            )
+        if not user or user.is_active:
+            return  # anti-enumeration: silent no-op
 
         existing_creds = await self._credentials.get_by_user_id(user.id)
         if not existing_creds:
-            # No credentials → this user came from the setup-link flow, not the
-            # verify-email flow. Direct them to the right resend endpoint.
-            raise ValidationError(
-                message="This account has not set a password yet.",
-                code="NO_CREDENTIALS",
-                errors=["Use /auth/resend-setup-link to receive a setup link."],
-            )
+            return  # silent no-op — no credentials (wrong resend flow)
 
         user_id_str = str(user.id)
         await self._verifications.deactivate_all_for_user(user_id_str)
@@ -275,15 +213,14 @@ class AuthService:
         token_obj = TokenVerification(
             token=verify_token,
             is_active=True,
-            expires_at=self._setup_token_expires_at(),
+            expires_at=setup_token_expires_at(),
             created_by=user.id,
         )
         await self._verifications.create(token_obj)
         await self._users.commit()
 
         logger.info("Verification link resent for user id=%s", user.id)
-        self._enqueue_email(background_tasks, lambda: render_verify_email(user, verify_token))
-        return verify_token
+        enqueue_email(background_tasks, self._email, lambda: render_verify_email(user, verify_token))
 
     # ── Password reset (forgot-password flow) ──
 
@@ -325,7 +262,7 @@ class AuthService:
         await self._users.commit()
 
         logger.info("Password reset link issued for user id=%s", user.id)
-        self._enqueue_email(background_tasks, lambda: render_password_reset(user, reset_token))
+        enqueue_email(background_tasks, self._email, lambda: render_password_reset(user, reset_token))
 
     async def reset_password_with_token(
         self,
@@ -364,7 +301,7 @@ class AuthService:
         await self._refresh_tokens.delete_by_user_id(user.id)
         await self._credentials.commit()
         logger.info("Password reset for user id=%s; refresh tokens revoked", user.id)
-        self._enqueue_email(background_tasks, lambda: render_password_changed(user))
+        enqueue_email(background_tasks, self._email, lambda: render_password_changed(user))
 
     # ── Login ──
 
@@ -402,14 +339,8 @@ class AuthService:
         )
 
         await self._refresh_tokens.upsert(user.id, refresh_token)
+        user.last_login = datetime.now(timezone.utc)
         await self._users.commit()
-
-        # Queue last_login update as background task (not critical for immediate response)
-        if background_tasks:
-            async def update_login_time():
-                user.last_login = datetime.now(timezone.utc)
-                await self._users.commit()
-            background_tasks.add_task(update_login_time)
 
         logger.info("User logged in: %s (id=%s)", email, user.id)
         return LoginResponse(
@@ -484,75 +415,7 @@ class AuthService:
         await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
         await self._credentials.commit()
         logger.info("Password changed for user id=%s", user.id)
-        self._enqueue_email(background_tasks, lambda: render_password_changed(user))
-
-    # ── Email Activation: Provision User ──
-
-    async def provision_user(
-        self,
-        email: str,
-        username: str,
-        full_name: Optional[str] = None,
-        phone_number: Optional[str] = None,
-        tenant_id: Optional[int | str] = None,
-        creation_type: str = "default",
-        role_name: str = RoleName.USER,
-        background_tasks: Optional[BackgroundTasks] = None,
-    ) -> tuple[str, str]:
-        """
-        Create an inactive user without credentials and generate a setup token.
-        Used by the tenant-user provisioning route during tenant user onboarding.
-        Returns (user_id_str, setup_token).
-
-        ``role_name`` decides which role is assigned. Default ``RoleName.USER``
-        for regular tenant members; pass ``RoleName.TENANT_ADMIN`` when
-        provisioning the first admin user of a new tenant.
-        """
-        if await self._users.get_by_email(email):
-            raise DuplicateEntityError("User", "email")
-        if await self._users.get_by_username(username):
-            raise DuplicateEntityError("User", "username")
-
-        parsed_tenant_id = await self._resolve_tenant_id(tenant_id)
-        # `CreationType` in the ORM currently supports only "default" and "google".
-        # Treat any unknown creation_type input as DEFAULT.
-        creation = CreationType(creation_type) if creation_type in CreationType._value2member_map_ else CreationType.DEFAULT
-
-        user = User(
-            email=email,
-            username=username,
-            full_name=full_name,
-            phone_number=phone_number,
-            tenant_id=parsed_tenant_id,
-            is_active=False,
-            creation_type=creation,
-        )
-        await self._users.create(user)
-
-        try:
-            await self._roles.assign_role(user.id, role_name)
-        except EntityNotFoundError:
-            logger.warning("Role %r not found, skipping role assignment.", role_name)
-
-        user_id_str = str(user.id)
-        setup_token = self._tokens.create_setup_token(
-            user_id=user_id_str,
-            email=email,
-            expires_delta=timedelta(hours=settings.setup_token_expire_hours),
-        )
-
-        token_obj = TokenVerification(
-            token=setup_token,
-            is_active=True,
-            expires_at=self._setup_token_expires_at(),
-            created_by=user.id,
-        )
-        await self._verifications.create(token_obj)
-        await self._users.commit()
-
-        logger.info("User provisioned (no credentials): %s (id=%s)", email, user.id)
-        self._enqueue_email(background_tasks, lambda: render_setup_link(user, setup_token))
-        return user_id_str, setup_token
+        enqueue_email(background_tasks, self._email, lambda: render_password_changed(user))
 
     # ── Email Activation: Set Password ──
 
@@ -591,7 +454,7 @@ class AuthService:
         await self._verifications.deactivate(token_obj)
         await self._users.commit()
         logger.info("Password set via activation link for user id=%s", user.id)
-        self._enqueue_email(background_tasks, lambda: render_welcome(user))
+        enqueue_email(background_tasks, self._email, lambda: render_welcome(user))
 
     # ── Email Activation: Token Status ──
 
@@ -621,19 +484,20 @@ class AuthService:
         self,
         email: str,
         background_tasks: Optional[BackgroundTasks] = None,
-    ) -> str:
-        """Invalidate old setup tokens and issue a new one."""
+    ) -> None:
+        """Invalidate old setup tokens and issue a new one.
+
+        Anti-enumeration: always returns successfully. Only sends email to users
+        who have NOT yet set a password (no credentials). Silently skips for
+        non-existent users or already-activated users.
+        """
         user = await self._users.get_by_email(email)
         if not user:
-            raise EntityNotFoundError("User")
+            return  # anti-enumeration: silent no-op
 
         existing_creds = await self._credentials.get_by_user_id(user.id)
         if existing_creds:
-            raise ValidationError(
-                message="User has already set a password.",
-                code="ALREADY_ACTIVATED",
-                errors=["Cannot resend setup link for an already-activated account."],
-            )
+            return  # silent no-op — user already activated
 
         user_id_str = str(user.id)
         await self._verifications.deactivate_all_for_user(user_id_str)
@@ -646,12 +510,11 @@ class AuthService:
         token_obj = TokenVerification(
             token=setup_token,
             is_active=True,
-            expires_at=self._setup_token_expires_at(),
+            expires_at=setup_token_expires_at(),
             created_by=user.id,
         )
         await self._verifications.create(token_obj)
         await self._users.commit()
 
         logger.info("Setup link resent for user id=%s", user.id)
-        self._enqueue_email(background_tasks, lambda: render_setup_link(user, setup_token))
-        return setup_token
+        enqueue_email(background_tasks, self._email, lambda: render_setup_link(user, setup_token))

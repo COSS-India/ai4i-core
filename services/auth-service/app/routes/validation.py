@@ -24,7 +24,7 @@ from app.core.jwt_verifier import JWTExpiredError, JWTVerificationError
 from app.core.database import get_db
 from app.core.redis import get_redis
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError
-from app.dependencies.auth import _check_token_revocation, get_jwt_verifier
+from app.dependencies.auth import check_token_revocation, get_jwt_verifier
 from app.dependencies.services import get_api_key_service, get_cache_service
 from app.repositories.api_key_repository import APIKeyRepository
 from app.schemas.api_key import ValidateAPIKeyErrorResponse, ValidateAPIKeyResponse
@@ -146,7 +146,7 @@ async def _validate_jwt(
     except JWTVerificationError:
         return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_INVALID", "message": "Token is invalid."})
 
-    if claims.token_id and await _check_token_revocation(
+    if claims.token_id and await check_token_revocation(
         claims.token_id, claims.token_type, cache_svc,
     ):
         return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_REVOKED", "message": "Token has been revoked."})

@@ -39,6 +39,7 @@ class TokenPayload:
         self.sub: str = str(data.get("sub", ""))
         self.token_type: str = data.get("type", "")
         self.token_id: Optional[str] = data.get("token_id")
+        self.tenant_id: Optional[str] = data.get("tenant_id")
 
 
 class TokenService:
@@ -178,7 +179,7 @@ class TokenService:
 
             if not kid:
                 raise TokenInvalidError("Token header missing 'kid'.")
-            if alg and alg != "RS256":
+            if alg != "RS256":
                 raise TokenInvalidError(f"Unsupported algorithm '{alg}'. Expected RS256.")
 
             public_key = key_manager.get_public_key(kid)
@@ -208,13 +209,13 @@ class TokenService:
         except ExpiredSignatureError as exc:
             raise TokenExpiredError() from exc
         except JWTError as exc:
-            raise TokenInvalidError(f"Invalid token: {exc}") from exc
+            raise TokenInvalidError("Token validation failed.") from exc
         except TokenExpiredError:
             raise
         except TokenInvalidError:
             raise
         except ValueError as exc:
-            raise TokenInvalidError(str(exc)) from exc
+            raise TokenInvalidError("Token validation failed.") from exc
 
     # ── Internal ──
 

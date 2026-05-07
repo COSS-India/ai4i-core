@@ -28,6 +28,7 @@ from ai4icore_email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks
 
 from app.core.config import settings
+from app.services.email_helpers import enqueue_email
 from app.core.exceptions import AuthenticationRequiredError, EntityNotFoundError
 from app.models.role_name import RoleName
 from app.models.user import CreationType, User
@@ -68,25 +69,6 @@ class OAuthService:
         self._tokens = token_service
         self._email = email_client
 
-    # ── Email helper (mirrors AuthService._enqueue_email) ──
-
-    def _enqueue_email(
-        self,
-        background_tasks: Optional[BackgroundTasks],
-        factory: Callable[[], EmailMessage],
-    ) -> None:
-        """Render in foreground (so a template bug fails fast & gets logged)
-        and enqueue ``send_safe`` for the actual delivery. Render is wrapped
-        so a bug never 5xx's a callback whose DB commit already succeeded."""
-        if background_tasks is None:
-            return
-        try:
-            message = factory()
-        except Exception as exc:
-            logger.error("email render failed: error=%s", exc.__class__.__name__)
-            return
-        background_tasks.add_task(self._email.send_safe, message)
-
     # ── Provider config ──
 
     def get_provider_config(self, provider: str) -> dict:
@@ -121,7 +103,7 @@ class OAuthService:
         """Exchange authorization code for OAuth tokens."""
         config = self.get_provider_config(provider)
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=settings.oauth_http_timeout_seconds) as client:
                 resp = await client.post(
                     config["token_url"],
                     data={
@@ -153,7 +135,7 @@ class OAuthService:
         today; the response shape mapping below assumes Google's userinfo."""
         config = self.get_provider_config(provider)
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=settings.oauth_http_timeout_seconds) as client:
                 resp = await client.get(
                     config["userinfo_url"],
                     headers={"Authorization": f"Bearer {access_token}"},
@@ -169,6 +151,7 @@ class OAuthService:
             "email": userinfo.get("email"),
             "full_name": userinfo.get("name"),
             "avatar_url": userinfo.get("picture"),
+            "email_verified": userinfo.get("verified_email", userinfo.get("email_verified", False)),
         }
 
     # ── Account resolution ──
@@ -202,11 +185,10 @@ class OAuthService:
         # Map provider to CreationType. Known providers get their own enum
         # value; unknown providers fall back to DEFAULT until an OTHERS
         # variant is added to the creation_type_enum in the DB.
-        creation_type = (
-            CreationType(provider_name.lower())
-            if provider_name.lower() in CreationType._value2member_map_
-            else CreationType.DEFAULT
-        )
+        try:
+            creation_type = CreationType(provider_name.lower())
+        except ValueError:
+            creation_type = CreationType.DEFAULT
 
         user = User(
             email=email,
@@ -248,6 +230,8 @@ class OAuthService:
             raise AuthenticationRequiredError(
                 "Could not retrieve email from OAuth provider."
             )
+        if not userinfo.get("email_verified"):
+            raise AuthenticationRequiredError("OAuth email address is not verified.")
 
         user, was_created = await self._find_or_create_user(
             email=email,
@@ -275,7 +259,7 @@ class OAuthService:
         await self._users.commit()
 
         if was_created:
-            self._enqueue_email(background_tasks, lambda: render_welcome(user))
+            enqueue_email(background_tasks, self._email, lambda: render_welcome(user))
 
         logger.info("OAuth login: %s via %s (user_id=%s)", email, provider, user.id)
         return LoginResponse(
