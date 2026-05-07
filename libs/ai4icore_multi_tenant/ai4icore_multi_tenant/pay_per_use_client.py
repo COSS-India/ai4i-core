@@ -44,7 +44,10 @@ def ppu_actor_key(http_request: Any) -> Optional[str]:
     Identifier for pay-per-use check/record: API key when the request used one,
     otherwise a stable key derived from the JWT user (browser / Bearer-only).
     """
-    api_key_id = getattr(http_request.state, "api_key_id", None)
+    # token_id is the API key UUID set by auth middleware; api_key_id kept for compatibility.
+    api_key_id = getattr(http_request.state, "token_id", None) or getattr(
+        http_request.state, "api_key_id", None
+    )
     if api_key_id is not None and str(api_key_id).strip():
         return str(api_key_id)
     user_id = getattr(http_request.state, "user_id", None)

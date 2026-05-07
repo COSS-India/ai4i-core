@@ -1,5 +1,6 @@
 """LLM inference endpoint."""
 
+import asyncio
 import logging
 from typing import Any, Dict
 
@@ -46,7 +47,7 @@ async def run_inference(
         session_id=session_id,
         http_request=http_request,
     )
-    await _llm_ppu_record(http_request, result.raw_response, input_texts)
+    asyncio.create_task(_llm_ppu_record(http_request, result.raw_response, input_texts))
     return result
 
 

@@ -11,6 +11,7 @@ Implements 7-phase tracing lifecycle with spans: preprocess, resolve_model,
 model.inference, postprocess, persist, redact (and parent inference span).
 """
 
+import asyncio
 import json
 import logging
 from typing import Any, List, Optional
@@ -230,7 +231,7 @@ async def _proxy_with_tracing(request: Request, path: str, endpoint: str) -> JSO
         status_code,
     )
     if status_code is not None and status_code < 400 and isinstance(body, dict):
-        await _llm_ppu_record(request, body, input_texts)
+        asyncio.create_task(_llm_ppu_record(request, body, input_texts))
 
     return JSONResponse(status_code=status_code, content=body)
 
