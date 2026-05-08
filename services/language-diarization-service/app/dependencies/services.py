@@ -1,14 +1,10 @@
-from ai4icore_bootstrap.database import get_db
 """Dependency injection factories for Language Diarization service."""
 
 import logging
 
-from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from fastapi import HTTPException, Request, status
 
 from app.clients.triton_client import LanguageDiarizationTritonClient
-from app.repositories.language_diarization_repository import LanguageDiarizationRepository
 from app.services.language_diarization_service import LanguageDiarizationService
 
 logger = logging.getLogger(__name__)
@@ -17,9 +13,8 @@ logger = logging.getLogger(__name__)
 
 async def get_language_diarization_service(
     request: Request,
-    db: AsyncSession = Depends(get_db),
 ) -> LanguageDiarizationService:
-    """Construct LanguageDiarizationService with Triton client and repository from request state."""
+    """Construct LanguageDiarizationService with Triton client from request state."""
     triton_endpoint = getattr(request.state, "triton_endpoint", None)
     triton_api_key = getattr(request.app.state, "triton_api_key", "")
     triton_timeout = getattr(request.app.state, "triton_timeout", 300.0)
@@ -42,5 +37,4 @@ async def get_language_diarization_service(
     triton_client = LanguageDiarizationTritonClient(
         triton_endpoint, api_key=triton_api_key or None, timeout=triton_timeout
     )
-    repository = LanguageDiarizationRepository(db)
-    return LanguageDiarizationService(triton_client=triton_client, repository=repository)
+    return LanguageDiarizationService(triton_client=triton_client)

@@ -1,3 +1,3 @@
-from app.models.audio_lang_detection import Base, AudioLangDetectionRequestDB, AudioLangDetectionResultDB
+from app.models.audio_lang_detection import Base
 
-__all__ = ["Base", "AudioLangDetectionRequestDB", "AudioLangDetectionResultDB"]
+__all__ = ["Base"]

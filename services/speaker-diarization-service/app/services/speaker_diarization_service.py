@@ -6,7 +6,6 @@ import base64
 import logging
 import time
 from typing import Dict, List, Optional
-from uuid import UUID
 
 import requests
 from ai4icore_telemetry import StandardSpanManager, Status, StatusCode
@@ -18,7 +17,6 @@ from app.schemas.inference import (
     SpeakerDiarizationOutput,
     SpeakerDiarizationResponseConfig,
 )
-from app.repositories.speaker_diarization_repository import SpeakerDiarizationRepository
 from app.clients.triton_client import SpeakerDiarizationTritonClient
 from ai4icore_exceptions import TritonInferenceError
 
@@ -41,11 +39,9 @@ class SpeakerDiarizationService:
 
     def __init__(
         self,
-        repository: SpeakerDiarizationRepository,
         triton_client: SpeakerDiarizationTritonClient,
         model_name: str,
     ):
-        self.repository = repository
         self.triton_client = triton_client
         self.model_name = model_name
 
@@ -89,7 +85,6 @@ class SpeakerDiarizationService:
         Phases: preprocess → resolve_model → triton_inference → postprocess → persist.
         """
         start_time = time.time()
-        request_id: Optional[UUID] = None
         has_errors = False
 
         service_id = request.config.serviceId if request.config else None
@@ -333,119 +328,6 @@ class SpeakerDiarizationService:
 
                 processing_time = time.time() - start_time
 
-                with _standard_spans.persist() as persist_span:
-                    persist_span.set_attribute(
-                        "speaker-diarization.db.operations",
-                        "speaker_diarization_requests.insert,speaker_diarization_results.insert_per_audio,speaker_diarization_requests.status_update",
-                    )
-                    try:
-                        request_record = await self.repository.create_request(
-                            model_id=service_id,
-                            audio_duration=None,
-                            num_speakers=None,
-                            user_id=user_id,
-                            api_key_id=api_key_id,
-                            session_id=session_id,
-                        )
-                        request_id = request_record.id
-                        persist_span.set_attribute(
-                            "speaker-diarization.db.speaker_diarization_request.id",
-                            str(request_id),
-                        )
-                        persist_span.add_event(
-                            "speaker-diarization.db.speaker_diarization_request.insert",
-                            {
-                                "table": "speaker_diarization_requests",
-                                "request_id": str(request_id),
-                            },
-                        )
-                        persist_span.set_attribute(
-                            "speaker-diarization.request_id", str(request_id)
-                        )
-                    except Exception as e:
-                        persist_span.add_event(
-                            "speaker-diarization.db.speaker_diarization_request.insert_failed",
-                            {
-                                "error.type": type(e).__name__,
-                                "error.message": str(e),
-                            },
-                        )
-                        logger.error("Failed to create request record: %s", e)
-
-                    if request_id:
-                        inserted_results = 0
-                        for audio_idx, out in enumerate(output_list):
-                            segments_dict = [
-                                {
-                                    "start_time": seg.start_time,
-                                    "end_time": seg.end_time,
-                                    "duration": seg.duration,
-                                    "speaker": seg.speaker,
-                                }
-                                for seg in out.segments
-                            ]
-                            try:
-                                await self.repository.create_result(
-                                    request_id=request_id,
-                                    total_segments=out.total_segments,
-                                    num_speakers=out.num_speakers,
-                                    speakers=out.speakers,
-                                    segments=segments_dict,
-                                )
-                                inserted_results += 1
-                                persist_span.add_event(
-                                    "speaker-diarization.db.speaker_diarization_result.insert",
-                                    {"audio_index": audio_idx},
-                                )
-                            except Exception as e:
-                                has_errors = True
-                                persist_span.add_event(
-                                    "speaker-diarization.db.speaker_diarization_result.insert_failed",
-                                    {
-                                        "audio_index": audio_idx,
-                                        "error.type": type(e).__name__,
-                                        "error.message": str(e),
-                                    },
-                                )
-                                logger.error(
-                                    "Failed to create result record (audio_index=%s): %s",
-                                    audio_idx,
-                                    e,
-                                )
-                        persist_span.set_attribute(
-                            "speaker-diarization.db.speaker_diarization_result.inserted_count",
-                            inserted_results,
-                        )
-                        persist_span.set_attribute(
-                            "speaker-diarization.db.speaker_diarization_result.expected_count",
-                            len(output_list),
-                        )
-
-                        try:
-                            status_str = "failed" if has_errors else "completed"
-                            await self.repository.update_request_status(
-                                request_id=request_id,
-                                status=status_str,
-                                processing_time=processing_time,
-                            )
-                            persist_span.add_event(
-                                "speaker-diarization.db.speaker_diarization_request.status_update",
-                                {
-                                    "request_id": str(request_id),
-                                    "status": status_str,
-                                    "processing_time_seconds": processing_time,
-                                },
-                            )
-                        except Exception as e:
-                            persist_span.add_event(
-                                "speaker-diarization.db.speaker_diarization_request.status_update_failed",
-                                {
-                                    "error.type": type(e).__name__,
-                                    "error.message": str(e),
-                                },
-                            )
-                            logger.error("Failed to update request status: %s", e)
-
                 response_config = None
                 if request.config and request.config.serviceId:
                     response_config = SpeakerDiarizationResponseConfig(
@@ -468,33 +350,5 @@ class SpeakerDiarizationService:
                 )
             except Exception as e:
                 logger.error("Speaker diarization inference failed: %s", e)
-
-                if request_id:
-                    try:
-                        await self.repository.update_request_status(
-                            request_id, "failed", error_message=str(e)
-                        )
-                    except Exception as update_error:
-                        logger.error(
-                            "Failed to update request status: %s", update_error
-                        )
-                else:
-                    try:
-                        dr = await self.repository.create_request(
-                            model_id=service_id,
-                            audio_duration=None,
-                            num_speakers=None,
-                            user_id=user_id,
-                            api_key_id=api_key_id,
-                            session_id=session_id,
-                        )
-                        await self.repository.update_request_status(
-                            dr.id, "failed", error_message=str(e)
-                        )
-                    except Exception as db_err:
-                        logger.error(
-                            "speaker-diarization: failed to record failed request: %s",
-                            db_err,
-                        )
 
                 raise

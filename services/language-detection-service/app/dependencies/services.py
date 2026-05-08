@@ -1,14 +1,10 @@
-from ai4icore_bootstrap.database import get_db
 """Dependency injection factories for Language Detection service."""
 
 import logging
 
-from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from fastapi import HTTPException, Request, status
 
 from app.clients.triton_client import LanguageDetectionTritonClient
-from app.repositories.language_detection_repository import LanguageDetectionRepository
 from app.services.text_service import TextService
 from app.services.language_detection_service import LanguageDetectionService
 
@@ -18,10 +14,8 @@ logger = logging.getLogger(__name__)
 
 async def get_language_detection_service(
     request: Request,
-    db: AsyncSession = Depends(get_db),
 ) -> LanguageDetectionService:
-    """Construct LanguageDetectionService with Triton client and repository from request state."""
-    repository = LanguageDetectionRepository(db)
+    """Construct LanguageDetectionService with Triton client from request state."""
     text_service = TextService()
 
     triton_endpoint = getattr(request.state, "triton_endpoint", None)
@@ -51,7 +45,6 @@ async def get_language_detection_service(
 
     triton_client = LanguageDetectionTritonClient(triton_endpoint, api_key=triton_api_key or None)
     return LanguageDetectionService(
-        repository=repository,
         text_service=text_service,
         triton_client=triton_client,
         model_name=model_name,

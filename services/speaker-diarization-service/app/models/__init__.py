@@ -1,3 +1,3 @@
-from app.models.speaker_diarization import Base, SpeakerDiarizationRequestDB, SpeakerDiarizationResultDB
+from app.models.speaker_diarization import Base
 
-__all__ = ["Base", "SpeakerDiarizationRequestDB", "SpeakerDiarizationResultDB"]
+__all__ = ["Base"]

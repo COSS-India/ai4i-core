@@ -16,7 +16,6 @@ from app.schemas.inference import (
     LanguageDetectionOutput,
     LanguagePrediction,
 )
-from app.repositories.language_detection_repository import LanguageDetectionRepository
 from app.services.text_service import TextService
 from app.clients.triton_client import LanguageDetectionTritonClient
 from ai4icore_exceptions import TritonInferenceError
@@ -89,12 +88,10 @@ class LanguageDetectionService:
 
     def __init__(
         self,
-        repository: LanguageDetectionRepository,
         text_service: TextService,
         triton_client: LanguageDetectionTritonClient,
         model_name: str,
     ):
-        self.repository = repository
         self.text_service = text_service
         self.triton_client = triton_client
         self.model_name = model_name
@@ -122,7 +119,6 @@ class LanguageDetectionService:
     ) -> LanguageDetectionInferenceResponse:
         """Run language detection inference (standard 7-phase spans)."""
         start_time = time.time()
-        request_id = None
         service_id = request.config.serviceId
         input_count = len(request.input)
         uid_int = int(user_id) if user_id else None
@@ -268,7 +264,6 @@ class LanguageDetectionService:
                     )
 
                 results: List[LanguageDetectionOutput] = []
-                db_rows: List[dict] = []
 
                 with _standard_spans.postprocess() as post_span:
                     post_span.set_attribute(
@@ -335,18 +330,6 @@ class LanguageDetectionService:
                                         )
                                     )
 
-                                    normalized_confidence = (
-                                        self.normalize_confidence_score(raw_confidence)
-                                    )
-                                    db_rows.append(
-                                        {
-                                            "source_text": source_text,
-                                            "detected_language": lang_code,
-                                            "detected_script": script_code,
-                                            "confidence_score": normalized_confidence,
-                                            "language_name": language_name,
-                                        }
-                                    )
                                     parsed_ok += 1
                                     post_span.add_event(
                                         "language-detection.postprocess.item.parsed",
@@ -415,68 +398,6 @@ class LanguageDetectionService:
                 response_model = LanguageDetectionInferenceResponse(output=results)
                 processing_time = time.time() - start_time
 
-                with _standard_spans.persist() as persist_span:
-                    persist_span.set_attribute(
-                        "language-detection.db.operations",
-                        "language_detection_requests.insert,language_detection_results.insert_per_item,language_detection_requests.status_update",
-                    )
-                    request_record = await self.repository.create_request(
-                        model_id=service_id,
-                        text_length=total_text_length,
-                        user_id=uid_int,
-                        api_key_id=None,
-                        session_id=None,
-                    )
-                    request_id = request_record.id
-                    persist_span.set_attribute(
-                        "language-detection.db.language_detection_request.id",
-                        str(request_id),
-                    )
-                    persist_span.set_attribute(
-                        "language-detection.request_id", str(request_id)
-                    )
-                    persist_span.add_event(
-                        "language-detection.db.language_detection_request.insert",
-                        {"table": "language_detection_requests", "request_id": str(request_id)},
-                    )
-
-                    inserted_results = 0
-                    for row in db_rows:
-                        await self.repository.create_result(
-                            request_id=request_id,
-                            source_text=row["source_text"],
-                            detected_language=row["detected_language"],
-                            detected_script=row["detected_script"],
-                            confidence_score=row["confidence_score"],
-                            language_name=row["language_name"],
-                        )
-                        inserted_results += 1
-                        persist_span.add_event(
-                            "language-detection.db.language_detection_result.insert",
-                            {
-                                "table": "language_detection_results",
-                                "detected_language": row["detected_language"],
-                            },
-                        )
-                    persist_span.set_attribute(
-                        "language-detection.db.language_detection_result.inserted_count",
-                        inserted_results,
-                    )
-
-                    await self.repository.update_request_status(
-                        request_id=request_id,
-                        status="completed",
-                        processing_time=processing_time,
-                    )
-                    persist_span.add_event(
-                        "language-detection.db.language_detection_request.status_update",
-                        {
-                            "request_id": str(request_id),
-                            "status": "completed",
-                            "processing_time_seconds": processing_time,
-                        },
-                    )
-
                 if parent_span is not None:
                     try:
                         parent_span.set_attribute(
@@ -486,87 +407,17 @@ class LanguageDetectionService:
                         pass
 
                 logger.info(
-                    "Language detection completed for request %s in %.2fs",
-                    request_id,
+                    "Language detection completed in %.2fs",
                     processing_time,
                 )
                 return response_model
 
             except TritonInferenceError as e:
                 logger.error("Language detection Triton inference failed: %s", e)
-                if request_id:
-                    try:
-                        await self.repository.update_request_status(
-                            request_id=request_id,
-                            status="failed",
-                            error_message=str(e),
-                        )
-                    except Exception as update_error:
-                        logger.error(
-                            "Failed to update request status: %s", update_error
-                        )
-                else:
-                    try:
-                        ttl = sum(
-                            len(self.text_service.normalize_text(ti.source))
-                            for ti in request.input
-                        )
-                        dr = await self.repository.create_request(
-                            model_id=service_id,
-                            text_length=ttl,
-                            user_id=uid_int,
-                            api_key_id=None,
-                            session_id=None,
-                        )
-                        await self.repository.update_request_status(
-                            request_id=dr.id,
-                            status="failed",
-                            error_message=str(e),
-                        )
-                    except Exception as db_err:
-                        logger.error(
-                            "language-detection: failed to record failed request: %s",
-                            db_err,
-                        )
                 raise
 
             except Exception as e:
                 logger.error("Language detection failed: %s", e)
-                if request_id:
-                    try:
-                        await self.repository.update_request_status(
-                            request_id=request_id,
-                            status="failed",
-                            error_message=str(e),
-                        )
-                    except Exception as update_error:
-                        logger.error(
-                            "Failed to update request status: %s", update_error
-                        )
-                else:
-                    try:
-                        ttl = sum(
-                            len(self.text_service.normalize_text(ti.source))
-                            for ti in request.input
-                        )
-                        dr = await self.repository.create_request(
-                            model_id=service_id,
-                            text_length=ttl,
-                            user_id=uid_int,
-                            api_key_id=None,
-                            session_id=None,
-                        )
-                        await self.repository.update_request_status(
-                            request_id=dr.id,
-                            status="failed",
-                            error_message=str(e),
-                        )
-                    except Exception as db_err:
-                        logger.error(
-                            "language-detection: failed to record failed request: %s",
-                            db_err,
-                        )
-
                 if isinstance(e, TritonInferenceError):
                     raise
                 raise TritonInferenceError(f"Language detection failed: {e}") from e

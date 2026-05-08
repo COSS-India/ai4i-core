@@ -1,14 +1,10 @@
-from ai4icore_bootstrap.database import get_db
 """Dependency injection factories for OCR service."""
 
 import logging
 
-from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from fastapi import HTTPException, Request, status
 
 from app.clients.triton_client import OCRTritonClient
-from app.repositories.ocr_repository import OCRRepository
 from app.services.ocr_service import OCRService
 
 logger = logging.getLogger(__name__)
@@ -17,11 +13,8 @@ logger = logging.getLogger(__name__)
 
 async def get_ocr_service(
     request: Request,
-    db: AsyncSession = Depends(get_db),
 ) -> OCRService:
-    """Construct OCRService with Triton client and repository from request state."""
-    repository = OCRRepository(db)
-
+    """Construct OCRService with Triton client from request state."""
     triton_endpoint = getattr(request.state, "triton_endpoint", None)
     triton_api_key = getattr(request.app.state, "triton_api_key", "")
     model_name = getattr(request.state, "triton_model_name", None)
@@ -48,4 +41,4 @@ async def get_ocr_service(
         )
 
     triton_client = OCRTritonClient(triton_endpoint, api_key=triton_api_key or None, model_name=model_name)
-    return OCRService(repository=repository, triton_client=triton_client, model_name=model_name)
+    return OCRService(triton_client=triton_client, model_name=model_name)

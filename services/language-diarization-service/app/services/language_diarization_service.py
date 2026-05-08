@@ -6,7 +6,6 @@ import base64
 import logging
 import time
 from typing import Dict, List, Optional
-from uuid import UUID
 
 import requests
 from ai4icore_telemetry import StandardSpanManager, Status, StatusCode
@@ -18,7 +17,6 @@ from app.schemas.inference import (
     LanguageDiarizationOutput,
     LanguageDiarizationResponseConfig,
 )
-from app.repositories.language_diarization_repository import LanguageDiarizationRepository
 from app.clients.triton_client import LanguageDiarizationTritonClient
 from ai4icore_exceptions import TritonInferenceError
 
@@ -45,10 +43,8 @@ class LanguageDiarizationService:
     def __init__(
         self,
         triton_client: LanguageDiarizationTritonClient,
-        repository: Optional[LanguageDiarizationRepository] = None,
     ):
         self.triton_client = triton_client
-        self.repository = repository
 
     def _resolve_audio_base64(self, audio: AudioInput) -> Optional[str]:
         """Resolve an audio into base64 (content or download from URI)."""
@@ -84,7 +80,6 @@ class LanguageDiarizationService:
     ) -> LanguageDiarizationInferenceResponse:
         """Asynchronous language diarization inference entrypoint."""
         start_time = time.time()
-        request_id: Optional[UUID] = None
         has_errors = False
 
         service_id = request.config.serviceId if request.config else None
@@ -326,122 +321,6 @@ class LanguageDiarizationService:
                 )
 
             processing_time = time.time() - start_time
-
-            if self.repository:
-                with _standard_spans.persist() as persist_span:
-                    persist_span.set_attribute(
-                        "language-diarization.db.operations",
-                        "language_diarization_requests.insert,language_diarization_results.insert_per_audio,language_diarization_requests.status_update",
-                    )
-                    model_id = (
-                        request.config.serviceId
-                        if request.config
-                        else "lang_diarization"
-                    )
-                    try:
-                        request_record = await self.repository.create_request(
-                            model_id=model_id,
-                            audio_duration=None,
-                            target_language="",
-                            user_id=user_id,
-                            api_key_id=api_key_id,
-                            session_id=session_id,
-                        )
-                        request_id = request_record.id
-                        persist_span.set_attribute(
-                            "language-diarization.db.language_diarization_request.id",
-                            str(request_id),
-                        )
-                        persist_span.set_attribute(
-                            "language-diarization.request_id", str(request_id)
-                        )
-                        persist_span.add_event(
-                            "language-diarization.db.language_diarization_request.insert",
-                            {"table": "language_diarization_requests", "request_id": str(request_id)},
-                        )
-                        logger.info(
-                            "Created language diarization request %s", request_id
-                        )
-                    except Exception as e:
-                        persist_span.add_event(
-                            "language-diarization.db.language_diarization_request.insert_failed",
-                            {
-                                "error.type": type(e).__name__,
-                                "error.message": str(e),
-                            },
-                        )
-                        logger.error("Failed to create request record: %s", e)
-
-                    if request_id:
-                        inserted_results = 0
-                        for idx, out in enumerate(output_list):
-                            try:
-                                segments_dict = [
-                                    {
-                                        "start_time": seg.start_time,
-                                        "end_time": seg.end_time,
-                                        "duration": seg.duration,
-                                        "language": seg.language,
-                                        "confidence": seg.confidence,
-                                    }
-                                    for seg in out.segments
-                                ]
-                                await self.repository.create_result(
-                                    request_id=request_id,
-                                    total_segments=out.total_segments,
-                                    segments=segments_dict,
-                                    target_language=out.target_language,
-                                )
-                                inserted_results += 1
-                                persist_span.add_event(
-                                    "language-diarization.db.language_diarization_result.insert",
-                                    {
-                                        "audio_index": idx,
-                                        "segment_count": len(out.segments),
-                                    },
-                                )
-                            except Exception as e:
-                                has_errors = True
-                                persist_span.add_event(
-                                    "language-diarization.db.language_diarization_result.insert_failed",
-                                    {
-                                        "audio_index": idx,
-                                        "error.type": type(e).__name__,
-                                        "error.message": str(e),
-                                    },
-                                )
-                                logger.error(
-                                    "Failed to create result record: %s", e
-                                )
-                        persist_span.set_attribute(
-                            "language-diarization.db.language_diarization_result.inserted_count",
-                            inserted_results,
-                        )
-
-                        try:
-                            req_status = "failed" if has_errors else "completed"
-                            await self.repository.update_request_status(
-                                request_id=request_id,
-                                status=req_status,
-                                processing_time=processing_time,
-                            )
-                            persist_span.add_event(
-                                "language-diarization.db.language_diarization_request.status_update",
-                                {
-                                    "request_id": str(request_id),
-                                    "status": req_status,
-                                    "processing_time_seconds": processing_time,
-                                },
-                            )
-                        except Exception as e:
-                            persist_span.add_event(
-                                "language-diarization.db.language_diarization_request.status_update_failed",
-                                {
-                                    "error.type": type(e).__name__,
-                                    "error.message": str(e),
-                                },
-                            )
-                            logger.error("Failed to update request status: %s", e)
 
             if has_errors:
                 _standard_spans.note_partial_inference_failure(
