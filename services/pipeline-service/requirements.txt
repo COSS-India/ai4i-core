@@ -2,7 +2,7 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 httpx==0.25.1
 pydantic==2.5.0
-python-dotenv==1.0.0
+python-dotenv==1.2.2
 # Redis for rate limiting
 redis>=5.0.0
 
@@ -21,7 +21,7 @@ packaging>=21.0
 
 # Authentication and security
 passlib[bcrypt]>=1.7.4
-python-jose[cryptography]>=3.3.0
+python-jose[cryptography]>=3.5.0
 
 # AI4ICore libraries are installed in Dockerfile
 # (not in requirements.txt due to path issues during Docker build)
