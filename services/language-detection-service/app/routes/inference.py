@@ -24,6 +24,9 @@ router = APIRouter(
 
 async def enforce_language_detection_checks(request: Request):
     """Enforce tenant and service availability checks."""
+    pass
+
+
 router.dependencies.append(Depends(enforce_language_detection_checks))
 
 

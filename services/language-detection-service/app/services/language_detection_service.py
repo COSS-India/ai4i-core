@@ -121,7 +121,6 @@ class LanguageDetectionService:
         start_time = time.time()
         service_id = request.config.serviceId
         input_count = len(request.input)
-        uid_int = int(user_id) if user_id else None
         model_name = self.model_name
 
         with _standard_spans.inference(
@@ -129,7 +128,7 @@ class LanguageDetectionService:
             model_name=model_name,
             input_count=input_count,
             input_type="text",
-            user_id=uid_int,
+            user_id=user_id,
             api_key_id=None,
             session_id=None,
         ) as parent_span:
