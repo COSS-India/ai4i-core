@@ -219,10 +219,11 @@ services:
         aliases:
           - api-gateway-service
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/health > /dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   auth-service:
