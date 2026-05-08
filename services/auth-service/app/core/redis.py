@@ -14,6 +14,8 @@ from urllib.parse import urlparse, urlunparse
 
 import redis.asyncio as aioredis
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 _redis: aioredis.Redis | None = None
@@ -67,9 +69,12 @@ async def init_redis(url: str, socket_timeout: int = 10, redis_db: int = 0) -> N
     _redis = aioredis.from_url(
         base_url,
         db=redis_db,
+        max_connections=settings.redis_max_connections,
         socket_timeout=socket_timeout,
         socket_connect_timeout=socket_timeout,
         decode_responses=True,
+        retry_on_timeout=True,
+        health_check_interval=30,
     )
 
     await _connect_with_retry(_redis, "auth")

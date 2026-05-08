@@ -13,10 +13,10 @@ import base64
 import binascii
 import json
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,6 @@ from app.core.database import get_db
 from app.core.redis import get_redis
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError
 from app.dependencies.auth import check_token_revocation, get_jwt_verifier
-from app.dependencies.services import get_api_key_service, get_cache_service
 from app.repositories.api_key_repository import APIKeyRepository
 from app.schemas.api_key import ValidateAPIKeyErrorResponse, ValidateAPIKeyResponse
 from app.schemas.token import TokenValidationResponse
@@ -178,26 +177,23 @@ async def _validate_jwt(
 async def validate_token(
     request: Request,
     response: Response,
-    db: AsyncSession = Depends(get_db),
-    redis = Depends(get_redis),
+    redis=Depends(get_redis),
 ):
     """Step 1: identify (anon / API key / JWT). Step 2: each branch authorizes.
 
-    Optimized: Only instantiate services for the token type we actually have.
-    - No token: zero service instantiation
-    - JWT: only cache_svc
-    - API key: only api_key_svc
+    DB is only acquired for the API-key branch; JWT and anonymous paths never
+    open a connection, keeping the gateway hot path as cheap as possible.
     """
     token = _extract_token(request)
     if not token:
         return await _validate_anonymous(request)
 
+    cache_svc = CacheService(redis)
+
     if is_jwt_strict(token):
-        cache_svc = CacheService(redis)
         return await _validate_jwt(token, request, response, cache_svc)
 
-    # API key path: instantiate only api_key_svc
-    cache_svc = CacheService(redis)
-    api_key_repo = APIKeyRepository(db)
-    api_key_svc = APIKeyService(api_key_repo, cache_svc)
-    return await _validate_api_key(token, request, response, api_key_svc)
+    # API key path — only branch that needs DB.
+    async with asynccontextmanager(get_db)() as db:
+        api_key_svc = APIKeyService(APIKeyRepository(db), cache_svc)
+        return await _validate_api_key(token, request, response, api_key_svc)

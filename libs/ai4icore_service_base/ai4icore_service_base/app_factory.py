@@ -36,6 +36,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import ai4icore_bootstrap.database as _bootstrap_db
 from ai4icore_env import app_env
 from ai4icore_exceptions import register_exception_handlers
 from ai4icore_model_management import (
@@ -183,6 +184,11 @@ def _build_lifespan(config: InferenceServiceConfig, db_base: Any):
         async with db_engine.begin() as conn:
             await conn.run_sync(db_base.metadata.create_all)
 
+        # Wire bootstrap get_db() to the engine we just created so that
+        # services using `from ai4icore_bootstrap.database import get_db` work.
+        _bootstrap_db._engine = db_engine
+        _bootstrap_db._session_factory = db_session_factory
+
         # ── Store in app.state ──
         app.state.redis_client = redis_client
         app.state.db_engine = db_engine
@@ -267,6 +273,8 @@ def _build_lifespan(config: InferenceServiceConfig, db_base: Any):
             await redis_client.close()
         if db_engine:
             await db_engine.dispose()
+            _bootstrap_db._engine = None
+            _bootstrap_db._session_factory = None
         if hasattr(app.state, "tenant_schema_router") and app.state.tenant_schema_router:
             await app.state.tenant_schema_router.close_all()
         svc_logger.info("%s stopped", config.title)

@@ -5,7 +5,7 @@ Auth service configuration — extends ai4icore_env with auth-specific settings.
 from pathlib import Path
 from typing import Optional
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.constants import ENV_DEVELOPMENT
@@ -31,13 +31,13 @@ class AuthSettings(BaseSettings):
     # ── Database ──
     database_url: Optional[str] = None
     postgres_user: Optional[str] = None
-    postgres_password: Optional[str] = None
+    postgres_password: Optional[SecretStr] = None
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_db: str = "ai4iplatform_auth"
     auth_database_url: Optional[str] = None
     auth_db_user: Optional[str] = None
-    auth_db_password: Optional[str] = None
+    auth_db_password: Optional[SecretStr] = None
     auth_db_host: Optional[str] = None
     auth_db_port: Optional[int] = None
     # AUTH_SERVICE_DB_NAME takes precedence; AUTH_DB_NAME is the legacy fallback.
@@ -54,9 +54,10 @@ class AuthSettings(BaseSettings):
     # ── Redis ──
     redis_host: str = "localhost"
     redis_port: int = 6379
-    redis_password: Optional[str] = None
+    redis_password: Optional[SecretStr] = None
     redis_db: int = 0
     redis_timeout: int = 10
+    redis_max_connections: int = 50
 
     # ── RS256 JWT ──
     rs256_key_directory: str = "keys"
@@ -100,7 +101,7 @@ class AuthSettings(BaseSettings):
 
     # ── Guest login (POST /auth/guest/login) — must match guest user email seeded in auth_db ──
     guest_email: Optional[str] = None
-    guest_password: Optional[str] = None
+    guest_password: Optional[SecretStr] = None
 
     # ── Email (Amazon SES via SMTP today, swappable to any provider) ──
     # Lib reads these via its own EmailSettings; mirrored here so AuthSettings
@@ -113,7 +114,7 @@ class AuthSettings(BaseSettings):
     smtp_host: Optional[str] = None
     smtp_port: int = 587
     smtp_username: Optional[str] = None
-    smtp_password: Optional[str] = None
+    smtp_password: Optional[SecretStr] = None
     smtp_use_tls: bool = True
     smtp_timeout: int = 30
     setup_link_base_url: Optional[str] = None
@@ -132,7 +133,8 @@ class AuthSettings(BaseSettings):
         if self.database_url:
             return self.database_url
         user = self.auth_db_user or self.postgres_user or "postgres"
-        password = self.auth_db_password or self.postgres_password or ""
+        raw_pw = self.auth_db_password or self.postgres_password
+        password = raw_pw.get_secret_value() if raw_pw else ""
         host = self.auth_db_host or self.postgres_host
         port = self.auth_db_port or self.postgres_port
         db = self.auth_service_db_name or self.auth_db_name or self.postgres_db
@@ -140,11 +142,33 @@ class AuthSettings(BaseSettings):
 
     def get_redis_url(self) -> str:
         if self.redis_password:
-            return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
+            pw = self.redis_password.get_secret_value()
+            return f"redis://:{pw}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
         return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
     def get_rs256_key_path(self) -> Path:
         return Path(self.rs256_key_directory)
+
+    @field_validator("access_token_expire_minutes", "reset_token_expire_minutes")
+    @classmethod
+    def validate_token_expire_minutes_positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("Token TTL must be positive")
+        return v
+
+    @field_validator("redis_db")
+    @classmethod
+    def validate_redis_db(cls, v: int) -> int:
+        if not 0 <= v <= 15:
+            raise ValueError("Redis DB must be 0–15")
+        return v
+
+    @field_validator("db_pool_size")
+    @classmethod
+    def validate_pool_size(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("db_pool_size must be >= 1")
+        return v
 
 
 settings = AuthSettings()

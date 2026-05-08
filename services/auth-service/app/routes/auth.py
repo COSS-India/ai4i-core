@@ -21,6 +21,7 @@ from app.schemas.auth import (
     ResendVerificationRequest,
     ResetPasswordRequest,
     SetPasswordRequest,
+    SetPasswordStatusRequest,
     SetPasswordStatusResponse,
     TokenRefreshRequest,
     TokenRefreshResponse,
@@ -31,7 +32,7 @@ from app.services.auth_service import AuthService
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-@router.post("/register")
+@router.post("/register", status_code=201)
 async def register(
     body: RegisterRequest,
     background_tasks: BackgroundTasks,
@@ -137,7 +138,7 @@ async def guest_login(
     svc: AuthService = Depends(get_auth_service),
 ):
     email = (settings.guest_email or "").strip()
-    password = settings.guest_password
+    password = settings.guest_password.get_secret_value() if settings.guest_password else None
     if not email or not password:
         raise HTTPException(
             status_code=503,
@@ -182,13 +183,13 @@ async def change_password(
 
 # ── Email activation ──
 
-@router.get("/set-password/status", response_model=SetPasswordStatusResponse)
+@router.post("/set-password/status", response_model=SetPasswordStatusResponse)
 async def get_setup_token_status(
-    token: str,
+    body: SetPasswordStatusRequest,
     svc: AuthService = Depends(get_auth_service),
 ):
     """Check whether a setup token is valid, expired, or already used."""
-    result = await svc.get_setup_token_status(token)
+    result = await svc.get_setup_token_status(body.token)
     return SetPasswordStatusResponse(**result)
 
 

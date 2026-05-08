@@ -78,6 +78,10 @@ class ResetPasswordRequest(BaseSchema):
     confirm_password: str = _PASSWORD_FIELD
 
 
+class SetPasswordStatusRequest(BaseSchema):
+    token: str = Field(..., min_length=10, max_length=2048)
+
+
 # ── Responses ──
 
 class LoginResponse(BaseSchema):

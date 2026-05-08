@@ -9,6 +9,7 @@ RS256 only — JWKS-based public key verification.
 
 import base64
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -93,6 +94,7 @@ class JWTVerifier:
         self._audience = audience
         self._http_timeout_seconds = http_timeout_seconds
         self._public_keys: dict[str, bytes] = {}  # kid → PEM bytes
+        self._last_jwks_refresh: float = 0.0  # monotonic; guards against per-request DoS
 
     # ── Public key management ──
 
@@ -185,7 +187,18 @@ class JWTVerifier:
             raise JWTVerificationError(TOKEN_ALGORITHM_UNSUPPORTED)
 
         pem = self._public_keys.get(kid)
-        if not pem:
+        if pem is None and self._jwks_url:
+            # On key-miss, attempt one refresh per 30s — handles key rotation
+            # without restart while bounding outbound HTTP calls per unknown kid.
+            if time.monotonic() - self._last_jwks_refresh >= 30.0:
+                try:
+                    await self._refresh_jwks()
+                    self._last_jwks_refresh = time.monotonic()
+                    pem = self._public_keys.get(kid)
+                except Exception as exc:
+                    self._last_jwks_refresh = time.monotonic()  # back off even on failure
+                    logger.debug("JWKS refresh failed during key-rotation attempt: %s", exc)
+        if pem is None:
             raise JWTVerificationError(TOKEN_INVALID)
 
         decode_kwargs: dict[str, Any] = {

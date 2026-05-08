@@ -91,7 +91,7 @@ async def lifespan(app: FastAPI):
 
     # Telemetry (optional — package may not be installed)
     if FastAPIInstrumentor is not None:
-        FastAPIInstrumentor.instrument_app(app, excluded_urls="health,ready,docs,redoc,openapi.json")
+        FastAPIInstrumentor.instrument_app(app, excluded_urls="health,ready,docs,redoc,openapi.json,auth/validate")
         logger.info("OpenTelemetry FastAPI instrumentation enabled.")
     else:
         logger.info("Telemetry not available, skipping.")

@@ -172,7 +172,7 @@ class AuthService:
         )
 
         await self._users.commit()
-        logger.info("User registered (pending verification): %s (id=%s)", email, user.id)
+        logger.info("User registered (pending verification): id=%s", user.id)
         enqueue_email(background_tasks, self._email, lambda: render_verify_email(user, verify_token))
         return user
 
@@ -324,7 +324,7 @@ class AuthService:
             self._users,
         )
 
-        logger.info("User logged in: %s (id=%s)", email, user.id)
+        logger.info("User logged in: id=%s, tenant=%s", user.id, user.tenant_id)
         return login_response
 
     # ── Refresh ──
