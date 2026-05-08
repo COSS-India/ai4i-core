@@ -495,7 +495,7 @@ services:
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_bootstrap:/app/libs/ai4icore_bootstrap
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -539,7 +539,7 @@ services:
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_bootstrap:/app/libs/ai4icore_bootstrap
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -629,7 +629,7 @@ services:
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_bootstrap:/app/libs/ai4icore_bootstrap
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -675,7 +675,7 @@ services:
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_bootstrap:/app/libs/ai4icore_bootstrap
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -759,7 +759,7 @@ services:
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_bootstrap:/app/libs/ai4icore_bootstrap
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -976,7 +976,7 @@ services:
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_bootstrap:/app/libs/ai4icore_bootstrap
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -1017,7 +1017,7 @@ services:
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_bootstrap:/app/libs/ai4icore_bootstrap
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -1094,7 +1094,7 @@ services:
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_bootstrap:/app/libs/ai4icore_bootstrap
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -1136,7 +1136,7 @@ services:
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_bootstrap:/app/libs/ai4icore_bootstrap
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
@@ -1178,7 +1178,7 @@ services:
       - ./libs/ai4icore_env:/app/libs/ai4icore_env
       - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
       - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
+      - ./libs/ai4icore_bootstrap:/app/libs/ai4icore_bootstrap
       - ./infrastructure:/app/infrastructure
       - ./shared:/app/shared
     command: ["--reload"]
