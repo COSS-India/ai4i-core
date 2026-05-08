@@ -22,14 +22,6 @@ router = APIRouter(
 )
 
 
-async def enforce_language_detection_checks(request: Request):
-    """Enforce tenant and service availability checks."""
-    pass
-
-
-router.dependencies.append(Depends(enforce_language_detection_checks))
-
-
 @router.post("/inference", response_model=LanguageDetectionInferenceResponse)
 async def run_inference(
     request_body: LanguageDetectionInferenceRequest,
