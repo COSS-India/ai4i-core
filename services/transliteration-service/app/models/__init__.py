@@ -1,3 +1,3 @@
-from app.models.transliteration import Base, TransliterationRequestDB, TransliterationResultDB
+from app.models.transliteration import Base
 
-__all__ = ["Base", "TransliterationRequestDB", "TransliterationResultDB"]
+__all__ = ["Base"]

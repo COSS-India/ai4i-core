@@ -1,14 +1,10 @@
-from ai4icore_bootstrap.database import get_db
 """Dependency injection factories for NMT service."""
 
 import logging
 
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
 
 from app.clients.triton_client import NMTTritonClient
-from app.repositories.nmt_repository import NMTRepository
 from app.services.text_service import TextService
 from app.services.nmt_service import NMTService
 
@@ -18,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 async def get_nmt_service(
     request: Request,
-    db: AsyncSession = Depends(get_db),
 ) -> NMTService:
     """Construct NMTService from request state set by Model Management middleware.
 
@@ -29,10 +24,8 @@ async def get_nmt_service(
     is_context_aware = getattr(request.state, "is_context_aware", False)
     if is_context_aware:
         logger.info("Context-aware request detected, skipping NMTService Triton initialisation")
-        repository = NMTRepository(db)
-        return NMTService(repository=repository, text_service=None)
+        return NMTService(text_service=None)
 
-    repository = NMTRepository(db)
     text_service = TextService()
 
     triton_endpoint = getattr(request.state, "triton_endpoint", None)
@@ -105,7 +98,6 @@ async def get_nmt_service(
     pii_http_client = getattr(request.app.state, "pii_http_client", None)
 
     return NMTService(
-        repository=repository,
         text_service=text_service,
         get_triton_client_func=get_triton_client_for_endpoint,
         model_management_client=model_management_client,

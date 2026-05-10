@@ -20,20 +20,32 @@ needed.
 """
 
 import logging
-from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 import httpx
-from ai4icore_email import EmailClient, EmailMessage
+from ai4icore_email import EmailClient
 from fastapi import BackgroundTasks
 
 from app.core.config import settings
+from app.services.email_helpers import enqueue_email, issue_session
 from app.core.exceptions import AuthenticationRequiredError, EntityNotFoundError
-from app.core.roles import Roles
+from app.core.messages import (
+    OAUTH_PROVIDER_UNKNOWN,
+    OAUTH_PROVIDER_UNREACHABLE,
+    OAUTH_CODE_EXCHANGE_FAILED,
+    OAUTH_USERINFO_FETCH_FAILED,
+    OAUTH_EMAIL_UNVERIFIED,
+    LOG_DEFAULT_ROLE_MISSING,
+    LOG_OAUTH_USER_CREATED,
+    LOG_OAUTH_LOGIN,
+    LOG_ERROR_OAUTH_TOKEN_EXCHANGE,
+    LOG_ERROR_OAUTH_TOKEN_EXCHANGE_STATUS,
+    LOG_ERROR_OAUTH_USERINFO,
+)
+from app.models.role_name import RoleName
 from app.models.user import CreationType, User
 from app.repositories.refresh_token_repository import RefreshTokenRepository
 from app.repositories.user_repository import UserRepository
-from app.schemas.auth import LoginResponse
 from app.services.auth_email_templates import render_welcome
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
@@ -68,25 +80,6 @@ class OAuthService:
         self._tokens = token_service
         self._email = email_client
 
-    # ── Email helper (mirrors AuthService._enqueue_email) ──
-
-    def _enqueue_email(
-        self,
-        background_tasks: Optional[BackgroundTasks],
-        factory: Callable[[], EmailMessage],
-    ) -> None:
-        """Render in foreground (so a template bug fails fast & gets logged)
-        and enqueue ``send_safe`` for the actual delivery. Render is wrapped
-        so a bug never 5xx's a callback whose DB commit already succeeded."""
-        if background_tasks is None:
-            return
-        try:
-            message = factory()
-        except Exception as exc:
-            logger.error("email render failed: error=%s", exc.__class__.__name__)
-            return
-        background_tasks.add_task(self._email.send_safe, message)
-
     # ── Provider config ──
 
     def get_provider_config(self, provider: str) -> dict:
@@ -98,7 +91,20 @@ class OAuthService:
                 "client_secret": settings.google_client_secret,
                 **_PROVIDER_METADATA["google"],
             }
-        raise EntityNotFoundError(f"OAuth provider '{provider}'")
+        raise EntityNotFoundError(OAUTH_PROVIDER_UNKNOWN)
+
+    def list_configured_providers(self) -> list[dict]:
+        """Return configs only for providers that have credentials wired up.
+
+        Walks the canonical ``_PROVIDER_METADATA`` here so the route layer
+        doesn't need its own provider list — single source of truth.
+        """
+        configured = []
+        for name in _PROVIDER_METADATA:
+            config = self.get_provider_config(name)
+            if config.get("client_id"):
+                configured.append(config)
+        return configured
 
     # ── Provider HTTP ──
 
@@ -108,7 +114,7 @@ class OAuthService:
         """Exchange authorization code for OAuth tokens."""
         config = self.get_provider_config(provider)
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=settings.oauth_http_timeout_seconds) as client:
                 resp = await client.post(
                     config["token_url"],
                     data={
@@ -121,17 +127,17 @@ class OAuthService:
                     headers={"Accept": "application/json"},
                 )
         except httpx.RequestError as exc:
-            logger.error("OAuth token exchange request failed for %s: %s", provider, exc)
-            raise AuthenticationRequiredError("OAuth provider unreachable.")
+            logger.error(LOG_ERROR_OAUTH_TOKEN_EXCHANGE, provider, exc)
+            raise AuthenticationRequiredError(OAUTH_PROVIDER_UNREACHABLE) from exc
         if resp.status_code != 200:
             # Provider error body may include client_secret in some configs
             # (e.g. echoed redirect_uri). Don't leak the body — log status only.
-            logger.error("OAuth token exchange failed: status=%s", resp.status_code)
-            raise AuthenticationRequiredError("Failed to exchange authorization code.")
+            logger.error(LOG_ERROR_OAUTH_TOKEN_EXCHANGE_STATUS, resp.status_code)
+            raise AuthenticationRequiredError(OAUTH_CODE_EXCHANGE_FAILED)
 
         token_data = resp.json()
         if not token_data.get("access_token"):
-            raise AuthenticationRequiredError("No access token received from provider.")
+            raise AuthenticationRequiredError(OAUTH_PROVIDER_UNREACHABLE)
         return token_data
 
     async def fetch_user_info(self, provider: str, access_token: str) -> dict[str, Any]:
@@ -140,22 +146,23 @@ class OAuthService:
         today; the response shape mapping below assumes Google's userinfo."""
         config = self.get_provider_config(provider)
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=settings.oauth_http_timeout_seconds) as client:
                 resp = await client.get(
                     config["userinfo_url"],
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
         except httpx.RequestError as exc:
-            logger.error("OAuth user info request failed for %s: %s", provider, exc)
-            raise AuthenticationRequiredError("OAuth provider unreachable.")
+            logger.error(LOG_ERROR_OAUTH_USERINFO, provider, exc)
+            raise AuthenticationRequiredError(OAUTH_PROVIDER_UNREACHABLE) from exc
         if resp.status_code != 200:
-            raise AuthenticationRequiredError("Failed to fetch user info from provider.")
+            raise AuthenticationRequiredError(OAUTH_USERINFO_FETCH_FAILED)
 
         userinfo = resp.json()
         return {
             "email": userinfo.get("email"),
             "full_name": userinfo.get("name"),
             "avatar_url": userinfo.get("picture"),
+            "email_verified": userinfo.get("verified_email", userinfo.get("email_verified", False)),
         }
 
     # ── Account resolution ──
@@ -189,11 +196,10 @@ class OAuthService:
         # Map provider to CreationType. Known providers get their own enum
         # value; unknown providers fall back to DEFAULT until an OTHERS
         # variant is added to the creation_type_enum in the DB.
-        creation_type = (
-            CreationType(provider_name.lower())
-            if provider_name.lower() in CreationType._value2member_map_
-            else CreationType.DEFAULT
-        )
+        try:
+            creation_type = CreationType(provider_name.lower())
+        except ValueError:
+            creation_type = CreationType.DEFAULT
 
         user = User(
             email=email,
@@ -206,11 +212,11 @@ class OAuthService:
         await self._users.create(user)
 
         try:
-            await self._roles.assign_role(user.id, Roles.USER)
+            await self._roles.assign_role(user.id, RoleName.USER)
         except EntityNotFoundError:
-            logger.warning("Default USER role not found, skipping role assignment.")
+            logger.warning(LOG_DEFAULT_ROLE_MISSING)
 
-        logger.info("OAuth user created: %s via %s (id=%s)", email, provider_name, user.id)
+        logger.info(LOG_OAUTH_USER_CREATED, email, provider_name, user.id)
         return user, True
 
     async def complete_oauth_login(
@@ -232,9 +238,9 @@ class OAuthService:
         userinfo = await self.fetch_user_info(provider, access_token)
         email = userinfo.get("email")
         if not email:
-            raise AuthenticationRequiredError(
-                "Could not retrieve email from OAuth provider."
-            )
+            raise AuthenticationRequiredError(OAUTH_USERINFO_FETCH_FAILED)
+        if not userinfo.get("email_verified"):
+            raise AuthenticationRequiredError(OAUTH_EMAIL_UNVERIFIED)
 
         user, was_created = await self._find_or_create_user(
             email=email,
@@ -244,30 +250,16 @@ class OAuthService:
         )
 
         # Issue JWT pair via the same path used by /auth/login.
-        tenant_id = str(user.tenant_id) if user.tenant_id else None
-        permission_ids = await self._roles.get_user_permission_ids_cached(user.id)
-
-        jwt_access = self._tokens.create_access_token(
-            user_id=str(user.id),
-            tenant_id=tenant_id,
-            permission_ids=permission_ids,
+        login_response = await issue_session(
+            user,
+            self._roles,
+            self._tokens,
+            self._refresh_tokens,
+            self._users,
         )
-        jwt_refresh = self._tokens.create_refresh_token(
-            user_id=str(user.id),
-            tenant_id=tenant_id,
-        )
-
-        await self._refresh_tokens.upsert(user.id, jwt_refresh)
-        user.last_login = datetime.now(timezone.utc)
-        await self._users.commit()
 
         if was_created:
-            self._enqueue_email(background_tasks, lambda: render_welcome(user))
+            enqueue_email(background_tasks, self._email, lambda: render_welcome(user))
 
-        logger.info("OAuth login: %s via %s (user_id=%s)", email, provider, user.id)
-        return LoginResponse(
-            access_token=jwt_access,
-            refresh_token=jwt_refresh,
-            token_type="bearer",
-            expires_in=settings.access_token_expire_minutes * 60,
-        ).model_dump()
+        logger.info(LOG_OAUTH_LOGIN, email, provider, user.id)
+        return login_response.model_dump()

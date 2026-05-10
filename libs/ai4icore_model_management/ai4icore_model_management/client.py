@@ -207,7 +207,7 @@ class ModelManagementClient:
         # Fetch from API
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/api/v1/model-management/services"
+            url = f"{self.base_url}/api/v1/services"
             headers = self._get_headers(auth_headers)
             
             # Add task_type as query parameter if provided
@@ -217,10 +217,12 @@ class ModelManagementClient:
             
             response = await client.get(url, headers=headers, params=params)
             response.raise_for_status()
-            
-            data = response.json()
+
+            raw = response.json()
+            # platform-core-service wraps responses in {"success": true, "data": [...]}
+            data = raw.get("data", raw) if isinstance(raw, dict) and "data" in raw else raw
             services = []
-            
+
             for item in data:
                 endpoint = item.get("endpoint")
                 api_key = item.get("api_key")
@@ -321,21 +323,23 @@ class ModelManagementClient:
             client = await self._get_client()
             # Encode service_id so IDs containing '/' (e.g. "ai4bharat/surya-ocr-v1--gpu--t4") are one path segment
             encoded_service_id = quote(service_id, safe="")
-            url = f"{self.base_url}/api/v1/model-management/services/{encoded_service_id}"
+            url = f"{self.base_url}/api/v1/services/{encoded_service_id}"
             headers = self._get_headers(auth_headers)
-            
+
             logger.debug(f"Fetching service {service_id} from {url}")
             response = await client.get(url, headers=headers)
-            
+
             if response.status_code == 404:
                 logger.warning(
                     f"Service not found (404) for service_id={service_id!r} from model management at {url}. "
                     "Ensure the service_id exists in the model_management_db services table (or use a valid service_id)."
                 )
                 return None
-            
+
             response.raise_for_status()
-            data = response.json()
+            raw = response.json()
+            # platform-core-service wraps responses in {"success": true, "data": {...}}
+            data = raw.get("data", raw) if isinstance(raw, dict) and "data" in raw else raw
             
             # Extract triton endpoint and model name
             endpoint = data.get("endpoint")

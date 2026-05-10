@@ -27,7 +27,6 @@ from app.schemas.inference import (
 )
 from app.services.audio_service import AudioService
 from app.clients.triton_client import ASRTritonClient
-from app.repositories.asr_repository import ASRRepository
 from ai4icore_env import app_env
 from app.dependencies.auth import validate_api_key_jwt
 
@@ -45,7 +44,6 @@ class StreamingSessionState:
         user_id: Optional[int] = None,
         api_key_id: Optional[int] = None,
         run_inference_once_in_bytes: int = 0,
-        request_id=None,
     ):
         self.session_id = session_id
         self.config = config
@@ -53,7 +51,6 @@ class StreamingSessionState:
         self.user_id = user_id
         self.api_key_id = api_key_id
         self.run_inference_once_in_bytes = run_inference_once_in_bytes
-        self.request_id = request_id
         self.buffer = b""
         self.history: list = []
         self.last_inference_position = 0
@@ -79,14 +76,12 @@ class StreamingASRService:
         self,
         audio_service: AudioService,
         triton_client: ASRTritonClient,
-        repository: ASRRepository,
         redis_client,
         response_frequency_in_ms: int = 2000,
         bytes_per_sample: int = 2,
     ):
         self.audio_service = audio_service
         self.triton_client = triton_client
-        self.repository = repository
         self.redis_client = redis_client
         self.response_frequency_in_ms = response_frequency_in_ms
         self.bytes_per_sample = bytes_per_sample
@@ -245,9 +240,6 @@ class StreamingASRService:
                         if transcript:
                             state.add_to_history(transcript)
 
-                    if state.request_id:
-                        await self.repository.update_request_status(state.request_id, "completed")
-
                     self.delete_session_state(sid)
                     await self.sio.emit("terminate", room=sid)
                     logger.info(f"Stream terminated for session: {sid}")
@@ -282,16 +274,6 @@ class StreamingASRService:
                 config.samplingRate * (config.responseFrequencyInMs / 1000) * self.bytes_per_sample
             )
 
-            request_id = None
-            if self.repository:
-                request_id = await self.repository.create_request(
-                    model_id=config.serviceId,
-                    language=config.language,
-                    status="streaming",
-                    user_id=user_id,
-                    api_key_id=api_key_id,
-                )
-
             state = StreamingSessionState(
                 session_id=sid,
                 config=config,
@@ -299,7 +281,6 @@ class StreamingASRService:
                 user_id=user_id,
                 api_key_id=api_key_id,
                 run_inference_once_in_bytes=run_inference_once_in_bytes,
-                request_id=request_id,
             )
 
             self.client_states[sid] = state
@@ -313,9 +294,6 @@ class StreamingASRService:
         """Delete session state and cleanup resources."""
         try:
             if sid in self.client_states:
-                state = self.client_states[sid]
-                if state.request_id and self.repository:
-                    asyncio.create_task(self.repository.update_request_status(state.request_id, "disconnected"))
                 del self.client_states[sid]
                 logger.info(f"Session state deleted for {sid}")
         except Exception as e:

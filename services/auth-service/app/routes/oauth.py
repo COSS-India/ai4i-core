@@ -23,6 +23,17 @@ from fastapi.responses import RedirectResponse
 
 from app.core.config import settings
 from app.core.exceptions import AuthenticationRequiredError, EntityNotFoundError
+from app.core.messages import (
+    OAUTH_PROVIDER_UNKNOWN,
+    OAUTH_REDIRECT_URI_INVALID,
+    OAUTH_STATE_INVALID,
+    OAUTH_PROVIDER_MISMATCH,
+    OAUTH_CODE_INVALID,
+    LOG_WARN_OAUTH_REDIRECT_INVALID,
+    LOG_WARN_OAUTH_REDIRECT_BLOCKED,
+    LOG_WARN_CONFIG_REDIRECT_ALLOWLIST,
+    LOG_ERROR_CONFIG_OAUTH_REDIRECT_URL,
+)
 from app.core.redis import get_redis
 from app.core.responses import success_response
 from app.dependencies.services import get_oauth_service
@@ -32,10 +43,6 @@ from app.services.oauth_service import OAuthService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/oauth2", tags=["OAuth2"])
-
-# Provider-list iteration order is deliberate: today only Google. Add new
-# providers here when you extend OAuthService.PROVIDER_METADATA.
-_KNOWN_PROVIDERS = ("google",)
 
 
 def _is_redirect_allowed(uri: str) -> bool:
@@ -50,9 +57,7 @@ def _is_redirect_allowed(uri: str) -> bool:
 
     allowed = settings.oauth_allowed_redirect_uris
     if not allowed:
-        logger.warning(
-            "OAUTH_ALLOWED_REDIRECT_URIS not configured — rejecting redirect to %s", uri
-        )
+        logger.warning(LOG_WARN_CONFIG_REDIRECT_ALLOWLIST)
         return False
 
     allowed_list = [u.strip() for u in allowed.split(",") if u.strip()]
@@ -76,22 +81,16 @@ async def list_providers(svc: OAuthService = Depends(get_oauth_service)):
     """Return providers that are CONFIGURED (have a client_id). Providers
     without credentials are silently omitted so the SPA's UI doesn't render
     a broken button."""
-    providers = []
-    for name in _KNOWN_PROVIDERS:
-        try:
-            config = svc.get_provider_config(name)
-        except EntityNotFoundError:
-            continue
-        if config.get("client_id"):
-            providers.append(
-                OAuth2ProviderInfo(
-                    provider=name,
-                    client_id=config["client_id"],
-                    authorization_url=config["authorization_url"],
-                    scope=config["scope"],
-                )
-            )
-    return success_response(data=[p.model_dump() for p in providers])
+    providers = [
+        OAuth2ProviderInfo(
+            provider=c["provider"],
+            client_id=c["client_id"],
+            authorization_url=c["authorization_url"],
+            scope=c["scope"],
+        ).model_dump()
+        for c in svc.list_configured_providers()
+    ]
+    return success_response(data=providers)
 
 
 @router.get("/{provider}/authorize")
@@ -107,27 +106,23 @@ async def authorize(
     JSON for API/SPA-driven flows."""
     config = svc.get_provider_config(provider)
     if not config.get("client_id") or not config.get("client_secret"):
-        raise EntityNotFoundError(f"OAuth provider '{provider}' is not configured")
+        raise EntityNotFoundError(OAUTH_PROVIDER_UNKNOWN)
 
     # Validate redirect_uri BEFORE persisting in state — never store an
     # untrusted target that we'd later redirect back to.
     if redirect_uri and not _is_redirect_allowed(redirect_uri):
-        raise AuthenticationRequiredError(
-            f"Redirect URI not allowed: {redirect_uri}. "
-            "Configure OAUTH_ALLOWED_REDIRECT_URIS."
-        )
+        logger.warning(LOG_WARN_OAUTH_REDIRECT_INVALID, redirect_uri)
+        raise AuthenticationRequiredError(OAUTH_REDIRECT_URI_INVALID)
 
     state = secrets.token_urlsafe(32)
     await redis_client.setex(
         f"auth:oauth_state:{state}",
-        600,  # 10 minutes
+        settings.oauth_state_ttl_seconds,
         json.dumps({"provider": provider, "redirect_uri": redirect_uri or ""}),
     )
 
     if not settings.oauth_redirect_base_url:
-        raise EntityNotFoundError(
-            "OAUTH_REDIRECT_BASE_URL must be configured for OAuth"
-        )
+        raise EntityNotFoundError(LOG_ERROR_CONFIG_OAUTH_REDIRECT_URL)
 
     callback_url = (
         f"{settings.oauth_redirect_base_url}"
@@ -172,17 +167,15 @@ async def callback(
     state_key = f"auth:oauth_state:{state}"
     state_data_raw = await redis_client.get(state_key)
     if not state_data_raw:
-        raise AuthenticationRequiredError("Invalid or expired OAuth state.")
+        raise AuthenticationRequiredError(OAUTH_STATE_INVALID)
     await redis_client.delete(state_key)
 
     state_data = json.loads(state_data_raw)
     if state_data.get("provider") != provider:
-        raise AuthenticationRequiredError("OAuth provider mismatch.")
+        raise AuthenticationRequiredError(OAUTH_PROVIDER_MISMATCH)
 
     if not settings.oauth_redirect_base_url:
-        raise EntityNotFoundError(
-            "OAUTH_REDIRECT_BASE_URL must be configured for OAuth"
-        )
+        raise EntityNotFoundError(LOG_ERROR_CONFIG_OAUTH_REDIRECT_URL)
 
     callback_url = (
         f"{settings.oauth_redirect_base_url}"
@@ -198,16 +191,16 @@ async def callback(
             # Allowlist may have changed between authorize and callback —
             # reject the redirect and fall back to JSON. The user keeps
             # their tokens; only the redirect is dropped.
-            logger.warning("Blocked redirect to unallowed URI: %s", client_redirect)
+            logger.warning(LOG_WARN_OAUTH_REDIRECT_BLOCKED, client_redirect)
             return success_response(data=result)
 
-        # Stash tokens under a single-use 2-minute code; SPA exchanges it via
+        # Stash tokens under a single-use code; SPA exchanges it via
         # POST /exchange. Tokens never appear in URLs, browser history,
         # referrer headers, or server access logs.
         exchange_code = secrets.token_urlsafe(32)
         await redis_client.setex(
             f"auth:oauth_exchange:{exchange_code}",
-            120,  # 2 minutes
+            settings.oauth_exchange_code_ttl_seconds,
             json.dumps(result),
         )
         params = urlencode({"code": exchange_code})
@@ -227,7 +220,7 @@ async def exchange_code(
     key = f"auth:oauth_exchange:{body.code}"
     data = await redis_client.get(key)
     if not data:
-        raise AuthenticationRequiredError("Invalid or expired exchange code.")
+        raise AuthenticationRequiredError(OAUTH_CODE_INVALID)
 
     # Delete immediately — single-use semantics.
     await redis_client.delete(key)

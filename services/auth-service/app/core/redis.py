@@ -1,8 +1,11 @@
 """
 Redis client lifecycle for auth-service.
 
-Single logical DB (default 0) for API keys, tenant status, revocation keys, etc.
-Keys are distinguished by prefix (e.g. auth:apikey:, auth:tenant_status:).
+Single logical DB (default 0). Auth-service uses Redis ONLY for:
+  - API key cache (auth:apikey:*)
+
+Roles, permissions, role→permission map, and endpoint→permission_id map
+are kept in-process (see PermissionChecker and RolePermissionCache).
 """
 
 import logging
@@ -10,6 +13,8 @@ from collections.abc import AsyncGenerator
 from urllib.parse import urlparse, urlunparse
 
 import redis.asyncio as aioredis
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +69,12 @@ async def init_redis(url: str, socket_timeout: int = 10, redis_db: int = 0) -> N
     _redis = aioredis.from_url(
         base_url,
         db=redis_db,
+        max_connections=settings.redis_max_connections,
         socket_timeout=socket_timeout,
         socket_connect_timeout=socket_timeout,
         decode_responses=True,
+        retry_on_timeout=True,
+        health_check_interval=30,
     )
 
     await _connect_with_retry(_redis, "auth")
@@ -89,38 +97,5 @@ def get_redis_client() -> aioredis.Redis:
     return _redis
 
 
-# Backward-compatible names — all resolve to the single DB 0 client.
-def get_redis_client_api_permissions() -> aioredis.Redis:
-    return get_redis_client()
-
-
-def get_redis_client_role_permissions() -> aioredis.Redis:
-    return get_redis_client()
-
-
-def get_redis_client_api_keys() -> aioredis.Redis:
-    return get_redis_client()
-
-
-def get_redis_client_refresh_tokens() -> aioredis.Redis:
-    return get_redis_client()
-
-
 async def get_redis() -> AsyncGenerator[aioredis.Redis, None]:
-    yield get_redis_client()
-
-
-async def get_redis_api_permissions() -> AsyncGenerator[aioredis.Redis, None]:
-    yield get_redis_client()
-
-
-async def get_redis_role_permissions() -> AsyncGenerator[aioredis.Redis, None]:
-    yield get_redis_client()
-
-
-async def get_redis_api_keys() -> AsyncGenerator[aioredis.Redis, None]:
-    yield get_redis_client()
-
-
-async def get_redis_refresh_tokens() -> AsyncGenerator[aioredis.Redis, None]:
     yield get_redis_client()

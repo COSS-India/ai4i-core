@@ -1,14 +1,10 @@
-from ai4icore_bootstrap.database import get_db
 """Dependency injection factories for Speaker Diarization service."""
 
 import logging
 
-from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from fastapi import HTTPException, Request, status
 
 from app.clients.triton_client import SpeakerDiarizationTritonClient
-from app.repositories.speaker_diarization_repository import SpeakerDiarizationRepository
 from app.services.speaker_diarization_service import SpeakerDiarizationService
 
 logger = logging.getLogger(__name__)
@@ -17,11 +13,8 @@ logger = logging.getLogger(__name__)
 
 async def get_speaker_diarization_service(
     request: Request,
-    db: AsyncSession = Depends(get_db),
 ) -> SpeakerDiarizationService:
-    """Construct SpeakerDiarizationService with Triton client and repository from request state."""
-    repository = SpeakerDiarizationRepository(db)
-
+    """Construct SpeakerDiarizationService with Triton client from request state."""
     triton_endpoint = getattr(request.state, "triton_endpoint", None)
     triton_api_key = getattr(request.app.state, "triton_api_key", "")
     model_name = getattr(request.state, "triton_model_name", None)
@@ -48,4 +41,4 @@ async def get_speaker_diarization_service(
         )
 
     triton_client = SpeakerDiarizationTritonClient(triton_endpoint, api_key=triton_api_key or None)
-    return SpeakerDiarizationService(repository=repository, triton_client=triton_client, model_name=model_name)
+    return SpeakerDiarizationService(triton_client=triton_client, model_name=model_name)

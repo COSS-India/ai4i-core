@@ -180,25 +180,20 @@ class ServiceClient:
         except Exception as e:
             logger.warning(f"⚠️ Failed to inject trace context: {e}")
     
-    async def call_asr_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
+    async def call_asr_service(self, request_data: Dict[str, Any], user_id: Optional[str] = None, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Call ASR service for speech-to-text conversion.
-        
-        Propagates distributed tracing context to enable end-to-end observability.
-        Also passes user_id for tenant routing in downstream services.
+
+        Propagates distributed tracing context and gateway-injected identity headers.
+        Gateway has already validated the request; we pass identity headers for downstream services.
         """
         await self._ensure_urls()
         headers = {}
-        if jwt_token:
-            headers['Authorization'] = f'Bearer {jwt_token}'
-        if api_key:
-            headers['X-API-Key'] = api_key
-        # Set X-Auth-Source to BOTH when both JWT and API key are present
-        if jwt_token and api_key:
-            headers['X-Auth-Source'] = 'BOTH'
-        # Add X-User-Id header for tenant routing (needed when JWT doesn't contain tenant info)
-        if user_id is not None:
-            headers['X-User-Id'] = str(user_id)
+        # Pass gateway-injected identity headers for downstream service context
+        if user_id:
+            headers['X-User-ID'] = str(user_id)
+        if tenant_id:
+            headers['X-Tenant-ID'] = str(tenant_id)
         
         # Inject trace context for distributed tracing
         self._inject_trace_context(headers)
@@ -344,25 +339,20 @@ class ServiceClient:
             logger.error(f"❌ ASR service HTTP error: {e}")
             raise ValueError(f"ASR service HTTP error: {str(e)}") from e
     
-    async def call_nmt_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
+    async def call_nmt_service(self, request_data: Dict[str, Any], user_id: Optional[str] = None, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Call NMT service for translation.
-        
-        Propagates distributed tracing context to enable end-to-end observability.
-        Also passes user_id for tenant routing in downstream services.
+
+        Propagates distributed tracing context and gateway-injected identity headers.
+        Gateway has already validated the request; we pass identity headers for downstream services.
         """
         await self._ensure_urls()
         headers = {}
-        if jwt_token:
-            headers['Authorization'] = f'Bearer {jwt_token}'
-        if api_key:
-            headers['X-API-Key'] = api_key
-        # Set X-Auth-Source to BOTH when both JWT and API key are present
-        if jwt_token and api_key:
-            headers['X-Auth-Source'] = 'BOTH'
-        # Add X-User-Id header for tenant routing (needed when JWT doesn't contain tenant info)
-        if user_id is not None:
-            headers['X-User-Id'] = str(user_id)
+        # Pass gateway-injected identity headers for downstream service context
+        if user_id:
+            headers['X-User-ID'] = str(user_id)
+        if tenant_id:
+            headers['X-Tenant-ID'] = str(tenant_id)
         
         # Inject trace context for distributed tracing
         self._inject_trace_context(headers)
@@ -496,25 +486,20 @@ class ServiceClient:
             logger.error(f"❌ NMT service HTTP error: {e}")
             raise ValueError(f"NMT service HTTP error: {str(e)}") from e
     
-    async def call_tts_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
+    async def call_tts_service(self, request_data: Dict[str, Any], user_id: Optional[str] = None, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Call TTS service for text-to-speech conversion.
-        
-        Propagates distributed tracing context to enable end-to-end observability.
-        Also passes user_id for tenant routing in downstream services.
+
+        Propagates distributed tracing context and gateway-injected identity headers.
+        Gateway has already validated the request; we pass identity headers for downstream services.
         """
         await self._ensure_urls()
         headers = {}
-        if jwt_token:
-            headers['Authorization'] = f'Bearer {jwt_token}'
-        if api_key:
-            headers['X-API-Key'] = api_key
-        # Set X-Auth-Source to BOTH when both JWT and API key are present
-        if jwt_token and api_key:
-            headers['X-Auth-Source'] = 'BOTH'
-        # Add X-User-Id header for tenant routing (needed when JWT doesn't contain tenant info)
-        if user_id is not None:
-            headers['X-User-Id'] = str(user_id)
+        # Pass gateway-injected identity headers for downstream service context
+        if user_id:
+            headers['X-User-ID'] = str(user_id)
+        if tenant_id:
+            headers['X-Tenant-ID'] = str(tenant_id)
         
         # Inject trace context for distributed tracing
         self._inject_trace_context(headers)

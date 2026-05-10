@@ -4,7 +4,7 @@ Permission listing routes.
 
 from fastapi import APIRouter, Depends
 
-from app.core.responses import success_response
+from app.core.responses import success_response, to_response
 from app.dependencies.permissions import require_any_role
 from app.dependencies.services import get_role_service
 from app.models.role_name import RoleName
@@ -22,7 +22,7 @@ async def list_permissions(
     svc: RoleService = Depends(get_role_service),
 ):
     permissions = await svc.list_permissions()
-    items = [PermissionResponse.model_validate(p, from_attributes=True).model_dump() for p in permissions]
+    items = [to_response(p, PermissionResponse, json_mode=False) for p in permissions]
     return success_response(data=items)
 
 
@@ -32,5 +32,5 @@ async def list_inference_permissions(
     svc: RoleService = Depends(get_role_service),
 ):
     permissions = await svc.list_inference_permissions()
-    items = [PermissionResponse.model_validate(p, from_attributes=True).model_dump() for p in permissions]
+    items = [to_response(p, PermissionResponse, json_mode=False) for p in permissions]
     return success_response(data=items)

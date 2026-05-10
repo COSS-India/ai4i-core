@@ -14,7 +14,6 @@ from app.schemas.inference import (
     LLMInferenceResponse,
     LLMOutput,
 )
-from app.repositories.llm_repository import LLMRepository
 from app.clients.triton_client import LLMTritonClient
 from ai4icore_exceptions import TritonInferenceError
 
@@ -37,11 +36,9 @@ class LLMService:
 
     def __init__(
         self,
-        repository: LLMRepository,
         triton_client: LLMTritonClient,
         model_name: str = "llm",
     ):
-        self.repository = repository
         self.triton_client = triton_client
         self.model_name = model_name
 
@@ -58,7 +55,6 @@ class LLMService:
     ) -> LLMInferenceResponse:
         """Run LLM inference on the given request."""
         start_time = time.time()
-        request_id = None
 
         with tracer.start_as_current_span("llm.process_batch") as span:
             try:
@@ -87,19 +83,6 @@ class LLMService:
                         normalized = text_input.source.replace("\n", " ").strip() if text_input.source else " "
                         input_texts.append(normalized)
                     preprocess_span.set_attribute("llm.preprocessed_count", len(input_texts))
-
-                # Create database request record
-                total_text_length = sum(len(text) for text in input_texts)
-                request_record = await self.repository.create_request(
-                    model_id=service_id,
-                    input_language=input_lang,
-                    output_language=output_lang,
-                    text_length=total_text_length,
-                    user_id=user_id,
-                    api_key_id=api_key_id,
-                    session_id=session_id,
-                )
-                request_id = request_record.id
 
                 # Process each input text
                 results: List[LLMOutput] = []
@@ -148,26 +131,11 @@ class LLMService:
 
                 response = LLMInferenceResponse(output=results)
 
-                # Database logging
-                for result in results:
-                    await self.repository.create_result(
-                        request_id=request_id,
-                        output_text=result.target,
-                        source_text=result.source,
-                    )
-
-                # Update request status
                 processing_time = time.time() - start_time
-                await self.repository.update_request_status(
-                    request_id=request_id,
-                    status="completed",
-                    processing_time=processing_time,
-                )
-
                 span.set_attribute("llm.processing_time_seconds", processing_time)
                 span.set_attribute("llm.output_count", len(response.output))
 
-                logger.info(f"LLM inference completed for request {request_id} in {processing_time:.2f}s")
+                logger.info(f"LLM inference completed in {processing_time:.2f}s")
                 return response
 
             except Exception as e:
@@ -177,16 +145,6 @@ class LLMService:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.record_exception(e)
                 logger.error(f"LLM inference failed: {e}")
-
-                if request_id:
-                    try:
-                        await self.repository.update_request_status(
-                            request_id=request_id,
-                            status="failed",
-                            error_message=str(e),
-                        )
-                    except Exception as update_error:
-                        logger.error(f"Failed to update request status: {update_error}")
 
                 # Check for static fallback on Triton-related errors
                 is_triton_error = (

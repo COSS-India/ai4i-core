@@ -5,8 +5,6 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, Request
 
-
-from app.dependencies.auth import AuthProvider
 from app.dependencies.services import get_llm_service
 from app.schemas.inference import LLMInferenceRequest, LLMInferenceResponse
 from app.services.llm_service import LLMService
@@ -16,7 +14,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/llm",
     tags=["LLM Inference"],
-    dependencies=[Depends(AuthProvider)],
 )
 
 

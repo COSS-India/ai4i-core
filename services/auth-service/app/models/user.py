@@ -19,6 +19,7 @@ class CreationType(str, enum.Enum):
     DEFAULT = "default"
     GOOGLE = "google"
 
+
 class User(Base):
     __tablename__ = "users"
 
@@ -55,3 +56,18 @@ class User(Base):
     credentials = relationship("UserCredentials", back_populates="user", uselist=False, cascade="all, delete-orphan")
     api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+
+    def is_accessible(self) -> bool:
+        """Account can be logged into: active and not soft-deleted."""
+        return bool(self.is_active and not self.is_delete)
+
+    def soft_delete(self) -> None:
+        self.is_delete = True
+        self.is_active = False
+
+    def activate(self) -> None:
+        self.is_active = True
+        self.is_delete = False
+
+    def __repr__(self) -> str:
+        return f"<User id={self.id} email={self.email!r} active={self.is_active}>"

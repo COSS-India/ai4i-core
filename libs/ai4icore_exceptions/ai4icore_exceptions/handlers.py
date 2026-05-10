@@ -156,7 +156,11 @@ def register_exception_handlers(app: FastAPI) -> None:
             )
 
         # Default: token expired / invalid / generic auth failure
-        return _error_detail_response(401, "AUTHENTICATION_ERROR", AUTH_FAILED_MESSAGE)
+        return _error_detail_response(
+            401,
+            exc.code,
+            error_msg or AUTH_FAILED_MESSAGE,
+        )
 
     # ------------------------------------------------------------------
     # Authorization (403)

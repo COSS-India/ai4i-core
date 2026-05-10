@@ -3,7 +3,7 @@ Tests for exception handling and response format.
 """
 
 from app.core.exceptions import (
-    AuthServiceError,
+    AppError,
     DuplicateEntityError,
     InsufficientPermissionsError,
     InvalidCredentialsError,
@@ -48,6 +48,6 @@ class TestExceptions:
         assert len(exc.errors) == 2
 
     def test_base_error(self):
-        exc = AuthServiceError("Custom error", "CUSTOM_CODE")
+        exc = AppError("Custom error", "CUSTOM_CODE")
         assert exc.code == "CUSTOM_CODE"
         assert exc.message == "Custom error"

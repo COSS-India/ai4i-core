@@ -3,7 +3,7 @@
 from fastapi import HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_auth.permission_checker import PermissionChecker
+from app.core.permission_checker import PermissionChecker
 
 from app.core.exceptions import EntityNotFoundError
 from app.models.role_name import RoleName, role_name_to_str
@@ -37,11 +37,11 @@ async def enforce_target_user_same_tenant(
     jwt_tid = getattr(request.state, "tenant_id", None)
     try:
         caller_tid = int(jwt_tid) if jwt_tid else current_user.tenant_id
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "INVALID_TOKEN", "message": "Stale token."},
-        )
+            detail={"code": "INVALID_TOKEN", "message": "Your session token contains an invalid tenant context. Please sign in again."},
+        ) from exc
 
     if not caller_tid or caller_tid != target.tenant_id:
         raise HTTPException(

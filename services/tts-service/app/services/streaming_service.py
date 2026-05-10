@@ -20,8 +20,6 @@ from app.services.voice_service import VoiceService, VoiceNotFoundError
 from app.services.audio_service import AudioService
 from app.services.text_service import TextService
 from app.clients.triton_client import TTSTritonClient
-from app.repositories.tts_repository import TTSRepository
-
 logger = logging.getLogger(__name__)
 
 
@@ -122,7 +120,6 @@ class StreamingTTSService:
         audio_service: AudioService,
         text_service: TextService,
         triton_client: TTSTritonClient,
-        repository: TTSRepository,
         voice_service: VoiceService,
         redis_client,
         response_frequency_in_ms: int = 2000,
@@ -133,7 +130,6 @@ class StreamingTTSService:
         self.audio_service = audio_service
         self.text_service = text_service
         self.triton_client = triton_client
-        self.repository = repository
         self.voice_service = voice_service
         self.redis_client = redis_client
         self.response_frequency_in_ms = response_frequency_in_ms

@@ -19,7 +19,6 @@ from app.schemas.inference import (
     AudioOutput,
     AudioConfig,
 )
-from app.repositories.tts_repository import TTSRepository
 from app.services.audio_service import AudioService
 from app.services.text_service import TextService
 from app.clients.triton_client import TTSTritonClient
@@ -44,14 +43,12 @@ class TTSService:
 
     def __init__(
         self,
-        repository: TTSRepository,
         audio_service: AudioService,
         text_service: TextService,
         triton_client: TTSTritonClient,
         resolved_model_name: Optional[str] = None,
     ):
         """Initialize TTS service with dependencies."""
-        self.repository = repository
         self.audio_service = audio_service
         self.text_service = text_service
         self.triton_client = triton_client
@@ -67,7 +64,6 @@ class TTSService:
     ) -> TTSInferenceResponse:
         """Run TTS inference for the given request."""
         start_time = time.time()
-        request_id = None
 
         service_id = request.config.serviceId
         if not service_id and http_request:
@@ -408,120 +404,21 @@ class TTSService:
                 total_audio_duration = None
                 total_audio_size = 0
 
-                # Phase 6: single persist — create request, store results, update status
-                with _standard_spans.persist() as persist_span:
-                    persist_span.set_attribute(
-                        "tts.db.operations",
-                        "tts_requests.insert,tts_results.insert,tts_requests.status_update",
+                if response.audio:
+                    total_audio_size = sum(
+                        len(base64.b64decode(a.audioContent))
+                        for a in response.audio
                     )
-                    db_request = await self.repository.create_request(
-                        model_id=service_id,
-                        voice_id=gender,
-                        language=language,
-                        text_length=total_text_length,
-                        user_id=user_id,
-                        api_key_id=api_key_id,
-                        session_id=session_id,
-                    )
-                    request_id = db_request.id
-                    persist_span.set_attribute("tts.db.tts_request.id", str(request_id))
-                    persist_span.set_attribute("tts.request_id", str(request_id))
-                    persist_span.set_attribute("tts.db.tts_request.model_id", service_id)
-                    persist_span.set_attribute("tts.db.tts_request.voice_id", gender)
-                    persist_span.set_attribute("tts.db.tts_request.language", language)
-                    persist_span.set_attribute(
-                        "tts.db.tts_request.text_length", total_text_length
-                    )
-                    persist_span.set_attribute(
-                        "tts.db.tts_request.status_after_insert", "processing"
-                    )
-                    persist_span.add_event(
-                        "tts.db.tts_request.insert",
-                        {
-                            "table": "tts_requests",
-                            "request_id": str(request_id),
-                            "model_id": service_id,
-                            "voice_id": gender,
-                            "language": language,
-                            "text_length": total_text_length,
-                            "initial_status": "processing",
-                        },
-                    )
+                    total_samples = total_audio_size / 2
+                    total_audio_duration = total_samples / target_sr
 
-                    if response.audio:
-                        total_audio_size = sum(
-                            len(base64.b64decode(a.audioContent))
-                            for a in response.audio
-                        )
-                        total_samples = total_audio_size / 2
-                        total_audio_duration = total_samples / target_sr
-
-                    response.config = AudioConfig(
-                        language=request.config.language,
-                        audioFormat=request.config.audioFormat,
-                        encoding="base64",
-                        samplingRate=target_sr,
-                        audioDuration=total_audio_duration,
-                    )
-
-                    last_encoded = (
-                        response.audio[-1].audioContent if response.audio else ""
-                    )
-                    preview_len = min(100, len(last_encoded)) if last_encoded else 0
-                    await self.repository.create_result(
-                        request_id=request_id,
-                        audio_file_path=last_encoded[:100] if last_encoded else "",
-                        audio_duration=total_audio_duration,
-                        audio_format=fmt,
-                        sample_rate=target_sr,
-                        file_size=total_audio_size,
-                    )
-                    persist_span.set_attribute(
-                        "tts.db.tts_result.audio_path_preview_length", preview_len
-                    )
-                    persist_span.set_attribute(
-                        "tts.db.tts_result.audio_duration_seconds",
-                        total_audio_duration or 0.0,
-                    )
-                    persist_span.set_attribute("tts.db.tts_result.audio_format", fmt)
-                    persist_span.set_attribute(
-                        "tts.db.tts_result.sample_rate_hz", target_sr
-                    )
-                    persist_span.set_attribute(
-                        "tts.db.tts_result.file_size_bytes", total_audio_size
-                    )
-                    persist_span.add_event(
-                        "tts.db.tts_result.insert",
-                        {
-                            "table": "tts_results",
-                            "request_id": str(request_id),
-                            "audio_format": fmt,
-                            "sample_rate_hz": target_sr,
-                            "file_size_bytes": total_audio_size,
-                            "audio_duration_seconds": total_audio_duration or 0.0,
-                        },
-                    )
-
-                    processing_time = time.time() - start_time
-                    await self.repository.update_request_status(
-                        request_id, "completed", processing_time=processing_time
-                    )
-                    persist_span.set_attribute(
-                        "tts.db.tts_request.final_status", "completed"
-                    )
-                    persist_span.set_attribute(
-                        "tts.db.tts_request.processing_time_seconds",
-                        processing_time,
-                    )
-                    persist_span.add_event(
-                        "tts.db.tts_request.status_update",
-                        {
-                            "table": "tts_requests",
-                            "request_id": str(request_id),
-                            "status": "completed",
-                            "processing_time_seconds": processing_time,
-                        },
-                    )
+                response.config = AudioConfig(
+                    language=request.config.language,
+                    audioFormat=request.config.audioFormat,
+                    encoding="base64",
+                    samplingRate=target_sr,
+                    audioDuration=total_audio_duration,
+                )
 
                 total_output_audio_duration = (
                     total_audio_duration if total_audio_duration else 0.0
@@ -549,7 +446,7 @@ class TTSService:
 
                 processing_time = time.time() - start_time
                 logger.info(
-                    f"TTS inference completed for request {request_id} in {processing_time:.2f}s, "
+                    f"TTS inference completed in {processing_time:.2f}s, "
                     f"input_characters={total_input_characters}, input_words={total_input_words}, "
                     f"output_audio_duration={total_output_audio_duration:.2f}s",
                     extra={
@@ -563,7 +460,6 @@ class TTSService:
                             "audio_length_ms": total_output_audio_duration * 1000.0,
                             "output_count": len(response.audio),
                         },
-                        "request_id": str(request_id),
                         "processing_time_seconds": processing_time,
                         "service_id": service_id,
                         "source_language": language,
@@ -591,36 +487,6 @@ class TTSService:
                     },
                     exc_info=True,
                 )
-
-                if request_id:
-                    try:
-                        await self.repository.update_request_status(
-                            request_id, "failed", error_message=str(e)
-                        )
-                    except Exception as update_error:
-                        logger.error(
-                            f"Failed to update request status: {update_error}"
-                        )
-                else:
-                    try:
-                        ttl = sum(len(inp.source) for inp in request.input)
-                        dr = await self.repository.create_request(
-                            model_id=service_id,
-                            voice_id=gender,
-                            language=language,
-                            text_length=ttl,
-                            user_id=user_id,
-                            api_key_id=api_key_id,
-                            session_id=session_id,
-                        )
-                        await self.repository.update_request_status(
-                            dr.id, "failed", error_message=str(e)
-                        )
-                    except Exception as db_err:
-                        logger.error(
-                            "TTS: failed to record failed request in DB: %s",
-                            db_err,
-                        )
 
                 if isinstance(e, TritonInferenceError):
                     raise

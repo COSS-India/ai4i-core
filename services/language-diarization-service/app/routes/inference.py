@@ -5,7 +5,6 @@ import logging
 from fastapi import APIRouter, Depends, Request
 
 
-from app.dependencies.auth import AuthProvider
 from app.dependencies.services import get_language_diarization_service
 from app.schemas.inference import (
     LanguageDiarizationInferenceRequest,
@@ -18,7 +17,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/language-diarization",
     tags=["Language Diarization Inference"],
-    dependencies=[Depends(AuthProvider)],
+    
 )
 
 

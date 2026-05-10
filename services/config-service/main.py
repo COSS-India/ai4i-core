@@ -6,7 +6,6 @@ import logging
 from ai4icore_env import app_env
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as redis
 from utils.health_status_cache import cache_health_snapshots
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -30,16 +29,7 @@ app = FastAPI(
     description="Centralized configuration for microservices"
 )
 
-# Add CORS middleware
-# Note: allow_origins=["*"] cannot be used with allow_credentials=True
-# If you need credentials, specify exact origins instead of "*"
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
-    allow_credentials=False,  # Must be False when allow_origins=["*"]
-    allow_methods=["*"],  # Allow all HTTP methods
-    allow_headers=["*"],  # Allow all headers
-)
+# CORS is handled at the nginx gateway, not here.
 
 # Global variables for connections
 redis_client = None

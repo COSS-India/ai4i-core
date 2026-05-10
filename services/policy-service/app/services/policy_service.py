@@ -1,5 +1,4 @@
 """Business logic for Policy Management."""
-import asyncio
 from typing import List, Optional, Sequence
 from uuid import UUID
 
@@ -8,47 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import httpx
 from ai4icore_env import app_env  # type: ignore
-from ai4icore_auth.providers import build_jwt_verifier  # type: ignore
 
 from app.models.orm import PiiPolicy
 from app.models.schemas import PolicyCreate, PolicyStatusUpdate, PolicyUpdate
 from app.repositories.policy_repository import PolicyRepository
 from app.repositories.tenant_policy_repository import TenantPolicyRepository
 from app.repositories.pii_type_repository import PiiTypeRepository
-
-
-_forward_auth_init_lock = asyncio.Lock()
-_forward_auth_verifier = build_jwt_verifier()
-
-
-async def _validated_forward_auth_header(auth_header: Optional[str]) -> Optional[str]:
-    """
-    Validate an inbound Authorization header before forwarding it to downstream services.
-
-    Why: prevents leaking arbitrary header values (or malformed tokens) to misconfigured URLs.
-    How: verify RS256 signature via JWKS using the shared platform verifier.
-    """
-    if not auth_header:
-        return None
-
-    # Accept either "Bearer <jwt>" or a raw token, but always forward as "Bearer <jwt>".
-    token = auth_header[7:] if auth_header.startswith("Bearer ") else auth_header
-    token = token.strip()
-    if not token:
-        raise HTTPException(
-            status_code=401,
-            detail={"code": "UNAUTHORIZED", "message": "Empty authorization token"},
-        )
-
-    # Initialize JWKS lazily (same pattern as the shared AuthProvider).
-    if _forward_auth_verifier.loaded_key_count == 0:
-        async with _forward_auth_init_lock:
-            if _forward_auth_verifier.loaded_key_count == 0:
-                await _forward_auth_verifier.initialize()
-
-    # Verify signature/issuer/audience as configured (raises on failure).
-    await _forward_auth_verifier.verify(token)
-    return f"Bearer {token}"
 
 
 class PolicyService:
@@ -160,8 +124,6 @@ class PolicyService:
         - remove policy-to-PII links (`policy_pii_types`) for the policy
         - keep `pii_types` master records intact
         """
-        # Keep mutating operations consistent with create/update auth handling.
-        await _validated_forward_auth_header(auth_header)
         obj = await self.get(policy_id)
         await self.repo.delete(obj)
 
@@ -196,9 +158,8 @@ class PolicyService:
             )
         url = f"{base}/api/v1/tenants?status=activated"
         headers = {}
-        validated = await _validated_forward_auth_header(auth_header)
-        if validated:
-            headers["Authorization"] = validated
+        if auth_header:
+            headers["Authorization"] = auth_header
         try:
             async with httpx.AsyncClient(timeout=app_env.policy_service_http_timeout) as client:
                 resp = await client.get(url, headers=headers)

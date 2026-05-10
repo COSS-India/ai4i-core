@@ -1,14 +1,10 @@
-from ai4icore_bootstrap.database import get_db
 """Dependency injection factories for Transliteration service."""
 
 import logging
 
-from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from fastapi import HTTPException, Request, status
 
 from app.clients.triton_client import TransliterationTritonClient
-from app.repositories.transliteration_repository import TransliterationRepository
 from app.services.transliteration_service import TransliterationService
 from app.services.text_service import TextService
 
@@ -18,10 +14,8 @@ logger = logging.getLogger(__name__)
 
 async def get_transliteration_service(
     request: Request,
-    db: AsyncSession = Depends(get_db),
 ) -> TransliterationService:
-    """Construct TransliterationService with Triton client and repository from request state."""
-    repository = TransliterationRepository(db)
+    """Construct TransliterationService with Triton client from request state."""
     text_service = TextService()
 
     triton_endpoint = getattr(request.state, "triton_endpoint", None)
@@ -58,7 +52,6 @@ async def get_transliteration_service(
 
     triton_client = TransliterationTritonClient(triton_endpoint, api_key=triton_api_key or None)
     return TransliterationService(
-        repository=repository,
         text_service=text_service,
         triton_client=triton_client,
         model_name=model_name,

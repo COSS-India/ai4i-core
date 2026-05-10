@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.core.exceptions import ValidationError
 from app.core.responses import success_response
-from app.dependencies.auth import get_user_id
 from app.dependencies.services import get_service_service
 from app.schemas.enums import TaskTypeEnum
 from app.schemas.service import (
@@ -117,7 +116,7 @@ async def create_service(
     svc: ServiceService = Depends(get_service_service),
 ):
     """Create a new service."""
-    user_id = get_user_id(request)
+    user_id = request.headers.get("X-User-Id")
     service_id = await svc.create_service(payload, created_by=user_id)
     return success_response(
         data={"serviceId": service_id, "name": payload.name},
@@ -132,7 +131,7 @@ async def update_service(
     svc: ServiceService = Depends(get_service_service),
 ):
     """Update an existing service."""
-    user_id = get_user_id(request)
+    user_id = request.headers.get("X-User-Id")
     await svc.update_service(payload, updated_by=user_id)
     return success_response(
         data={"serviceId": payload.serviceId},

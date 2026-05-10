@@ -5,13 +5,21 @@ RS256 key management and password hashing (argon2).
 import base64
 import logging
 import secrets
+from dataclasses import dataclass
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.backends import default_backend
+from passlib.context import CryptContext
 
 from app.core.config import settings
+from app.core.constants import (
+    ENV_DEVELOPMENT,
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
+)
+from app.core.exceptions import PasswordMismatchError, PasswordValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +58,10 @@ class RS256KeyManager:
         Auto-generation is only allowed in development/testing.
         """
         key_dir = settings.get_rs256_key_path()
-        is_production = settings.environment in ("production", "staging")
 
         if key_dir.exists() and any(key_dir.glob("*.pem")):
             self._load_from_directory(key_dir)
-        elif is_production:
+        elif settings.environment != ENV_DEVELOPMENT:
             raise RuntimeError(
                 f"FATAL: No RSA keys found at '{key_dir}'. "
                 f"In production/staging, pre-provisioned PEM key pairs are required. "
@@ -71,7 +78,7 @@ class RS256KeyManager:
             self._generate_keys(key_dir, settings.rs256_min_key_count)
 
         if len(self._keys) < settings.rs256_min_key_count:
-            if is_production:
+            if settings.environment != ENV_DEVELOPMENT:
                 raise RuntimeError(
                     f"FATAL: Only {len(self._keys)} key pair(s) found, "
                     f"minimum required is {settings.rs256_min_key_count}. "
@@ -84,7 +91,7 @@ class RS256KeyManager:
             self._generate_keys(key_dir, settings.rs256_min_key_count - len(self._keys))
 
         self._active_index = min(settings.rs256_active_key_index, len(self._keys) - 1)
-        logger.info("RS256 KeyManager: %d key(s) loaded, active kid=%s", len(self._keys), self.active_kid)
+        logger.info("RS256 KeyManager: %d key(s) loaded, active kid=%s", len(self._keys), self.get_signing_kid())
 
     def _load_from_directory(self, key_dir: Path) -> None:
         """Load key pairs from PEM files: key_01_private.pem / key_01_public.pem."""
@@ -145,10 +152,6 @@ class RS256KeyManager:
 
     # ── Public API ──
 
-    @property
-    def active_kid(self) -> str:
-        return self._keys[self._active_index].kid
-
     def get_signing_key(self):
         return self._keys[self._active_index].private_key
 
@@ -191,13 +194,11 @@ key_manager = RS256KeyManager()
 # ─────────────────────────────────────────────
 
 
+@dataclass(frozen=True, slots=True)
 class PasswordHashResult:
-    """Result of hashing a password."""
-
-    def __init__(self, hashed: str, salt: str, rounds: int):
-        self.hashed = hashed
-        self.salt = salt
-        self.rounds = rounds
+    """Result of hashing a password — argon2 hash + per-user salt."""
+    hashed: str
+    salt: str
 
 
 class PasswordManager:
@@ -207,19 +208,14 @@ class PasswordManager:
     """
 
     def __init__(self) -> None:
-        from passlib.context import CryptContext
         self._context = CryptContext(schemes=["argon2"], default="argon2")
 
     def hash_password(self, password: str) -> PasswordHashResult:
-        """Hash a password with a unique salt. Returns hash, salt, and rounds."""
+        """Hash a password with a unique salt. Returns hash + salt."""
         salt = secrets.token_hex(settings.argon2_salt_length)
         salted_password = password + salt
         hashed = self._context.hash(salted_password)
-        return PasswordHashResult(
-            hashed=hashed,
-            salt=salt,
-            rounds=settings.default_hash_rounds,
-        )
+        return PasswordHashResult(hashed=hashed, salt=salt)
 
     def verify_password(self, plain_password: str, hashed_password: str, salt: str) -> bool:
         """Verify a password against its hash using the stored salt."""
@@ -231,15 +227,15 @@ class PasswordManager:
         """Validate password meets product password-policy requirements.
 
         Rules (per security spec):
-          - Min 8 chars, max 64 chars
+          - Min PASSWORD_MIN_LENGTH chars, max PASSWORD_MAX_LENGTH chars
           - At least one uppercase, one lowercase, one digit, one special char
           - No spaces (anywhere)
         """
         errors: list[str] = []
-        if len(password) < 8:
-            errors.append("Password must be at least 8 characters long.")
-        if len(password) > 64:
-            errors.append("Password must be at most 64 characters long.")
+        if len(password) < PASSWORD_MIN_LENGTH:
+            errors.append(f"Password must be at least {PASSWORD_MIN_LENGTH} characters long.")
+        if len(password) > PASSWORD_MAX_LENGTH:
+            errors.append(f"Password must be at most {PASSWORD_MAX_LENGTH} characters long.")
         if not any(c.isupper() for c in password):
             errors.append("Password must contain at least one uppercase letter.")
         if not any(c.islower() for c in password):
@@ -251,6 +247,14 @@ class PasswordManager:
         if any(c.isspace() for c in password):
             errors.append("Password must not contain spaces.")
         return len(errors) == 0, errors
+
+    def validate_and_confirm(self, password: str, confirm_password: str) -> None:
+        """Validate strength and confirm passwords match. Raises on failure."""
+        if password != confirm_password:
+            raise PasswordMismatchError()
+        valid, errors = self.validate_strength(password)
+        if not valid:
+            raise PasswordValidationError(errors)
 
 
 password_manager = PasswordManager()

@@ -2,6 +2,8 @@
 APIKey ORM model.
 """
 
+from datetime import datetime, timezone
+
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -33,3 +35,11 @@ class APIKey(Base):
     updated_by = Column(UUID(as_uuid=True), nullable=True)
 
     user = relationship("User", back_populates="api_keys")
+
+    def is_expired(self) -> bool:
+        if self.expires_at is None:
+            return False
+        return datetime.now(timezone.utc) > self.expires_at
+
+    def __repr__(self) -> str:
+        return f"<APIKey id={self.id} name={self.key_name!r} expired={self.is_expired()}>"

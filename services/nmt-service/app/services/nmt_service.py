@@ -8,12 +8,10 @@ import json
 import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
-from uuid import UUID
 
 import httpx
 import numpy as np
 from app.schemas.inference import NMTInferenceRequest, NMTInferenceResponse, TranslationOutput
-from app.repositories.nmt_repository import NMTRepository
 from app.clients.triton_client import NMTTritonClient
 from app.clients.model_management_client import ModelManagementClient, ServiceInfo
 from app.clients.pii_client import PII_SUPPORTED_LANG_CODES, pii_language_code, redact_for_storage
@@ -54,7 +52,6 @@ class NMTService:
 
     def __init__(
         self,
-        repository: NMTRepository,
         text_service=None,
         get_triton_client_func=None,
         model_management_client: Optional[ModelManagementClient] = None,
@@ -64,7 +61,6 @@ class NMTService:
         pii_redact_timeout: float = 20.0,
         pii_http_client: Optional[httpx.AsyncClient] = None,
     ):
-        self.repository = repository
         self.text_service = text_service
         self.get_triton_client_func = get_triton_client_func
         self.model_management_client = model_management_client
@@ -85,15 +81,14 @@ class NMTService:
     async def run_inference(
         self,
         request: NMTInferenceRequest,
-        user_id: Optional[int] = None,
-        api_key_id: Optional[int] = None,
-        session_id: Optional[int] = None,
+        user_id: Optional[str] = None,
+        api_key_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         auth_headers: Optional[Dict[str, str]] = None,
         http_request: Optional[Request] = None,
     ) -> NMTInferenceResponse:
         """Run NMT inference with StandardSpanManager phases and fallback retry."""
         start_time = time.time()
-        request_id = None
 
         service_id = (
             getattr(http_request.state, "service_id", None) if http_request else None
@@ -374,115 +369,6 @@ class NMTService:
 
                 nmt_response = NMTInferenceResponse(output=results)
 
-                # Phase 6: single persist — create request, store results, update status
-                with _standard_spans.persist() as persist_span:
-                    persist_span.set_attribute(
-                        "nmt.db.operations",
-                        "nmt_requests.insert,nmt_results.bulk_insert,nmt_requests.status_update",
-                    )
-                    request_record = await self.repository.create_request(
-                        model_id=service_id,
-                        source_language=original_source_lang,
-                        target_language=original_target_lang,
-                        text_length=total_text_length,
-                        user_id=user_id,
-                        api_key_id=api_key_id,
-                        session_id=session_id,
-                    )
-                    request_id = request_record.id
-                    persist_span.set_attribute("nmt.db.nmt_request.id", str(request_id))
-                    persist_span.set_attribute("nmt.request_id", str(request_id))
-                    persist_span.set_attribute("nmt.db.nmt_request.model_id", service_id)
-                    persist_span.set_attribute(
-                        "nmt.db.nmt_request.source_language", original_source_lang
-                    )
-                    persist_span.set_attribute(
-                        "nmt.db.nmt_request.target_language", original_target_lang
-                    )
-                    persist_span.set_attribute(
-                        "nmt.db.nmt_request.text_length", total_text_length
-                    )
-                    persist_span.set_attribute(
-                        "nmt.db.nmt_request.status_after_insert", "processing"
-                    )
-                    persist_span.add_event(
-                        "nmt.db.nmt_request.insert",
-                        {
-                            "table": "nmt_requests",
-                            "request_id": str(request_id),
-                            "model_id": service_id,
-                            "source_language": original_source_lang,
-                            "target_language": original_target_lang,
-                            "text_length": total_text_length,
-                            "initial_status": "processing",
-                        },
-                    )
-
-                    stored, persist_db_meta = await self._persist_translation_results(
-                        request_id=request_id,
-                        results=results,
-                        original_source_lang=original_source_lang,
-                        original_target_lang=original_target_lang,
-                        auth_headers=auth_headers,
-                        http_request=http_request,
-                    )
-                    persist_span.set_attribute(
-                        "nmt.db.nmt_result.bulk_insert_row_count",
-                        persist_db_meta["bulk_row_count"],
-                    )
-                    persist_span.set_attribute(
-                        "nmt.pii_redact.base_url_configured",
-                        persist_db_meta["pii_redact_base_url_configured"],
-                    )
-                    persist_span.set_attribute(
-                        "nmt.pii_redact.source_lang_eligible",
-                        persist_db_meta["pii_redact_source_lang_eligible"],
-                    )
-                    persist_span.set_attribute(
-                        "nmt.pii_redact.target_lang_eligible",
-                        persist_db_meta["pii_redact_target_lang_eligible"],
-                    )
-                    persist_span.set_attribute(
-                        "nmt.pii_redact.applied_per_text_pair",
-                        persist_db_meta["pii_redact_applied_per_text_pair"],
-                    )
-                    persist_span.add_event(
-                        "nmt.db.nmt_result.bulk_insert",
-                        {
-                            "table": "nmt_results",
-                            "request_id": str(request_id),
-                            "row_count": persist_db_meta["bulk_row_count"],
-                            "pii_redact_applied": persist_db_meta[
-                                "pii_redact_applied_per_text_pair"
-                            ],
-                        },
-                    )
-                    if http_request is not None:
-                        http_request.state.persisted_translation_results = stored
-
-                    processing_time = time.time() - start_time
-                    await self.repository.update_request_status(
-                        request_id=request_id,
-                        status="completed",
-                        processing_time=processing_time,
-                    )
-                    persist_span.set_attribute(
-                        "nmt.db.nmt_request.final_status", "completed"
-                    )
-                    persist_span.set_attribute(
-                        "nmt.db.nmt_request.processing_time_seconds",
-                        processing_time,
-                    )
-                    persist_span.add_event(
-                        "nmt.db.nmt_request.status_update",
-                        {
-                            "table": "nmt_requests",
-                            "request_id": str(request_id),
-                            "status": "completed",
-                            "processing_time_seconds": processing_time,
-                        },
-                    )
-
                 # Required parent span attributes that are only known at the end
                 if parent_span is not None:
                     try:
@@ -494,7 +380,6 @@ class NMTService:
                 logger.info(
                     "NMT inference completed",
                     extra={
-                        "request_id": str(request_id),
                         "processing_time_seconds": processing_time,
                         "service_id": service_id,
                         "input_details": {
@@ -773,70 +658,6 @@ class NMTService:
     # PII-aware persistence
     # ──────────────────────────────────────────────
 
-    async def _persist_translation_results(
-        self,
-        request_id: UUID,
-        results: List[TranslationOutput],
-        original_source_lang: str,
-        original_target_lang: str,
-        auth_headers: Optional[Dict[str, str]],
-        http_request: Optional[Request],
-    ) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
-        tenant_id = getattr(http_request.state, "tenant_id", None) if http_request else None
-        tenant_header = str(tenant_id) if tenant_id else None
-
-        src_lang = pii_language_code(original_source_lang)
-        tgt_lang = pii_language_code(original_target_lang)
-        src_ok = bool(src_lang) and src_lang in PII_SUPPORTED_LANG_CODES
-        tgt_ok = bool(tgt_lang) and tgt_lang in PII_SUPPORTED_LANG_CODES
-
-        stored_results: List[Dict[str, str]] = []
-        meta: Dict[str, Any] = {
-            "bulk_row_count": 0,
-            "pii_redact_base_url_configured": bool(self.pii_redact_base_url),
-            "pii_redact_source_lang_eligible": src_ok,
-            "pii_redact_target_lang_eligible": tgt_ok,
-            "pii_redact_applied_per_text_pair": False,
-        }
-
-        if not self.pii_redact_base_url or (not src_ok and not tgt_ok):
-            rows = []
-            for r in results:
-                rows.append({"translated_text": r.target, "source_text": r.source})
-                stored_results.append({"source_text": r.source, "translated_text": r.target})
-            if rows:
-                await self.repository.create_results_bulk(request_id=request_id, rows=rows)
-                meta["bulk_row_count"] = len(rows)
-            return stored_results, meta
-
-        async def _maybe_redact(text: str, lang: str, supported: bool) -> str:
-            if not supported or not text:
-                return text
-            try:
-                return await redact_for_storage(
-                    base_url=self.pii_redact_base_url,
-                    text=text, lang=lang,
-                    auth_headers=auth_headers, tenant_id=tenant_header,
-                    timeout=self.pii_redact_timeout, client=self.pii_http_client,
-                )
-            except Exception as exc:
-                logger.warning("PII redact failed; storing raw: %s", exc)
-                return text
-
-        meta["pii_redact_applied_per_text_pair"] = True
-        rows = []
-        for r in results:
-            src_stored, tgt_stored = await asyncio.gather(
-                _maybe_redact(r.source, src_lang, src_ok),
-                _maybe_redact(r.target, tgt_lang, tgt_ok),
-            )
-            rows.append({"translated_text": tgt_stored, "source_text": src_stored})
-            stored_results.append({"source_text": src_stored, "translated_text": tgt_stored})
-        if rows:
-            await self.repository.create_results_bulk(request_id=request_id, rows=rows)
-            meta["bulk_row_count"] = len(rows)
-        return stored_results, meta
-
     # ──────────────────────────────────────────────
     # Internal helpers
     # ──────────────────────────────────────────────
@@ -871,7 +692,6 @@ class NMTService:
         cache_ttl = getattr(mm_client, "cache_ttl_seconds", 300) if mm_client else 300
 
         fb = NMTService(
-            repository=self.repository,
             text_service=TextService(),
             get_triton_client_func=_client_factory,
             model_management_client=mm_client,
@@ -892,14 +712,3 @@ class NMTService:
         )
         fb._service_info_cache[fallback_service_id] = (fb_info, expires)
         return fb
-
-    def _mark_failed(self, request_id, error_message: str):
-        """Best-effort mark request as failed (fire-and-forget in background)."""
-        if not request_id:
-            return
-        try:
-            asyncio.get_event_loop().create_task(
-                self.repository.update_request_status(request_id=request_id, status="failed", error_message=error_message)
-            )
-        except Exception:
-            pass

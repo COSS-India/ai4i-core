@@ -1,14 +1,11 @@
-from ai4icore_bootstrap.database import get_db
 """Dependency injection factories for Audio Language Detection service."""
 
 import logging
 
-from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import HTTPException, Request, status
 
 
 from app.clients.triton_client import AudioLangDetectionTritonClient
-from app.repositories.audio_lang_detection_repository import AudioLangDetectionRepository
 from app.services.audio_lang_detection_service import AudioLangDetectionService
 
 logger = logging.getLogger(__name__)
@@ -17,11 +14,8 @@ logger = logging.getLogger(__name__)
 
 async def get_audio_lang_detection_service(
     request: Request,
-    db: AsyncSession = Depends(get_db),
 ) -> AudioLangDetectionService:
-    """Construct AudioLangDetectionService with Triton client and repository from request state."""
-    repository = AudioLangDetectionRepository(db)
-
+    """Construct AudioLangDetectionService with Triton client from request state."""
     triton_endpoint = getattr(request.state, "triton_endpoint", None)
     triton_api_key = getattr(request.app.state, "triton_api_key", "")
     model_name = getattr(request.state, "triton_model_name", None)
@@ -48,4 +42,4 @@ async def get_audio_lang_detection_service(
         )
 
     triton_client = AudioLangDetectionTritonClient(triton_endpoint, api_key=triton_api_key or None)
-    return AudioLangDetectionService(repository=repository, triton_client=triton_client, model_name=model_name)
+    return AudioLangDetectionService(triton_client=triton_client, model_name=model_name)

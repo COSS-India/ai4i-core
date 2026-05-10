@@ -6,7 +6,6 @@ import asyncio
 import logging
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -31,14 +30,7 @@ app = FastAPI(
     description="Process and route telemetry data for microservices"
 )
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS is handled at the nginx gateway, not here.
 
 # Shared exception handlers
 register_exception_handlers(app)

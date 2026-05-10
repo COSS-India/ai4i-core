@@ -6,7 +6,6 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, Request
 
 
-from app.dependencies.auth import AuthProvider
 from app.dependencies.services import get_language_detection_service
 from app.schemas.inference import (
     LanguageDetectionInferenceRequest,
@@ -19,13 +18,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/language-detection",
     tags=["Language Detection"],
-    dependencies=[Depends(AuthProvider)],
+    
 )
-
-
-async def enforce_language_detection_checks(request: Request):
-    """Enforce tenant and service availability checks."""
-router.dependencies.append(Depends(enforce_language_detection_checks))
 
 
 @router.post("/inference", response_model=LanguageDetectionInferenceResponse)
