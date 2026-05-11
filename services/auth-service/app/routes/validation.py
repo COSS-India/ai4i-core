@@ -13,7 +13,6 @@ import base64
 import binascii
 import json
 import logging
-from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
@@ -21,11 +20,9 @@ from fastapi.responses import JSONResponse
 logger = logging.getLogger(__name__)
 
 from app.core.jwt_verifier import JWTExpiredError, JWTVerificationError
-from app.core.database import get_db
 from app.core.redis import get_redis
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError
 from app.dependencies.auth import check_token_revocation, get_jwt_verifier
-from app.repositories.api_key_repository import APIKeyRepository
 from app.schemas.api_key import ValidateAPIKeyErrorResponse, ValidateAPIKeyResponse
 from app.schemas.token import TokenValidationResponse
 from app.services.api_key_service import APIKeyService
@@ -193,7 +190,6 @@ async def validate_token(
     if is_jwt_strict(token):
         return await _validate_jwt(token, request, response, cache_svc)
 
-    # API key path — only branch that needs DB.
-    async with asynccontextmanager(get_db)() as db:
-        api_key_svc = APIKeyService(APIKeyRepository(db), cache_svc)
-        return await _validate_api_key(token, request, response, api_key_svc)
+    # API key path — validates against Redis cache only, no DB needed
+    api_key_svc = APIKeyService(None, cache_svc)
+    return await _validate_api_key(token, request, response, api_key_svc)
