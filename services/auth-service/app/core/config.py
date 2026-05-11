@@ -77,9 +77,11 @@ class AuthSettings(BaseSettings):
         validation_alias=AliasChoices("API_KEY_EXPIRE_DAYS", "APIKEY_EXPIRY"),
     )
 
-    # ── Password hashing (argon2) ──
+    # ── Password hashing (argon2id) ──
+    argon2_time_cost: int = 3
+    argon2_memory_cost: int = 65536
+    argon2_parallelism: int = 4
     argon2_salt_length: int = 16
-    default_hash_rounds: int = 12
 
     # ── HTTP Timeouts ──
     # JWKS endpoint timeout for JWT verification
