@@ -3,7 +3,7 @@ Authentication routes: register, login, logout, refresh, password management,
 and email activation (provision + set-password).
 """
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from app.core.config import settings
 from app.core.responses import success_response
@@ -21,7 +21,6 @@ from app.schemas.auth import (
     ResendVerificationRequest,
     ResetPasswordRequest,
     SetPasswordRequest,
-    SetPasswordStatusRequest,
     SetPasswordStatusResponse,
     TokenRefreshRequest,
     TokenRefreshResponse,
@@ -183,13 +182,13 @@ async def change_password(
 
 # ── Email activation ──
 
-@router.post("/set-password/status", response_model=SetPasswordStatusResponse)
+@router.get("/set-password/status", response_model=SetPasswordStatusResponse)
 async def get_setup_token_status(
-    body: SetPasswordStatusRequest,
+    token: str = Query(...),
     svc: AuthService = Depends(get_auth_service),
 ):
     """Check whether a setup token is valid, expired, or already used."""
-    result = await svc.get_setup_token_status(body.token)
+    result = await svc.get_setup_token_status(token)
     return SetPasswordStatusResponse(**result)
 
 

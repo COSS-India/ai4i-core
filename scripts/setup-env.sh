@@ -45,6 +45,9 @@ DASHBOARD_DB_NAME="$(read_env_var DASHBOARD_DB_NAME)"
 TELEMETRY_DB_NAME="$(read_env_var TELEMETRY_DB_NAME)"
 METRICS_DB_NAME="$(read_env_var METRICS_DB_NAME)"
 ALERTING_DB_NAME="$(read_env_var ALERTING_DB_NAME)"
+POLICY_DB_NAME="$(read_env_var POLICY_DB_NAME)"
+
+REDIS_PASSWORD="$(read_env_var REDIS_PASSWORD)"
 
 ALEMBIC_DB_HOST="$(read_env_var ALEMBIC_DB_HOST)"
 ALEMBIC_DB_PORT="$(read_env_var ALEMBIC_DB_PORT)"
@@ -76,6 +79,8 @@ add_sed_replacement "DASHBOARD_DB_NAME" "${DASHBOARD_DB_NAME}"
 add_sed_replacement "TELEMETRY_DB_NAME" "${TELEMETRY_DB_NAME}"
 add_sed_replacement "METRICS_DB_NAME" "${METRICS_DB_NAME}"
 add_sed_replacement "ALERTING_DB_NAME" "${ALERTING_DB_NAME}"
+add_sed_replacement "POLICY_DB_NAME" "${POLICY_DB_NAME}"
+add_sed_replacement "YOUR_REDIS_PASSWORD" "${REDIS_PASSWORD}"
 add_sed_replacement "ALEMBIC_DB_HOST" "${ALEMBIC_DB_HOST}"
 add_sed_replacement "ALEMBIC_DB_PORT" "${ALEMBIC_DB_PORT}"
 

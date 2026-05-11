@@ -19,7 +19,8 @@ def to_response(obj: Any, schema: type[BaseModel], *, json_mode: bool = True) ->
     response builder will serialise types like UUID itself).
     """
     return schema.model_validate(obj, from_attributes=True).model_dump(
-        mode="json" if json_mode else "python"
+        mode="json" if json_mode else "python",
+        by_alias=True,
     )
 
 

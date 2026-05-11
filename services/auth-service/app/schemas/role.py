@@ -23,7 +23,7 @@ class RoleResponse(BaseSchema):
 
 
 class PermissionResponse(BaseSchema):
-    permission_id: int = Field(validation_alias=AliasChoices("permission_id", "id"))
+    permission_id: int = Field(validation_alias=AliasChoices("permission_id", "id"), serialization_alias="id")
     name: str
     resource: str
     action: str
