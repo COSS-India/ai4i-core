@@ -15,7 +15,7 @@ from typing import Optional
 from uuid import UUID
 
 from app.core.config import settings
-from app.core.exceptions import EntityNotFoundError, InvalidAPIKeyError, ValidationError
+from app.core.exceptions import AuthorizationError, EntityNotFoundError, InvalidAPIKeyError, ValidationError
 from app.models.api_key import APIKey
 from app.repositories.api_key_repository import APIKeyRepository
 from app.services.cache_service import CacheService
@@ -100,12 +100,7 @@ class APIKeyService:
         logger.info("API key created: name=%s user=%s", key_name, user_id)
         return raw_key, api_key
 
-    async def validate_api_key(
-        self,
-        token: str,
-        required_service: Optional[str] = None,
-        required_action: Optional[str] = None,
-    ) -> dict:
+    async def validate_api_key(self, token: str) -> dict:
         """
         Validate a hex API key. Redis-only — zero DB calls.
         Raises InvalidAPIKeyError when the key is absent from Redis (revoked or never existed).
@@ -117,29 +112,10 @@ class APIKeyService:
         if cached is None:
             raise InvalidAPIKeyError()
 
-        permission_ids: list[int] = cached.get("permissions", [])
-
-        if required_service and required_action:
-            id_to_name = await self._repo.get_permission_names_by_ids(permission_ids)
-            permission_names = list(id_to_name.values())
-            required_permission = f"{required_service}.{required_action}"
-            inference_permission = f"{required_service}.inference"
-            has_permission = (
-                required_permission in permission_names
-                or (required_action == "read" and inference_permission in permission_names)
-            )
-            if not has_permission:
-                return {
-                    "valid": False,
-                    "message": f"API key missing '{required_permission}' permission.",
-                    "user_id": cached.get("user_id"),
-                    "permissions": permission_names,
-                }
-
         return {
             "valid": True,
             "user_id": cached.get("user_id"),
-            "permission_ids": permission_ids,
+            "permission_ids": cached.get("permissions", []),
             "tenant_id": cached.get("tenant_id"),
         }
 
@@ -152,7 +128,7 @@ class APIKeyService:
         if not db_key:
             raise EntityNotFoundError("API key")
         if user_id is not None and db_key.user_id != user_id:
-            raise EntityNotFoundError("API key")
+            raise AuthorizationError("API key does not belong to you.")
 
         await self._repo.revoke(db_key)
         await self._cache.delete_api_key_cache(api_key_value)
@@ -169,7 +145,7 @@ class APIKeyService:
         if not db_key:
             raise EntityNotFoundError("API key")
         if user_id is not None and db_key.user_id != user_id:
-            raise EntityNotFoundError("API key")
+            raise AuthorizationError("API key does not belong to you.")
 
         expires_days = data.pop("expires_days", None)
         if expires_days is not None:
@@ -186,7 +162,7 @@ class APIKeyService:
         if expires_at:
             ttl = max(0, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
         else:
-            ttl = settings.api_key_expire_days * 86400
+            ttl = int(timedelta(days=settings.api_key_expire_days).total_seconds())
         if ttl > 0:
             await self._cache.set_api_key_cache(
                 api_key_value,

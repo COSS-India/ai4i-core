@@ -6,19 +6,29 @@ from typing import Optional
 
 from pydantic import EmailStr, Field
 
+from app.core.constants import (
+    FULL_NAME_MAX_LENGTH,
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
+    PHONE_NUMBER_MAX_LENGTH,
+    TIMEZONE_MAX_LENGTH,
+    USERNAME_MAX_LENGTH,
+)
 from app.schemas.base import BaseSchema
+
+_PASSWORD_FIELD = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH)
 
 
 # ── Requests ──
 
 class RegisterRequest(BaseSchema):
     email: EmailStr
-    username: str = Field(..., min_length=3, max_length=100)
-    password: str = Field(..., min_length=8, max_length=64)
-    confirm_password: str = Field(..., min_length=8, max_length=64)
-    full_name: Optional[str] = Field(None, max_length=255)
-    phone_number: Optional[str] = Field(None, max_length=20)
-    timezone: str = Field(default="UTC", max_length=50)
+    username: str = Field(..., min_length=3, max_length=USERNAME_MAX_LENGTH)
+    password: str = _PASSWORD_FIELD
+    confirm_password: str = _PASSWORD_FIELD
+    full_name: Optional[str] = Field(None, max_length=FULL_NAME_MAX_LENGTH)
+    phone_number: Optional[str] = Field(None, max_length=PHONE_NUMBER_MAX_LENGTH)
+    timezone: str = Field(default="UTC", max_length=TIMEZONE_MAX_LENGTH)
     tenant_id: Optional[int] = Field(
         None,
         description="Tenant integer ID to associate with the user.",
@@ -36,30 +46,14 @@ class TokenRefreshRequest(BaseSchema):
 
 class PasswordChangeRequest(BaseSchema):
     current_password: str
-    new_password: str = Field(..., min_length=8, max_length=64)
-    confirm_password: str = Field(..., min_length=8, max_length=64)
-
-
-class LogoutRequest(BaseSchema):
-    refresh_token: Optional[str] = None
-
-
-class ProvisionUserRequest(BaseSchema):
-    email: EmailStr
-    username: str = Field(..., min_length=3, max_length=100)
-    full_name: Optional[str] = Field(None, max_length=255)
-    phone_number: Optional[str] = Field(None, max_length=20)
-    tenant_id: Optional[int] = Field(None, description="Tenant integer ID.")
-    creation_type: str = Field(
-        default="default",
-        description="Legacy values 'tenant'/'direct' normalize to 'default'; only 'default' and 'google' persist.",
-    )
+    new_password: str = _PASSWORD_FIELD
+    confirm_password: str = _PASSWORD_FIELD
 
 
 class SetPasswordRequest(BaseSchema):
     token: str
-    new_password: str = Field(..., min_length=8, max_length=64)
-    confirm_password: str = Field(..., min_length=8, max_length=64)
+    new_password: str = _PASSWORD_FIELD
+    confirm_password: str = _PASSWORD_FIELD
 
 
 class ResendSetupLinkRequest(BaseSchema):
@@ -80,8 +74,12 @@ class ForgotPasswordRequest(BaseSchema):
 
 class ResetPasswordRequest(BaseSchema):
     token: str
-    new_password: str = Field(..., min_length=8, max_length=64)
-    confirm_password: str = Field(..., min_length=8, max_length=64)
+    new_password: str = _PASSWORD_FIELD
+    confirm_password: str = _PASSWORD_FIELD
+
+
+class SetPasswordStatusRequest(BaseSchema):
+    token: str = Field(..., min_length=10, max_length=2048)
 
 
 # ── Responses ──
@@ -102,12 +100,6 @@ class TokenRefreshResponse(BaseSchema):
 class LogoutResponse(BaseSchema):
     message: str
     logged_out: bool
-
-
-class ProvisionUserResponse(BaseSchema):
-    user_id: str
-    setup_token: str
-    message: str
 
 
 class SetPasswordStatusResponse(BaseSchema):

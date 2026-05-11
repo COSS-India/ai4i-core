@@ -218,7 +218,9 @@ class PlatformCoreClient:
             response = await client.get(url, headers=headers, params=params)
             response.raise_for_status()
 
-            data = response.json()
+            raw = response.json()
+            # platform-core-service wraps responses in {"success": true, "data": [...]}
+            data = raw.get("data", raw) if isinstance(raw, dict) and "data" in raw else raw
             services = []
 
             for item in data:
@@ -335,8 +337,10 @@ class PlatformCoreClient:
                 return None
 
             response.raise_for_status()
-            data = response.json()
-
+            raw = response.json()
+            # platform-core-service wraps responses in {"success": true, "data": {...}}
+            data = raw.get("data", raw) if isinstance(raw, dict) and "data" in raw else raw
+            
             # Extract triton endpoint and model name
             endpoint = data.get("endpoint")
             api_key = data.get("api_key")

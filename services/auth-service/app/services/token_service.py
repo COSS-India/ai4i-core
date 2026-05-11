@@ -10,47 +10,66 @@ All tokens include: iss, iat, kid, alg=RS256
 """
 
 import logging
+import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-import uuid
 
 from jose import jwt, JWTError, ExpiredSignatureError
 from cryptography.hazmat.primitives import serialization
 
 from app.core.config import settings
 from app.core.constants import TokenType
+from app.core.exceptions import TokenExpiredError, TokenInvalidError
 from app.core.security import key_manager
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
 class TokenPayload:
-    """Decoded JWT payload."""
+    """Decoded JWT payload — only the claims auth-service actually reads.
 
-    def __init__(self, data: dict[str, Any]):
-        self.sub: str = str(data.get("sub", ""))
-        self.tenant_id: Optional[str] = data.get("tenant_id")
-        self.permission_ids: list[int] = data.get("permission_ids", [])
-        self.token_type: str = data.get("type", "")
-        self.token_id: Optional[str] = data.get("token_id")
-        self.email: Optional[str] = data.get("email")
-        self.exp: Optional[datetime] = None
-        self.iss: Optional[str] = data.get("iss")
-        self.aud: Optional[str] = data.get("aud")
-        self.kid: Optional[str] = data.get("kid")
-        self.raw = data
+    Other JWT claims (tenant_id, permission_ids, email, exp, iss, aud, kid)
+    are still verified by the JWTVerifier (sig/exp/iss/aud/alg/kid checks)
+    but they're not surfaced here because no consumer reads them off
+    TokenPayload — callers either work from AuthClaims directly (validate
+    flow) or only need sub/token_id/token_type (provision/setup flows).
 
-        if "exp" in data:
-            self.exp = datetime.fromtimestamp(data["exp"], tz=timezone.utc)
+    Frozen: post-creation mutation is forbidden to ensure auth claims immutability.
+    """
+
+    sub: str
+    token_type: str
+    token_id: Optional[str] = None
+    tenant_id: Optional[str] = None
 
 
 class TokenService:
     """Creates and validates RS256 JWT tokens with strict iss/aud/alg/kid claims."""
 
+    def _create_token(
+        self,
+        token_type: str,
+        sub: str,
+        extra: dict[str, Any],
+        default_delta: timedelta,
+        expires_delta: Optional[timedelta] = None,
+    ) -> str:
+        """Template method for token creation. All token types follow: expire + payload + sign."""
+        expire = datetime.now(timezone.utc) + (expires_delta or default_delta)
+        payload = {**self._base_claims(), "sub": sub, "type": token_type, "exp": expire, **extra}
+        return self._sign(payload)
+
     def _base_claims(self) -> dict[str, Any]:
+        # `jti` makes every token unique even when (sub, type, iat) collide —
+        # `iat` has only 1-second precision, so without a nonce two
+        # verify/setup/reset tokens issued in the same second produce
+        # identical JWT bytes and collide on token_verification.token UNIQUE.
         claims: dict[str, Any] = {
             "iss": settings.jwt_issuer,
             "iat": datetime.now(timezone.utc),
+            "jti": uuid.uuid4().hex,
             "kid": key_manager.get_signing_kid(),
         }
         if settings.jwt_audience:
@@ -67,18 +86,13 @@ class TokenService:
         expires_delta: Optional[timedelta] = None,
     ) -> str:
         """Short-lived access token. Contains permission_ids only — no roles."""
-        expire = datetime.now(timezone.utc) + (
-            expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
+        return self._create_token(
+            token_type=TokenType.ACCESS,
+            sub=str(user_id),
+            extra={"tenant_id": tenant_id, "permission_ids": permission_ids or []},
+            default_delta=timedelta(minutes=settings.access_token_expire_minutes),
+            expires_delta=expires_delta,
         )
-        payload = {
-            **self._base_claims(),
-            "sub": str(user_id),
-            "tenant_id": tenant_id,
-            "permission_ids": permission_ids or [],
-            "type": TokenType.ACCESS,
-            "exp": expire,
-        }
-        return self._sign(payload)
 
     def create_refresh_token(
         self,
@@ -87,40 +101,13 @@ class TokenService:
         expires_delta: Optional[timedelta] = None,
     ) -> str:
         """Refresh token. No roles, no token_id — revocation is via DB row deletion."""
-        expire = datetime.now(timezone.utc) + (
-            expires_delta or timedelta(days=settings.refresh_token_expire_days)
+        return self._create_token(
+            token_type=TokenType.REFRESH,
+            sub=str(user_id),
+            extra={"tenant_id": tenant_id},
+            default_delta=timedelta(days=settings.refresh_token_expire_days),
+            expires_delta=expires_delta,
         )
-        payload = {
-            **self._base_claims(),
-            "sub": str(user_id),
-            "tenant_id": tenant_id,
-            "type": TokenType.REFRESH,
-            "exp": expire,
-        }
-        return self._sign(payload)
-
-    def create_api_key_token(
-        self,
-        user_id: str,
-        token_id: str,
-        tenant_id: Optional[str] = None,
-        permission_ids: list[int] | None = None,
-        expires_delta: Optional[timedelta] = None,
-    ) -> str:
-        """Long-lived API key token. token_id stored in DB for revocation lookups."""
-        expire = datetime.now(timezone.utc) + (
-            expires_delta or timedelta(days=settings.api_key_expire_days)
-        )
-        payload = {
-            **self._base_claims(),
-            "sub": str(user_id),
-            "tenant_id": tenant_id,
-            "permission_ids": permission_ids or [],
-            "type": TokenType.API_KEY,
-            "token_id": token_id,
-            "exp": expire,
-        }
-        return self._sign(payload)
 
     def create_setup_token(
         self,
@@ -129,17 +116,13 @@ class TokenService:
         expires_delta: Optional[timedelta] = None,
     ) -> str:
         """Short-lived email activation token. Signed JWT, stored in token_verification table."""
-        expire = datetime.now(timezone.utc) + (
-            expires_delta or timedelta(hours=settings.setup_token_expire_hours)
+        return self._create_token(
+            token_type=TokenType.SETUP,
+            sub=str(user_id),
+            extra={"email": email},
+            default_delta=timedelta(hours=settings.setup_token_expire_hours),
+            expires_delta=expires_delta,
         )
-        payload = {
-            **self._base_claims(),
-            "sub": str(user_id),
-            "email": email,
-            "type": TokenType.SETUP,
-            "exp": expire,
-        }
-        return self._sign(payload)
 
     def create_reset_token(
         self,
@@ -150,17 +133,13 @@ class TokenService:
         """Short-lived password-reset token. 30-min default per security spec —
         much shorter than SETUP/VERIFY (48h) since reset is initiated by an
         already-active user and the link is sensitive."""
-        expire = datetime.now(timezone.utc) + (
-            expires_delta or timedelta(minutes=settings.reset_token_expire_minutes)
+        return self._create_token(
+            token_type=TokenType.RESET,
+            sub=str(user_id),
+            extra={"email": email},
+            default_delta=timedelta(minutes=settings.reset_token_expire_minutes),
+            expires_delta=expires_delta,
         )
-        payload = {
-            **self._base_claims(),
-            "sub": str(user_id),
-            "email": email,
-            "type": TokenType.RESET,
-            "exp": expire,
-        }
-        return self._sign(payload)
 
     def create_verify_token(
         self,
@@ -172,17 +151,13 @@ class TokenService:
         token_verification table. Distinct from SETUP: VERIFY only flips
         is_active=True (the user already supplied a password at signup).
         """
-        expire = datetime.now(timezone.utc) + (
-            expires_delta or timedelta(hours=settings.setup_token_expire_hours)
+        return self._create_token(
+            token_type=TokenType.VERIFY,
+            sub=str(user_id),
+            extra={"email": email},
+            default_delta=timedelta(hours=settings.setup_token_expire_hours),
+            expires_delta=expires_delta,
         )
-        payload = {
-            **self._base_claims(),
-            "sub": str(user_id),
-            "email": email,
-            "type": TokenType.VERIFY,
-            "exp": expire,
-        }
-        return self._sign(payload)
 
     # ── Validation ──
 
@@ -192,8 +167,6 @@ class TokenService:
         Verifies: signature, expiry, kid, alg, issuer, audience (if configured).
         Raises TokenInvalidError or TokenExpiredError on failure.
         """
-        from app.core.exceptions import TokenExpiredError, TokenInvalidError
-
         try:
             header = jwt.get_unverified_header(token)
             kid = header.get("kid")
@@ -201,7 +174,7 @@ class TokenService:
 
             if not kid:
                 raise TokenInvalidError("Token header missing 'kid'.")
-            if alg and alg != "RS256":
+            if alg != "RS256":
                 raise TokenInvalidError(f"Unsupported algorithm '{alg}'. Expected RS256.")
 
             public_key = key_manager.get_public_key(kid)
@@ -226,18 +199,23 @@ class TokenService:
             if not payload.get("type"):
                 raise TokenInvalidError("Token missing 'type' claim.")
 
-            return TokenPayload(payload)
+            return TokenPayload(
+                sub=str(payload.get("sub", "")),
+                token_type=payload.get("type", ""),
+                token_id=payload.get("token_id"),
+                tenant_id=payload.get("tenant_id"),
+            )
 
-        except ExpiredSignatureError:
-            raise TokenExpiredError()
+        except ExpiredSignatureError as exc:
+            raise TokenExpiredError() from exc
         except JWTError as exc:
-            raise TokenInvalidError(f"Invalid token: {exc}")
+            raise TokenInvalidError("Token validation failed.") from exc
         except TokenExpiredError:
             raise
         except TokenInvalidError:
             raise
         except ValueError as exc:
-            raise TokenInvalidError(str(exc))
+            raise TokenInvalidError("Token validation failed.") from exc
 
     # ── Internal ──
 

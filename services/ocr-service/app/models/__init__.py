@@ -1,3 +1,3 @@
-from app.models.ocr import Base, OCRRequestDB, OCRResultDB
+from app.models.ocr import Base
 
-__all__ = ["Base", "OCRRequestDB", "OCRResultDB"]
+__all__ = ["Base"]

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import authService from "../../../services/authService";
 import type { User, Permission } from "../../../types/auth";
@@ -45,13 +45,6 @@ export function useCreateApiKeyTab({
     try {
       const allPermissions = await authService.getAllPermissions();
       setPermissions(Array.isArray(allPermissions) ? allPermissions : []);
-      toast({
-        title: "Permissions Loaded",
-        description: `Loaded ${allPermissions.length} permissions`,
-        status: "success",
-        duration: 2000,
-        isClosable: true,
-      });
     } catch (error) {
       toast({
         title: "Error",
@@ -64,6 +57,11 @@ export function useCreateApiKeyTab({
       setIsLoadingPermissions(false);
     }
   };
+
+  useEffect(() => {
+    handleLoadPermissions();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleUserSelect = (userId: string | null, picked?: UserSearchablePick | null) => {
     if (userId == null) {
@@ -157,7 +155,7 @@ export function useCreateApiKeyTab({
     }
   };
 
-  const openManagePermissions = async () => {
+  const openManagePermissions = () => {
     if (!selectedUserForPermissions) {
       toast({
         title: "Select user",
@@ -167,9 +165,6 @@ export function useCreateApiKeyTab({
         isClosable: true,
       });
       return;
-    }
-    if (permissions.length === 0) {
-      await handleLoadPermissions();
     }
     setIsManagePermissionsOpen(true);
   };

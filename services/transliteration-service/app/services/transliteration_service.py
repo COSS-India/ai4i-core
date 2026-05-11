@@ -12,7 +12,6 @@ from app.schemas.inference import (
     TransliterationInferenceResponse,
     TransliterationOutput,
 )
-from app.repositories.transliteration_repository import TransliterationRepository
 from app.clients.triton_client import TransliterationTritonClient
 from app.services.text_service import TextService
 from ai4icore_exceptions import TritonInferenceError
@@ -34,12 +33,10 @@ class TransliterationService:
 
     def __init__(
         self,
-        repository: TransliterationRepository,
         text_service: TextService,
         triton_client: TransliterationTritonClient,
         model_name: str = "transliteration",
     ):
-        self.repository = repository
         self.text_service = text_service
         self.triton_client = triton_client
         self.model_name = model_name
@@ -53,7 +50,6 @@ class TransliterationService:
     ) -> TransliterationInferenceResponse:
         """Run transliteration inference on the given request."""
         start_time = time.time()
-        request_id = None
 
         service_id = request.config.serviceId
         source_lang = request.config.language.sourceLanguage
@@ -340,67 +336,6 @@ class TransliterationService:
 
                 response = TransliterationInferenceResponse(output=results)
 
-                with _standard_spans.persist() as persist_span:
-                    persist_span.set_attribute(
-                        "transliteration.db.operations",
-                        "transliteration_requests.insert,transliteration_results.insert_per_item,transliteration_requests.status_update",
-                    )
-                    request_record = await self.repository.create_request(
-                        model_id=service_id,
-                        source_language=source_lang,
-                        target_language=target_lang,
-                        text_length=total_text_length,
-                        is_sentence_level=is_sentence,
-                        num_suggestions=top_k,
-                        user_id=user_id,
-                        api_key_id=api_key_id,
-                        session_id=session_id,
-                    )
-                    request_id = request_record.id
-                    persist_span.set_attribute(
-                        "transliteration.db.transliteration_request.id",
-                        str(request_id),
-                    )
-                    persist_span.set_attribute(
-                        "transliteration.request_id", str(request_id)
-                    )
-                    persist_span.add_event(
-                        "transliteration.db.transliteration_request.insert",
-                        {"table": "transliteration_requests", "request_id": str(request_id)},
-                    )
-
-                    inserted_results = 0
-                    for idx, result in enumerate(results):
-                        await self.repository.create_result(
-                            request_id=request_id,
-                            transliterated_text=result.target,
-                            source_text=result.source,
-                        )
-                        inserted_results += 1
-                        persist_span.add_event(
-                            "transliteration.db.transliteration_result.insert",
-                            {"result_index": idx, "request_id": str(request_id)},
-                        )
-                    persist_span.set_attribute(
-                        "transliteration.db.transliteration_result.inserted_count",
-                        inserted_results,
-                    )
-
-                    processing_time = time.time() - start_time
-                    await self.repository.update_request_status(
-                        request_id=request_id,
-                        status="completed",
-                        processing_time=processing_time,
-                    )
-                    persist_span.add_event(
-                        "transliteration.db.transliteration_request.status_update",
-                        {
-                            "request_id": str(request_id),
-                            "status": "completed",
-                            "processing_time_seconds": processing_time,
-                        },
-                    )
-
                 if parent_span is not None:
                     try:
                         parent_span.set_attribute(
@@ -411,60 +346,13 @@ class TransliterationService:
 
                 processing_time = time.time() - start_time
                 logger.info(
-                    "Transliteration inference completed for request %s in %.2fs",
-                    request_id,
+                    "Transliteration inference completed in %.2fs",
                     processing_time,
                 )
                 return response
 
             except Exception as e:
                 logger.error("Transliteration inference failed: %s", e)
-
-                if request_id:
-                    try:
-                        await self.repository.update_request_status(
-                            request_id=request_id,
-                            status="failed",
-                            error_message=str(e),
-                        )
-                    except Exception as update_error:
-                        logger.error(
-                            "Failed to update request status: %s", update_error
-                        )
-                else:
-                    try:
-                        ttl = sum(
-                            len(
-                                (
-                                    ti.source.replace("\n", " ").strip()
-                                    if ti.source
-                                    else ""
-                                )
-                            )
-                            for ti in (request.input or [])
-                        )
-                        dr = await self.repository.create_request(
-                            model_id=service_id,
-                            source_language=source_lang,
-                            target_language=target_lang,
-                            text_length=ttl,
-                            is_sentence_level=is_sentence,
-                            num_suggestions=top_k,
-                            user_id=user_id,
-                            api_key_id=api_key_id,
-                            session_id=session_id,
-                        )
-                        await self.repository.update_request_status(
-                            request_id=dr.id,
-                            status="failed",
-                            error_message=str(e),
-                        )
-                    except Exception as db_err:
-                        logger.error(
-                            "Transliteration: failed to record failed request: %s",
-                            db_err,
-                        )
-
                 if isinstance(e, TritonInferenceError):
                     raise
                 raise TritonInferenceError(

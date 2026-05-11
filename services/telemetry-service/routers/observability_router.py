@@ -16,15 +16,10 @@ from ai4icore_telemetry import (
 )
 from sqlalchemy import text
 from ai4icore_env import app_env
-from ai4icore_auth.providers import build_jwt_verifier
-from ai4icore_auth.jwt_verifier import AuthClaims, JWTVerificationError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# Shared JWT verifier — initialized lazily on first request
-_jwt_verifier = build_jwt_verifier()
 
 # Global clients (will be initialized in main.py)
 opensearch_client: Optional[OpenSearchQueryClient] = None
@@ -140,44 +135,21 @@ def map_subscription_to_service_name(subscription: str) -> str:
     return service_name_mapping.get(subscription.lower(), f"{subscription}-service")
 
 
-async def _get_claims(request: Request) -> Optional[AuthClaims]:
-    """Verify JWT and return AuthClaims, or None if no/invalid token."""
-    global _jwt_verifier
-    authorization = request.headers.get("Authorization") or request.headers.get("authorization")
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-
-    token = authorization.split(" ", 1)[1]
-
-    try:
-        if _jwt_verifier.loaded_key_count == 0:
-            await _jwt_verifier.initialize()
-        return await _jwt_verifier.verify(token)
-    except (JWTVerificationError, Exception) as e:
-        logger.warning("JWT verification failed: %s", e)
-        return None
-
-
 async def extract_tenant_id_from_jwt(request: Request) -> Optional[str]:
-    """Extract tenant_id from verified JWT token."""
-    claims = await _get_claims(request)
-    return claims.tenant_id if claims else None
+    """Extract tenant_id from gateway-injected headers (gateway already validated token)."""
+    return request.headers.get("X-Tenant-ID")
 
 
 async def is_user_admin(request: Request) -> bool:
-    """Check if the authenticated user has ADMIN role."""
-    claims = await _get_claims(request)
-    if not claims:
-        return False
-    return "ADMIN" in claims.roles
+    """Check if the authenticated user has ADMIN role (from gateway headers)."""
+    roles = request.headers.get("X-Roles", "").split(",") if request.headers.get("X-Roles") else []
+    return "ADMIN" in roles
 
 
 async def is_user_tenant_admin(request: Request) -> bool:
-    """Check if the authenticated user has TENANT ADMIN role."""
-    claims = await _get_claims(request)
-    if not claims:
-        return False
-    return "TENANT ADMIN" in claims.roles
+    """Check if the authenticated user has TENANT ADMIN role (from gateway headers)."""
+    roles = request.headers.get("X-Roles", "").split(",") if request.headers.get("X-Roles") else []
+    return "TENANT ADMIN" in roles
 
 
 async def get_tenant_subscriptions(tenant_id: str) -> Optional[List[str]]:

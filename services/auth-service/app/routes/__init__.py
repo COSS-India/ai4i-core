@@ -7,14 +7,14 @@ Version prefix (/api/v1) is managed centrally — route files have domain prefix
 Future v2: create v2 router, mount alongside v1. Deprecate v1 with Sunset header.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
 from ai4icore_core.bootstrap.versioning import APIVersioning, VersionInfo
 
 from app.core.config import settings
-from app.dependencies.endpoint_guard import enforce_endpoint_permission
 from app.routes.health import router as health_router
 from app.routes.auth import router as auth_router
+from app.routes.oauth import router as oauth_router
 from app.routes.user import router as user_router
 from app.routes.role import router as role_router
 from app.routes.permission import inference_router as inference_permission_router
@@ -37,20 +37,19 @@ versioning = APIVersioning(
 )
 
 # ── v1 routes ──
+# Permission enforcement happens at the gateway via /auth/validate
+# (api_permissions.json is the source of truth). No in-process guard.
 v1_router = versioning.create_router("v1")
 
-# Public (no endpoint guard)
 v1_router.include_router(auth_router)
+v1_router.include_router(oauth_router)
 v1_router.include_router(validation_router)
-
-# Protected (endpoint guard enforces api_permissions.json)
-_guard = [Depends(enforce_endpoint_permission)]
-v1_router.include_router(user_router, dependencies=_guard)
-v1_router.include_router(role_router, dependencies=_guard)
-v1_router.include_router(permission_router, dependencies=_guard)
-v1_router.include_router(inference_permission_router, dependencies=_guard)
-v1_router.include_router(api_key_router, dependencies=_guard)
-v1_router.include_router(tenants_router, dependencies=_guard)
+v1_router.include_router(user_router)
+v1_router.include_router(role_router)
+v1_router.include_router(permission_router)
+v1_router.include_router(inference_permission_router)
+v1_router.include_router(api_key_router)
+v1_router.include_router(tenants_router)
 
 # ── Top-level router ──
 api_router = APIRouter()

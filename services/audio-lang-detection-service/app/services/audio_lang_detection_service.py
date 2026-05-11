@@ -4,9 +4,7 @@ Core business logic for Audio Language Detection inference.
 
 import base64
 import logging
-import time
-from typing import Dict, List, Optional, Tuple
-from uuid import UUID
+from typing import Dict, List, Optional
 
 import requests
 from ai4icore_telemetry import StandardSpanManager, Status, StatusCode
@@ -18,7 +16,6 @@ from app.schemas.inference import (
     AudioLangDetectionResponseConfig,
     AllScores,
 )
-from app.repositories.audio_lang_detection_repository import AudioLangDetectionRepository
 from app.clients.triton_client import AudioLangDetectionTritonClient
 from ai4icore_exceptions import TritonInferenceError
 
@@ -36,16 +33,13 @@ class AudioLangDetectionService:
       - Resolve base64 content (direct or via audioUri download)
       - Call Triton (Audio Language Detection model)
       - Map detection model output to AudioLangDetectionInferenceResponse
-    - Persist requests and results to database
     """
 
     def __init__(
         self,
-        repository: AudioLangDetectionRepository,
         triton_client: AudioLangDetectionTritonClient,
         model_name: str,
     ):
-        self.repository = repository
         self.triton_client = triton_client
         self.model_name = model_name
 
@@ -89,10 +83,8 @@ class AudioLangDetectionService:
         """
         Async audio language detection inference entrypoint.
 
-        Standard phases: preprocess → resolve_model → triton_inference → postprocess → persist.
+        Standard phases: preprocess → resolve_model → triton_inference → postprocess.
         """
-        start_time = time.time()
-        request_id: Optional[UUID] = None
         has_errors = False
         service_id = request.config.serviceId
         input_count = len(request.audio or [])
@@ -263,7 +255,6 @@ class AudioLangDetectionService:
                     "One or more audio inputs failed during Triton inference"
                 )
 
-            inferred_rows: List[Tuple[int, str, float, dict]] = []
             output_list: List[AudioLangDetectionOutput] = []
 
             with _standard_spans.postprocess() as post_span:
@@ -285,9 +276,6 @@ class AudioLangDetectionService:
                     language_code = detection_data.get("language_code", "")
                     confidence = detection_data.get("confidence", 0.0)
 
-                    inferred_rows.append(
-                        (idx, language_code, confidence, all_scores_data)
-                    )
                     output_list.append(
                         AudioLangDetectionOutput(
                             language_code=language_code,
@@ -305,111 +293,13 @@ class AudioLangDetectionService:
                 post_span.set_attribute(
                     "audio-lang-detection.postprocess.output_count", len(output_list)
                 )
-                post_span.set_attribute(
-                    "audio-lang-detection.postprocess.db_candidate_count",
-                    len(inferred_rows),
-                )
                 post_span.add_event(
                     "audio-lang-detection.postprocess.completed",
                     {
                         "output_count": len(output_list),
-                        "db_candidate_count": len(inferred_rows),
                         "has_errors": bool(has_errors),
                     },
                 )
-
-            processing_time = time.time() - start_time
-
-            with _standard_spans.persist() as persist_span:
-                persist_span.set_attribute(
-                    "audio-lang-detection.db.operations",
-                    "audio_lang_detection_requests.insert,audio_lang_detection_results.insert_per_audio,audio_lang_detection_requests.status_update",
-                )
-                try:
-                    request_record = await self.repository.create_request(
-                        model_id=service_id,
-                        audio_duration=None,
-                        user_id=user_id,
-                        api_key_id=api_key_id,
-                        session_id=session_id,
-                    )
-                    request_id = request_record.id
-                    persist_span.set_attribute(
-                        "audio-lang-detection.db.audio_lang_detection_request.id",
-                        str(request_id),
-                    )
-                    persist_span.set_attribute(
-                        "audio-lang-detection.request_id", str(request_id)
-                    )
-                    persist_span.add_event(
-                        "audio-lang-detection.db.audio_lang_detection_request.insert",
-                        {"table": "audio_lang_detection_requests", "request_id": str(request_id)},
-                    )
-                except Exception as e:
-                    persist_span.add_event(
-                        "audio-lang-detection.db.audio_lang_detection_request.insert_failed",
-                        {
-                            "error.type": type(e).__name__,
-                            "error.message": str(e),
-                        },
-                    )
-
-                if request_id:
-                    inserted_results = 0
-                    for idx, language_code, confidence, all_scores_data in inferred_rows:
-                        try:
-                            await self.repository.create_result(
-                                request_id=request_id,
-                                language_code=language_code,
-                                confidence=confidence,
-                                all_scores=all_scores_data,
-                            )
-                            inserted_results += 1
-                            persist_span.add_event(
-                                "audio-lang-detection.db.audio_lang_detection_result.insert",
-                                {"audio_index": idx},
-                            )
-                        except Exception as e:
-                            persist_span.add_event(
-                                "audio-lang-detection.db.audio_lang_detection_result.insert_failed",
-                                {
-                                    "audio_index": idx,
-                                    "error.type": type(e).__name__,
-                                    "error.message": str(e),
-                                },
-                            )
-                    persist_span.set_attribute(
-                        "audio-lang-detection.db.audio_lang_detection_result.inserted_count",
-                        inserted_results,
-                    )
-                    persist_span.set_attribute(
-                        "audio-lang-detection.db.audio_lang_detection_result.expected_count",
-                        len(inferred_rows),
-                    )
-
-                    try:
-                        status_str = "failed" if has_errors else "completed"
-                        await self.repository.update_request_status(
-                            request_id=request_id,
-                            status=status_str,
-                            processing_time=processing_time,
-                        )
-                        persist_span.add_event(
-                            "audio-lang-detection.db.audio_lang_detection_request.status_update",
-                            {
-                                "request_id": str(request_id),
-                                "status": status_str,
-                                "processing_time_seconds": processing_time,
-                            },
-                        )
-                    except Exception as e:
-                        persist_span.add_event(
-                            "audio-lang-detection.db.audio_lang_detection_request.status_update_failed",
-                            {
-                                "error.type": type(e).__name__,
-                                "error.message": str(e),
-                            },
-                        )
 
             response_config = (
                 AudioLangDetectionResponseConfig(serviceId=request.config.serviceId)

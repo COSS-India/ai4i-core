@@ -63,12 +63,15 @@ class TestAuthSchemas:
     def test_login_request(self):
         from app.schemas.auth import LoginRequest
         req = LoginRequest(email="a@b.com", password="pass")
-        assert req.remember_me is False
+        assert req.email == "a@b.com"
+        assert req.password == "pass"
 
-    def test_api_key_create_admin_check(self):
-        from app.schemas.api_key import APIKeyCreateRequest
-        req = APIKeyCreateRequest(key_name="test", user_id=42)
-        assert req.user_id == 42
+    def test_api_key_create_request(self):
+        from app.schemas.api_key import CreateAPIKeyRequest
+        req = CreateAPIKeyRequest(key_name="test", permissions=[12, 15], expires_days=7)
+        assert req.key_name == "test"
+        assert req.permissions == [12, 15]
+        assert req.expires_days == 7
 
 
 class TestDependencyFactories:

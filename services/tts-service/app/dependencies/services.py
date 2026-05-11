@@ -1,14 +1,10 @@
-from ai4icore_bootstrap.database import get_db
 """Dependency injection factories for TTS service."""
 
 import logging
 
-from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from fastapi import HTTPException, Request, status
 
 from app.clients.triton_client import TTSTritonClient
-from app.repositories.tts_repository import TTSRepository
 from app.services.audio_service import AudioService
 from app.services.text_service import TextService
 from app.services.tts_service import TTSService
@@ -19,10 +15,8 @@ logger = logging.getLogger(__name__)
 
 async def get_tts_service(
     request: Request,
-    db: AsyncSession = Depends(get_db),
 ) -> TTSService:
     """Construct TTSService from request state set by Model Management middleware."""
-    repository = TTSRepository(db)
     audio_service = AudioService()
     text_service = TextService()
 
@@ -80,7 +74,6 @@ async def get_tts_service(
     triton_client = TTSTritonClient(triton_url=triton_endpoint, api_key=triton_api_key)
 
     return TTSService(
-        repository=repository,
         audio_service=audio_service,
         text_service=text_service,
         triton_client=triton_client,

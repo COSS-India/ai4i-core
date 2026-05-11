@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.responses import success_response
-from app.dependencies.auth import get_current_active_user
+from app.core.responses import success_response, to_response
+from app.dependencies.auth import get_current_user
 from app.dependencies.permissions import require_any_role
 from app.dependencies.services import get_role_service
 from app.dependencies.tenant_scope import enforce_target_user_same_tenant
@@ -27,7 +27,7 @@ async def list_roles(
     svc: RoleService = Depends(get_role_service),
 ):
     roles = await svc.list_roles()
-    items = [RoleResponse.model_validate(r, from_attributes=True).model_dump() for r in roles]
+    items = [to_response(r, RoleResponse, json_mode=False) for r in roles]
     return success_response(data=items)
 
 
@@ -89,9 +89,9 @@ async def assign_guest_services(
 
 @router.get("/list/guest/services")
 async def list_guest_services(
-    _current_user: User = Depends(get_current_active_user),
+    _current_user: User = Depends(get_current_user),
     svc: RoleService = Depends(get_role_service),
 ):
-    """List GUEST-role inference services; ``roles.read`` is enforced by ``enforce_endpoint_permission`` on the v1 router."""
+    """List GUEST-role inference services."""
     services = await svc.list_guest_inference_services()
     return success_response(data={"services": services})

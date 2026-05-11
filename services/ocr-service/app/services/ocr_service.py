@@ -15,7 +15,6 @@ from app.schemas.inference import (
     ImageInput,
     TextOutput,
 )
-from app.repositories.ocr_repository import OCRRepository
 from app.clients.triton_client import OCRTritonClient
 from ai4icore_exceptions import TritonInferenceError
 from ai4icore_telemetry import StandardSpanManager
@@ -37,8 +36,7 @@ class OCRService:
     - Log requests and results to database
     """
 
-    def __init__(self, repository: OCRRepository, triton_client: OCRTritonClient, model_name: str):
-        self.repository = repository
+    def __init__(self, triton_client: OCRTritonClient, model_name: str):
         self.triton_client = triton_client
         self.model_name = model_name
 
@@ -82,7 +80,6 @@ class OCRService:
         Standard 7-phase spans: preprocess → resolve_model → triton_inference → postprocess → persist.
         """
         start_time = time.time()
-        request_id = None
         service_id = request.config.serviceId
         language = request.config.language.sourceLanguage
         input_count = len(request.image)
@@ -246,44 +243,6 @@ class OCRService:
                             TextOutput(source="", target="")
                             for _ in request.image
                         ]
-                        with _standard_spans.persist() as persist_span:
-                            persist_span.set_attribute(
-                                "ocr.db.operations",
-                                "ocr_requests.insert,ocr_requests.status_update",
-                            )
-                            db_request = await self.repository.create_request(
-                                model_id=service_id,
-                                language=language,
-                                image_count=len(request.image),
-                                user_id=user_id,
-                                api_key_id=api_key_id,
-                                session_id=session_id,
-                            )
-                            request_id = db_request.id
-                            persist_span.set_attribute(
-                                "ocr.db.ocr_request.id", str(request_id)
-                            )
-                            persist_span.set_attribute("ocr.request_id", str(request_id))
-                            persist_span.add_event(
-                                "ocr.db.ocr_request.insert",
-                                {
-                                    "table": "ocr_requests",
-                                    "request_id": str(request_id),
-                                    "model_id": service_id,
-                                    "language": language,
-                                    "image_count": len(request.image),
-                                    "initial_status": "processing",
-                                },
-                            )
-                            await self.repository.update_request_status(
-                                db_request.id,
-                                "failed",
-                                error_message=str(exc),
-                            )
-                            persist_span.add_event(
-                                "ocr.db.ocr_request.status_update",
-                                {"request_id": str(request_id), "status": "failed"},
-                            )
                         if parent_span is not None:
                             try:
                                 parent_span.set_attribute(
@@ -339,64 +298,9 @@ class OCRService:
                         except Exception:
                             pass
 
-                with _standard_spans.persist() as persist_span:
-                    persist_span.set_attribute(
-                        "ocr.db.operations",
-                        "ocr_requests.insert,ocr_results.insert_per_output,ocr_requests.status_update",
-                    )
-                    db_request = await self.repository.create_request(
-                        model_id=service_id,
-                        language=language,
-                        image_count=len(request.image),
-                        user_id=user_id,
-                        api_key_id=api_key_id,
-                        session_id=session_id,
-                    )
-                    request_id = db_request.id
-                    persist_span.set_attribute("ocr.db.ocr_request.id", str(request_id))
-                    persist_span.set_attribute("ocr.request_id", str(request_id))
-                    persist_span.add_event(
-                        "ocr.db.ocr_request.insert",
-                        {"table": "ocr_requests", "request_id": str(request_id)},
-                    )
-
-                    inserted_results = 0
-                    for output in outputs:
-                        if output.source:
-                            await self.repository.create_result(
-                                request_id=db_request.id,
-                                extracted_text=output.source,
-                                page_count=1,
-                            )
-                            inserted_results += 1
-                            persist_span.add_event(
-                                "ocr.db.ocr_result.insert",
-                                {
-                                    "table": "ocr_results",
-                                    "request_id": str(request_id),
-                                },
-                            )
-                    persist_span.set_attribute(
-                        "ocr.db.ocr_result.inserted_count", inserted_results
-                    )
-
-                    processing_time = time.time() - start_time
-                    await self.repository.update_request_status(
-                        db_request.id, "completed", processing_time
-                    )
-                    persist_span.add_event(
-                        "ocr.db.ocr_request.status_update",
-                        {
-                            "request_id": str(request_id),
-                            "status": "completed",
-                            "processing_time_seconds": processing_time,
-                        },
-                    )
-
                 logger.info(
-                    "OCR inference completed in %.2fs (request %s)",
+                    "OCR inference completed in %.2fs",
                     time.time() - start_time,
-                    request_id,
                 )
                 return OCRInferenceResponse(
                     output=outputs, config=request.config.dict()
@@ -404,30 +308,4 @@ class OCRService:
 
             except Exception as e:
                 logger.error("OCR inference failed: %s", e)
-                if request_id:
-                    try:
-                        await self.repository.update_request_status(
-                            request_id, "failed", error_message=str(e)
-                        )
-                    except Exception as update_error:
-                        logger.error(
-                            "Failed to update request status: %s", update_error
-                        )
-                else:
-                    try:
-                        dr = await self.repository.create_request(
-                            model_id=service_id,
-                            language=language,
-                            image_count=len(request.image),
-                            user_id=user_id,
-                            api_key_id=api_key_id,
-                            session_id=session_id,
-                        )
-                        await self.repository.update_request_status(
-                            dr.id, "failed", error_message=str(e)
-                        )
-                    except Exception as db_err:
-                        logger.error(
-                            "OCR: failed to record failed request: %s", db_err
-                        )
                 raise

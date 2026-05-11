@@ -10,7 +10,6 @@ COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_env /app/libs/ai4icore_env
 COPY libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
-COPY libs/ai4icore_auth /app/libs/ai4icore_auth
 COPY services/alert-management-service/requirements.txt /app/requirements.txt
 
 RUN pip install --no-cache-dir -r /app/requirements.txt
@@ -18,7 +17,6 @@ RUN pip install --no-cache-dir /app/libs/ai4icore_core
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_env
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_exceptions
-RUN pip install --no-cache-dir -e /app/libs/ai4icore_auth
 RUN pip install --no-cache-dir -e /app/libs/ai4icore_telemetry
 
 # Runtime stage
@@ -33,12 +31,11 @@ COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
 COPY --from=builder /app/libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
-COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
 
 COPY services/alert-management-service/ /app/
 
 # Parent of the ai4icore_* packages (package dir is libs/<name>/<name>/)
-ENV PYTHONPATH="/app:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry:/app/libs/ai4icore_env:/app/libs/ai4icore_auth:/app/libs/ai4icore_exceptions"
+ENV PYTHONPATH="/app:/app/libs/ai4icore_logging:/app/libs/ai4icore_telemetry:/app/libs/ai4icore_env:/app/libs/ai4icore_exceptions"
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8098

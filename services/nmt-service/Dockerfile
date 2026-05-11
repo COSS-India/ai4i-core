@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
 COPY libs/ai4icore_core /app/libs/ai4icore_core
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY libs/ai4icore_env /app/libs/ai4icore_env
-COPY libs/ai4icore_auth /app/libs/ai4icore_auth
+COPY libs/ai4icore_bootstrap /app/libs/ai4icore_bootstrap
 COPY libs/ai4icore_service_base /app/libs/ai4icore_service_base
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
@@ -35,17 +35,15 @@ RUN pip install --no-cache-dir packaging>=21.0 && \
  
 # Install Python deps (packaging is already installed above)
 RUN pip install --no-cache-dir --user -r requirements.txt
-RUN pip install --no-cache-dir --user /app/libs/ai4icore_core
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_exceptions
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
-RUN pip install --no-cache-dir --user /app/libs/ai4icore_service_base
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_platform_core
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_constants
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_exceptions
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_bootstrap
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_service_base
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
 
 # Verify packaging is installed (for debugging)
 RUN python -c "import packaging; print(f'packaging version: {packaging.__version__}')" || (echo "ERROR: packaging not found!" && exit 1)
@@ -81,7 +79,7 @@ RUN pip install --no-cache-dir packaging>=21.0 && \
 COPY --from=builder /app/libs/ai4icore_core /app/libs/ai4icore_core
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
-COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
+COPY --from=builder /app/libs/ai4icore_bootstrap /app/libs/ai4icore_bootstrap
 COPY --from=builder /app/libs/ai4icore_service_base /app/libs/ai4icore_service_base
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry

@@ -74,10 +74,6 @@ class CoreSettings(BaseSettings):
     jaeger_endpoint: Optional[str] = None
     telemetry_enabled: bool = True
 
-    # ── CORS ──
-    # Comma-separated origins. Use "*" to allow all.
-    cors_origins: str = "*"
-
     # ── Derived helpers ──
 
     def get_database_url(self) -> str:

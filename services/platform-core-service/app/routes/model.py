@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.core.exceptions import ValidationError
 from app.core.responses import success_response
-from app.dependencies.auth import get_user_id
 from app.dependencies.services import get_model_service
 from app.schemas.enums import TaskTypeEnum
 from app.schemas.model import (
@@ -112,7 +111,7 @@ async def create_model(
     svc: ModelService = Depends(get_model_service),
 ):
     """Create a new model version."""
-    user_id = get_user_id(request)
+    user_id = request.headers.get("X-User-Id")
     model_id = await svc.create_model(payload, created_by=user_id)
     return success_response(
         data={
@@ -131,7 +130,7 @@ async def update_model(
     svc: ModelService = Depends(get_model_service),
 ):
     """Update an existing model version."""
-    user_id = get_user_id(request)
+    user_id = request.headers.get("X-User-Id")
     await svc.update_model(payload, updated_by=user_id)
     return success_response(
         data={"modelId": payload.modelId, "version": payload.version},

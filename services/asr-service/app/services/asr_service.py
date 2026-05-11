@@ -22,7 +22,6 @@ from app.schemas.inference import (
     TranscriptOutput,
     NBestToken,
 )
-from app.repositories.asr_repository import ASRRepository
 from app.services.audio_service import AudioService
 from app.clients.triton_client import ASRTritonClient
 from ai4icore_exceptions import TritonInferenceError
@@ -47,13 +46,11 @@ class ASRService:
 
     def __init__(
         self,
-        repository: ASRRepository,
         audio_service: AudioService,
         triton_client: ASRTritonClient,
         resolved_model_name: Optional[str] = None,
     ):
         """Initialize ASR service with dependencies."""
-        self.repository = repository
         self.audio_service = audio_service
         self.triton_client = triton_client
         self.resolved_model_name = resolved_model_name  # Model name from Model Management
@@ -120,16 +117,10 @@ class ASRService:
                     fallback_service_id=fallback_service_id,
                 )
 
-                from app.repositories.asr_repository import ASRRepository as _Repo
                 from app.services.audio_service import AudioService as _Audio
                 from app.clients.triton_client import ASRTritonClient as _Triton
-                from ai4icore_bootstrap.database import get_db
-
-                async for fallback_db in get_db():
-                    break
 
                 fallback_service = ASRService(
-                    repository=_Repo(fallback_db),
                     audio_service=_Audio(),
                     triton_client=_Triton(triton_endpoint, api_key=triton_api_key or None),
                     resolved_model_name=triton_model_name,
@@ -208,13 +199,6 @@ class ASRService:
             )
 
         standard_rate = 16000
-
-        model_id_for_db = service_id
-        if not model_id_for_db:
-            raise TritonInferenceError(
-                "Cannot create database record: serviceId is missing. "
-                "Please ensure serviceId is provided in the request or resolved via SMR."
-            )
 
         input_count = len(request.audio or [])
         audio_format_value = (
@@ -612,95 +596,6 @@ class ASRService:
                         )
                     except Exception:
                         pass
-
-            # Phase 6: single persist — create request, store results, update status
-            with _standard_spans.persist() as persist_span:
-                persist_span.set_attribute(
-                    "asr.db.operations",
-                    "asr_requests.insert,asr_results.insert_per_audio,asr_requests.status_update",
-                )
-                db_request = await self.repository.create_request(
-                    model_id=model_id_for_db,
-                    language=language,
-                    user_id=user_id,
-                    api_key_id=api_key_id,
-                    session_id=session_id,
-                )
-                request_id_str = str(db_request.id)
-                persist_span.set_attribute("asr.db.asr_request.id", request_id_str)
-                persist_span.set_attribute("asr.request_id", request_id_str)
-                persist_span.set_attribute("asr.db.asr_request.model_id", model_id_for_db)
-                persist_span.set_attribute("asr.db.asr_request.language", language)
-                persist_span.set_attribute(
-                    "asr.db.asr_request.status_after_insert", "processing"
-                )
-                persist_span.add_event(
-                    "asr.db.asr_request.insert",
-                    {
-                        "table": "asr_requests",
-                        "request_id": request_id_str,
-                        "model_id": model_id_for_db,
-                        "language": language,
-                        "initial_status": "processing",
-                    },
-                )
-
-                logger.info(
-                    "Created ASR request %s for %s audio inputs",
-                    db_request.id,
-                    input_count,
-                )
-
-                result_row = 0
-                for audio_idx, transcript, _n_best_tokens_list, processed_transcript_lines in finalized:
-                    await self.repository.create_result(
-                        request_id=db_request.id,
-                        transcript=transcript,
-                        confidence_score=None,
-                        word_timestamps=[
-                            line for line in processed_transcript_lines if "start" in line
-                        ],
-                        language_detected=language,
-                        audio_format=request.config.audioFormat.value
-                        if request.config.audioFormat
-                        else None,
-                        sample_rate=standard_rate,
-                    )
-                    result_row += 1
-                    persist_span.add_event(
-                        "asr.db.asr_result.insert",
-                        {
-                            "table": "asr_results",
-                            "audio_index": audio_idx,
-                            "request_id": request_id_str,
-                            "transcript_char_length": len(transcript),
-                        },
-                    )
-
-                persist_span.set_attribute(
-                    "asr.db.asr_result.row_count", result_row
-                )
-
-                processing_time = time.time() - start_time
-                await self.repository.update_request_status(
-                    db_request.id, "completed", processing_time
-                )
-                persist_span.set_attribute(
-                    "asr.db.asr_request.final_status", "completed"
-                )
-                persist_span.set_attribute(
-                    "asr.db.asr_request.processing_time_seconds",
-                    processing_time,
-                )
-                persist_span.add_event(
-                    "asr.db.asr_request.status_update",
-                    {
-                        "table": "asr_requests",
-                        "request_id": request_id_str,
-                        "status": "completed",
-                        "processing_time_seconds": processing_time,
-                    },
-                )
 
             return response
 

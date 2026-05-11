@@ -20,7 +20,6 @@ logger = get_logger(__name__)
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from alert_management import init_db_pool, close_db_pool
@@ -60,14 +59,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS is handled at the nginx gateway, not here.
 
 # Shared exception handlers
 register_exception_handlers(app)

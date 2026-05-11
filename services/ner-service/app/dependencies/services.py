@@ -1,14 +1,10 @@
-from ai4icore_bootstrap.database import get_db
 """Dependency injection factories for NER service."""
 
 import logging
 
-from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from fastapi import HTTPException, Request, status
 
 from app.clients.triton_client import NERTritonClient
-from app.repositories.ner_repository import NERRepository
 from app.services.ner_service import NerService
 
 logger = logging.getLogger(__name__)
@@ -17,11 +13,8 @@ logger = logging.getLogger(__name__)
 
 async def get_ner_service(
     request: Request,
-    db: AsyncSession = Depends(get_db),
 ) -> NerService:
-    """Construct NerService with Triton client and repository from request state."""
-    repository = NERRepository(db)
-
+    """Construct NerService with Triton client from request state."""
     triton_endpoint = getattr(request.state, "triton_endpoint", None)
     triton_api_key = getattr(request.app.state, "triton_api_key", "")
     model_name = getattr(request.state, "triton_model_name", None)
@@ -48,4 +41,4 @@ async def get_ner_service(
         )
 
     triton_client = NERTritonClient(triton_endpoint, api_key=triton_api_key or None)
-    return NerService(repository=repository, triton_client=triton_client, model_name=model_name)
+    return NerService(triton_client=triton_client, model_name=model_name)

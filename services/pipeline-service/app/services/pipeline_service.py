@@ -53,9 +53,9 @@ class PipelineService:
     async def run_pipeline_inference(
         self,
         request: PipelineInferenceRequest,
-        jwt_token: Optional[str] = None,
-        api_key: Optional[str] = None,
-        user_id: Optional[int] = None,
+        user_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        auth_type: Optional[str] = None,
     ) -> PipelineInferenceResponse:
         """
         Execute a multi-task AI pipeline.
@@ -121,10 +121,10 @@ class PipelineService:
                         input_data=previous_output,
                         task_index=task_idx,
                         triton_span=triton_span,
-                        jwt_token=jwt_token,
-                        api_key=api_key,
-                        control_config=request.controlConfig,
                         user_id=user_id,
+                        tenant_id=tenant_id,
+                        auth_type=auth_type,
+                        control_config=request.controlConfig,
                     )
                     triton_span.add_event(
                         "pipeline.task.completed",
@@ -375,10 +375,10 @@ class PipelineService:
         *,
         task_index: int,
         triton_span: Any,
-        jwt_token: Optional[str] = None,
-        api_key: Optional[str] = None,
+        user_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        auth_type: Optional[str] = None,
         control_config: Optional[Dict[str, Any]] = None,
-        user_id: Optional[int] = None,
     ) -> PipelineTaskOutput:
         """Execute a single pipeline task (HTTP to downstream service)."""
 
@@ -426,9 +426,8 @@ class PipelineService:
                 )
                 response = await self.service_client.call_asr_service(
                     asr_request,
-                    jwt_token=jwt_token,
-                    api_key=api_key,
                     user_id=user_id,
+                    tenant_id=tenant_id,
                 )
                 output_count = len(response.get("output", []))
                 triton_span.add_event(
@@ -510,9 +509,8 @@ class PipelineService:
                 )
                 response = await self.service_client.call_nmt_service(
                     nmt_request,
-                    jwt_token=jwt_token,
-                    api_key=api_key,
                     user_id=user_id,
+                    tenant_id=tenant_id,
                 )
                 output_count = len(response.get("output", []))
                 triton_span.add_event(
@@ -594,9 +592,8 @@ class PipelineService:
                 )
                 response = await self.service_client.call_tts_service(
                     tts_request,
-                    jwt_token=jwt_token,
-                    api_key=api_key,
                     user_id=user_id,
+                    tenant_id=tenant_id,
                 )
                 audio_count = len(response.get("audio", []))
                 triton_span.add_event(

@@ -5,8 +5,10 @@ Auth service configuration — extends ai4icore_env with auth-specific settings.
 from pathlib import Path
 from typing import Optional
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.core.constants import ENV_DEVELOPMENT
 
 
 class AuthSettings(BaseSettings):
@@ -23,19 +25,19 @@ class AuthSettings(BaseSettings):
     service_name: str = "auth-service"
     service_version: str = "2.0.0"
     api_version: str = "v1"
-    environment: str = "development"
+    environment: str = ENV_DEVELOPMENT
     debug: bool = False
 
     # ── Database ──
     database_url: Optional[str] = None
     postgres_user: Optional[str] = None
-    postgres_password: Optional[str] = None
+    postgres_password: Optional[SecretStr] = None
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_db: str = "ai4iplatform_auth"
     auth_database_url: Optional[str] = None
     auth_db_user: Optional[str] = None
-    auth_db_password: Optional[str] = None
+    auth_db_password: Optional[SecretStr] = None
     auth_db_host: Optional[str] = None
     auth_db_port: Optional[int] = None
     # AUTH_SERVICE_DB_NAME takes precedence; AUTH_DB_NAME is the legacy fallback.
@@ -52,10 +54,10 @@ class AuthSettings(BaseSettings):
     # ── Redis ──
     redis_host: str = "localhost"
     redis_port: int = 6379
-    redis_password: Optional[str] = None
+    redis_password: Optional[SecretStr] = None
     redis_db: int = 0
     redis_timeout: int = 10
-    revocation_endpoint_cooldown_seconds: int = 30
+    redis_max_connections: int = 50
 
     # ── RS256 JWT ──
     rs256_key_directory: str = "keys"
@@ -75,43 +77,33 @@ class AuthSettings(BaseSettings):
         validation_alias=AliasChoices("API_KEY_EXPIRE_DAYS", "APIKEY_EXPIRY"),
     )
 
-    # ── Password hashing (argon2) ──
+    # ── Password hashing (argon2id) ──
     argon2_time_cost: int = 3
     argon2_memory_cost: int = 65536
     argon2_parallelism: int = 4
-    argon2_hash_length: int = 32
     argon2_salt_length: int = 16
-    default_hash_rounds: int = 12
 
-    # ── APISIX ──
-    apisix_validation_enabled: bool = True
-
-    # ── CORS ──
-    # In production, MUST be set to specific origins (comma-separated).
-    # "*" is only allowed in development/testing.
-    cors_origins: str = "*"
-
-    # ── Logging / Observability ──
-    log_level: str = "INFO"
-    jaeger_endpoint: Optional[str] = None
-    telemetry_enabled: bool = True
+    # ── HTTP Timeouts ──
+    # JWKS endpoint timeout for JWT verification
+    jwks_http_timeout_seconds: float = 10.0
 
     # ── OAuth ──
     google_client_id: Optional[str] = None
     google_client_secret: Optional[str] = None
-    github_client_id: Optional[str] = None
-    github_client_secret: Optional[str] = None
     oauth_redirect_base_url: Optional[str] = None
     # Comma-separated allowlist of allowed OAuth client redirect URIs.
     # Prevents open redirect / token leakage attacks.
     oauth_allowed_redirect_uris: str = ""
-
-    # ── Swagger ──
-    swagger_server_url: Optional[str] = None
+    # OAuth state token TTL (seconds) — bounds time on provider consent screen
+    oauth_state_ttl_seconds: int = 600  # 10 minutes
+    # OAuth exchange code TTL (seconds) — SPA must POST /exchange within this time
+    oauth_exchange_code_ttl_seconds: int = 120  # 2 minutes
+    # HTTP request timeout (seconds) for external OAuth provider calls
+    oauth_http_timeout_seconds: int = 10
 
     # ── Guest login (POST /auth/guest/login) — must match guest user email seeded in auth_db ──
     guest_email: Optional[str] = None
-    guest_password: Optional[str] = None
+    guest_password: Optional[SecretStr] = None
 
     # ── Email (Amazon SES via SMTP today, swappable to any provider) ──
     # Lib reads these via its own EmailSettings; mirrored here so AuthSettings
@@ -124,7 +116,7 @@ class AuthSettings(BaseSettings):
     smtp_host: Optional[str] = None
     smtp_port: int = 587
     smtp_username: Optional[str] = None
-    smtp_password: Optional[str] = None
+    smtp_password: Optional[SecretStr] = None
     smtp_use_tls: bool = True
     smtp_timeout: int = 30
     setup_link_base_url: Optional[str] = None
@@ -143,7 +135,8 @@ class AuthSettings(BaseSettings):
         if self.database_url:
             return self.database_url
         user = self.auth_db_user or self.postgres_user or "postgres"
-        password = self.auth_db_password or self.postgres_password or ""
+        raw_pw = self.auth_db_password or self.postgres_password
+        password = raw_pw.get_secret_value() if raw_pw else ""
         host = self.auth_db_host or self.postgres_host
         port = self.auth_db_port or self.postgres_port
         db = self.auth_service_db_name or self.auth_db_name or self.postgres_db
@@ -151,11 +144,33 @@ class AuthSettings(BaseSettings):
 
     def get_redis_url(self) -> str:
         if self.redis_password:
-            return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
+            pw = self.redis_password.get_secret_value()
+            return f"redis://:{pw}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
         return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
     def get_rs256_key_path(self) -> Path:
         return Path(self.rs256_key_directory)
+
+    @field_validator("access_token_expire_minutes", "reset_token_expire_minutes")
+    @classmethod
+    def validate_token_expire_minutes_positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("Token TTL must be positive")
+        return v
+
+    @field_validator("redis_db")
+    @classmethod
+    def validate_redis_db(cls, v: int) -> int:
+        if not 0 <= v <= 15:
+            raise ValueError("Redis DB must be 0–15")
+        return v
+
+    @field_validator("db_pool_size")
+    @classmethod
+    def validate_pool_size(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("db_pool_size must be >= 1")
+        return v
 
 
 settings = AuthSettings()
