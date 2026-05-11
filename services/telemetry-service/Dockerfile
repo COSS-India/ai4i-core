@@ -16,7 +16,6 @@ RUN apt-get update && apt-get install -y \
 # Copy AI4ICore libraries from monorepo
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_env /app/libs/ai4icore_env
-COPY libs/ai4icore_auth /app/libs/ai4icore_auth
 COPY libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
 
 # Copy requirements and install Python dependencies
@@ -29,7 +28,6 @@ RUN pip install --no-cache-dir --user 'grpcio>=1.63.2,<2.0.0'
 # Install AI4ICore libraries (editable)
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_env
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_exceptions
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 
 # Verify packaging is installed (for debugging)
@@ -60,7 +58,6 @@ COPY services/telemetry-service /app
 RUN mkdir -p /app/libs
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_env /app/libs/ai4icore_env
-COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
 COPY --from=builder /app/libs/ai4icore_exceptions /app/libs/ai4icore_exceptions
 
 # Verify library was copied
@@ -83,8 +80,6 @@ RUN pip install --no-cache-dir --user /app/libs/ai4icore_env || \
     (echo "ERROR: Failed to install ai4icore_env!" && exit 1)
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_exceptions || \
     (echo "ERROR: Failed to install ai4icore_exceptions!" && exit 1)
-RUN pip install --no-cache-dir --user /app/libs/ai4icore_auth || \
-    (echo "ERROR: Failed to install ai4icore_auth!" && exit 1)
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_telemetry || \
     (echo "ERROR: Failed to install ai4icore_telemetry!" && exit 1)
 
