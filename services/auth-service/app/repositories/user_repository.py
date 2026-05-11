@@ -33,7 +33,10 @@ class UserRepository(BaseRepository):
 
     async def get_by_email(self, email: str) -> Optional[User]:
         result = await self._db.execute(
-            select(User).where(User.email == email, User.is_delete.isnot(True))
+            select(User).where(
+                func.lower(User.email) == email.lower().strip(),
+                User.is_delete.isnot(True),
+            )
         )
         return result.scalar_one_or_none()
 

@@ -28,7 +28,7 @@ _HEX_KEY_RE = re.compile(r"[0-9a-f]{32}")
 class APIKeyService:
     def __init__(
         self,
-        api_key_repo: APIKeyRepository,
+        api_key_repo: Optional[APIKeyRepository],
         cache_service: CacheService,
     ) -> None:
         self._repo = api_key_repo
@@ -84,7 +84,9 @@ class APIKeyService:
             updated_by=str(user_id),
         )
         await self._repo.create(api_key)
+        await self._repo.commit()
 
+        # Cache in Redis AFTER DB commit to ensure atomicity
         await self._cache.set_api_key_cache(
             raw_key,
             ttl,
@@ -96,7 +98,6 @@ class APIKeyService:
             },
         )
 
-        await self._repo.commit()
         logger.info("API key created: name=%s user=%s", key_name, user_id)
         return raw_key, api_key
 
@@ -131,8 +132,10 @@ class APIKeyService:
             raise AuthorizationError("API key does not belong to you.")
 
         await self._repo.revoke(db_key)
-        await self._cache.delete_api_key_cache(api_key_value)
         await self._repo.commit()
+
+        # Evict from Redis AFTER DB commit to ensure atomicity
+        await self._cache.delete_api_key_cache(api_key_value)
         logger.info("API key revoked: api_key=%s", api_key_value)
 
     async def update_key(
