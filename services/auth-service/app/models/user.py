@@ -27,7 +27,7 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     username = Column(String(100), unique=True, index=True, nullable=False)
     full_name = Column(String(255), nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=False, nullable=False, server_default="false")
     tenant_id = Column(
         Integer,
         ForeignKey("tenants.id", ondelete="SET NULL"),
