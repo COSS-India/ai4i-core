@@ -82,6 +82,9 @@ class AuthSettings(BaseSettings):
     argon2_memory_cost: int = 65536
     argon2_parallelism: int = 4
     argon2_salt_length: int = 16
+    # Thread pool max workers for concurrent password hashing/verification
+    # Higher values support more concurrent login/register requests (e.g., 50 handles 12+ concurrent users)
+    password_hash_max_workers: int = 50
 
     # ── HTTP Timeouts ──
     # JWKS endpoint timeout for JWT verification

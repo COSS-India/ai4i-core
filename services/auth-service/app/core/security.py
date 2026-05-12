@@ -217,7 +217,9 @@ class PasswordManager:
             argon2__memory_cost=settings.argon2_memory_cost,
             argon2__parallelism=settings.argon2_parallelism,
         )
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=50)
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=settings.password_hash_max_workers
+        )
 
     def hash_password(self, password: str) -> PasswordHashResult:
         """Hash a password with a unique salt. Returns hash + salt."""
@@ -234,8 +236,8 @@ class PasswordManager:
     async def hash_password_async(self, password: str) -> PasswordHashResult:
         """Async hash a password with a unique salt. Returns hash + salt.
 
-        Uses dedicated thread pool (max_workers=50) to offload CPU-bound argon2 work,
-        preventing the event loop from blocking and supporting high concurrency.
+        Uses dedicated thread pool (configured via PASSWORD_HASH_MAX_WORKERS env var)
+        to offload CPU-bound argon2 work, preventing event loop blocking and supporting high concurrency.
         """
         salt = secrets.token_hex(settings.argon2_salt_length)
         salted_password = password + salt
@@ -246,8 +248,8 @@ class PasswordManager:
     async def verify_password_async(self, plain_password: str, hashed_password: str, salt: str) -> bool:
         """Async verify a password against its hash using the stored salt.
 
-        Uses dedicated thread pool (max_workers=50) to offload CPU-bound argon2 work,
-        preventing the event loop from blocking and supporting high concurrency.
+        Uses dedicated thread pool (configured via PASSWORD_HASH_MAX_WORKERS env var)
+        to offload CPU-bound argon2 work, preventing event loop blocking and supporting high concurrency.
         """
         salted_password = plain_password + salt
         loop = asyncio.get_event_loop()
