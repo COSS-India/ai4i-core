@@ -129,6 +129,9 @@ class AuthService:
         """
         password_manager.validate_and_confirm(password, confirm_password)
 
+        # Normalize email to lowercase for consistent storage and lookup
+        email = email.lower().strip()
+
         if await self._users.get_by_email(email):
             raise DuplicateEntityError("User", "email")
         if await self._users.get_by_username(username):
@@ -149,7 +152,7 @@ class AuthService:
         )
         await self._users.create(user)
 
-        hash_result = password_manager.hash_password(password)
+        hash_result = await password_manager.hash_password_async(password)
         creds = UserCredentials(
             user_id=user.id,
             password_hash=hash_result.hashed,
@@ -217,7 +220,7 @@ class AuthService:
             return  # silent no-op — no credentials (wrong resend flow)
 
         user_id_str = str(user.id)
-        await self._verifications.deactivate_all_for_user(user_id_str)
+        await self._verifications.deactivate_all_for_user(user_id_str, token_type=TokenType.VERIFY)
 
         verify_token = self._tokens.create_verify_token(user_id=user_id_str, email=email)
         await persist_token_verification(
@@ -254,7 +257,7 @@ class AuthService:
             return  # silent no-op — passwordless account, can't reset
 
         user_id_str = str(user.id)
-        await self._verifications.deactivate_all_for_user(user_id_str)
+        await self._verifications.deactivate_all_for_user(user_id_str, token_type=TokenType.RESET)
 
         reset_token = self._tokens.create_reset_token(user_id=user_id_str, email=email)
         reset_expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.reset_token_expire_minutes)
@@ -289,7 +292,7 @@ class AuthService:
             # with creds), but guard regardless.
             raise TokenInvalidError("Invalid reset link.")
 
-        hash_result = password_manager.hash_password(new_password)
+        hash_result = await password_manager.hash_password_async(new_password)
         await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
         await self._verifications.deactivate(token_obj)
         # Sign out all other sessions per security spec.
@@ -313,7 +316,7 @@ class AuthService:
         if not creds or not creds.password_hash or not creds.password_salt:
             raise InvalidCredentialsError()
 
-        if not password_manager.verify_password(password, creds.password_hash, creds.password_salt):
+        if not await password_manager.verify_password_async(password, creds.password_hash, creds.password_salt):
             raise InvalidCredentialsError()
 
         login_response = await issue_session(
@@ -385,10 +388,10 @@ class AuthService:
         if not creds:
             raise InvalidCredentialsError("No credentials found for user.")
 
-        if not password_manager.verify_password(current_password, creds.password_hash, creds.password_salt):
+        if not await password_manager.verify_password_async(current_password, creds.password_hash, creds.password_salt):
             raise InvalidCredentialsError("Current password is incorrect.")
 
-        hash_result = password_manager.hash_password(new_password)
+        hash_result = await password_manager.hash_password_async(new_password)
         await self._credentials.update_password(creds, hash_result.hashed, hash_result.salt)
         await self._credentials.commit()
         logger.info("Password changed for user id=%s", user.id)
@@ -409,7 +412,7 @@ class AuthService:
 
         token_obj, user = await self._resolve_verified_token(token, TokenType.SETUP, "setup link")
 
-        hash_result = password_manager.hash_password(new_password)
+        hash_result = await password_manager.hash_password_async(new_password)
         creds = UserCredentials(
             user_id=user.id,
             password_hash=hash_result.hashed,
@@ -467,7 +470,7 @@ class AuthService:
             return  # silent no-op — user already activated
 
         user_id_str = str(user.id)
-        await self._verifications.deactivate_all_for_user(user_id_str)
+        await self._verifications.deactivate_all_for_user(user_id_str, token_type=TokenType.SETUP)
 
         setup_token = self._tokens.create_setup_token(user_id=user_id_str, email=email)
         await persist_token_verification(
