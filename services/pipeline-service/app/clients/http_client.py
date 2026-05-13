@@ -28,23 +28,23 @@ logger = logging.getLogger(__name__)
 def parse_service_error_response(response: httpx.Response) -> Tuple[str, Dict[str, Any]]:
     """
     Parse error response from a service to extract meaningful error information.
-    
+
     Handles nested error structures like:
     - {"detail": {"message": "...", "code": "...", ...}}
     - {"detail": "..."}
     - {"error": "..."}
     - Plain text responses
-    
+
     Returns:
         Tuple of (error_message, error_details_dict)
     """
     try:
         error_body = response.json()
-        
+
         # Handle nested detail structure (common in FastAPI)
         if isinstance(error_body, dict):
             detail = error_body.get("detail", error_body)
-            
+
             # If detail is a dict with message/code structure
             if isinstance(detail, dict):
                 message = detail.get("message", detail.get("detail", str(detail)))
@@ -52,7 +52,7 @@ def parse_service_error_response(response: httpx.Response) -> Tuple[str, Dict[st
                 if isinstance(message, dict):
                     nested_msg = message.get("message", str(message))
                     message = nested_msg
-                
+
                 error_details = {
                     "code": detail.get("code"),
                     "type": detail.get("type"),
@@ -60,19 +60,19 @@ def parse_service_error_response(response: httpx.Response) -> Tuple[str, Dict[st
                     "raw_detail": detail
                 }
                 return message, error_details
-            
+
             # If detail is a string
             elif isinstance(detail, str):
                 return detail, {"message": detail, "raw_detail": error_body}
-            
+
             # Fallback: stringify the detail
             else:
                 return str(detail), {"message": str(detail), "raw_detail": error_body}
-        
+
         # If response is a list or other structure
         else:
             return str(error_body), {"message": str(error_body), "raw_detail": error_body}
-            
+
     except (json.JSONDecodeError, ValueError):
         # Not JSON, return text
         text = response.text[:500]  # Limit length
@@ -81,17 +81,17 @@ def parse_service_error_response(response: httpx.Response) -> Tuple[str, Dict[st
 
 class ServiceClient:
     """HTTP client for calling AI microservices via service discovery."""
-    
+
     def __init__(self):
         """Initialize the service client with service registry."""
         # Registry client for discovery (HTTP-backed, e.g. config-service → ZooKeeper)
         self._registry_client = ServiceRegistryHttpClient()
-        
+
         # Service URLs will be discovered via registry (no hardcoded defaults)
         self.asr_service_url: Optional[str] = None
         self.nmt_service_url: Optional[str] = None
         self.tts_service_url: Optional[str] = None
-        
+
         self._discovered: bool = False
 
         # Create HTTP client with configurable timeout
@@ -118,7 +118,7 @@ class ServiceClient:
             asr_env = app_env.asr_service_url
             nmt_env = app_env.nmt_service_url
             tts_env = app_env.tts_service_url
-            
+
             if asr_env:
                 self.asr_service_url = asr_env.rstrip('/')
                 logger.info("ASR service URL provided via environment: %s", self.asr_service_url)
@@ -128,7 +128,7 @@ class ServiceClient:
                     raise ValueError("ASR service not found in service registry. Ensure asr-service is registered.")
                 self.asr_service_url = url.rstrip('/')
                 logger.info("ASR service URL discovered via registry: %s", self.asr_service_url)
-            
+
             if nmt_env:
                 self.nmt_service_url = nmt_env.rstrip('/')
                 logger.info("NMT service URL provided via environment: %s", self.nmt_service_url)
@@ -138,7 +138,7 @@ class ServiceClient:
                     raise ValueError("NMT service not found in service registry. Ensure nmt-service is registered.")
                 self.nmt_service_url = url.rstrip('/')
                 logger.info("NMT service URL discovered via registry: %s", self.nmt_service_url)
-            
+
             if tts_env:
                 self.tts_service_url = tts_env.rstrip('/')
                 logger.info("TTS service URL provided via environment: %s", self.tts_service_url)
@@ -154,20 +154,20 @@ class ServiceClient:
         finally:
             # Mark as attempted to avoid re-discovery per request; TTL/refresh can be added later if needed
             self._discovered = True
-    
+
     def _inject_trace_context(self, headers: Dict[str, str]) -> None:
         """
         Inject OpenTelemetry trace context into headers for distributed tracing.
-        
+
         This allows downstream services to continue the trace span, enabling
         end-to-end observability across the pipeline.
-        
+
         Args:
             headers: Dictionary of HTTP headers to inject trace context into
         """
         if not TRACING_AVAILABLE:
             return
-        
+
         try:
             # Get current span context
             current_span = trace.get_current_span()
@@ -179,7 +179,7 @@ class ServiceClient:
                 logger.debug("⚠️ No active span found, skipping trace context injection")
         except Exception as e:
             logger.warning(f"⚠️ Failed to inject trace context: {e}")
-    
+
     async def call_asr_service(self, request_data: Dict[str, Any], user_id: Optional[str] = None, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Call ASR service for speech-to-text conversion.
@@ -194,13 +194,13 @@ class ServiceClient:
             headers['X-User-ID'] = str(user_id)
         if tenant_id:
             headers['X-Tenant-ID'] = str(tenant_id)
-        
+
         # Inject trace context for distributed tracing
         self._inject_trace_context(headers)
-        
+
         service_url = f"{self.asr_service_url}/api/v1/asr/inference"
         logger.info(f"🔗 Calling ASR service: {service_url}")
-        
+
         # Outbound HTTP span under pipeline.* naming (pipeline.<snake_case>)
         if TRACING_AVAILABLE:
             # Get tracer - use the same service name as the main app to ensure proper nesting
@@ -209,7 +209,7 @@ class ServiceClient:
         else:
             tracer = None
             span_name = None
-        
+
         try:
             if tracer:
                 # Create span as child of current active span (task span)
@@ -221,19 +221,19 @@ class ServiceClient:
                     span.set_attribute("service.name", "asr")
                     span.set_attribute("service.type", "asr")
                     span.set_attribute("span.kind", "client")  # Mark as outgoing client call
-                    
+
                     # Add request details
                     if "audio" in request_data:
                         span.set_attribute("asr.request.audio_count", len(request_data["audio"]))
                     if "config" in request_data and "serviceId" in request_data["config"]:
                         span.set_attribute("asr.request.service_id", request_data["config"]["serviceId"])
-                    
+
                     # Add event for request start
                     span.add_event("pipeline.http.request_started", {
                         "url": service_url,
                         "service": "asr"
                     })
-                    
+
                     start_time = time.time()
                     response = await self.client.post(
                         service_url,
@@ -241,23 +241,23 @@ class ServiceClient:
                         headers=headers
                     )
                     elapsed_time = time.time() - start_time
-                    
+
                     span.set_attribute("http.status_code", response.status_code)
                     span.set_attribute("http.duration_ms", elapsed_time * 1000)
-                    
+
                     response.raise_for_status()
                     result = response.json()
-                    
+
                     # Add response details
                     if "output" in result:
                         span.set_attribute("asr.response.output_count", len(result["output"]))
-                    
+
                     # Add event for request completion
                     span.add_event("pipeline.http.request_completed", {
                         "status_code": response.status_code,
                         "duration_ms": elapsed_time * 1000
                     })
-                    
+
                     logger.info(f"✅ ASR service completed successfully in {elapsed_time:.2f}s")
                     return result
             else:
@@ -302,7 +302,7 @@ class ServiceClient:
                     current_span.set_attribute("error.message", f"ASR service returned status {e.response.status_code}")
                     current_span.set_attribute("http.status_code", e.response.status_code)
             error_message, error_details = parse_service_error_response(e.response)
-            
+
             # Check if this is an authentication error from downstream service
             if e.response.status_code == 401:
                 # Check if the error indicates JWT authentication failure
@@ -316,9 +316,9 @@ class ServiceClient:
                 error_lower = error_message.lower()
                 # If the error message suggests JWT failure, raise AuthenticationError
                 if any(indicator.lower() in error_lower for indicator in jwt_failure_indicators):
-                    from ai4icore_constants.exceptions import AuthenticationError
+                    from ai4icore_core.constants.exceptions import AuthenticationError
                     raise AuthenticationError("Authentication failed. Please log in again.")
-            
+
             error_detail = f"ASR service returned status {e.response.status_code}: {error_message}"
             logger.error(f"❌ ASR service error: {error_detail}")
             # Create a structured error that can be parsed upstream
@@ -338,7 +338,7 @@ class ServiceClient:
                     current_span.set_attribute("error.message", str(e))
             logger.error(f"❌ ASR service HTTP error: {e}")
             raise ValueError(f"ASR service HTTP error: {str(e)}") from e
-    
+
     async def call_nmt_service(self, request_data: Dict[str, Any], user_id: Optional[str] = None, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Call NMT service for translation.
@@ -353,20 +353,20 @@ class ServiceClient:
             headers['X-User-ID'] = str(user_id)
         if tenant_id:
             headers['X-Tenant-ID'] = str(tenant_id)
-        
+
         # Inject trace context for distributed tracing
         self._inject_trace_context(headers)
-        
+
         service_url = f"{self.nmt_service_url}/api/v1/nmt/inference"
         logger.info(f"🔗 Calling NMT service: {service_url}")
-        
+
         if TRACING_AVAILABLE:
             tracer = trace.get_tracer("pipeline-service")
             span_name = "pipeline.http_nmt"
         else:
             tracer = None
             span_name = None
-        
+
         try:
             if tracer:
                 # Create span as child of current active span (task span)
@@ -378,7 +378,7 @@ class ServiceClient:
                     span.set_attribute("service.name", "nmt")
                     span.set_attribute("service.type", "nmt")
                     span.set_attribute("span.kind", "client")  # Mark as outgoing client call
-                    
+
                     # Add request details
                     if "input" in request_data:
                         span.set_attribute("nmt.request.input_count", len(request_data["input"]))
@@ -391,13 +391,13 @@ class ServiceClient:
                                 span.set_attribute("nmt.request.source_language", lang["sourceLanguage"])
                             if "targetLanguage" in lang:
                                 span.set_attribute("nmt.request.target_language", lang["targetLanguage"])
-                    
+
                     # Add event for request start
                     span.add_event("pipeline.http.request_started", {
                         "url": service_url,
                         "service": "nmt"
                     })
-                    
+
                     start_time = time.time()
                     response = await self.client.post(
                         service_url,
@@ -405,23 +405,23 @@ class ServiceClient:
                         headers=headers
                     )
                     elapsed_time = time.time() - start_time
-                    
+
                     span.set_attribute("http.status_code", response.status_code)
                     span.set_attribute("http.duration_ms", elapsed_time * 1000)
-                    
+
                     response.raise_for_status()
                     result = response.json()
-                    
+
                     # Add response details
                     if "output" in result:
                         span.set_attribute("nmt.response.output_count", len(result["output"]))
-                    
+
                     # Add event for request completion
                     span.add_event("pipeline.http.request_completed", {
                         "status_code": response.status_code,
                         "duration_ms": elapsed_time * 1000
                     })
-                    
+
                     logger.info(f"✅ NMT service completed successfully in {elapsed_time:.2f}s")
                     return result
             else:
@@ -485,7 +485,7 @@ class ServiceClient:
                     current_span.set_attribute("error.message", str(e))
             logger.error(f"❌ NMT service HTTP error: {e}")
             raise ValueError(f"NMT service HTTP error: {str(e)}") from e
-    
+
     async def call_tts_service(self, request_data: Dict[str, Any], user_id: Optional[str] = None, tenant_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Call TTS service for text-to-speech conversion.
@@ -500,20 +500,20 @@ class ServiceClient:
             headers['X-User-ID'] = str(user_id)
         if tenant_id:
             headers['X-Tenant-ID'] = str(tenant_id)
-        
+
         # Inject trace context for distributed tracing
         self._inject_trace_context(headers)
-        
+
         service_url = f"{self.tts_service_url}/api/v1/tts/inference"
         logger.info(f"🔗 Calling TTS service: {service_url}")
-        
+
         if TRACING_AVAILABLE:
             tracer = trace.get_tracer("pipeline-service")
             span_name = "pipeline.http_tts"
         else:
             tracer = None
             span_name = None
-        
+
         try:
             if tracer:
                 # Create span as child of current active span (task span)
@@ -525,7 +525,7 @@ class ServiceClient:
                     span.set_attribute("service.name", "tts")
                     span.set_attribute("service.type", "tts")
                     span.set_attribute("span.kind", "client")  # Mark as outgoing client call
-                    
+
                     # Add request details
                     if "input" in request_data:
                         span.set_attribute("tts.request.input_count", len(request_data["input"]))
@@ -540,13 +540,13 @@ class ServiceClient:
                             lang = request_data["config"]["language"]
                             if "sourceLanguage" in lang:
                                 span.set_attribute("tts.request.language", lang["sourceLanguage"])
-                    
+
                     # Add event for request start
                     span.add_event("pipeline.http.request_started", {
                         "url": service_url,
                         "service": "tts"
                     })
-                    
+
                     start_time = time.time()
                     response = await self.client.post(
                         service_url,
@@ -554,23 +554,23 @@ class ServiceClient:
                         headers=headers
                     )
                     elapsed_time = time.time() - start_time
-                    
+
                     span.set_attribute("http.status_code", response.status_code)
                     span.set_attribute("http.duration_ms", elapsed_time * 1000)
-                    
+
                     response.raise_for_status()
                     result = response.json()
-                    
+
                     # Add response details
                     if "audio" in result:
                         span.set_attribute("tts.response.audio_count", len(result["audio"]))
-                    
+
                     # Add event for request completion
                     span.add_event("pipeline.http.request_completed", {
                         "status_code": response.status_code,
                         "duration_ms": elapsed_time * 1000
                     })
-                    
+
                     logger.info(f"✅ TTS service completed successfully in {elapsed_time:.2f}s")
                     return result
             else:
@@ -638,7 +638,7 @@ class ServiceClient:
                     current_span.set_attribute("error.message", str(e))
             logger.error(f"❌ TTS service HTTP error: {e}")
             raise ValueError(f"TTS service HTTP error: {str(e)}") from e
-    
+
     async def close(self):
         """Close the HTTP client."""
         await self.client.aclose()

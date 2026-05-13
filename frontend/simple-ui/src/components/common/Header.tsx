@@ -144,6 +144,10 @@ const Header: React.FC = () => {
       router.push("/model-management");
       return;
     }
+    if (router.pathname === "/traces") {
+       router.push("/logs");
+       return;
+    }
     router.push("/");
   };
 

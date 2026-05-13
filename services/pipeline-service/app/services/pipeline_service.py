@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from app.schemas.pipeline_request import PipelineInferenceRequest, TaskType, PipelineTask
 from app.schemas.pipeline_response import PipelineInferenceResponse, PipelineTaskOutput
 from app.clients.http_client import ServiceClient
-from ai4icore_constants.exceptions import (
+from ai4icore_core.constants.exceptions import (
     PipelineTaskError,
     ServiceUnavailableError,
     ModelNotFoundError,

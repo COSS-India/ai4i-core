@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from ai4icore_exceptions import ErrorDetail
-from ai4icore_constants.error_messages import (
+from ai4icore_core.constants.error_messages import (
     MODEL_UNAVAILABLE,
     MODEL_UNAVAILABLE_MESSAGE,
     INVALID_REQUEST,

@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from ai4icore_constants.error_messages import (
+from ai4icore_core.constants.error_messages import (
     SERVICE_UNAVAILABLE,
     SERVICE_UNAVAILABLE_MESSAGE,
 )
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/transliteration",
     tags=["Transliteration Inference"],
-    
+
 )
 
 

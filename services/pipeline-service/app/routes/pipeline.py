@@ -13,7 +13,7 @@ from app.schemas.pipeline_request import PipelineInferenceRequest
 from app.schemas.pipeline_response import PipelineInferenceResponse
 from app.services.pipeline_service import PipelineService
 from app.clients.http_client import ServiceClient
-from ai4icore_constants.exceptions import (
+from ai4icore_core.constants.exceptions import (
     PipelineError,
     PipelineTaskError,
     ServiceUnavailableError,
@@ -79,7 +79,7 @@ async def run_pipeline_inference(
 ) -> PipelineInferenceResponse:
     """
     Execute a pipeline of AI tasks.
-    
+
     Creates detailed trace spans for the entire pipeline operation.
     Example: ASR → Translation → TTS for Speech-to-Speech translation
     """
@@ -88,24 +88,24 @@ async def run_pipeline_inference(
     if not tracer:
         # Fallback if tracing not available
         return await _execute_pipeline_request(request, http_request, None, None)
-    
+
     with tracer.start_as_current_span("pipeline.inference") as span:
         try:
             # Extract auth context from request.state (if middleware is configured)
             user_id = getattr(http_request.state, "user_id", None)
             api_key_id = getattr(http_request.state, "api_key_id", None)
-            
+
             # Get correlation ID for log/trace correlation
             correlation_id = get_correlation_id(http_request) or getattr(http_request.state, "correlation_id", None)
             if correlation_id:
                 span.set_attribute("correlation.id", correlation_id)
-            
+
             # Add request metadata to span
             span.set_attribute("pipeline.task_count", len(request.pipelineTasks))
             task_types = [task.taskType.value for task in request.pipelineTasks]
             span.set_attribute("pipeline.task_types", ",".join(task_types))
             span.set_attribute("pipeline.has_input_data", hasattr(request, 'inputData') and request.inputData is not None)
-            
+
             # Track request size (approximate)
             try:
                 import json
@@ -113,32 +113,32 @@ async def run_pipeline_inference(
                 span.set_attribute("http.request.size_bytes", request_size)
             except Exception:
                 pass
-            
+
             if user_id:
                 span.set_attribute("user.id", str(user_id))
             if api_key_id:
                 span.set_attribute("api_key.id", str(api_key_id))
-            
+
             # Add span event for request start
             span.add_event("pipeline.inference.started", {
                 "task_count": len(request.pipelineTasks),
                 "task_types": ",".join(task_types)
             })
-            
+
             logger.info(
                 "Processing pipeline inference request with %d tasks, user_id=%s api_key_id=%s",
                 len(request.pipelineTasks),
                 user_id,
                 api_key_id
             )
-            
+
             # Execute pipeline
             response = await _execute_pipeline_request(request, http_request, tracer, span)
-            
+
             # Add response metadata
             span.set_attribute("http.status_code", 200)
             span.set_attribute("pipeline.success", True)
-            
+
             # Track response size (approximate)
             try:
                 import json
@@ -146,7 +146,7 @@ async def run_pipeline_inference(
                 span.set_attribute("http.response.size_bytes", response_size)
             except Exception:
                 pass
-            
+
             # Add span event for successful completion
             span.add_event("pipeline.inference.completed", {
                 "status": "success",
@@ -155,7 +155,7 @@ async def run_pipeline_inference(
             span.set_status(Status(StatusCode.OK))
             logger.info("Pipeline inference completed successfully")
             return response
-            
+
         except AuthenticationError:
             # Re-raise authentication errors as-is so they're handled by the error handler
             raise
@@ -172,7 +172,7 @@ async def run_pipeline_inference(
             span.record_exception(exc)
             logger.warning("Pipeline error: %s", exc)
             raise
-            
+
         except Exception as exc:
             span.set_attribute("error", True)
             span.set_attribute("error.type", type(exc).__name__)
