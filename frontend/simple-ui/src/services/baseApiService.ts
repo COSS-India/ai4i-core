@@ -62,22 +62,23 @@ class BaseApiService {
    */
   private normalizeError(error: unknown): never {
     if (error instanceof AxiosError) {
-      if (error.response) {
-        const status = error.response.status;
-        const data = error.response.data as any;
+      const response = error?.response;
+      const status = response?.status;
+      const data = response?.data as any;
+      if (response) {
         const message =
           data?.detail?.message ||
           data?.detail ||
           data?.message ||
-          error.message ||
-          `Request failed with status ${status}`;
+          error?.message ||
+          `Request failed with status ${status ?? 'unknown'}`;
         const normalizedError = new Error(String(message));
         (normalizedError as any).status = status;
-        (normalizedError as any).response = error.response;
+        (normalizedError as any).response = response;
         throw normalizedError;
       }
 
-      if (error.request) {
+      if (error?.request) {
         throw new Error('Network error - please check your connection');
       }
     }

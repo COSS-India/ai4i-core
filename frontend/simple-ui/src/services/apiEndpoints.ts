@@ -5,31 +5,6 @@
 
 export const API_V1 = '/api/v1' as const;
 
-/** Substrings matched against lowercase request URLs in axios interceptors */
-export const API_URL_PATH_MARKERS = {
-  modelManagement: '/model-management',
-  v1Models: `${API_V1}/models`,
-  v1Services: `${API_V1}/services`,
-  asr: `${API_V1}/asr`,
-  nmt: `${API_V1}/nmt`,
-  tts: `${API_V1}/tts`,
-  llm: `${API_V1}/llm`,
-  pipeline: `${API_V1}/pipeline`,
-  ner: `${API_V1}/ner`,
-  ocr: `${API_V1}/ocr`,
-  transliteration: `${API_V1}/transliteration`,
-  languageDetection: `${API_V1}/language-detection`,
-  speakerDiarization: `${API_V1}/speaker-diarization`,
-  languageDiarization: `${API_V1}/language-diarization`,
-  audioLangDetection: `${API_V1}/audio-lang-detection`,
-  telemetry: `${API_V1}/telemetry`,
-  tenants: `${API_V1}/tenants`,
-  featureFlags: `${API_V1}/feature-flags`,
-  policyService: `${API_V1}/policy-service`,
-  auth: `${API_V1}/auth`,
-  authRefresh: `${API_V1}/auth/refresh`,
-} as const;
-
 export const apiEndpoints = {
   auth: {
     base: `${API_V1}/auth`,
@@ -111,6 +86,7 @@ export const apiEndpoints = {
   },
 
   telemetry: {
+    base: `${API_V1}/telemetry`,
     logsSearch: `${API_V1}/telemetry/logs/search`,
     logsAggregate: `${API_V1}/telemetry/logs/aggregate`,
     logsServices: `${API_V1}/telemetry/logs/services`,
@@ -222,6 +198,29 @@ export const apiEndpoints = {
     auditLogs: `${API_V1}/policy-service/audit-logs`,
     auditLogById: (id: string) => `${API_V1}/policy-service/audit-logs/${id}`,
   },
+} as const;
+
+/** `/api/v1/{service}` prefix derived from inference routes (substring checks in interceptors). */
+const inferenceServicePrefix = (inferencePath: string) =>
+  inferencePath.replace(/\/inference$/, '');
+
+/** Substrings matched against lowercase request URLs in axios interceptors */
+export const API_URL_PATH_MARKERS = {
+  modelManagement: '/model-management',
+  asr: inferenceServicePrefix(apiEndpoints.asr.inference),
+  nmt: inferenceServicePrefix(apiEndpoints.nmt.inference),
+  tts: inferenceServicePrefix(apiEndpoints.tts.inference),
+  llm: inferenceServicePrefix(apiEndpoints.llm.inference),
+  pipeline: inferenceServicePrefix(apiEndpoints.pipeline.inference),
+  ner: inferenceServicePrefix(apiEndpoints.ner.inference),
+  ocr: inferenceServicePrefix(apiEndpoints.ocr.inference),
+  transliteration: inferenceServicePrefix(apiEndpoints.transliteration.inference),
+  languageDetection: inferenceServicePrefix(apiEndpoints['language-detection'].inference),
+  speakerDiarization: inferenceServicePrefix(apiEndpoints['speaker-diarization'].inference),
+  languageDiarization: inferenceServicePrefix(apiEndpoints['language-diarization'].inference),
+  audioLangDetection: inferenceServicePrefix(
+    apiEndpoints['audio-language-detection'].inference
+  ),
 } as const;
 
 /** HTTP paths for inference calls — used by trace/log UI filters */

@@ -87,8 +87,8 @@ const SERVICE_BASE_PATHS = [
   API_URL_PATH_MARKERS.speakerDiarization,
   API_URL_PATH_MARKERS.languageDiarization,
   API_URL_PATH_MARKERS.audioLangDetection,
-  API_URL_PATH_MARKERS.telemetry,
-  API_URL_PATH_MARKERS.policyService,
+  apiEndpoints.telemetry.base,
+  apiEndpoints.policy.base,
 ];
 
 const extractErrorMessage = (data: any, fallback: string): string => {
@@ -115,12 +115,14 @@ const clearSessionAndRedirect = async (href: '/auth' | '/') => {
 const getEndpointContext = (rawUrl: string): EndpointContext => {
   const url = (rawUrl || '').toLowerCase();
   const pathNoQuery = (url.split('?')[0] || '').toLowerCase();
-  const isAuthEndpoint = url.includes(API_URL_PATH_MARKERS.auth);
-  const isAuthRefreshEndpoint = url.includes(API_URL_PATH_MARKERS.authRefresh);
+  const isAuthEndpoint = url.includes(apiEndpoints.auth.base);
+  const isAuthRefreshEndpoint = url.includes(
+    `${apiEndpoints.auth.base}${apiEndpoints.auth.paths.refresh}`
+  );
   const isModelManagementEndpoint =
     url.includes(API_URL_PATH_MARKERS.modelManagement) ||
-    url.includes(API_URL_PATH_MARKERS.v1Models) ||
-    url.includes(API_URL_PATH_MARKERS.v1Services);
+    url.includes(apiEndpoints.platform.models.base) ||
+    url.includes(apiEndpoints.platform.services.base);
   const isMultiTenantEndpoint = url.includes(apiEndpoints.tenants.base);
   const isPolicyServiceEndpoint = url.includes(apiEndpoints.policy.base);
   const isPolicyServiceHealthPath = pathNoQuery.endsWith(`${apiEndpoints.policy.base}/health`);
@@ -206,11 +208,12 @@ apiClient.interceptors.response.use(
     return response;
   },
   async (error: AxiosError) => {
-    const originalRequest = error.config as any;
-    
+    const originalRequest = error?.config as any;
+
     // Handle different error types
-    if (error.response) {
-      const { status, data } = error.response;
+    if (error?.response) {
+      const status = error?.response?.status;
+      const data = error?.response?.data;
 
       if (
         typeof window !== 'undefined' &&
@@ -228,7 +231,7 @@ apiClient.interceptors.response.use(
         case 401:
           // Unauthorized - handle based on endpoint type
           if (typeof window !== 'undefined') {
-            const url = error.config?.url || '';
+            const url = error?.config?.url || '';
             const context = getEndpointContext(url);
             
             if (context.isServiceEndpoint || context.isModelManagementEndpoint || context.isMultiTenantEndpoint) {
@@ -326,7 +329,7 @@ apiClient.interceptors.response.use(
               
               const enhancedError = new Error(enhancedErrorMessage);
               (enhancedError as any).status = 401;
-              (enhancedError as any).response = error.response;
+              (enhancedError as any).response = error?.response;
               return Promise.reject(enhancedError);
             } else {
               // For auth endpoints and other non-service endpoints
@@ -397,12 +400,12 @@ apiClient.interceptors.response.use(
         default:
           console.error(`API Error ${status}:`, data);
       }
-    } else if (error.request) {
+    } else if (error?.request) {
       // Network error
       console.error('Network error - please check your connection');
     } else {
       // Other error
-      console.error('Request setup error:', error.message);
+      console.error('Request setup error:', error?.message);
     }
     
     return Promise.reject(error);

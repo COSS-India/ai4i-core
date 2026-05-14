@@ -89,19 +89,19 @@ export const performTryItNMTInference = async (
   } catch (error: any) {
     console.error('Try-It NMT inference error:', error);
 
-    if (error.response?.status === 403 || error.response?.status === 429) {
+    if (error?.response?.status === 403 || error?.response?.status === 429) {
       // Extract message from either FastAPI format (data.detail) or APISIX gateway format (data.error_msg)
       const rawMessage: string =
-        (typeof error.response?.data?.detail === 'string' ? error.response.data.detail : '') ||
-        error.response?.data?.detail?.message ||
-        error.response?.data?.error_msg ||
-        error.response?.data?.message ||
+        (typeof error?.response?.data?.detail === 'string' ? error?.response?.data?.detail : '') ||
+        error?.response?.data?.detail?.message ||
+        error?.response?.data?.error_msg ||
+        error?.response?.data?.message ||
         '';
 
       if (
         rawMessage.toLowerCase().includes('login') ||
         rawMessage.toLowerCase().includes('rate') ||
-        error.response?.status === 429
+        error?.response?.status === 429
       ) {
         throw new Error('Rate limit exceeded. You can try up to 5 translations per hour. Please sign in for unlimited access.');
       }
@@ -109,7 +109,7 @@ export const performTryItNMTInference = async (
       throw new Error('Access denied. Please login to access this service.');
     }
 
-    if (error.message) {
+    if (error?.message) {
       throw error;
     }
     throw new Error('Failed to perform translation. Please try again.');

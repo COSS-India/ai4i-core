@@ -132,8 +132,8 @@ export const searchLogs = async (
     });
     // Extract error message from detail object
     let errorMessage = 'Failed to search logs';
-    if (error?.response?.data?.detail) {
-      const detail = error.response.data.detail;
+    const detail = error?.response?.data?.detail;
+    if (detail) {
       if (typeof detail === 'string') {
         errorMessage = detail;
       } else if (typeof detail === 'object' && detail.message) {
@@ -173,8 +173,8 @@ export const getLogAggregations = async (
     console.error('Failed to get log aggregations:', error);
     // Extract error message from detail object
     let errorMessage = 'Failed to get log aggregations';
-    if (error?.response?.data?.detail) {
-      const detail = error.response.data.detail;
+    const detail = error?.response?.data?.detail;
+    if (detail) {
       if (typeof detail === 'string') {
         errorMessage = detail;
       } else if (typeof detail === 'object' && detail.message) {
@@ -213,8 +213,8 @@ export const getServicesWithLogs = async (): Promise<string[]> => {
     });
     // Extract error message from detail object
     let errorMessage = 'Failed to get services with logs';
-    if (error?.response?.data?.detail) {
-      const detail = error.response.data.detail;
+    const detail = error?.response?.data?.detail;
+    if (detail) {
       if (typeof detail === 'string') {
         errorMessage = detail;
       } else if (typeof detail === 'object' && detail.message) {
@@ -265,8 +265,8 @@ export const searchTraces = async (
     console.error('Failed to search traces:', error);
     // Extract error message from detail object
     let errorMessage = 'Failed to search traces';
-    if (error?.response?.data?.detail) {
-      const detail = error.response.data.detail;
+    const detail = error?.response?.data?.detail;
+    if (detail) {
       if (typeof detail === 'string') {
         errorMessage = detail;
       } else if (typeof detail === 'object' && detail.message) {
@@ -296,8 +296,8 @@ export const getTraceById = async (traceId: string): Promise<Trace> => {
     console.error('Failed to get trace:', error);
     // Extract error message from detail object
     let errorMessage = 'Failed to get trace';
-    if (error?.response?.data?.detail) {
-      const detail = error.response.data.detail;
+    const detail = error?.response?.data?.detail;
+    if (detail) {
       if (typeof detail === 'string') {
         errorMessage = detail;
       } else if (typeof detail === 'object' && detail.message) {
@@ -327,8 +327,8 @@ export const getServicesWithTraces = async (): Promise<string[]> => {
     console.error('Failed to get services with traces:', error);
     // Extract error message from detail object
     let errorMessage = 'Failed to get services with traces';
-    if (error?.response?.data?.detail) {
-      const detail = error.response.data.detail;
+    const detail = error?.response?.data?.detail;
+    if (detail) {
       if (typeof detail === 'string') {
         errorMessage = detail;
       } else if (typeof detail === 'object' && detail.message) {
@@ -358,8 +358,8 @@ export const getOperationsForService = async (serviceName: string): Promise<stri
     console.error('Failed to get operations:', error);
     // Extract error message from detail object
     let errorMessage = 'Failed to get operations';
-    if (error?.response?.data?.detail) {
-      const detail = error.response.data.detail;
+    const detail = error?.response?.data?.detail;
+    if (detail) {
       if (typeof detail === 'string') {
         errorMessage = detail;
       } else if (typeof detail === 'object' && detail.message) {

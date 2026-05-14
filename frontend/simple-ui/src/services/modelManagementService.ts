@@ -219,9 +219,9 @@ export const listServices = async (
   } catch (error: any) {
     console.error('List services error:', error);
     const errorMessage =
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
+      error?.response?.data?.detail ||
+      error?.response?.data?.message ||
+      error?.message ||
       'Failed to fetch services';
     throw new Error(errorMessage);
   }
