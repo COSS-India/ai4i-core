@@ -36,6 +36,7 @@ import {
   IoShieldCheckmarkOutline,
   IoFolderOpenOutline,
 } from "react-icons/io5";
+import { TABS } from "../../config/constants";
 import { getServiceTitle } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
@@ -44,121 +45,121 @@ import { getTenantIdFromToken } from "../../utils/helpers";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
 const safeColorMap = {
-  asr: { // Coral → Pastel Coral
+  [TABS.asr]: { // Coral → Pastel Coral
     50:  "#FFE9E2",
     300: "#FFB8A4",
     400: "#FF9C86",
     600: "#FF7A61",
   },
-  tts: { // Royal Blue → Pastel Blue
+  [TABS.tts]: { // Royal Blue → Pastel Blue
     50:  "#EAF0FF",
     300: "#B3C7FF",
     400: "#8CAEFF",
     600: "#668FFF",
   },
-  nmt: { // Emerald → Pastel Mint
+  [TABS.nmt]: { // Emerald → Pastel Mint
     50:  "#E7FAF1",
     300: "#B3EFD4",
     400: "#90E6C0",
     600: "#6AD2A7",
   },
-  llm: { // Magenta → Pastel Pink/Magenta
+  [TABS.llm]: { // Magenta → Pastel Pink/Magenta
     50:  "#FFE6FA",
     300: "#FFB3EB",
     400: "#FF8CDE",
     600: "#F061C8",
   },
-  pipeline: { // Purple → Pastel Lilac
+  [TABS.pipeline]: { // Purple → Pastel Lilac
     50:  "#F8F0FA",
     300: "#E4C9EE",
     400: "#D8AFE8",
     600: "#C08BD8",
   },
-  ocr: { // Teal → Pastel Aqua
+  [TABS.ocr]: { // Teal → Pastel Aqua
     50:  "#E5F7F7",
     300: "#B5E8E8",
     400: "#90DDDD",
     600: "#6BC7C7",
   },
-  transliteration: { // Turquoise → Pastel Turquoise
+  [TABS.transliteration]: { // Turquoise → Pastel Turquoise
     50:  "#E8FCFA",
     300: "#B5F3EC",
     400: "#8DEBDD",
     600: "#6BD2C1",
   },
-  "language-detection": { // Crimson → Pastel Red
+  [TABS.languageDetection]: { // Crimson → Pastel Red
     50:  "#FFE9EE",
     300: "#FFBBC8",
     400: "#FF9EAF",
     600: "#FF7A8F",
   },
-  "speaker-diarization": { // Amber → Pastel Yellow/Amber
+  [TABS.speakerDiarization]: { // Amber → Pastel Yellow/Amber
     50:  "#FFF9E6",
     300: "#FEE5A8",
     400: "#FFDA7A",
     600: "#F5C554",
   },
-  "language-diarization": { // Lime → Pastel Lime Green
+  [TABS.languageDiarization]: { // Lime → Pastel Lime Green
     50:  "#F3FFE8",
     300: "#D4FFAA",
     400: "#C0FF85",
     600: "#99F45A",
   },
-  "audio-language-detection": { // Replace gray → Pastel Electric Blue
+  [TABS.audioLanguageDetection]: { // Replace gray → Pastel Electric Blue
     50:  "#E7F7FF",
     300: "#B3E4FF",
     400: "#89D6FF",
     600: "#63C5FF",
   },
-  ner: { // Indigo → Pastel Indigo/Violet
+  [TABS.ner]: { // Indigo → Pastel Indigo/Violet
     50:  "#F1E8FF",
     300: "#D0BBFF",
     400: "#BA9AFF",
     600: "#9D72FF",
   },
-  "model-management": { // Rose → Pastel Rose
+  [TABS.modelManagement]: { // Rose → Pastel Rose
     50:  "#FFF1F2",
     300: "#FFC1C7",
     400: "#FF9FA8",
     600: "#FF6B7A",
   },
-  "services-management": { // Cyan → Pastel Cyan
+  [TABS.servicesManagement]: { // Cyan → Pastel Cyan
     50:  "#E0F7FA",
     300: "#80DEEA",
     400: "#4DD0E1",
     600: "#00ACC1",
   },
-  "tenant-management": { // Teal → Pastel Teal
+  [TABS.tenantManagement]: { // Teal → Pastel Teal
     50:  "#E0F2F1",
     300: "#80CBC4",
     400: "#4DB6AC",
     600: "#00897B",
   },
-  "logs": { // Green → Pastel Green
+  [TABS.logs]: { // Green → Pastel Green
     50:  "#E8F5E9",
     300: "#81C784",
     400: "#66BB6A",
     600: "#43A047",
   },
-  "traces": { // Purple → Pastel Purple
+  [TABS.traces]: { // Purple → Pastel Purple
     50:  "#F3E5F5",
     300: "#BA68C8",
     400: "#AB47BC",
     600: "#8E24AA",
   },
-  "alerts-management": { // Amber/Yellow → Pastel Amber
+  [TABS.alertsManagement]: { // Amber/Yellow → Pastel Amber
     50:  "#FFF8E1",
     300: "#FFD54F",
     400: "#FFCA28",
     600: "#F9A825",
   },
-  "pii-management": {
+  [TABS.piiManagement]: {
     50:  "#E8EAF6",
     300: "#9FA8DA",
     400: "#7986CB",
     600: "#5C6BC0",
   },
-  "policy-management": {
+  [TABS.policyManagement]: {
     50:  "#E3F2FD",
     300: "#64B5F6",
     400: "#42A5F5",
@@ -186,7 +187,7 @@ interface NavItem {
 // Home and Model Management (always visible)
 const topNavItems: NavItem[] = [
   {
-    id: "home",
+    id: TABS.home,
     label: "Home",
     path: "/",
     icon: IoHomeOutline,
@@ -195,81 +196,81 @@ const topNavItems: NavItem[] = [
     requiresAuth: false,
   },
   {
-    id: "model-management",
+    id: TABS.modelManagement,
     label: "Model Management",
-    path: "/model-management",
+    path: `/${TABS.modelManagement}`,
     icon: IoServerOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "services-management",
+    id: TABS.servicesManagement,
     label: "Services Management",
-    path: "/services-management",
+    path: `/${TABS.servicesManagement}`,
     icon: IoAppsOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "tenant-management",
+    id: TABS.tenantManagement,
     label: "Tenant Management",
-    path: "/tenant-management",
+    path: `/${TABS.tenantManagement}`,
     icon: IoPeopleOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "api-key-management",
+    id: TABS.apiKeyManagement,
     label: "API Key Management",
-    path: "/api-key-management",
+    path: `/${TABS.apiKeyManagement}`,
     icon: IoKeyOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "logs",
+    id: TABS.logs,
     label: "Logs Dashboard",
-    path: "/logs",
+    path: `/${TABS.logs}`,
     icon: IoDocumentTextOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "traces",
+    id: TABS.traces,
     label: "Traces Dashboard",
-    path: "/traces",
+    path: `/${TABS.traces}`,
     icon: IoPulseOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "alerts-management",
+    id: TABS.alertsManagement,
     label: "Alerts Management",
-    path: "/alerts-management",
+    path: `/${TABS.alertsManagement}`,
     icon: IoNotificationsOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "pii-management",
+    id: TABS.piiManagement,
     label: "PII Guardrail",
-    path: "/pii-management",
+    path: `/${TABS.piiManagement}`,
     icon: IoShieldCheckmarkOutline,
     iconSize: 10,
     iconColor: "",
     requiresAuth: true,
   },
   {
-    id: "policy-management",
+    id: TABS.policyManagement,
     label: "Policy Management",
-    path: "/policy-management",
+    path: `/${TABS.policyManagement}`,
     icon: IoFolderOpenOutline,
     iconSize: 10,
     iconColor: "",
@@ -280,108 +281,108 @@ const topNavItems: NavItem[] = [
 // Services (grouped under Services section) — order matches homepage (index.tsx services array)
 const baseNavItems: NavItem[] = [
   {
-    id: "nmt",
-    label: getServiceTitle("nmt"),
-    path: "/nmt",
+    id: TABS.nmt,
+    label: getServiceTitle(TABS.nmt),
+    path: `/${TABS.nmt}`,
     icon: IoLanguageOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: false, // Allow anonymous access with rate limiting
   },
   {
-    id: "asr",
-    label: getServiceTitle("asr"),
-    path: "/asr",
+    id: TABS.asr,
+    label: getServiceTitle(TABS.asr),
+    path: `/${TABS.asr}`,
     icon: FaMicrophone,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "tts",
-    label: getServiceTitle("tts"),
-    path: "/tts",
+    id: TABS.tts,
+    label: getServiceTitle(TABS.tts),
+    path: `/${TABS.tts}`,
     icon: IoVolumeHighOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "llm",
-    label: getServiceTitle("llm"),
-    path: "/llm",
+    id: TABS.llm,
+    label: getServiceTitle(TABS.llm),
+    path: `/${TABS.llm}`,
     icon: IoSparklesOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "pipeline",
-    label: getServiceTitle("pipeline"),
-    path: "/pipeline",
+    id: TABS.pipeline,
+    label: getServiceTitle(TABS.pipeline),
+    path: `/${TABS.pipeline}`,
     icon: DoubleMicrophoneIcon,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "ocr",
-    label: getServiceTitle("ocr"),
-    path: "/ocr",
+    id: TABS.ocr,
+    label: getServiceTitle(TABS.ocr),
+    path: `/${TABS.ocr}`,
     icon: IoDocumentTextOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "transliteration",
-    label: getServiceTitle("transliteration"),
-    path: "/transliteration",
+    id: TABS.transliteration,
+    label: getServiceTitle(TABS.transliteration),
+    path: `/${TABS.transliteration}`,
     icon: IoSwapHorizontalOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "language-detection",
-    label: getServiceTitle("language-detection"),
-    path: "/language-detection",
+    id: TABS.languageDetection,
+    label: getServiceTitle(TABS.languageDetection),
+    path: `/${TABS.languageDetection}`,
     icon: IoGlobeOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "speaker-diarization",
-    label: getServiceTitle("speaker-diarization"),
-    path: "/speaker-diarization",
+    id: TABS.speakerDiarization,
+    label: getServiceTitle(TABS.speakerDiarization),
+    path: `/${TABS.speakerDiarization}`,
     icon: IoPeopleOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "language-diarization",
-    label: getServiceTitle("language-diarization"),
-    path: "/language-diarization",
+    id: TABS.languageDiarization,
+    label: getServiceTitle(TABS.languageDiarization),
+    path: `/${TABS.languageDiarization}`,
     icon: IoLanguageOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "audio-language-detection",
-    label: getServiceTitle("audio-language-detection"),
-    path: "/audio-language-detection",
+    id: TABS.audioLanguageDetection,
+    label: getServiceTitle(TABS.audioLanguageDetection),
+    path: `/${TABS.audioLanguageDetection}`,
     icon: IoRadioOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
   },
   {
-    id: "ner",
-    label: getServiceTitle("ner"),
-    path: "/ner",
+    id: TABS.ner,
+    label: getServiceTitle(TABS.ner),
+    path: `/${TABS.ner}`,
     icon: IoPricetagOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
@@ -416,21 +417,21 @@ const Sidebar: React.FC = () => {
   const topItems = useMemo(
     () =>
       topNavItems.filter((item) => {
-        if (item.id === "home") return true;
-        if (item.id === "traces") return false;
+        if (item.id === TABS.home) return true;
+        if (item.id === TABS.traces) return false;
         if (
           (isGuest || isUser || isTenantAdmin) &&
-          (item.id === "model-management" || item.id === "services-management")
+          (item.id === TABS.modelManagement || item.id === TABS.servicesManagement)
         ) {
           return false;
         }
-        if (item.id === "tenant-management" && !showTenantManagement) return false;
-        if (item.id === "alerts-management" && !isAdmin) return false;
-        if (item.id === "pii-management" && !(isAdmin || isTenantAdmin)) return false;
-        if (item.id === "policy-management" && !isAdmin) return false;
-        if (item.id === "api-key-management" && !(isAdmin || isTenantAdmin)) return false;
-        if (item.id === "logs" && (isUser || isGuest)) return false;
-        if (item.id === "logs" && !tenantId && !isAdmin) return false;
+        if (item.id === TABS.tenantManagement && !showTenantManagement) return false;
+        if (item.id === TABS.alertsManagement && !isAdmin) return false;
+        if (item.id === TABS.piiManagement && !(isAdmin || isTenantAdmin)) return false;
+        if (item.id === TABS.policyManagement && !isAdmin) return false;
+        if (item.id === TABS.apiKeyManagement && !(isAdmin || isTenantAdmin)) return false;
+        if (item.id === TABS.logs && (isUser || isGuest)) return false;
+        if (item.id === TABS.logs && !tenantId && !isAdmin) return false;
         return true;
       }),
     [
@@ -580,7 +581,7 @@ const Sidebar: React.FC = () => {
                     <Icon
                       as={item.icon}
                       boxSize={5}
-                      color={item.id === "home" ? "black" : getColor(item.id, 600)}
+                      color={item.id === TABS.home ? "black" : getColor(item.id, 600)}
                     />
                   ) : undefined
                 }
@@ -603,7 +604,7 @@ const Sidebar: React.FC = () => {
                   <Icon
                     as={item.icon}
                     boxSize={6}
-                    color={item.id === "home" ? "black" : getColor(item.id, 600)}
+                    color={item.id === TABS.home ? "black" : getColor(item.id, 600)}
                   />
                 )}
               </Button>
