@@ -1,3 +1,3 @@
-from app.models.llm import Base, LLMRequestDB, LLMResultDB
+from app.models.llm import Base
 
-__all__ = ["Base", "LLMRequestDB", "LLMResultDB"]
+__all__ = ["Base"]

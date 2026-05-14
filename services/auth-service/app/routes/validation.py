@@ -1,186 +1,165 @@
 """
-Token validation endpoint — called by APISIX for every request.
-Uses the shared ai4icore_auth JWTVerifier.
+Token validation endpoint — called by APISIX / nginx forward-auth on every
+request through the gateway.
+
+Two-step flow:
+  1. Identify the caller (anonymous / hex API key / JWT) and validate the
+     token if one is presented.
+  2. Authorize: check the caller's permission_ids against the permission
+     required by X-Original-Method:X-Original-URI.
 """
 
+import base64
+import binascii
+import json
 import logging
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from ai4icore_auth.jwt_verifier import AuthClaims, JWTExpiredError, JWTVerificationError
+logger = logging.getLogger(__name__)
 
-from app.core.constants import TokenType
-from app.core.database import get_db
+from app.core.jwt_verifier import JWTExpiredError, JWTVerificationError
+from app.core.redis import get_redis
 from app.core.exceptions import AuthenticationRequiredError, InvalidAPIKeyError
-from app.core.security import key_manager
-from app.dependencies.auth import _check_token_revocation, get_jwt_verifier
-from app.dependencies.services import get_api_key_service, get_cache_service, get_user_service
+from app.dependencies.auth import check_token_revocation, get_jwt_verifier
 from app.schemas.api_key import ValidateAPIKeyErrorResponse, ValidateAPIKeyResponse
 from app.schemas.token import TokenValidationResponse
 from app.services.api_key_service import APIKeyService
 from app.services.cache_service import CacheService
-from app.services.tenant_service import TenantService, is_suspended_or_deactivated
-from app.services.user_service import UserService
-
-logger = logging.getLogger(__name__)
 
 USER_PLAN_JWT: str = "P1"
 USER_PLAN_APIKEY: str = "P2"
 
 router = APIRouter(prefix="/auth", tags=["Validation"])
 
-security = HTTPBearer(auto_error=False)
-
 
 def is_jwt_strict(token: str) -> bool:
     """Return True only when token is a 3-part JWT with alg=RS256 in the header."""
-    import base64
-    import json as _json
     parts = token.split(".")
     if len(parts) != 3:
         return False
     try:
-        padding = 4 - len(parts[0]) % 4
-        header = _json.loads(base64.urlsafe_b64decode(parts[0] + "=" * padding))
+        padding = (4 - len(parts[0]) % 4) % 4
+        header = json.loads(base64.urlsafe_b64decode(parts[0] + "=" * padding))
         return header.get("alg") == "RS256"
-    except Exception:
+    except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError, AttributeError) as exc:
+        logger.debug("JWT header validation failed: %s", exc.__class__.__name__)
         return False
 
 
-def _tenant_inactive_message() -> str:
-    return "Tenant access is restricted. Contact your administrator."
+async def _required_endpoint_permission(request: Request) -> tuple[bool, int | None]:
+    """Look up the permission required for X-Original-Method:X-Original-URI.
+
+    Returns:
+      (False, None) — gateway didn't set X-Original-* (direct call) OR the
+                      permission checker isn't loaded yet. Caller decides.
+      (True,  None) — endpoint is public (no permission required).
+      (True,  <id>) — endpoint requires this permission.
+    """
+    method = request.headers.get("X-Original-Method")
+    uri = request.headers.get("X-Original-URI")
+    if not (method and uri):
+        return False, None
+    checker = getattr(request.app.state, "permission_checker", None)
+    if checker is None:
+        return False, None
+    return True, await checker.get_required_permission(method, uri.split("?", 1)[0])
 
 
-def _user_inactive_message(user_status: str) -> str:
-    return f"User is {user_status.lower()}, please contact your admin"
+async def _check_endpoint_permission(request: Request, permission_ids: list[int]) -> bool:
+    """Authorize a caller's permission_ids against the endpoint's required perm.
+
+    Allow when: gateway didn't signal an endpoint (direct call), OR the
+    endpoint is public, OR the caller holds the required permission.
+    """
+    looked_up, required = await _required_endpoint_permission(request)
+    if not looked_up:
+        return True
+    return required is None or required in permission_ids
 
 
-@router.get("/validate")
-@router.post("/validate")
-async def validate_token(
+def _extract_token(request: Request) -> str:
+    """Pull the bearer token from the Authorization header, or empty string."""
+    raw = request.headers.get("Authorization", "").strip()
+    if raw.lower().startswith("bearer "):
+        return raw[7:].strip()
+    return raw
+
+
+# ── Per-token-type validators ─────────────────────────────────────────────
+
+
+async def _validate_anonymous(request: Request) -> Response:
+    """No token: allow only when X-Original-* point at a public endpoint."""
+    looked_up, required = await _required_endpoint_permission(request)
+    if looked_up and required is None:
+        return TokenValidationResponse(valid=True)
+    raise AuthenticationRequiredError()
+
+
+async def _validate_api_key(
+    token: str,
     request: Request,
     response: Response,
-    credentials: HTTPAuthorizationCredentials | None = Depends(security),
-    cache_svc: CacheService = Depends(get_cache_service),
-    user_svc: UserService = Depends(get_user_service),
-    api_key_svc: APIKeyService = Depends(get_api_key_service),
-    db: AsyncSession = Depends(get_db),
-):
-    # Extract token — accept both "Bearer <token>" and raw "<token>"
-    raw_auth = request.headers.get("Authorization", "").strip()
-    if raw_auth.lower().startswith("bearer "):
-        token = raw_auth[7:].strip()
-    elif raw_auth:
-        token = raw_auth
-    elif credentials is not None:
-        token = credentials.credentials
-    else:
-        raise AuthenticationRequiredError()
-
-    # Hex API key path — Redis only, zero DB calls
-    if not is_jwt_strict(token):
-        try:
-            result = await api_key_svc.validate_api_key(token)
-        except InvalidAPIKeyError:
-            return JSONResponse(
-                status_code=401,
-                content=ValidateAPIKeyErrorResponse(
-                    error="API key not found or revoked."
-                ).model_dump(),
-            )
-        user_id = result.get("user_id")
-        if user_id:
-            response.headers["X-User-ID"] = str(user_id)
-        response.headers["X-User-Plan"] = USER_PLAN_APIKEY
-        response.headers["X-Auth-Type"] = "api_key"
-        tenant_id = result.get("tenant_id")
-        if tenant_id:
-            response.headers["X-Tenant-ID"] = str(tenant_id)
-        return ValidateAPIKeyResponse(
-            valid=True,
-            user_id=user_id,
-            permission_ids=result.get("permission_ids", []),
-        )
-
-    # JWT path — existing flow unchanged
-    verifier = get_jwt_verifier()
-
+    api_key_svc: APIKeyService,
+) -> Response:
+    """Hex API key path — Redis-only validation, then endpoint authz."""
     try:
-        claims: AuthClaims = await verifier.verify(token)
-    except JWTExpiredError:
-        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_EXPIRED"})
-    except JWTVerificationError:
-        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_INVALID"})
-
-    if claims.token_id:
-        revoked = await _check_token_revocation(
-            claims.token_id, claims.token_type, cache_svc, db,
+        result = await api_key_svc.validate_api_key(token)
+    except InvalidAPIKeyError:
+        return JSONResponse(
+            status_code=401,
+            content=ValidateAPIKeyErrorResponse(error="API key not found or revoked.", message="API key not found or has been revoked.").model_dump(),
         )
-        if revoked:
-            return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_REVOKED"})
 
-    username = None
-    if claims.user_id:
-        user = await user_svc.get_user_by_id(claims.user_id)
-        if not user:
-            # Backward compatibility: API key validation should still succeed
-            # even if the owning user record was deleted.
-            if claims.token_type != TokenType.API_KEY:
-                return JSONResponse(status_code=401, content={"valid": False, "error": "USER_NOT_FOUND"})
-            logger.warning(
-                "API key token validated with missing user record: user_id=%s token_id=%s",
-                claims.user_id,
-                claims.token_id,
-            )
-            user = None
+    permission_ids = result.get("permission_ids") or []
+    if not await _check_endpoint_permission(request, permission_ids):
+        return JSONResponse(status_code=403, content={"valid": False, "error": "INSUFFICIENT_PERMISSIONS", "message": "You do not have permission to access this endpoint."})
 
-        if user and not user.is_active:
-            return JSONResponse(status_code=401, content={"valid": False, "error": "USER_INACTIVE"})
+    user_id = result.get("user_id")
+    tenant_id = result.get("tenant_id")
+    if user_id:
+        response.headers["X-User-ID"] = str(user_id)
+    response.headers["X-User-Plan"] = USER_PLAN_APIKEY
+    response.headers["X-Auth-Type"] = "api_key"
+    if tenant_id:
+        response.headers["X-Tenant-ID"] = str(tenant_id)
+    return ValidateAPIKeyResponse(valid=True, user_id=user_id, permission_ids=permission_ids)
 
-        if user:
-            username = user.username
 
-        if user and user.tenant_id:
-            tenant_service = TenantService(db, cache_svc)
-            tenant_id_str = str(user.tenant_id)
+async def _validate_jwt(
+    token: str,
+    request: Request,
+    response: Response,
+    cache_svc: CacheService,
+) -> Response:
+    """JWT path — verify signature, check revocation, then endpoint authz."""
+    try:
+        claims = await get_jwt_verifier().verify(token)
+    except JWTExpiredError:
+        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_EXPIRED", "message": "Token has expired."})
+    except JWTVerificationError:
+        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_INVALID", "message": "Token is invalid."})
 
-            tenant_status = await tenant_service.get_tenant_status_cached(tenant_id_str)
-            if is_suspended_or_deactivated(tenant_status):
-                return JSONResponse(
-                    status_code=401,
-                    content={
-                        "valid": False,
-                        "error": "TENANT_INACTIVE",
-                        "message": _tenant_inactive_message(),
-                    },
-                )
+    if claims.token_id and await check_token_revocation(
+        claims.token_id, claims.token_type, cache_svc,
+    ):
+        return JSONResponse(status_code=401, content={"valid": False, "error": "TOKEN_REVOKED", "message": "Token has been revoked."})
 
-            if user.is_tenant_active is False:
-                return JSONResponse(
-                    status_code=401,
-                    content={
-                        "valid": False,
-                        "error": "TENANT_USER_INACTIVE",
-                        "message": _user_inactive_message("deactivated"),
-                    },
-                )
+    if not await _check_endpoint_permission(request, claims.permission_ids):
+        return JSONResponse(status_code=403, content={"valid": False, "error": "INSUFFICIENT_PERMISSIONS", "message": "You do not have permission to access this endpoint."})
 
-    # Backward-compatible: keep JSON body and add user id header for consumers
     if claims.user_id:
         response.headers["X-User-ID"] = str(claims.user_id)
     response.headers["X-User-Plan"] = USER_PLAN_JWT
-    tt = claims.token_type
-    response.headers["X-Auth-Type"] = str(tt.value) if hasattr(tt, "value") else str(tt)
+    response.headers["X-Auth-Type"] = claims.token_type
     if claims.tenant_id:
         response.headers["X-Tenant-ID"] = str(claims.tenant_id)
-
     return TokenValidationResponse(
         valid=True,
         user_id=claims.user_id,
-        username=username,
+        username=claims.username,
         tenant_id=claims.tenant_id,
         permission_ids=claims.permission_ids,
         roles=claims.roles,
@@ -188,6 +167,29 @@ async def validate_token(
     )
 
 
-@router.get("/.well-known/jwks.json")
-async def jwks():
-    return key_manager.get_jwks()
+# nginx auth_request and APISIX forward-auth both issue GET; the original
+# client method travels in X-Original-Method. Don't add POST defensively —
+# no caller uses it, and silent 405s on config drift are easier to spot.
+@router.get("/validate")
+async def validate_token(
+    request: Request,
+    response: Response,
+    redis=Depends(get_redis),
+):
+    """Step 1: identify (anon / API key / JWT). Step 2: each branch authorizes.
+
+    DB is only acquired for the API-key branch; JWT and anonymous paths never
+    open a connection, keeping the gateway hot path as cheap as possible.
+    """
+    token = _extract_token(request)
+    if not token:
+        return await _validate_anonymous(request)
+
+    cache_svc = CacheService(redis)
+
+    if is_jwt_strict(token):
+        return await _validate_jwt(token, request, response, cache_svc)
+
+    # API key path — validates against Redis cache only, no DB needed
+    api_key_svc = APIKeyService(None, cache_svc)
+    return await _validate_api_key(token, request, response, api_key_svc)

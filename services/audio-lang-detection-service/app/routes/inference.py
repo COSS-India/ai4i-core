@@ -5,7 +5,6 @@ import logging
 from fastapi import APIRouter, Depends, Request
 
 
-from app.dependencies.auth import AuthProvider
 from app.dependencies.services import get_audio_lang_detection_service
 from app.schemas.inference import AudioLangDetectionInferenceRequest, AudioLangDetectionInferenceResponse
 from app.services.audio_lang_detection_service import AudioLangDetectionService
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/audio-lang-detection",
     tags=["Audio Language Detection Inference"],
-    dependencies=[Depends(AuthProvider)],
+    
 )
 
 

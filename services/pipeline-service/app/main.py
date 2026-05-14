@@ -8,7 +8,6 @@ from typing import Any, Dict
 
 import redis.asyncio as aioredis
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 from ai4icore_env import app_env
 from ai4icore_exceptions import register_exception_handlers
@@ -142,14 +141,7 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.warning("Tracing setup failed: %s", e)
 
-    # -- CORS --
-    application.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # CORS is handled at the nginx gateway, not here.
 
     # -- Logging Plugin --
     if _LOGGING:

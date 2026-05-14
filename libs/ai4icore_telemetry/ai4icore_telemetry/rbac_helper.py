@@ -2,40 +2,13 @@
 RBAC Helper for AI4ICore Telemetry Library
 
 Provides RBAC utilities for extracting organization filters from requests.
-Uses shared ai4icore_auth for RS256 JWT verification.
+Auth validation is delegated to API gateway; this reads pre-validated headers.
 """
 import logging
 from typing import Optional, Any
 from fastapi import Request, HTTPException, status
 
 logger = logging.getLogger(__name__)
-
-
-async def _verify_token(request: Request):
-    """Verify JWT using shared ai4icore_auth verifier. Returns AuthClaims or raises 401."""
-    from ai4icore_auth.providers import build_jwt_verifier
-    from ai4icore_auth.jwt_verifier import JWTVerificationError
-
-    authorization = request.headers.get("Authorization") or request.headers.get("authorization")
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or invalid authorization header"
-        )
-
-    token = authorization.split(" ", 1)[1]
-
-    verifier = build_jwt_verifier()
-    if verifier.loaded_key_count == 0:
-        await verifier.initialize()
-
-    try:
-        return await verifier.verify(token)
-    except JWTVerificationError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token"
-        )
 
 
 async def get_organization_filter(
@@ -48,10 +21,9 @@ async def get_organization_filter(
     Extract tenant_id filter from request based on RBAC.
 
     This function:
-    1. Verifies JWT token via shared ai4icore_auth (RS256)
-    2. Extracts user_id, tenant_id, and roles from claims
-    3. Checks Casbin permissions
-    4. Returns tenant_id filter (None for admin, tenant_id for users)
+    1. Reads user_id, tenant_id, and roles from gateway-injected headers
+    2. Checks Casbin permissions
+    3. Returns tenant_id filter (None for admin, tenant_id for users)
 
     Args:
         request: FastAPI request object
@@ -63,13 +35,18 @@ async def get_organization_filter(
         None if user is admin (no filter), tenant_id if normal user
 
     Raises:
-        HTTPException: 401 if no token, 403 if no permission or no tenant_id
+        HTTPException: 401 if no User-ID header, 403 if no permission or no tenant_id
     """
-    claims = await _verify_token(request)
+    user_id = request.headers.get("X-User-ID")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing X-User-ID header (gateway auth required)"
+        )
 
-    user_id = claims.user_id
-    tenant_id = claims.tenant_id
-    roles = claims.roles
+    tenant_id = request.headers.get("X-Tenant-ID")
+    roles_header = request.headers.get("X-Roles", "")
+    roles = [r.strip() for r in roles_header.split(",")] if roles_header else []
 
     # Check permission using Casbin
     if "." not in permission:

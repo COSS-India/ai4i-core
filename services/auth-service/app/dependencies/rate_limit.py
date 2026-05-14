@@ -33,13 +33,8 @@ async def enforce_rate_limit(
     full_key = f"rl:{key}"
     pipe = redis.pipeline()
     pipe.incr(full_key)
-    pipe.ttl(full_key)
-    count, ttl = await pipe.execute()
-
-    # First call → set the window TTL.
-    if count == 1 or ttl < 0:
-        await redis.expire(full_key, window_seconds)
-        ttl = window_seconds
+    pipe.expire(full_key, window_seconds)
+    count, _ = await pipe.execute()
 
     if count > limit:
         retry_after = max(int(ttl), 1)

@@ -5,7 +5,6 @@ import logging
 from fastapi import APIRouter, Depends, Request
 
 
-from app.dependencies.auth import AuthProvider
 from app.dependencies.services import get_ner_service
 from app.schemas.inference import NerInferenceRequest, NerInferenceResponse
 from app.services.ner_service import NerService
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/ner",
     tags=["NER Inference"],
-    dependencies=[Depends(AuthProvider)],
+    
 )
 
 

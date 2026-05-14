@@ -23,9 +23,20 @@ class UserRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
+    async def is_active(self, user_id: UUID) -> bool:
+        """Lightweight check: is user active? (no full object fetch)."""
+        result = await self._db.execute(
+            select(User.is_active).where(User.id == user_id, User.is_delete.isnot(True))
+        )
+        is_active = result.scalar_one_or_none()
+        return is_active is True
+
     async def get_by_email(self, email: str) -> Optional[User]:
         result = await self._db.execute(
-            select(User).where(User.email == email, User.is_delete.isnot(True))
+            select(User).where(
+                func.lower(User.email) == email.lower().strip(),
+                User.is_delete.isnot(True),
+            )
         )
         return result.scalar_one_or_none()
 
@@ -34,10 +45,6 @@ class UserRepository(BaseRepository):
             select(User).where(User.username == username, User.is_delete.isnot(True))
         )
         return result.scalar_one_or_none()
-
-    async def update_last_login(self, user: User) -> None:
-        user.last_login = datetime.now(timezone.utc)
-        await self._db.flush()
 
     async def list_all(self, offset: int = 0, limit: int = 100) -> list[User]:
         result = await self._db.execute(
@@ -58,9 +65,3 @@ class UserRepository(BaseRepository):
             .limit(limit)
         )
         return list(result.scalars().all())
-
-    async def count(self) -> int:
-        result = await self._db.execute(
-            select(func.count(User.id)).where(User.is_delete.isnot(True))
-        )
-        return result.scalar_one()

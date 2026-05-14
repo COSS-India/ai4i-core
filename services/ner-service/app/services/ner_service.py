@@ -15,7 +15,6 @@ from app.schemas.inference import (
     NerPrediction,
     NerTokenPrediction,
 )
-from app.repositories.ner_repository import NERRepository
 from app.clients.triton_client import NERTritonClient
 from ai4icore_exceptions import TritonInferenceError
 from ai4icore_telemetry import StandardSpanManager
@@ -39,11 +38,9 @@ class NerService:
 
     def __init__(
         self,
-        repository: NERRepository,
         triton_client: NERTritonClient,
         model_name: str,
     ):
-        self.repository = repository
         self.triton_client = triton_client
         self.model_name = model_name
 
@@ -60,7 +57,6 @@ class NerService:
         Standard phases: preprocess → resolve_model → triton_inference → postprocess → persist.
         """
         start_time = time.time()
-        request_id = None
         service_id = request.config.serviceId
         language = request.config.language.sourceLanguage
         input_count = len(request.input)
@@ -412,95 +408,6 @@ class NerService:
                 ner_response = NerInferenceResponse(output=predictions)
                 processing_time = time.time() - start_time
 
-                with _standard_spans.persist() as persist_span:
-                    persist_span.set_attribute(
-                        "ner.db.operations",
-                        "ner_requests.insert,ner_results.insert_per_prediction,ner_requests.status_update",
-                    )
-                    db_request = await self.repository.create_request(
-                        model_id=service_id,
-                        language=language,
-                        text_length=total_text_length,
-                        user_id=user_id,
-                        api_key_id=api_key_id,
-                        session_id=session_id,
-                    )
-                    request_id = db_request.id
-                    rid = str(request_id)
-                    persist_span.set_attribute("ner.db.ner_request.id", rid)
-                    persist_span.set_attribute("ner.request_id", rid)
-                    persist_span.set_attribute("ner.db.ner_request.model_id", service_id)
-                    persist_span.set_attribute("ner.db.ner_request.language", language)
-                    persist_span.set_attribute(
-                        "ner.db.ner_request.text_length", total_text_length
-                    )
-                    persist_span.set_attribute(
-                        "ner.db.ner_request.status_after_insert", "processing"
-                    )
-                    persist_span.add_event(
-                        "ner.db.ner_request.insert",
-                        {
-                            "table": "ner_requests",
-                            "request_id": rid,
-                            "model_id": service_id,
-                            "language": language,
-                            "text_length": total_text_length,
-                            "initial_status": "processing",
-                        },
-                    )
-
-                    result_rows = 0
-                    for prediction in predictions:
-                        entities_data = {
-                            "nerPrediction": [
-                                {
-                                    "token": token.token,
-                                    "tag": token.tag,
-                                    "tokenIndex": token.tokenIndex,
-                                    "tokenStartIndex": token.tokenStartIndex,
-                                    "tokenEndIndex": token.tokenEndIndex,
-                                }
-                                for token in prediction.nerPrediction
-                            ]
-                        }
-                        await self.repository.create_result(
-                            request_id=request_id,
-                            entities=entities_data,
-                            source_text=prediction.source,
-                        )
-                        result_rows += 1
-                        persist_span.add_event(
-                            "ner.db.ner_result.insert",
-                            {
-                                "table": "ner_results",
-                                "request_id": rid,
-                                "source_length": len(prediction.source),
-                                "token_count": len(prediction.nerPrediction),
-                            },
-                        )
-
-                    persist_span.set_attribute("ner.db.ner_result.row_count", result_rows)
-
-                    await self.repository.update_request_status(
-                        request_id, "completed", processing_time
-                    )
-                    persist_span.set_attribute(
-                        "ner.db.ner_request.final_status", "completed"
-                    )
-                    persist_span.set_attribute(
-                        "ner.db.ner_request.processing_time_seconds",
-                        processing_time,
-                    )
-                    persist_span.add_event(
-                        "ner.db.ner_request.status_update",
-                        {
-                            "table": "ner_requests",
-                            "request_id": rid,
-                            "status": "completed",
-                            "processing_time_seconds": processing_time,
-                        },
-                    )
-
                 if parent_span is not None:
                     try:
                         parent_span.set_attribute(
@@ -521,36 +428,4 @@ class NerService:
 
             except Exception as e:
                 logger.error("NER inference failed: %s", e)
-
-                if request_id:
-                    try:
-                        await self.repository.update_request_status(
-                            request_id, "failed", error_message=str(e)
-                        )
-                    except Exception as update_error:
-                        logger.error(
-                            "Failed to update request status: %s", update_error
-                        )
-                else:
-                    try:
-                        ttl = sum(
-                            len((ti.source or " ").replace("\n", " ").strip())
-                            for ti in request.input
-                        )
-                        dr = await self.repository.create_request(
-                            model_id=service_id,
-                            language=language,
-                            text_length=ttl,
-                            user_id=user_id,
-                            api_key_id=api_key_id,
-                            session_id=session_id,
-                        )
-                        await self.repository.update_request_status(
-                            dr.id, "failed", error_message=str(e)
-                        )
-                    except Exception as db_err:
-                        logger.error(
-                            "ner: failed to record failed request: %s", db_err
-                        )
-
                 raise

@@ -1,3 +1,3 @@
-from app.models.ner import Base, NERRequestDB, NERResultDB
+from app.models.ner import Base
 
-__all__ = ["Base", "NERRequestDB", "NERResultDB"]
+__all__ = ["Base"]

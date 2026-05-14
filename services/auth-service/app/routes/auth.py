@@ -3,25 +3,19 @@ Authentication routes: register, login, logout, refresh, password management,
 and email activation (provision + set-password).
 """
 
-import redis.asyncio as aioredis
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from app.core.config import settings
-from app.core.redis import get_redis
 from app.core.responses import success_response
-from app.dependencies.auth import get_current_active_user
-from app.dependencies.rate_limit import enforce_rate_limit
+from app.dependencies.auth import get_current_user
 from app.dependencies.services import get_auth_service
 from app.models.user import User
 from app.schemas.auth import (
     ForgotPasswordRequest,
     LoginRequest,
     LoginResponse,
-    LogoutRequest,
     LogoutResponse,
     PasswordChangeRequest,
-    ProvisionUserRequest,
-    ProvisionUserResponse,
     RegisterRequest,
     ResendSetupLinkRequest,
     ResendVerificationRequest,
@@ -37,7 +31,7 @@ from app.services.auth_service import AuthService
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-@router.post("/register")
+@router.post("/register", status_code=201)
 async def register(
     body: RegisterRequest,
     background_tasks: BackgroundTasks,
@@ -94,23 +88,13 @@ async def forgot_password(
     body: ForgotPasswordRequest,
     background_tasks: BackgroundTasks,
     svc: AuthService = Depends(get_auth_service),
-    redis: aioredis.Redis = Depends(get_redis),
 ):
     """Request a password-reset link.
 
     Anti-enumeration: returns the same generic 200 message regardless of
-    whether the email matches a real, active account. Rate-limited per email
-    per spec (3 / hour).
+    whether the email matches a real, active account. Rate-limiting is handled
+    at the gateway (APISIX) level.
     """
-    # Per-email rate limit (case-insensitive key)
-    await enforce_rate_limit(
-        redis,
-        f"forgot_password:{body.email.lower()}",
-        limit=settings.reset_request_limit_per_hour,
-        window_seconds=3600,
-        error_code="RESET_RATE_LIMITED",
-        error_message="Too many reset requests for this email. Try again later.",
-    )
     await svc.request_password_reset(email=body.email, background_tasks=background_tasks)
     return success_response(data={
         "message": "If this email is registered, you'll receive a reset link shortly.",
@@ -152,11 +136,13 @@ async def login(
 async def guest_login(
     svc: AuthService = Depends(get_auth_service),
 ):
-    from fastapi import HTTPException
     email = (settings.guest_email or "").strip()
-    password = settings.guest_password
+    password = settings.guest_password.get_secret_value() if settings.guest_password else None
     if not email or not password:
-        raise HTTPException(status_code=503, detail="Guest login is not configured.")
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "SERVICE_UNAVAILABLE", "message": "Guest login is not configured."},
+        )
     return await svc.login(email=email, password=password)
 
 
@@ -170,7 +156,7 @@ async def refresh_token(
 
 @router.post("/logout")
 async def logout(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     svc: AuthService = Depends(get_auth_service),
 ):
     await svc.logout(user_id=current_user.id)
@@ -181,7 +167,7 @@ async def logout(
 async def change_password(
     body: PasswordChangeRequest,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     svc: AuthService = Depends(get_auth_service),
 ):
     await svc.change_password(
@@ -196,35 +182,9 @@ async def change_password(
 
 # ── Email activation ──
 
-@router.post("/internal/provision-user", response_model=ProvisionUserResponse)
-async def provision_user(
-    body: ProvisionUserRequest,
-    background_tasks: BackgroundTasks,
-    svc: AuthService = Depends(get_auth_service),
-):
-    """
-    Internal: provision an inactive user and return a one-time setup token.
-    Used by tenant-user onboarding (POST /api/v1/tenants/{tenant_id}/users).
-    """
-    user_id, setup_token = await svc.provision_user(
-        email=body.email,
-        username=body.username,
-        full_name=body.full_name,
-        phone_number=body.phone_number,
-        tenant_id=body.tenant_id,
-        creation_type=body.creation_type,
-        background_tasks=background_tasks,
-    )
-    return ProvisionUserResponse(
-        user_id=user_id,
-        setup_token=setup_token,
-        message="User provisioned. Setup link can now be sent to the user.",
-    )
-
-
 @router.get("/set-password/status", response_model=SetPasswordStatusResponse)
 async def get_setup_token_status(
-    token: str,
+    token: str = Query(...),
     svc: AuthService = Depends(get_auth_service),
 ):
     """Check whether a setup token is valid, expired, or already used."""
@@ -256,11 +216,10 @@ async def resend_setup_link(
     svc: AuthService = Depends(get_auth_service),
 ):
     """Invalidate existing setup tokens and issue a new one for the given email."""
-    setup_token = await svc.resend_setup_link(
+    await svc.resend_setup_link(
         email=body.email,
         background_tasks=background_tasks,
     )
     return success_response(data={
         "message": "New setup link issued.",
-        "setup_token": setup_token,
     })

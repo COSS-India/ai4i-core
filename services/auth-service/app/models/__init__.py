@@ -17,7 +17,6 @@ from app.models.role import Role, Permission, UserRole, RolePermission  # noqa: 
 from app.models.api_key import APIKey  # noqa: E402
 from app.models.verification import TokenVerification  # noqa: E402
 from app.models.refresh import RefreshToken  # noqa: E402
-from app.models.audit import AuditLog  # noqa: E402
 
 __all__ = [
     "Base",
@@ -32,5 +31,4 @@ __all__ = [
     "APIKey",
     "TokenVerification",
     "RefreshToken",
-    "AuditLog",
 ]

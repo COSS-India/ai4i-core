@@ -1,9 +1,9 @@
 """
-Shared password material for auth_db user seeders.
+Shared password material for auth-service user seeders.
 
-Matches auth-service-v2: Argon2 hash of (plaintext + per-user salt). When re-seeding,
-reuse existing hash/salt if the configured plaintext still verifies — avoids churn and
-unnecessary password column rewrites on every deployment.
+Matches the auth-service password scheme: Argon2 hash of (plaintext + per-user salt).
+When re-seeding, reuse existing hash/salt if the configured plaintext still verifies —
+avoids churn and unnecessary password column rewrites on every deployment.
 """
 
 import secrets

@@ -53,7 +53,6 @@ if _tracer_setup:
 
 tracer = trace.get_tracer(_pii_service_name)
 
-from middleware.auth_provider import AuthProvider
 
 
 class KnowledgeBase:
@@ -467,13 +466,13 @@ async def health():
 
 
 @app.get("/domains")
-async def get_domains(auth=Depends(AuthProvider)):
+async def get_domains():
     _ = auth
     return await policy_agent.list_domains()
 
 
 @app.get("/policy/{domain}")
-async def get_policy(domain: str, auth=Depends(AuthProvider)):
+async def get_policy(domain: str):
     _ = auth
     return await policy_agent.get_policy(domain) or {}
 
@@ -488,7 +487,6 @@ def require_pii_admin(auth_claims):
 async def redact_text(
     request: RedactionRequest,
     background_tasks: BackgroundTasks,
-    auth=Depends(AuthProvider),
     include_original_text: bool = Query(default=False),
     x_target: str = Header("user"),
     x_language: str = Header("en"),
@@ -589,7 +587,7 @@ async def redact_text(
 
 
 @app.get("/admin/all-domains")
-async def get_all_domains(auth=Depends(AuthProvider)):
+async def get_all_domains():
     require_pii_admin(auth)
     global db_pool
     async with db_pool.acquire() as conn:
@@ -600,7 +598,7 @@ async def get_all_domains(auth=Depends(AuthProvider)):
 
 
 @app.post("/admin/deploy")
-async def deploy(req: DeployRequest, auth=Depends(AuthProvider)):
+async def deploy(req: DeployRequest):
     require_pii_admin(auth)
     global db_pool, redis_client
     async with db_pool.acquire() as conn:
@@ -616,7 +614,7 @@ async def deploy(req: DeployRequest, auth=Depends(AuthProvider)):
 
 
 @app.post("/admin/activate-domains")
-async def activate(req: BulkActivateRequest, auth=Depends(AuthProvider)):
+async def activate(req: BulkActivateRequest):
     require_pii_admin(auth)
     global db_pool, redis_client
     async with db_pool.acquire() as conn:
@@ -629,7 +627,7 @@ async def activate(req: BulkActivateRequest, auth=Depends(AuthProvider)):
 
 
 @app.post("/admin/generate-regex")
-async def gen_regex(req: GenerateRegexRequest, auth=Depends(AuthProvider)):
+async def gen_regex(req: GenerateRegexRequest):
     require_pii_admin(auth)
     base_ip = NER_SERVICE_URL.split(":")[1].replace("//", "")
     llm_url = f"http://{base_ip}:8000/api/query"
@@ -649,7 +647,7 @@ async def gen_regex(req: GenerateRegexRequest, auth=Depends(AuthProvider)):
 
 
 @app.post("/admin/domain")
-async def create_domain(req: NewDomainRequest, auth=Depends(AuthProvider)):
+async def create_domain(req: NewDomainRequest):
     require_pii_admin(auth)
     global db_pool
     async with db_pool.acquire() as conn:
@@ -662,7 +660,7 @@ async def create_domain(req: NewDomainRequest, auth=Depends(AuthProvider)):
 
 
 @app.get("/admin/tenant-domains")
-async def list_tenant_domain_mappings(auth=Depends(AuthProvider)):
+async def list_tenant_domain_mappings():
     require_pii_admin(auth)
     global db_pool
     async with db_pool.acquire() as conn:
@@ -673,7 +671,7 @@ async def list_tenant_domain_mappings(auth=Depends(AuthProvider)):
 
 
 @app.post("/admin/tenant-domain")
-async def upsert_tenant_domain_mapping(req: TenantDomainUpsertRequest, auth=Depends(AuthProvider)):
+async def upsert_tenant_domain_mapping(req: TenantDomainUpsertRequest):
     require_pii_admin(auth)
     global db_pool, redis_client
     tid, did = req.tenant_id.strip(), req.domain_id.strip()
@@ -702,7 +700,7 @@ async def upsert_tenant_domain_mapping(req: TenantDomainUpsertRequest, auth=Depe
 
 
 @app.post("/admin/tenant-domain/delete")
-async def delete_tenant_domain_mapping(req: TenantDomainDeleteRequest, auth=Depends(AuthProvider)):
+async def delete_tenant_domain_mapping(req: TenantDomainDeleteRequest):
     require_pii_admin(auth)
     global db_pool, redis_client
     tid = req.tenant_id.strip()
@@ -718,7 +716,6 @@ async def delete_tenant_domain_mapping(req: TenantDomainDeleteRequest, auth=Depe
 
 @app.get("/admin/audit-logs")
 async def list_audit_logs(
-    auth=Depends(AuthProvider),
     limit: int = Query(default=50, ge=1, le=500),
 ):
     require_pii_admin(auth)

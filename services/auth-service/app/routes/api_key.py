@@ -8,7 +8,7 @@ All operations are delegated to APIKeyService.
 from fastapi import APIRouter, Depends, Query
 
 from app.core.responses import success_response
-from app.dependencies.auth import get_current_active_user
+from app.dependencies.auth import get_current_user
 from app.dependencies.permissions import require_any_role
 from app.dependencies.services import get_api_key_service, get_role_service
 from app.models.role_name import RoleName
@@ -40,7 +40,7 @@ def _key_dict(k) -> dict:
 @router.post("/api-keys")
 async def create_api_key(
     body: CreateAPIKeyRequest,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     raw_key, api_key = await svc.create_api_key(
@@ -60,7 +60,7 @@ async def create_api_key(
 
 @router.get("/api-keys")
 async def list_api_keys(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     keys = await svc.list_by_user(current_user.id)
@@ -70,7 +70,7 @@ async def list_api_keys(
 @router.patch("/api-keys")
 async def update_api_key(
     body: UpdateAPIKeyRequest,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     update_data = body.model_dump(exclude={"api_key"}, exclude_unset=True)
@@ -91,7 +91,7 @@ async def update_api_key(
 @router.delete("/api-keys/{api_key}")
 async def revoke_api_key(
     api_key: str,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_user),
     svc: APIKeyService = Depends(get_api_key_service),
     role_svc: RoleService = Depends(get_role_service),
 ):

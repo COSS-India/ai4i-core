@@ -25,8 +25,7 @@ AI4I Core uses **Alembic** for managing PostgreSQL database schema changes. Alem
 
 ### Supported Databases (current `scripts/migrate.sh`)
 
-- `ai4iplatform_auth` - Auth-service DB (users/roles/tenants/api keys)
-- `auth_service_v2_db` - Consolidated auth/service metadata DB
+- `ai4iplatform_auth` - Auth-service DB (users/roles/tenants/api keys/oauth identities)
 - `config_db` - Configuration management
 - `dashboard_db` - Dashboard data
 - `telemetry_db` - Telemetry and observability

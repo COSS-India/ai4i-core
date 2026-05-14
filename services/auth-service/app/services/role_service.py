@@ -1,16 +1,17 @@
 """
 Role assignment and permission checking.
-Permission IDs for roles are resolved from the database (no Redis role cache).
+Per-user permission resolution reads role_ids from the DB and unions
+their permission_ids from the in-process role_permission_cache.
 """
 
 import logging
 from uuid import UUID
 
-from app.core.exceptions import EntityNotFoundError, ValidationError
+from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
 from app.models.role import Permission, Role
 from app.models.role_name import RoleName, role_name_to_str
 from app.repositories.role_repository import RoleRepository
-from app.services.cache_service import CacheService
+from app.services.role_permission_cache import role_permission_cache
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +20,9 @@ def _normalize_service_slug(value: str) -> str:
     return value.strip().lower().replace("_", "-")
 
 
-def _resource_from_permission(perm) -> str:
-    """Return resource for a Permission ORM row."""
-    return perm.resource
-
-
 class RoleService:
-    def __init__(self, role_repo: RoleRepository, cache_service: CacheService) -> None:
+    def __init__(self, role_repo: RoleRepository) -> None:
         self._roles = role_repo
-        self._cache = cache_service
 
     @staticmethod
     def _expanded_excluded_resources_for_platform_inference() -> tuple[str, ...]:
@@ -41,23 +36,6 @@ class RoleService:
             expanded.add(res.replace("-", "_"))
             expanded.add(res.replace("_", "-"))
         return tuple(sorted(expanded))
-
-    # ── Cached permission lookups (hot path) ──
-
-    async def get_user_permission_ids_cached(self, user_id: UUID) -> list[int]:
-        """
-        Get permission IDs for a user (union of all assigned roles) from the database.
-        """
-        role_records = await self._roles.get_user_role_records(user_id)
-        if not role_records:
-            return []
-
-        all_perm_ids: set[int] = set()
-        for ur in role_records:
-            perm_ids = await self._roles.get_role_permission_ids(ur.role_id)
-            all_perm_ids.update(perm_ids)
-
-        return sorted(all_perm_ids)
 
     # ── Role management ──
 
@@ -86,18 +64,23 @@ class RoleService:
             raise EntityNotFoundError(f"Role '{key}'")
         removed = await self._roles.remove_role(user_id, role.id)
         if not removed:
-            raise EntityNotFoundError("UserRole")
+            raise AppError(message="The user does not have this role assigned.", code="NOT_FOUND", status_code=404)
         await self._roles.commit()
 
     async def get_user_roles(self, user_id: UUID) -> list[str]:
         return await self._roles.get_user_roles(user_id)
 
     async def get_user_permission_ids(self, user_id: UUID) -> list[int]:
-        return await self._roles.get_user_permission_ids(user_id)
-
-    async def check_permission(self, user_id: UUID, resource: str, action: str) -> bool:
-        permissions = await self._roles.get_user_permission_names(user_id)
-        return f"{resource}.{action}" in permissions
+        """
+        Union of permission IDs across all roles assigned to a user.
+        Reads role_ids from DB and resolves permissions via the in-memory
+        role_permission_cache (no per-role DB query on the hot path).
+        """
+        role_records = await self._roles.get_user_role_records(user_id)
+        if not role_records:
+            return []
+        role_ids = [ur.role_id for ur in role_records]
+        return role_permission_cache.get_user_permission_ids(role_ids)
 
     async def list_roles(self) -> list[Role]:
         return await self._roles.list_roles()
@@ -110,14 +93,11 @@ class RoleService:
             excluded_resources=self._expanded_excluded_resources_for_platform_inference(),
         )
 
-    async def _managed_guest_inference_permissions(self) -> list[Permission]:
-        return await self.list_inference_permissions()
-
     async def assign_guest_inference_services(self, services: list[str]) -> list[str]:
-        managed = await self._managed_guest_inference_permissions()
+        managed = await self.list_inference_permissions()
         by_norm_resource: dict[str, Permission] = {}
         for perm in managed:
-            key = _normalize_service_slug(_resource_from_permission(perm))
+            key = _normalize_service_slug(perm.resource)
             by_norm_resource[key] = perm
 
         managed_ids = [p.id for p in managed]
@@ -167,9 +147,9 @@ class RoleService:
         if not guest:
             raise EntityNotFoundError(f"Role '{RoleName.GUEST.value}'")
 
-        managed = await self._managed_guest_inference_permissions()
+        managed = await self.list_inference_permissions()
         managed_id_set = {p.id for p in managed}
-        id_to_resource = {p.id: _resource_from_permission(p) for p in managed}
+        id_to_resource = {p.id: p.resource for p in managed}
 
         role_perm_ids = await self._roles.get_role_permission_ids(guest.id)
         active = sorted(

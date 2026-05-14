@@ -13,7 +13,6 @@ from app.schemas.pipeline_request import PipelineInferenceRequest
 from app.schemas.pipeline_response import PipelineInferenceResponse
 from app.services.pipeline_service import PipelineService
 from app.clients.http_client import ServiceClient
-from app.dependencies.auth import AuthProvider
 from ai4icore_constants.exceptions import (
     PipelineError,
     PipelineTaskError,
@@ -48,7 +47,6 @@ tracer = trace.get_tracer("pipeline-service") if TRACING_AVAILABLE else None
 pipeline_router = APIRouter(
     prefix="/api/v1/pipeline",
     tags=["Pipeline"],
-    dependencies=[Depends(AuthProvider)]  # Enforce auth and permission checks on all routes
 )
 
 
@@ -197,35 +195,25 @@ async def _execute_pipeline_request(
     root_span
 ) -> PipelineInferenceResponse:
     """Internal pipeline request execution logic."""
-    # Extract JWT token and API key from request headers
-    jwt_token = None
-    api_key = None
-    
-    auth_header = http_request.headers.get('Authorization')
-    if auth_header and auth_header.startswith('Bearer '):
-        jwt_token = auth_header.replace('Bearer ', '')
-    
-    api_key_header = http_request.headers.get('X-API-Key')
-    if api_key_header:
-        api_key = api_key_header
-    
-    # Extract user_id from request state (set by AuthProvider middleware)
-    # This is needed for tenant routing in downstream services (ASR, NMT, TTS)
-    user_id = getattr(http_request.state, "user_id", None)
-    
-    logger.info(f"🔐 Authentication extracted: JWT={'present' if jwt_token else 'absent'}, API_KEY={'present' if api_key else 'absent'}, USER_ID={user_id}")
-    
+    # Extract identity headers set by gateway auth validation
+    # Gateway has already validated the token and injected these headers
+    user_id = http_request.headers.get('X-User-ID')
+    tenant_id = http_request.headers.get('X-Tenant-ID')
+    auth_type = http_request.headers.get('X-Auth-Type')
+
+    logger.info(f"🔐 Identity context: USER_ID={user_id}, TENANT_ID={tenant_id}, AUTH_TYPE={auth_type}")
+
     # Get pipeline service
     pipeline_service = get_pipeline_service()
-    
+
     # Execute pipeline (this will create its own spans)
     response = await pipeline_service.run_pipeline_inference(
         request=request,
-        jwt_token=jwt_token,
-        api_key=api_key,
-        user_id=user_id
+        user_id=user_id,
+        tenant_id=tenant_id,
+        auth_type=auth_type
     )
-    
+
     logger.info("✅ Pipeline inference completed successfully")
     return response
 

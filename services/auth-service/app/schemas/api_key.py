@@ -4,7 +4,6 @@ API key request/response schemas.
 
 from datetime import datetime
 from typing import Optional
-from uuid import UUID
 
 from pydantic import Field
 
@@ -35,29 +34,6 @@ class CreateAPIKeyResponse(BaseSchema):
     expires_at: Optional[datetime] = None
 
 
-class APIKeyItem(BaseSchema):
-    key_name: str
-    user_id: UUID
-    permissions: list[int]
-    expires_at: Optional[datetime] = None
-    is_active: bool
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-
-class ListAPIKeyResponse(BaseSchema):
-    api_keys: list[APIKeyItem]
-
-
-class AdminAPIKeyItem(APIKeyItem):
-    user_email: str
-    username: str
-
-
-class AdminListAPIKeyResponse(BaseSchema):
-    api_keys: list[AdminAPIKeyItem]
-
-
 class ValidateAPIKeyResponse(BaseSchema):
     valid: bool = True
     user_id: Optional[str] = None
@@ -69,3 +45,4 @@ class ValidateAPIKeyResponse(BaseSchema):
 class ValidateAPIKeyErrorResponse(BaseSchema):
     valid: bool = False
     error: str
+    message: str
