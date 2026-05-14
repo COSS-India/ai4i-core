@@ -1,7 +1,7 @@
 """auto_20260416_155245
 
 Revision ID: 5c424da577cc
-Revises: 
+Revises:
 Create Date: 2026-04-16 15:52:45.955962
 
 """

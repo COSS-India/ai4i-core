@@ -47,34 +47,7 @@ class ConfigDefaultConfigsSeeder(BaseSeeder):
             )
         
         print(f"    ✓ Seeded {len(configs)} configurations")
-        
-        # Insert default feature flags
-        flags = [
-            ('new_dashboard_ui', 'Enable new dashboard user interface', False, '0.00', 'development'),
-            ('advanced_analytics', 'Enable advanced analytics features', True, '100.00', 'development'),
-            ('beta_features', 'Enable beta features for testing', False, '25.00', 'development'),
-            ('api_rate_limiting', 'Enable API rate limiting', True, '100.00', 'development'),
-            ('real_time_notifications', 'Enable real-time notifications', True, '50.00', 'development'),
-        ]
-        
-        for name, description, is_enabled, rollout_percentage, environment in flags:
-            adapter.execute(
-                """
-                INSERT INTO feature_flags (name, description, is_enabled, rollout_percentage, environment)
-                VALUES (:name, :description, :is_enabled, :rollout_percentage, :environment)
-                ON CONFLICT (name, environment) DO NOTHING
-                """,
-                {
-                    'name': name,
-                    'description': description,
-                    'is_enabled': is_enabled,
-                    'rollout_percentage': rollout_percentage,
-                    'environment': environment
-                }
-            )
-        
-        print(f"    ✓ Seeded {len(flags)} feature flags")
-        
+
         # Insert service registry entries
         services = [
             ('api-gateway-service', 'http://api-gateway-service:8080', 'http://api-gateway-service:8080/health', 'healthy'),
