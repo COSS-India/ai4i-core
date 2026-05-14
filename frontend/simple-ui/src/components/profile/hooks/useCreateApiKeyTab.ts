@@ -1,44 +1,26 @@
 import { useState, useEffect } from "react";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import authService from "../../../services/authService";
-import type { User, Permission } from "../../../types/auth";
-import type { UserSearchablePick } from "../../common/UserSearchableSelect";
+import type { Permission } from "../../../types/auth";
 
 export interface UseCreateApiKeyTabOptions {
-  users: User[];
-  isLoadingUsers: boolean;
-  setApiKeys: (keys: import("../../../types/auth").APIKeyResponse[]) => void;
+  onApiKeyCreated?: () => void;
 }
 
-export interface SelectedUserForPermissions {
-  user_id: string;
-  email: string;
-  username: string;
-}
-
-export function useCreateApiKeyTab({
-  users,
-  setApiKeys,
-}: UseCreateApiKeyTabOptions) {
+export function useCreateApiKeyTab({ onApiKeyCreated }: UseCreateApiKeyTabOptions) {
   const toast = useToastWithDeduplication();
   const [permissions, setPermissions] = useState<Permission[]>([]);
-  const [selectedUserForPermissions, setSelectedUserForPermissions] =
-    useState<SelectedUserForPermissions | null>(null);
-  const [selectedUserPermissions, setSelectedUserPermissions] = useState<string[]>([]);
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(false);
-  const [apiKeyForUser, setApiKeyForUser] = useState<{
+  const [apiKeyForm, setApiKeyForm] = useState<{
     key_name: string;
-    permissions: string[];
     expires_days: number | "";
   }>({
     key_name: "",
-    permissions: [],
     expires_days: 30,
   });
-  const [selectedPermissionsForUser, setSelectedPermissionsForUser] = useState<string[]>([]);
-  const [isCreatingApiKeyForUser, setIsCreatingApiKeyForUser] = useState(false);
+  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
+  const [isCreating, setIsCreating] = useState(false);
   const [createdApiKeyToken, setCreatedApiKeyToken] = useState<string | null>(null);
-  const [isManagePermissionsOpen, setIsManagePermissionsOpen] = useState(false);
 
   const handleLoadPermissions = async () => {
     setIsLoadingPermissions(true);
@@ -60,28 +42,11 @@ export function useCreateApiKeyTab({
 
   useEffect(() => {
     handleLoadPermissions();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleUserSelect = (userId: string | null, picked?: UserSearchablePick | null) => {
-    if (userId == null) {
-      setSelectedUserForPermissions(null);
-      setSelectedUserPermissions([]);
-      return;
-    }
-    const u = users.find((x) => x.user_id === userId) ?? picked;
-    if (!u) return;
-    setSelectedUserForPermissions({
-      user_id: u.user_id,
-      email: u.email,
-      username: u.username || "",
-    });
-    setSelectedUserPermissions([]);
-  };
-
-  const handleCreateApiKeyForUser = async () => {
-    if (!selectedUserForPermissions) return;
-    if (!apiKeyForUser.key_name.trim()) {
+  const handleCreateApiKey = async () => {
+    if (!apiKeyForm.key_name.trim()) {
       toast({
         title: "Validation Error",
         description: "Please enter a key name",
@@ -91,7 +56,7 @@ export function useCreateApiKeyTab({
       });
       return;
     }
-    if (selectedPermissionsForUser.length === 0) {
+    if (selectedPermissions.length === 0) {
       toast({
         title: "Validation Error",
         description: "Please select at least one permission",
@@ -101,7 +66,11 @@ export function useCreateApiKeyTab({
       });
       return;
     }
-    if (apiKeyForUser.expires_days === "" || apiKeyForUser.expires_days < 1 || apiKeyForUser.expires_days > 365) {
+    if (
+      apiKeyForm.expires_days === "" ||
+      apiKeyForm.expires_days < 1 ||
+      apiKeyForm.expires_days > 365
+    ) {
       toast({
         title: "Validation Error",
         description: "Please enter a valid expiry (days) between 1 and 365",
@@ -111,37 +80,29 @@ export function useCreateApiKeyTab({
       });
       return;
     }
-    setIsCreatingApiKeyForUser(true);
+    setIsCreating(true);
     try {
-      // Convert selected permission names to IDs for the v2 API
-      const permissionIds = selectedPermissionsForUser
+      const permissionIds = selectedPermissions
         .map((name) => permissions.find((p) => p.name === name)?.id)
         .filter((id): id is number => id != null);
-      const createdKey = await authService.createApiKeyForUser({
-        key_name: apiKeyForUser.key_name,
+      const createdKey = await authService.createApiKey({
+        key_name: apiKeyForm.key_name.trim(),
         permissions: permissionIds,
-        expires_days: Number(apiKeyForUser.expires_days) || 30,
-        user_id: selectedUserForPermissions.user_id,
+        expires_days: Number(apiKeyForm.expires_days) || 30,
       });
-      try {
-        const listResponse = await authService.listApiKeys();
-        setApiKeys(Array.isArray(listResponse.api_keys) ? listResponse.api_keys : []);
-      } catch (err) {
-        console.error("Failed to refresh API keys list:", err);
-      }
-      // Store the JWT token so the UI can display it for copying
+      onApiKeyCreated?.();
       if (createdKey.api_key) {
         setCreatedApiKeyToken(createdKey.api_key);
       }
       toast({
         title: "API Key Created",
-        description: `API key "${createdKey.key_name}" created successfully for ${selectedUserForPermissions.username}. Copy it now — it won't be shown again.`,
+        description: `API key "${createdKey.key_name}" was created. Copy it now — it won't be shown again.`,
         status: "success",
         duration: 8000,
         isClosable: true,
       });
-      setApiKeyForUser({ key_name: "", permissions: [], expires_days: 30 });
-      setSelectedPermissionsForUser([]);
+      setApiKeyForm({ key_name: "", expires_days: 30 });
+      setSelectedPermissions([]);
     } catch (error) {
       toast({
         title: "Error",
@@ -151,45 +112,20 @@ export function useCreateApiKeyTab({
         isClosable: true,
       });
     } finally {
-      setIsCreatingApiKeyForUser(false);
+      setIsCreating(false);
     }
-  };
-
-  const openManagePermissions = () => {
-    if (!selectedUserForPermissions) {
-      toast({
-        title: "Select user",
-        description: "Choose a user before managing permissions.",
-        status: "info",
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-    setIsManagePermissionsOpen(true);
-  };
-
-  const closeManagePermissions = () => {
-    setIsManagePermissionsOpen(false);
   };
 
   return {
     permissions,
-    selectedUserForPermissions,
-    selectedUserPermissions,
     isLoadingPermissions,
-    apiKeyForUser,
-    setApiKeyForUser,
-    selectedPermissionsForUser,
-    setSelectedPermissionsForUser,
-    isCreatingApiKeyForUser,
-    isManagePermissionsOpen,
+    apiKeyForm,
+    setApiKeyForm,
+    selectedPermissions,
+    setSelectedPermissions,
+    isCreating,
     createdApiKeyToken,
     clearCreatedApiKeyToken: () => setCreatedApiKeyToken(null),
-    handleLoadPermissions,
-    handleUserSelect,
-    handleCreateApiKeyForUser,
-    openManagePermissions,
-    closeManagePermissions,
+    handleCreateApiKey,
   };
 }

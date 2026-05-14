@@ -41,7 +41,6 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { useApiKeyManagementTab } from "./hooks/useApiKeyManagementTab";
 import { ViewIcon, EditIcon, DeleteIcon } from "@chakra-ui/icons";
-import UserSearchableSelect from "../common/UserSearchableSelect";
 import {
   TableFilterToolbar,
   TablePaginationBar,
@@ -51,15 +50,15 @@ import {
 import StandardModal from "../common/StandardModal";
 
 export interface ApiKeyManagementTabProps {
-  users: import("../../types/auth").User[];
-  isLoadingUsers?: boolean;
   /** When true, tab is visible; used to fetch data when user switches to this tab */
   isActive?: boolean;
+  /** Parent can trigger refresh after keys are created on another tab */
+  onRegisterRefresh?: (refresh: () => Promise<void>) => void;
 }
 
 export default function ApiKeyManagementTab({
-  users,
   isActive = false,
+  onRegisterRefresh,
 }: ApiKeyManagementTabProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const { user } = useAuth();
@@ -68,8 +67,6 @@ export default function ApiKeyManagementTab({
 
   const mgmt = useApiKeyManagementTab({
     user: user ?? null,
-    users,
-    isLoadingUsers: false,
   });
 
   const [keyNameSortDirection, setKeyNameSortDirection] = useState<"asc" | "desc">("asc");
@@ -79,30 +76,16 @@ export default function ApiKeyManagementTab({
 
   const sortedApiKeys = useMemo(() => {
     return [...mgmt.filteredApiKeys].sort((a, b) => {
-      // When showing all users, keep the overall list alphabetical by user.
-      if (mgmt.filterUser === "all") {
-        const emailA = (a.user_email ?? "").trim();
-        const emailB = (b.user_email ?? "").trim();
-        const emailCmp = emailA.localeCompare(emailB, undefined, { sensitivity: "base" });
-        if (emailCmp !== 0) return emailCmp;
-
-        const usernameA = (a.username ?? "").trim();
-        const usernameB = (b.username ?? "").trim();
-        const usernameCmp = usernameA.localeCompare(usernameB, undefined, { sensitivity: "base" });
-        if (usernameCmp !== 0) return usernameCmp;
-      }
-
       const aName = a.key_name ?? "";
       const bName = b.key_name ?? "";
       const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
       if (nameCmp !== 0) return keyNameSortDirection === "asc" ? nameCmp : -nameCmp;
 
-      // Tie-breaker: newest first
       const timeA = new Date(a.created_at).getTime();
       const timeB = new Date(b.created_at).getTime();
       return timeB - timeA;
     });
-  }, [mgmt.filteredApiKeys, keyNameSortDirection, mgmt.filterUser]);
+  }, [mgmt.filteredApiKeys, keyNameSortDirection]);
 
   const totalApiKeys = sortedApiKeys.length;
   const totalPages = Math.max(1, Math.ceil(totalApiKeys / listPageSize));
@@ -115,19 +98,14 @@ export default function ApiKeyManagementTab({
   }, [listPage, totalPages]);
 
   useEffect(() => {
-    if (isActive) {
-      mgmt.handleFetchAllApiKeys();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive]);
+    onRegisterRefresh?.(mgmt.handleFetchAllApiKeys);
+  }, [onRegisterRefresh, mgmt.handleFetchAllApiKeys]);
 
-  // Ensure permissions are loaded whenever we mount or they become empty
   useEffect(() => {
-    if (mgmt.permissions.length === 0 && !mgmt.isLoadingAllApiKeys) {
-      mgmt.handleFetchAllApiKeys();
+    if (isActive) {
+      void mgmt.handleFetchAllApiKeys({ silent: true });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isActive, mgmt.handleFetchAllApiKeys]);
 
   return (
     <>
@@ -135,12 +113,12 @@ export default function ApiKeyManagementTab({
         <CardHeader>
           <HStack justify="space-between">
             <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-              API Key Management
+              Your API Keys
             </Heading>
             <Button
               size="sm"
               colorScheme="blue"
-              onClick={mgmt.handleFetchAllApiKeys}
+              onClick={() => void mgmt.handleFetchAllApiKeys()}
               isLoading={mgmt.isLoadingAllApiKeys}
               loadingText="Loading..."
             >
@@ -157,9 +135,12 @@ export default function ApiKeyManagementTab({
 
               {(() => {
                 const hasActiveFilters =
-                  mgmt.filterUser !== "all" ||
-                  mgmt.filterPermission !== "all" ||
-                  mgmt.filterActive !== "all";
+                  mgmt.filterPermission !== "all" || mgmt.filterActive !== "all";
+
+                const permissionOptions =
+                  mgmt.allUniquePermissions.length > 0
+                    ? mgmt.allUniquePermissions
+                    : mgmt.permissions.map((p) => p.name);
 
                 return (
                   <TableFilterToolbar
@@ -170,24 +151,6 @@ export default function ApiKeyManagementTab({
                     }}
                     align="flex-end"
                   >
-                    <FormControl w={{ base: "full", md: "320px" }}>
-                      <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
-                        User
-                      </FormLabel>
-                      <UserSearchableSelect
-                        variant="filter"
-                        value={mgmt.filterUser}
-                        onChange={(v) => {
-                          mgmt.setFilterUser(v);
-                          setListPage(1);
-                        }}
-                        seedUsers={users}
-                        size="sm"
-                        allOptionLabel="All Users"
-                        placeholder="All Users"
-                      />
-                    </FormControl>
-
                     <FormControl w={{ base: "full", md: "320px" }}>
                       <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
                         Permission
@@ -202,7 +165,7 @@ export default function ApiKeyManagementTab({
                         bg={cardBg}
                       >
                         <option value="all">All Permissions</option>
-                        {mgmt.permissionOptionsForFilter.map((perm) => (
+                        {permissionOptions.map((perm) => (
                           <option key={perm} value={perm}>
                             {perm}
                           </option>
@@ -225,7 +188,7 @@ export default function ApiKeyManagementTab({
                       >
                         <option value="all">All</option>
                         <option value="active">Active</option>
-                        <option value="inactive">Inactive</option>
+                        <option value="revoked">Revoked</option>
                       </Select>
                     </FormControl>
                   </TableFilterToolbar>
@@ -261,7 +224,6 @@ export default function ApiKeyManagementTab({
                           descAriaLabel="Sort API keys by name descending"
                         />
                       </Th>
-                      <Th>User</Th>
                       <Th>Permissions</Th>
                       <Th>Status</Th>
                       <Th>Created</Th>
@@ -272,40 +234,29 @@ export default function ApiKeyManagementTab({
                   <Tbody>
                     {paginatedApiKeys.map((key) => (
                       <Tr
-                        key={key.id}
+                        key={key.api_key ?? `id-${key.id ?? ""}-${key.user_id}-${key.key_name}`}
                         onClick={() => mgmt.handleOpenViewModal(key)}
                         cursor="pointer"
                         _hover={{ bg: tableRowHoverBg }}
                       >
                         <Td fontWeight="semibold">{key.key_name}</Td>
                         <Td>
-                          <VStack align="start" spacing={0}>
-                            <Text fontSize="sm">{key.user_email}</Text>
-                            <Text fontSize="xs" color="gray.500">
-                              {key.username}
-                            </Text>
-                          </VStack>
-                        </Td>
-                        <Td>
                           <HStack flexWrap="wrap" spacing={1}>
-                            {key.permissions.slice(0, 3).map((permId) => {
-                              const permName = mgmt.permissions.find(p => p.id === permId)?.name || String(permId);
-                              return (
-                                <Badge key={permId} colorScheme="blue" fontSize="xs">
-                                  {permName}
-                                </Badge>
-                              );
-                            })}
-                            {key.permissions.length > 3 && (
+                            {(key.permissions ?? []).slice(0, 3).map((perm) => (
+                              <Badge key={String(perm)} colorScheme="blue" fontSize="xs">
+                                {mgmt.formatPermission(perm)}
+                              </Badge>
+                            ))}
+                            {(key.permissions ?? []).length > 3 && (
                               <Badge colorScheme="gray" fontSize="xs">
-                                +{key.permissions.length - 3}
+                                +{(key.permissions ?? []).length - 3}
                               </Badge>
                             )}
                           </HStack>
                         </Td>
                         <Td>
                           <Badge colorScheme={key.is_active ? "green" : "red"}>
-                            {key.is_active ? "Active" : "Inactive"}
+                            {key.is_active ? "Active" : "Revoked"}
                           </Badge>
                         </Td>
                         <Td fontSize="sm">
@@ -334,7 +285,11 @@ export default function ApiKeyManagementTab({
                             </Tooltip>
                             <Tooltip
                               hasArrow
-                              label="Update key"
+                              label={
+                                key.is_active
+                                  ? "Update key"
+                                  : "This API key has been revoked and cannot be updated."
+                              }
                             >
                               <IconButton
                                 aria-label="Update API key"
@@ -347,6 +302,7 @@ export default function ApiKeyManagementTab({
                                   e.stopPropagation();
                                   mgmt.handleOpenUpdateModal(key);
                                 }}
+                                isDisabled={!key.is_active}
                               />
                             </Tooltip>
                             <Tooltip
@@ -430,31 +386,17 @@ export default function ApiKeyManagementTab({
                   </Text>
                   <Text fontSize="md">{mgmt.selectedKeyForView.key_name}</Text>
                 </Box>
-                <Box>
-                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                    User
-                  </Text>
-                  <VStack align="start" spacing={0}>
-                    <Text fontSize="md">{mgmt.selectedKeyForView.user_email}</Text>
-                    <Text fontSize="sm" color="gray.500">
-                      @{mgmt.selectedKeyForView.username}
-                    </Text>
-                  </VStack>
-                </Box>
                 <Box gridColumn={{ base: "span 1", md: "span 2" }}>
                   <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={2}>
                     Permissions
                   </Text>
-                  {mgmt.selectedKeyForView.permissions.length > 0 ? (
+                  {(mgmt.selectedKeyForView.permissions ?? []).length > 0 ? (
                     <HStack flexWrap="wrap" spacing={2}>
-                      {mgmt.selectedKeyForView.permissions.map((permId) => {
-                        const permName = mgmt.permissions.find(p => p.id === permId)?.name || String(permId);
-                        return (
-                          <Badge key={permId} colorScheme="blue" fontSize="sm" p={2}>
-                            {permName}
-                          </Badge>
-                        );
-                      })}
+                      {(mgmt.selectedKeyForView.permissions ?? []).map((perm) => (
+                        <Badge key={String(perm)} colorScheme="blue" fontSize="sm" p={2}>
+                          {mgmt.formatPermission(perm)}
+                        </Badge>
+                      ))}
                     </HStack>
                   ) : (
                     <Text fontSize="sm" color="gray.500">
@@ -471,7 +413,7 @@ export default function ApiKeyManagementTab({
                     fontSize="sm"
                     p={2}
                   >
-                    {mgmt.selectedKeyForView.is_active ? "Active" : "Inactive"}
+                    {mgmt.selectedKeyForView.is_active ? "Active" : "Revoked"}
                   </Badge>
                 </Box>
                 <Box>
@@ -502,12 +444,16 @@ export default function ApiKeyManagementTab({
                     </Text>
                   </Box>
                 )}
-                <Box gridColumn={{ base: "span 1", md: "span 2" }}>
+                <Box>
                   <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                    API Key
+                    Key (public id)
                   </Text>
-                  <Text fontSize="sm" fontFamily="mono" color="gray.700" wordBreak="break-all" p={2} bg="gray.50" borderRadius="md">
-                    {mgmt.selectedKeyForView.api_key}
+                  <Text fontSize="sm" fontFamily="mono" color="gray.700" wordBreak="break-all">
+                    {mgmt.selectedKeyForView.api_key
+                      ? `${mgmt.selectedKeyForView.api_key.slice(0, 8)}…${mgmt.selectedKeyForView.api_key.slice(-4)}`
+                      : mgmt.selectedKeyForView.id != null
+                        ? String(mgmt.selectedKeyForView.id)
+                        : "—"}
                   </Text>
                 </Box>
               </SimpleGrid>
@@ -558,22 +504,6 @@ export default function ApiKeyManagementTab({
                 />
               </FormControl>
               <FormControl>
-                <FormLabel fontWeight="semibold">Status</FormLabel>
-                <Select
-                  value={mgmt.updateFormData.is_active ? "active" : "inactive"}
-                  onChange={(e) =>
-                    mgmt.setUpdateFormData({
-                      ...mgmt.updateFormData,
-                      is_active: e.target.value === "active",
-                    })
-                  }
-                  bg="white"
-                >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </Select>
-              </FormControl>
-              <FormControl>
                 <FormLabel fontWeight="semibold">Permissions</FormLabel>
                 <Text fontSize="sm" color="gray.600" mb={3}>
                   Select permissions for this API key
@@ -588,7 +518,7 @@ export default function ApiKeyManagementTab({
                     overflowY="auto"
                   >
                     <CheckboxGroup
-                      value={(mgmt.updateFormData.permissions || []).map(p => String(p))}
+                      value={mgmt.updateFormData.permissions || []}
                       onChange={(values) =>
                         mgmt.setUpdateFormData({
                           ...mgmt.updateFormData,
@@ -598,7 +528,7 @@ export default function ApiKeyManagementTab({
                     >
                       <SimpleGrid columns={2} spacing={3}>
                         {mgmt.permissions.map((perm) => (
-                          <Checkbox key={perm.id} value={String(perm.id)} colorScheme="blue">
+                          <Checkbox key={perm.name} value={perm.name} colorScheme="blue">
                             <Text fontSize="sm">{perm.name}</Text>
                           </Checkbox>
                         ))}
@@ -615,23 +545,11 @@ export default function ApiKeyManagementTab({
                   </Alert>
                 )}
               </FormControl>
-              {mgmt.selectedKeyForUpdate && (
-                <VStack align="start" spacing={3} mt={4} pt={4} borderTopWidth="1px" borderColor="gray.200">
-                  <Box w="100%">
-                    <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={1}>
-                      User
-                    </Text>
-                    <Text fontSize="sm">{mgmt.selectedKeyForUpdate.user_email}</Text>
-                  </Box>
-                  <Box w="100%">
-                    <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={1}>
-                      API Key
-                    </Text>
-                    <Text fontSize="xs" fontFamily="mono" color="gray.700" wordBreak="break-all" p={2} bg="gray.50" borderRadius="md">
-                      {mgmt.selectedKeyForUpdate.api_key}
-                    </Text>
-                  </Box>
-                </VStack>
+              {mgmt.selectedKeyForUpdate?.api_key && (
+                <Text fontSize="xs" color="gray.500">
+                  Key: {mgmt.selectedKeyForUpdate.api_key.slice(0, 8)}…
+                  {mgmt.selectedKeyForUpdate.api_key.slice(-4)}
+                </Text>
               )}
         </VStack>
       </StandardModal>
@@ -659,11 +577,12 @@ export default function ApiKeyManagementTab({
                   </Text>
                   <VStack align="start" spacing={1} fontSize="sm">
                     <Text>
-                      <strong>User:</strong> {mgmt.keyToRevoke?.user_email} (@
-                      {mgmt.keyToRevoke?.username})
-                    </Text>
-                    <Text>
-                      <strong>Key ID:</strong> {mgmt.keyToRevoke?.id}
+                      <strong>Key:</strong>{" "}
+                      {mgmt.keyToRevoke?.api_key
+                        ? `${mgmt.keyToRevoke.api_key.slice(0, 8)}…${mgmt.keyToRevoke.api_key.slice(-4)}`
+                        : mgmt.keyToRevoke?.id != null
+                          ? String(mgmt.keyToRevoke.id)
+                          : "—"}
                     </Text>
                     <Text>
                       <strong>Created:</strong>{" "}
@@ -673,27 +592,24 @@ export default function ApiKeyManagementTab({
                     </Text>
                   </VStack>
                 </Box>
-                {mgmt.keyToRevoke && mgmt.keyToRevoke.permissions.length > 0 && (
+                {mgmt.keyToRevoke && (mgmt.keyToRevoke.permissions ?? []).length > 0 && (
                   <Box>
                     <Text fontWeight="semibold" fontSize="sm" color="gray.700" mb={2}>
                       Permissions (will be revoked):
                     </Text>
                     <HStack flexWrap="wrap" spacing={2}>
-                      {mgmt.keyToRevoke.permissions.map((permId) => {
-                        const permName = mgmt.permissions.find(p => p.id === permId)?.name || String(permId);
-                        return (
-                          <Badge key={permId} colorScheme="orange" fontSize="xs">
-                            {permName}
-                          </Badge>
-                        );
-                      })}
+                      {(mgmt.keyToRevoke.permissions ?? []).map((perm) => (
+                        <Badge key={String(perm)} colorScheme="orange" fontSize="xs">
+                          {perm}
+                        </Badge>
+                      ))}
                     </HStack>
                   </Box>
                 )}
                 <Alert status="warning" borderRadius="md" mt={2}>
                   <AlertIcon />
                   <AlertDescription fontSize="sm">
-                    This action will disable the API key and make it inactive.
+                    This action will revoke the API key. Revoked keys cannot be reactivated.
                   </AlertDescription>
                 </Alert>
               </VStack>

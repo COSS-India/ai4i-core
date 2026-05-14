@@ -22,7 +22,6 @@ import {
   APIKeyResponse,
   APIKeyListResponse,
   AdminAPIKeyWithUserResponse,
-  APIKeyUpdate,
   OAuth2Provider,
   Permission,
 } from '../types/auth';
@@ -518,23 +517,31 @@ class AuthService {
     );
   }
 
-  async revokeApiKey(apiKeyValue: string): Promise<{ message: string }> {
+  /** Revoke by the 32-char hex `api_key` value (path segment), not numeric id. */
+  async revokeApiKey(apiKeyHex: string): Promise<{ message: string }> {
+    const encoded = encodeURIComponent(apiKeyHex);
     return this.validatedRequest(
-      `/api-keys/${apiKeyValue}`,
+      `${authPath.apiKeys}/${encoded}`,
       authUnwrappedSchema(messageResponseSchema),
       { method: 'DELETE' }
     );
   }
 
-  async updateApiKey(apiKeyValue: string, updateData: APIKeyUpdate): Promise<APIKeyResponse> {
-    return this.validatedRequest(
-      `/api-keys/${apiKeyValue}`,
-      authUnwrappedSchema(apiKeyResponseSchema),
-      {
-        method: 'PATCH',
-        body: JSON.stringify(updateData),
-      }
-    );
+  /**
+   * PATCH collection `/api-keys` with `api_key` in the body (current auth-service contract).
+   * `permissions` must be permission IDs (numbers), not display names.
+   */
+  async updateApiKey(
+    apiKeyHex: string,
+    updateData: { key_name?: string; permissions?: number[]; expires_days?: number },
+  ): Promise<APIKeyResponse> {
+    return this.validatedRequest(authPath.apiKeys, authUnwrappedSchema(apiKeyResponseSchema), {
+      method: 'PATCH',
+      body: JSON.stringify({
+        api_key: apiKeyHex,
+        ...updateData,
+      }),
+    });
   }
 
   // OAuth2

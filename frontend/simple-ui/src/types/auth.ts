@@ -125,16 +125,19 @@ export interface APIKeyCreate {
 }
 
 export interface APIKeyResponse {
-  id: number;
+  /** Present on some responses; list endpoints identify keys by `api_key` (hex). */
+  id?: number;
   key_id?: number;  // Alias for id, returned by create endpoint
   key_name: string;
-  api_key?: string; // Hex API key, only returned on creation or list
-  permissions: number[];
+  /** 32-char hex public identifier; required for PATCH/DELETE on current auth API. */
+  api_key?: string;
+  permissions: (string | number)[];
   is_active: boolean;
-  is_revoked: boolean;
+  is_revoked?: boolean;
   created_at: string;
   expires_at?: string;
   last_used?: string;
+  updated_at?: string;
 }
 
 export interface AdminAPIKeyWithUserResponse extends APIKeyResponse {
@@ -143,10 +146,10 @@ export interface AdminAPIKeyWithUserResponse extends APIKeyResponse {
   username: string;
 }
 
+/** Form state for the admin “update API key” modal (permission names in UI). */
 export interface APIKeyUpdate {
   key_name?: string;
-  permissions?: number[];
-  is_active?: boolean;
+  permissions?: string[];
 }
 
 /** Response from GET /api/v1/auth/api-keys */
