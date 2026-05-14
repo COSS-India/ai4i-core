@@ -1,95 +1,57 @@
-# Config Service - Feature Flags (as exposed via API Gateway)
 openapi: 3.0.3
 info:
-  title: Config Service (Feature Flags)
-  description: Feature flag management using Unleash. Evaluate, list, and sync flags.
+  title: Config Service
+  description: Centralized configuration management, service registry, and health monitoring.
   version: 1.0.0
 servers:
   - url: "http://localhost:8080"
     description: API Gateway
+  - url: "http://localhost:8082"
+    description: Direct (local dev)
 tags:
-  - name: Feature Flags
+  - name: Configuration
+  - name: Service Registry
+  - name: Internal
+  - name: Health
+
 paths:
-  /api/v1/feature-flags/evaluate:
+  # ── Configuration ────────────────────────────────────────────────────────
+  /api/v1/config/:
     post:
-      tags: [Feature Flags]
-      summary: Evaluate Feature Flag
+      tags: [Configuration]
+      summary: Create Configuration
       security: [{ BearerAuth: [] }]
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               type: object
+              required: [key, value, environment, service_name]
               properties:
-                flag_name: { type: string }
-                user_id: { type: string }
-                context: { type: object }
-                default_value: {}
+                key: { type: string }
+                value: {}
                 environment: { type: string }
+                service_name: { type: string }
+                is_encrypted: { type: boolean, default: false }
       responses:
-        "200": { description: Evaluation result }
-  /api/v1/feature-flags/evaluate/boolean:
-    post:
-      tags: [Feature Flags]
-      summary: Evaluate Boolean Feature Flag
-      security: [{ BearerAuth: [] }]
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                flag_name: { type: string }
-                user_id: { type: string }
-                context: { type: object }
-                default_value: { type: boolean }
-                environment: { type: string }
-      responses:
-        "200": { description: Boolean value and reason }
-  /api/v1/feature-flags/evaluate/bulk:
-    post:
-      tags: [Feature Flags]
-      summary: Bulk Evaluate Feature Flags
-      security: [{ BearerAuth: [] }]
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                flag_names: { type: array, items: { type: string } }
-                user_id: { type: string }
-                context: { type: object }
-                environment: { type: string }
-      responses:
-        "200": { description: Results for each flag }
-  /api/v1/feature-flags/{name}:
+        "201": { description: Configuration created }
     get:
-      tags: [Feature Flags]
-      summary: Get Feature Flag
-      security: [{ BearerAuth: [] }]
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema: { type: string }
-        - name: environment
-          in: query
-          required: true
-          schema: { type: string }
-      responses:
-        "200": { description: Flag details }
-        "404": { description: Flag not found }
-  /api/v1/feature-flags/:
-    get:
-      tags: [Feature Flags]
-      summary: List Feature Flags
+      tags: [Configuration]
+      summary: List Configurations
       security: [{ BearerAuth: [] }]
       parameters:
         - name: environment
           in: query
-          required: true
           schema: { type: string }
+        - name: service_name
+          in: query
+          schema: { type: string }
+        - name: keys
+          in: query
+          schema: { type: array, items: { type: string } }
+          style: form
+          explode: true
         - name: limit
           in: query
           schema: { type: integer, default: 50 }
@@ -97,25 +59,355 @@ paths:
           in: query
           schema: { type: integer, default: 0 }
       responses:
-        "200": { description: Paginated list of flags }
-  /api/v1/feature-flags/sync:
+        "200": { description: Paginated list of configurations }
+
+  /api/v1/config/bulk:
     post:
-      tags: [Feature Flags]
-      summary: Sync Feature Flags
-      description: Refresh feature flags cache from Unleash.
+      tags: [Configuration]
+      summary: Bulk Get Configurations
       security: [{ BearerAuth: [] }]
       parameters:
         - name: environment
           in: query
           required: true
           schema: { type: string }
+        - name: service_name
+          in: query
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { type: string }
       responses:
-        "200": { description: Sync result with count }
+        "200": { description: Map of key to configuration value }
+
+  /api/v1/config/{key}:
+    get:
+      tags: [Configuration]
+      summary: Get Configuration
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+        - name: environment
+          in: query
+          required: true
+          schema: { type: string }
+        - name: service_name
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Configuration entry }
+        "404": { description: Not found }
+    put:
+      tags: [Configuration]
+      summary: Update Configuration
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+        - name: environment
+          in: query
+          required: true
+          schema: { type: string }
+        - name: service_name
+          in: query
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                value: {}
+                is_encrypted: { type: boolean }
+      responses:
+        "200": { description: Updated configuration }
+        "404": { description: Not found }
+    delete:
+      tags: [Configuration]
+      summary: Delete Configuration
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+        - name: environment
+          in: query
+          required: true
+          schema: { type: string }
+        - name: service_name
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Not found }
+
+  /api/v1/config/{key}/history:
+    get:
+      tags: [Configuration]
+      summary: Get Configuration History
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+        - name: environment
+          in: query
+          required: true
+          schema: { type: string }
+        - name: service_name
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Audit history for the configuration key }
+        "404": { description: Not found }
+
+  # ── Service Registry ──────────────────────────────────────────────────────
+  /api/v1/registry/register:
+    post:
+      tags: [Service Registry]
+      summary: Register Service Instance
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service_name, service_url, health_check_url]
+              properties:
+                service_name: { type: string }
+                service_url: { type: string }
+                health_check_url: { type: string }
+                service_metadata: { type: object }
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instance_id: { type: string }
+
+  /api/v1/registry/deregister:
+    post:
+      tags: [Service Registry]
+      summary: Deregister Service Instance
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: service_name
+          in: query
+          required: true
+          schema: { type: string }
+        - name: instance_id
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Deregistered }
+
+  /api/v1/registry/services:
+    get:
+      tags: [Service Registry]
+      summary: List All Services
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of all registered service instances }
+
+  /api/v1/registry/services/{service_name}:
+    get:
+      tags: [Service Registry]
+      summary: Get Service Instances
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: service_name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Instances for the service }
+
+  /api/v1/registry/services/{service_name}/url:
+    get:
+      tags: [Service Registry]
+      summary: Get Load-Balanced Service URL
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: service_name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: URL of a healthy instance
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string }
+        "404": { description: No healthy instances found }
+
+  /api/v1/registry/services/{service_name}/health:
+    post:
+      tags: [Service Registry]
+      summary: Trigger Health Check
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: service_name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Health check result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+
+  /api/v1/registry/services/{service_name}/health/detailed:
+    post:
+      tags: [Service Registry]
+      summary: Trigger Detailed Health Check
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: service_name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Aggregated health check with per-instance results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service_name: { type: string }
+                  overall_status: { type: string }
+                  total_instances: { type: integer }
+                  healthy_instances: { type: integer }
+                  unhealthy_instances: { type: integer }
+                  check_results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        endpoint_url: { type: string }
+                        is_healthy: { type: boolean }
+                        response_time_ms: { type: number }
+                        status_code: { type: integer }
+                        error_message: { type: string }
+                        timestamp: { type: string, format: date-time }
+                  timestamp: { type: string, format: date-time }
+        "400": { description: Invalid request }
+
+  /api/v1/registry/discover/{service_name}:
+    get:
+      tags: [Service Registry]
+      summary: Discover Healthy Instances
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: service_name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: List of healthy instances }
+
+  # ── Internal ──────────────────────────────────────────────────────────────
+  /internal/health-status:
+    get:
+      tags: [Internal]
+      summary: Get Cached Health Status
+      description: >
+        Pure Redis cache read for low-latency routing decisions.
+        No DB queries or live probes. Returns unknown if cache is missing.
+      parameters:
+        - name: service_id
+          in: query
+          required: true
+          schema: { type: string, minLength: 1 }
+          description: Service identifier (service name)
+      responses:
+        "200":
+          description: Cached health snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  service_id: { type: string }
+                  state:
+                    type: string
+                    enum: [healthy, degraded, unhealthy, unknown]
+                  last_check: { type: string, format: date-time }
+                  total_instances: { type: integer }
+                  healthy_instances: { type: integer }
+        "404": { description: No cached status found }
+        "503": { description: Redis not initialized }
+
+  # ── Health ────────────────────────────────────────────────────────────────
+  /health:
+    get:
+      tags: [Health]
+      summary: Health Check
+      responses:
+        "200":
+          description: Component health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  redis: { type: string }
+                  postgres: { type: string }
+                  kafka: { type: string }
+                  zookeeper: { type: string }
+                  timestamp: { type: number }
+        "503": { description: Service unhealthy }
+
+  /ready:
+    get:
+      tags: [Health]
+      summary: Readiness Probe
+      responses:
+        "200": { description: Service is ready }
+        "503": { description: Not ready }
+
+  /live:
+    get:
+      tags: [Health]
+      summary: Liveness Probe
+      responses:
+        "200": { description: Service is alive }
+
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: API Key
+      bearerFormat: JWT
 security:
   - BearerAuth: []

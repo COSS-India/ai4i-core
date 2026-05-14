@@ -10,10 +10,6 @@ The configuration management service provides centralized environment-specific c
 - Redis caching for performance
 - Audit trail for configuration changes
 - Internal health status contract for routing (Redis-backed)
-- Feature flags using Unleash and OpenFeature
-- Boolean, string, integer, float, and object flag types
-- User targeting and gradual rollouts
-- Flag evaluation caching and audit trail
 
 ## Architecture
 - ZooKeeper: service discovery and live instances (ephemeral nodes)
@@ -39,14 +35,6 @@ The configuration management service provides centralized environment-specific c
   - GET `/services/{service_name}/url` get balanced URL
   - POST `/services/{service_name}/health` trigger health check
   - GET `/discover/{service_name}` discover healthy instances
-- Feature Flags (`/api/v1/feature-flags`) - **Redis & Unleash Only**
-  - POST `/evaluate` evaluate single flag (cached in Redis)
-  - POST `/evaluate/boolean` evaluate boolean flag
-  - POST `/evaluate/bulk` bulk evaluate flags
-  - GET `/{name}` get flag by name from Unleash (cached in Redis)
-  - GET `/` list flags from Unleash (cached in Redis, environment required)
-  - POST `/sync` refresh cache from Unleash
-  - **Note**: Flags are managed in Unleash UI only - no create/update/delete endpoints
 - Internal (for inference routing)
   - GET `/internal/health-status?service_id={service_id}` get cached health state for a service
 - Health
@@ -81,10 +69,6 @@ Key environment variables (see `env.template`):
 - KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC_CONFIG_UPDATES
 - ZOOKEEPER_HOSTS, ZOOKEEPER_BASE_PATH, ZOOKEEPER_CONNECTION_TIMEOUT, ZOOKEEPER_SESSION_TIMEOUT
 - SERVICE_REGISTRY_ENABLED, SERVICE_HEALTH_CHECK_INTERVAL, SERVICE_INSTANCE_ID
-- UNLEASH_URL, UNLEASH_APP_NAME, UNLEASH_INSTANCE_ID, UNLEASH_API_TOKEN (must be Admin token)
-- UNLEASH_ENVIRONMENT, UNLEASH_REFRESH_INTERVAL, UNLEASH_METRICS_INTERVAL
-- FEATURE_FLAG_CACHE_TTL (default: 300s), FEATURE_FLAG_KAFKA_TOPIC
-- UNLEASH_AUTO_SYNC_ON_STARTUP (optional, default: false)
 
 ## Usage Examples
 - Create configuration:
@@ -103,34 +87,6 @@ curl -X POST http://localhost:8082/api/v1/registry/register \
 ```bash
 curl http://localhost:8082/api/v1/registry/discover/asr-service
 ```
-- Evaluate feature flag:
-```bash
-curl -X POST http://localhost:8082/api/v1/feature-flags/evaluate \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "flag_name":"new-ui-enabled",
-    "user_id":"user-123",
-    "context":{"region":"us-west"},
-    "default_value":false,
-    "environment":"development"
-  }'
-```
-- Evaluate boolean flag:
-```bash
-curl -X POST http://localhost:8082/api/v1/feature-flags/evaluate/boolean \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "flag_name":"dark-mode",
-    "user_id":"user-456",
-    "default_value":false,
-    "environment":"production"
-  }'
-```
-- Sync flags from Unleash:
-```bash
-curl -X POST 'http://localhost:8082/api/v1/feature-flags/sync?environment=development'
-```
-
 ## Development
 - Install requirements: `pip install -r services/config_service/requirements.txt`
 - Run locally: `uvicorn services.config_service.main:app --reload --port 8082`
@@ -139,7 +95,3 @@ curl -X POST 'http://localhost:8082/api/v1/feature-flags/sync?environment=develo
 - Ensure ZooKeeper and Kafka are healthy
 - Configure `ZOOKEEPER_HOSTS`, `KAFKA_BOOTSTRAP_SERVERS`
 - Consider enabling TLS and ACLs on ZooKeeper and Kafka; monitor registry health
-- Ensure Unleash server is running and accessible
-- Configure UNLEASH_URL and UNLEASH_API_TOKEN
-- Run database migrations to create feature flag tables
-- Access Unleash UI at http://localhost:4242 (default credentials: admin/unleash4all)

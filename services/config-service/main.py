@@ -39,9 +39,6 @@ kafka_producer = None
 registry_client = None
 health_monitor_service = None
 health_monitor_task = None
-flag_sync_task = None
-openfeature_client = None
-unleash_provider = None
 
 async def periodic_health_check():
     """Background task for periodic health checks"""
@@ -97,86 +94,10 @@ async def periodic_health_check():
         await asyncio.sleep(health_check_interval)
 
 
-async def periodic_flag_sync():
-    """Background task to periodically sync feature flags from Unleash"""
-    global redis_client, kafka_producer, openfeature_client
-    
-    # Check if feature flag sync is enabled
-    sync_enabled = app_env.unleash_auto_sync_enabled
-    if not sync_enabled:
-        logger.info("Periodic flag sync is disabled")
-        return
-
-    sync_interval = app_env.unleash_sync_interval
-
-    # Get environments to sync - support multiple environments
-    environments_str = app_env.unleash_sync_environments
-    if environments_str:
-        environments = [e.strip() for e in environments_str.split(",") if e.strip()]
-    else:
-        # Default to common environments
-        default_env = app_env.unleash_environment
-        environments = [default_env, "staging", "production"]
-        # Remove duplicates while preserving order
-        seen = set()
-        environments = [e for e in environments if not (e in seen or seen.add(e))]
-    
-    logger.info(
-        f"Starting periodic feature flag sync "
-        f"(interval: {sync_interval}s, environments: {', '.join(environments)})"
-    )
-    
-    # Wait a bit before first sync to let service fully start
-    await asyncio.sleep(5)
-    
-    while True:
-        try:
-            from services.feature_flag_service import FeatureFlagService
-            
-            unleash_url = app_env.unleash_url
-            unleash_api_token = app_env.unleash_api_token
-            kafka_topic = app_env.feature_flag_kafka_topic
-            cache_ttl = app_env.feature_flag_cache_ttl
-            
-            feature_flag_service = FeatureFlagService(
-                redis_client=redis_client,
-                kafka_producer=kafka_producer,
-                openfeature_client=openfeature_client,
-                kafka_topic=kafka_topic,
-                cache_ttl=cache_ttl,
-                unleash_url=unleash_url,
-                unleash_api_token=unleash_api_token,
-            )
-            
-            # Sync flags for all environments
-            total_synced = 0
-            for env in environments:
-                try:
-                    synced_count = await feature_flag_service.sync_flags_from_unleash(env)
-                    total_synced += synced_count
-                    logger.debug(f"Synced {synced_count} flags for environment '{env}'")
-                except Exception as env_error:
-                    logger.warning(f"Failed to sync environment '{env}': {env_error}")
-            
-            if total_synced > 0:
-                logger.info(f"Periodic sync completed: {total_synced} total flags synced across {len(environments)} environment(s)")
-            
-            # Wait for next cycle
-            await asyncio.sleep(sync_interval)
-            
-        except asyncio.CancelledError:
-            logger.info("Periodic flag sync task cancelled")
-            break
-        except Exception as e:
-            logger.error(f"Error in periodic flag sync: {e}", exc_info=True)
-            # Wait before retrying
-            await asyncio.sleep(sync_interval)
-
-
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections on startup"""
-    global redis_client, db_engine, db_session, kafka_producer, health_monitor_service, health_monitor_task, flag_sync_task, openfeature_client, unleash_provider
+    global redis_client, db_engine, db_session, kafka_producer, health_monitor_service, health_monitor_task
     
     try:
         # Initialize Redis connection
@@ -278,91 +199,6 @@ async def startup_event():
             logger.warning(f"Failed to initialize health monitor service: {e}")
             health_monitor_service = None
         
-        # Initialize OpenFeature with Unleash provider
-        try:
-            from openfeature import api as openfeature_api
-            from providers.unleash_provider import UnleashFeatureProvider
-            from openfeature.evaluation_context import EvaluationContext
-            
-            unleash_url = app_env.unleash_url
-            unleash_app_name = app_env.unleash_app_name
-            unleash_instance_id = app_env.unleash_instance_id
-            unleash_api_token = app_env.unleash_api_token
-            unleash_environment = app_env.unleash_environment  # Optional - if not set, SDK won't be used
-            unleash_refresh_interval = app_env.unleash_refresh_interval
-            unleash_metrics_interval = app_env.unleash_metrics_interval
-            unleash_disable_metrics = app_env.unleash_disable_metrics
-            
-            # Only initialize SDK if UNLEASH_ENVIRONMENT is set
-            if unleash_environment:
-                unleash_provider = UnleashFeatureProvider(
-                    url=unleash_url,
-                    app_name=unleash_app_name,
-                    instance_id=unleash_instance_id,
-                    api_token=unleash_api_token,
-                    environment=unleash_environment,
-                    refresh_interval=unleash_refresh_interval,
-                    metrics_interval=unleash_metrics_interval,
-                    disable_metrics=unleash_disable_metrics,
-                )
-                
-                # Initialize provider with empty context
-                unleash_provider.initialize(EvaluationContext())
-                
-                openfeature_api.set_provider(unleash_provider)
-                openfeature_client = openfeature_api.get_client()
-                
-                # Store in app state for access in routers
-                app.state.openfeature_client = openfeature_client
-                
-                logger.info(f"OpenFeature with Unleash provider initialized for environment: {unleash_environment}")
-                logger.info(
-                    f"Note: SDK is configured for '{unleash_environment}'. Evaluation will use Admin API "
-                    f"for all environments, with SDK as fallback for complex targeting."
-                )
-            else:
-                openfeature_client = None
-                app.state.openfeature_client = None
-                logger.info(
-                    "UNLEASH_ENVIRONMENT not set - SDK disabled. Evaluation will use Admin API only, "
-                    "which works correctly for all environments."
-                )
-            
-            # Optionally sync flags from Unleash on startup
-            auto_sync_enabled = app_env.unleash_auto_sync_on_startup
-            if auto_sync_enabled:
-                try:
-                    from services.feature_flag_service import FeatureFlagService
-                    
-                    kafka_topic = app_env.feature_flag_kafka_topic
-                    cache_ttl = app_env.feature_flag_cache_ttl
-                    
-                    feature_flag_service = FeatureFlagService(
-                        redis_client=redis_client,
-                        kafka_producer=kafka_producer,
-                        openfeature_client=openfeature_client,
-                        kafka_topic=kafka_topic,
-                        cache_ttl=cache_ttl,
-                        unleash_url=unleash_url,
-                        unleash_api_token=unleash_api_token,
-                    )
-                    
-                    synced_count = await feature_flag_service.sync_flags_from_unleash(unleash_environment)
-                    logger.info(f"Auto-synced {synced_count} feature flags from Unleash on startup")
-                except Exception as sync_error:
-                    logger.warning(f"Failed to auto-sync flags from Unleash on startup: {sync_error}")
-            
-            # Start periodic flag sync task if enabled
-            sync_enabled = app_env.unleash_auto_sync_enabled
-            if sync_enabled:
-                flag_sync_task = asyncio.create_task(periodic_flag_sync())
-                logger.info("Periodic feature flag sync task started")
-            else:
-                logger.info("Periodic feature flag sync disabled")
-        except Exception as e:
-            logger.warning(f"Failed to initialize OpenFeature/Unleash: {e}")
-            openfeature_client = None
-        
     except Exception as e:
         logger.error(f"Failed to initialize essential connections: {e}")
         raise
@@ -370,16 +206,8 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up connections on shutdown"""
-    global redis_client, db_engine, kafka_producer, health_monitor_service, health_monitor_task, flag_sync_task, unleash_provider
-    
-    # Shutdown OpenFeature provider
-    if unleash_provider:
-        try:
-            unleash_provider.shutdown()
-            logger.info("OpenFeature provider shutdown complete")
-        except Exception as e:
-            logger.warning(f"Error shutting down OpenFeature provider: {e}")
-    
+    global redis_client, db_engine, kafka_producer, health_monitor_service, health_monitor_task
+
     # Cancel health monitor task
     if health_monitor_task:
         health_monitor_task.cancel()
@@ -388,16 +216,7 @@ async def shutdown_event():
         except asyncio.CancelledError:
             pass
         logger.info("Health monitor task cancelled")
-    
-    # Cancel flag sync task
-    if flag_sync_task:
-        flag_sync_task.cancel()
-        try:
-            await flag_sync_task
-        except asyncio.CancelledError:
-            pass
-        logger.info("Flag sync task cancelled")
-    
+
     # Close health monitor service
     if health_monitor_service:
         await health_monitor_service.close()
@@ -441,13 +260,11 @@ from routers import (
     config_router,
     service_registry_router,
     health_router,
-    feature_flag_router,
     internal_health_router,
 )
 app.include_router(config_router)
 app.include_router(service_registry_router)
 app.include_router(health_router)
-app.include_router(feature_flag_router)
 app.include_router(internal_health_router)
 
 @app.get("/api/v1/config/status")
@@ -462,7 +279,6 @@ async def config_status():
             "Service discovery",
             "Dynamic configuration updates",
             "Configuration audit logging",
-            "Feature flags with Unleash"
         ]
     }
 

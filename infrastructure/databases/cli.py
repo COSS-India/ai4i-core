@@ -49,11 +49,6 @@ class MigrationCLI:
         'ai4i_platform'
     ]
     
-    # External service databases (managed by third-party services, not our migration framework)
-    EXTERNAL_DBS = [
-        'unleash'  # Unleash feature flags - manages its own schema
-    ]
-    
     def __init__(self):
         self.migrations_path = project_root / 'infrastructure' / 'databases' / 'migrations'
         
@@ -94,9 +89,6 @@ Examples:
   # Report DBs, tables, row counts
   python cli.py report
 
-  # Initialize external service databases (e.g., Unleash)
-  python cli.py init:external
-
   # Create new migration
   python cli.py make:migration create_users_table --database postgres
 
@@ -131,7 +123,6 @@ Examples:
             'seed': self.seed,
             'seed:all': self.seed_all,
             'report': self.report,
-            'init:external': self.init_external_databases,
         }
         
         if args.command not in command_map:
@@ -419,48 +410,6 @@ Examples:
         
         print("\n" + "=" * 80)
         print(f"  Total: {total_dbs} database(s), {total_tables} table(s), {total_rows} row(s)")
-        print("=" * 80 + "\n")
-
-    def init_external_databases(self, args):
-        """
-        Initialize external service databases.
-        These are third-party services (like Unleash) that manage their own schemas.
-        This command only ensures the databases exist - the services handle their own migrations.
-        """
-        from infrastructure.databases.adapters import PostgresAdapter
-        
-        print("\n" + "=" * 80)
-        print("🔨 Initializing External Service Databases")
-        print("=" * 80)
-        print()
-        print("ℹ️  External services manage their own database schemas.")
-        print("   This command only ensures the databases exist.")
-        print()
-        
-        # Get postgres connection config (connect to 'postgres' database to create others)
-        base_config = MigrationConfig.get_postgres_config('postgres')
-        
-        for db_name in self.EXTERNAL_DBS:
-            print(f"📦 Database: {db_name}")
-            
-            try:
-                # Use the adapter's built-in _ensure_database_exists()
-                db_config = MigrationConfig.get_postgres_config(db_name)
-                adapter = PostgresAdapter(db_config)
-                
-                # The connect() method will automatically create the database if it doesn't exist
-                adapter.connect()
-                adapter.disconnect()
-                
-                print(f"   ✅ Ready (schema managed by external service)")
-                
-            except Exception as e:
-                print(f"   ❌ Error: {str(e)}")
-            
-            print()
-        
-        print("=" * 80)
-        print("✅ External database initialization completed!")
         print("=" * 80 + "\n")
 
     def _get_manager(self, database_type: str, postgres_db: str = None) -> MigrationManager:

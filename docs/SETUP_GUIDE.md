@@ -71,7 +71,7 @@ docker compose -f docker-compose-local.yml build
 Start the infrastructure services (PostgreSQL, Redis, Kafka, etc.). Application services depend on databases being initialized:
 
 ```bash
-docker compose -f docker-compose-local.yml up -d postgres redis kafka zookeeper influxdb unleash
+docker compose -f docker-compose-local.yml up -d postgres redis kafka zookeeper influxdb
 ```
 
 Wait for all infrastructure services to be healthy:
@@ -80,7 +80,7 @@ Wait for all infrastructure services to be healthy:
 docker compose -f docker-compose-local.yml ps
 ```
 
-You should see `postgres`, `redis`, `kafka`, `zookeeper`, `influxdb`, and `unleash` all showing as "healthy" or "Up".
+You should see `postgres`, `redis`, `kafka`, `zookeeper`, and `influxdb` all showing as "healthy" or "Up".
 
 If any service is not running, start the specific service using: 
 ```bash
@@ -107,23 +107,7 @@ pip install -r requirements.txt
 cd ..\..
 ```
 
-### Step 5.2: Initialize External Service Databases
-
-External services (like Unleash) manage their own schemas. Create their databases first:
-
-**Linux/macOS:**
-```bash
-python3 infrastructure/databases/cli.py init:external
-```
-
-**Windows:**
-```bash
-python infrastructure/databases/cli.py init:external
-```
-
-This creates the `unleash` database for the Unleash feature flag service.
-
-### Step 5.3: Run All Migrations
+### Step 5.2: Run All Migrations
 
 Run migrations for all databases at once.
 
@@ -234,11 +218,6 @@ Once all services are running, use the table below to find URLs and ports. The *
 - **Email**: `admin@ai4inclusion.org`
 - **Password**: `ADMIN_PASSWORD`
 - **Role**: ADMIN (all permissions)
-
-**Unleash (Feature Flags):**
-- **URL**: http://localhost:4242/feature-flags
-- **Username**: `admin`
-- **Password**: `unleash4all`
 
 ## Troubleshooting
 
@@ -358,7 +337,6 @@ This `docker-compose-local.yml` configuration is optimized for local development
 
 - **Health checks**: Configured with 6-hour intervals to reduce overhead
 - **Monitoring stack**: Full observability with Prometheus, Grafana, Jaeger, and OpenSearch
-- **Feature flags**: Unleash for gradual feature rollout
 
 ### Production Deployment
 
@@ -368,7 +346,6 @@ For production deployment with Kong API Gateway, load balancing, and enhanced se
 
 - Explore the API using Swagger documentation at http://localhost:8080/docs
 - Test the frontend at http://localhost:3000
-- Configure feature flags in Unleash (optional)
 - Review service logs and metrics in Grafana
 - Check the API documentation for detailed endpoint information
 
@@ -412,8 +389,6 @@ Then run the setup again from [Step 1: Clone the Repository](#step-1-clone-the-r
 ## Optional Configurations
 
 After the platform is running, you can enable or customize these optional features:
-
-- **[Feature Flags](../services/config-service/docs/FEATURE_FLAGS_SETUP.md)** — Control visibility of services in the UI and create feature toggles in Unleash (e.g. `asr-enabled`, `tts-enabled`).
 
 **Need Help?** Check the [Troubleshooting Guide](TROUBLESHOOTING.md) or open an issue on GitHub.
 
