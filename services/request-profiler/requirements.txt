@@ -1,3 +1,6 @@
+# Shared platform library (consolidated; sourced from PyPI)
+ai4icore-core>=1.0.0
+
 # Core web framework
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
@@ -36,4 +39,3 @@ tqdm==4.66.1
 # Utilities
 python-multipart==0.0.6
 httpx==0.26.0
-

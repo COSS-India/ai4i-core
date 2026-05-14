@@ -14,7 +14,7 @@ import httpx
 from fastapi import HTTPException, Request
 
 from ai4icore_env import app_env
-from ai4icore_constants.error_messages import SERVICE_UNPUBLISHED, SERVICE_UNPUBLISHED_MESSAGE
+from ai4icore_core.constants.error_messages import SERVICE_UNPUBLISHED, SERVICE_UNPUBLISHED_MESSAGE
 
 logger = logging.getLogger(__name__)
 

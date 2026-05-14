@@ -1,0 +1,58 @@
+name: Line endings
+
+on:
+  pull_request:
+  push:
+    branches: [master, main]
+
+jobs:
+  check-line-endings:
+    name: Reject CR characters in LF-only files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Preserve raw line endings as committed — disable autocrlf for the checkout
+          submodules: false
+        env:
+          GIT_CONFIG_GLOBAL: /dev/null
+
+      - name: Disable autocrlf and re-checkout files
+        run: |
+          git config --local core.autocrlf false
+          git config --local core.eol lf
+          git rm --cached -r --quiet .
+          git reset --hard HEAD
+
+      - name: Scan LF-only files for carriage returns
+        run: |
+          set -euo pipefail
+          # Patterns that .gitattributes / .editorconfig declare as LF-only.
+          # Find any tracked file matching these patterns that contains \r.
+          mapfile -t bad < <(
+            git ls-files -z -- \
+              '*.sh' '*.bash' \
+              '.env' '.env.*' '*.env' '*.env.template' 'env.template' \
+              'Dockerfile' 'Dockerfile.*' '*.dockerfile' \
+              'docker-compose*.yml' 'docker-compose*.yaml' \
+              'alembic.ini' \
+            | xargs -0 -I{} sh -c '
+                if LC_ALL=C grep -lU $'"'"'\r'"'"' "$1" >/dev/null 2>&1; then
+                  echo "$1"
+                fi
+              ' _ {}
+          )
+          if [ "${#bad[@]}" -gt 0 ]; then
+            echo "::error::The following files contain CR characters but are declared LF-only:"
+            for f in "${bad[@]}"; do
+              echo "  - $f"
+            done
+            echo ""
+            echo "Fix locally with:"
+            echo "  python -c \"import pathlib;"
+            echo "    [p.write_bytes(p.read_bytes().replace(b'\\\\r\\\\n', b'\\\\n').replace(b'\\\\r', b'\\\\n')) for p in pathlib.Path('.').rglob('*')"
+            echo "     if p.is_file() and b'\\\\r' in p.read_bytes()]\""
+            echo "Or run 'git add --renormalize .' after setting 'git config --local core.autocrlf false'."
+            exit 1
+          fi
+          echo "OK — no CR characters in LF-only files."

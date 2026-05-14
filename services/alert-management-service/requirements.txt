@@ -1,3 +1,6 @@
+# Shared platform library (consolidated; sourced from PyPI)
+ai4icore-core>=1.0.0
+
 # FastAPI and ASGI server
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
@@ -19,4 +22,3 @@ opentelemetry-sdk>=1.20.0
 opentelemetry-instrumentation-fastapi>=0.41b0
 opentelemetry-exporter-otlp-proto-grpc>=1.20.0
 grpcio>=1.63.2,<2.0.0
-

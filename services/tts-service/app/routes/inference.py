@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Request
 
-from ai4icore_constants.error_messages import SERVICE_UNAVAILABLE
+from ai4icore_core.constants.error_messages import SERVICE_UNAVAILABLE
 
 from app.dependencies.services import get_tts_service
 from app.schemas.inference import TTSInferenceRequest, TTSInferenceResponse
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/v1/tts",
     tags=["TTS Inference"],
-    
+
 )
 
 smr_service = SMRService()

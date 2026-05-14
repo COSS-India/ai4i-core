@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ai4icore_constants.error_messages import SERVICE_UNAVAILABLE
+from ai4icore_core.constants.error_messages import SERVICE_UNAVAILABLE
 
 from app.dependencies.services import get_nmt_service
 from app.schemas.inference import NMTInferenceRequest, NMTInferenceResponse, TranslationOutput
