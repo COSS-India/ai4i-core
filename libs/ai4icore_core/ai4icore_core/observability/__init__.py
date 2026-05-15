@@ -21,20 +21,9 @@ from .metrics import MetricsCollector
 from .config import PluginConfig
 from .middleware import ObservabilityMiddleware
 
-# Import dashboard utilities
-from .dashboards import (
-    get_dashboard_path,
-    get_dashboard_json,
-    list_available_dashboards
-)
-
 __all__ = [
     "ObservabilityPlugin",
     "MetricsCollector",
     "PluginConfig",
     "ObservabilityMiddleware",
-    # Dashboard utilities
-    "get_dashboard_path",
-    "get_dashboard_json",
-    "list_available_dashboards",
 ]
