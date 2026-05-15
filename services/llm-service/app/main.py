@@ -6,6 +6,9 @@ from ai4icore_service_base import create_inference_app
 from app.models import Base
 from app.routes import api_router
 
+ENV_DEVELOPMENT = "development"
+hide_docs = app_env.environment != ENV_DEVELOPMENT
+
 app = create_inference_app(
     service_name="llm-service",
     title="LLM Service",
@@ -17,4 +20,5 @@ app = create_inference_app(
         "triton_endpoint": app_env.triton_endpoint,
         "triton_timeout": app_env.triton_timeout,
     },
+    hide_docs=hide_docs,
 )

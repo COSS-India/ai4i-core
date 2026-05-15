@@ -291,13 +291,28 @@ services:
     ports:
       - "8106:8103"
     environment:
-      - SPECS_ROOT=/app/specs
       - SERVICE_DOCS_REGISTRY_PATH=/app/specs/service-docs-registry.yaml
+      - API_GATEWAY_URL=http://localhost:8080
     env_file:
       - ./.env
     volumes:
       - ./services/docs-manager:/app
     command: ["--reload"]
+    depends_on:
+      - auth-service
+      - asr-service
+      - tts-service
+      - nmt-service
+      - ner-service
+      - ocr-service
+      - llm-service
+      - pipeline-service
+      - platform-core-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8103/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     networks:
       microservices-network:
         aliases:
