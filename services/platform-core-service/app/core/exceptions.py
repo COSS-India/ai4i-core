@@ -1,10 +1,10 @@
 """
-Core-service exceptions — re-exports from shared ai4icore_exceptions.
+Core-service exceptions — re-exports from shared ai4icore_core.exceptions.
 
 NO local exception classes. All services share the same exception hierarchy.
 """
 
-from ai4icore_exceptions import (  # noqa: F401
+from ai4icore_core.exceptions import (  # noqa: F401
     # Base
     AppError,
     # Resource (404, 409)

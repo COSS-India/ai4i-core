@@ -1,12 +1,12 @@
 """
-Request logging middleware — re-exports from shared ai4icore_logging.
+Request logging middleware — re-exports from shared ai4icore_core.logging.
 
 All services use the same structured logging. No local duplication.
 Falls back to a minimal implementation if the shared lib is not available.
 """
 
 try:
-    from ai4icore_logging import RequestLoggingMiddleware
+    from ai4icore_core.logging import RequestLoggingMiddleware
 
 except ImportError:
     # Fallback: minimal structured request logging if shared lib not installed

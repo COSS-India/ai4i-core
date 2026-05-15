@@ -1,5 +1,5 @@
 """
-Auth service configuration — extends ai4icore_env with auth-specific settings.
+Auth service configuration — extends ai4icore_core.env with auth-specific settings.
 """
 
 from pathlib import Path

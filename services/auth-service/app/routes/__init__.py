@@ -1,7 +1,7 @@
 """
 Versioned API router aggregation.
 
-Uses shared APIVersioning from ai4icore_bootstrap.
+Uses shared APIVersioning from ai4icore_core.bootstrap.
 Version prefix (/api/v1) is managed centrally — route files have domain prefixes only.
 
 Future v2: create v2 router, mount alongside v1. Deprecate v1 with Sunset header.
@@ -9,7 +9,7 @@ Future v2: create v2 router, mount alongside v1. Deprecate v1 with Sunset header
 
 from fastapi import APIRouter
 
-from ai4icore_bootstrap.versioning import APIVersioning, VersionInfo
+from ai4icore_core.bootstrap.versioning import APIVersioning, VersionInfo
 
 from app.core.config import settings
 from app.routes.health import router as health_router

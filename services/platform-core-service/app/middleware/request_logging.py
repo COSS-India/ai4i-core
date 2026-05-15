@@ -1,12 +1,12 @@
 """
-Request logging middleware — re-exports from shared ai4icore_logging.
+Request logging middleware — re-exports from shared ai4icore_core.logging.
 
 Falls back to a minimal local implementation if the shared lib is not
 available (e.g. test environments without the lib installed).
 """
 
 try:
-    from ai4icore_logging import RequestLoggingMiddleware  # type: ignore  # noqa: F401
+    from ai4icore_core.logging import RequestLoggingMiddleware  # type: ignore  # noqa: F401
 
 except ImportError:
     import logging

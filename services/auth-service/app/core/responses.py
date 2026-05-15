@@ -1,5 +1,5 @@
 """
-API response envelope — re-exports from shared ai4icore_exceptions,
+API response envelope — re-exports from shared ai4icore_core.exceptions,
 plus a tiny helper to render ORM objects through a Pydantic schema.
 """
 
@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ai4icore_exceptions import success_response, error_response  # noqa: F401
+from ai4icore_core.exceptions import success_response, error_response  # noqa: F401
 
 
 def to_response(obj: Any, schema: type[BaseModel], *, json_mode: bool = True) -> dict:

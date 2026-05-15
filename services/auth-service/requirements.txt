@@ -1,13 +1,8 @@
 # ── Shared platform libraries ──
-# Install from local paths: pip install -e ../../libs/<name>
-# In Docker: COPY libs/ /tmp/libs/ && pip install /tmp/libs/ai4icore_*
-ai4icore-core>=1.0.0
-ai4icore-exceptions>=1.0.0
-ai4icore-constants>=1.0.0
-ai4icore-logging>=1.0.0
-ai4icore-env>=1.0.0
-ai4icore-bootstrap>=1.0.0
-ai4icore-email>=1.0.0
+# Single consolidated package sourced from PyPI. Pulls in
+# exceptions / constants / logging / env / bootstrap / email / observability /
+# telemetry / model_management / service_base as subpackages.
+ai4icore-core>=1.0.1
 
 # ── Core ──
 fastapi>=0.104.0
