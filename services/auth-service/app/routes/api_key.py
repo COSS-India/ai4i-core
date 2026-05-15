@@ -73,13 +73,14 @@ async def update_api_key(
     current_user: User = Depends(get_current_user),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
-    update_data = body.model_dump(exclude={"api_key"}, exclude_unset=True)
+    update_data = body.model_dump(exclude={"api_key", "is_active"}, exclude_unset=True)
     api_key = await svc.update_key(
         api_key_value=body.api_key,
         data=update_data,
         user_id=current_user.id,
     )
     return success_response(data={
+        "api_key": api_key.api_key,
         "key_name": api_key.key_name,
         "user_id": str(api_key.user_id),
         "permissions": api_key.permissions or [],
