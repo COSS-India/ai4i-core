@@ -90,13 +90,15 @@ def _extract_token(request: Request) -> str:
 # ── Per-token-type validators ─────────────────────────────────────────────
 
 
-async def _validate_anonymous(request: Request, response: Response) -> Response:
+async def _validate_anonymous(request: Request) -> Response:
     """No token: allow only when X-Original-* point at a public endpoint."""
     looked_up, required = await _required_endpoint_permission(request)
     if looked_up and required is None:
-        response.headers["X-User-ID"] = ""
-        response.headers["X-Tenant-ID"] = ""
-        return TokenValidationResponse(valid=True)
+        resp = JSONResponse(
+            content=TokenValidationResponse(valid=True).model_dump(),
+            headers={"X-User-ID": "", "X-Tenant-ID": ""}
+        )
+        return resp
     raise AuthenticationRequiredError()
 
 
@@ -185,7 +187,7 @@ async def validate_token(
     """
     token = _extract_token(request)
     if not token:
-        return await _validate_anonymous(request, response)
+        return await _validate_anonymous(request)
 
     cache_svc = CacheService(redis)
 
