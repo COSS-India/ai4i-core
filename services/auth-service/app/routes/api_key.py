@@ -77,11 +77,11 @@ async def update_api_key(
     svc: APIKeyService = Depends(get_api_key_service),
 ):
     # Only allow updating if at least one field is provided
-    update_data = body.model_dump(exclude={"api_key", "is_active"}, exclude_unset=True)
+    update_data = body.model_dump(exclude={"api_key"}, exclude_unset=True)
     if not update_data:
         from app.core.exceptions import ValidationError
         raise ValidationError(
-            message="No fields to update. Provide at least one of: key_name, permissions, expires_days.",
+            message="No fields to update. Provide at least one of: key_name, permissions, expires_days, is_active.",
             code="NOTHING_TO_UPDATE",
         )
 

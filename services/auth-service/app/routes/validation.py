@@ -117,7 +117,7 @@ async def _validate_api_key(
             content=ValidateAPIKeyErrorResponse(error="API key not found or revoked.", message="API key not found or has been revoked.").model_dump(),
         )
 
-    permission_ids = result.get("permission_ids") or []
+    permission_ids = result.get("permissions") or result.get("permission_ids") or []
     if not await _check_endpoint_permission(request, permission_ids):
         return JSONResponse(status_code=403, content={"valid": False, "error": "INSUFFICIENT_PERMISSIONS", "message": "You do not have permission to access this endpoint."})
 

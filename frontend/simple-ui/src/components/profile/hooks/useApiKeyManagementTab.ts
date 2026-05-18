@@ -38,8 +38,7 @@ export function useApiKeyManagementTab({
   const handleFetchAllApiKeys = async () => {
     setIsLoadingAllApiKeys(true);
     try {
-      const allKeys = await authService.listAllApiKeys();
-      setAllApiKeys(allKeys);
+      // Load permissions first (if not already loaded)
       if (permissions.length === 0) {
         try {
           const permsList = await authService.getAllPermissions();
@@ -48,6 +47,11 @@ export function useApiKeyManagementTab({
           console.error("Failed to fetch permissions for filter:", err);
         }
       }
+
+      // Then load API keys
+      const allKeys = await authService.listAllApiKeys();
+      setAllApiKeys(allKeys);
+
       toast({
         title: "API Keys Loaded",
         description: `Loaded ${allKeys?.length} API key(s)`,
@@ -68,11 +72,21 @@ export function useApiKeyManagementTab({
     }
   };
 
-  const handleOpenUpdateModal = (key: AdminAPIKeyWithUserResponse) => {
+  const handleOpenUpdateModal = async (key: AdminAPIKeyWithUserResponse) => {
+    // Ensure permissions are loaded before opening modal
+    if (permissions.length === 0) {
+      try {
+        const permsList = await authService.getAllPermissions();
+        setPermissions(permsList);
+      } catch (err) {
+        console.error("Failed to load permissions:", err);
+      }
+    }
+
     setSelectedKeyForUpdate(key);
     setUpdateFormData({
       key_name: key.key_name,
-      permissions: [...key.permissions],
+      permissions: key.permissions ? key.permissions.map(p => (typeof p === 'string' ? parseInt(p, 10) : p)) : [],
       is_active: key.is_active,
     });
     setIsUpdateModalOpen(true);
@@ -108,7 +122,7 @@ export function useApiKeyManagementTab({
     }
     setIsUpdating(true);
     try {
-      await authService.updateApiKey(selectedKeyForUpdate.id, updateFormData);
+      await authService.updateApiKey(selectedKeyForUpdate.api_key || selectedKeyForUpdate.id.toString(), updateFormData);
       toast({
         title: "API Key Updated",
         description: "API key has been updated successfully",
@@ -161,7 +175,7 @@ export function useApiKeyManagementTab({
     if (!keyToRevoke) return;
     setIsRevoking(true);
     try {
-      await authService.revokeApiKey(keyToRevoke.id);
+      await authService.revokeApiKey(keyToRevoke.api_key || keyToRevoke.id.toString());
       toast({
         title: "API Key Revoked",
         description: "API key has been revoked successfully",
@@ -189,13 +203,24 @@ export function useApiKeyManagementTab({
       [...allApiKeys]
         .filter((key) => {
           if (filterUser !== "all" && key.user_id.toString() !== filterUser) return false;
-          if (filterPermission !== "all" && !key.permissions.includes(filterPermission)) return false;
+          if (filterPermission !== "all") {
+            // Handle both numeric IDs and string names
+            const permissionMatch = key.permissions.some((perm) => {
+              if (typeof perm === 'number') {
+                // If perm is a number, find its name and compare
+                const permName = permissions.find(p => p.id === perm)?.name;
+                return permName === filterPermission || perm === parseInt(filterPermission, 10);
+              }
+              return perm === filterPermission;
+            });
+            if (!permissionMatch) return false;
+          }
           if (filterActive === "active" && !key.is_active) return false;
           if (filterActive === "inactive" && key.is_active) return false;
           return true;
         })
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
-    [allApiKeys, filterUser, filterPermission, filterActive]
+    [allApiKeys, filterUser, filterPermission, filterActive, permissions]
   );
 
   const allUniquePermissions = useMemo(() => {
@@ -203,6 +228,26 @@ export function useApiKeyManagementTab({
     allApiKeys.forEach((key) => key.permissions.forEach((p) => perms.add(p)));
     return Array.from(perms).sort();
   }, [allApiKeys]);
+
+  const permissionOptionsForFilter = useMemo(() => {
+    if (allUniquePermissions.length > 0) {
+      return allUniquePermissions.map((perm) => {
+        // Handle both numeric IDs and string names
+        if (!isNaN(Number(perm))) {
+          const permId = parseInt(perm, 10);
+          // Try to find permission name, fallback to showing the ID
+          return permissions.find(p => p.id === permId)?.name || String(permId);
+        }
+        return perm;
+      });
+    }
+    // If no unique permissions from keys, show loaded permissions
+    if (permissions.length > 0) {
+      return permissions.map((p) => p.name);
+    }
+    // If no permissions loaded, return empty array (dropdown will show "All Permissions" only)
+    return [];
+  }, [allUniquePermissions, permissions]);
 
   return {
     allApiKeys,
@@ -232,6 +277,7 @@ export function useApiKeyManagementTab({
     handleResetFilters,
     filteredApiKeys,
     allUniquePermissions,
+    permissionOptionsForFilter,
     selectedKeyForView,
     isViewModalOpen,
     handleOpenViewModal,

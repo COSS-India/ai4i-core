@@ -128,8 +128,8 @@ export interface APIKeyResponse {
   id: number;
   key_id?: number;  // Alias for id, returned by create endpoint
   key_name: string;
-  api_key?: string; // JWT token, only returned on creation
-  permissions: string[];
+  api_key?: string; // Hex API key, only returned on creation or list
+  permissions: number[];
   is_active: boolean;
   is_revoked: boolean;
   created_at: string;
@@ -145,7 +145,7 @@ export interface AdminAPIKeyWithUserResponse extends APIKeyResponse {
 
 export interface APIKeyUpdate {
   key_name?: string;
-  permissions?: string[];
+  permissions?: number[];
   is_active?: boolean;
 }
 
