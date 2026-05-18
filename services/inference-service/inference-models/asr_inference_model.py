@@ -1,130 +1,81 @@
-"""ASR (Automatic Speech Recognition) InferenceModel converter."""
+"""ASR (Automatic Speech Recognition) InferenceModel using generic mapper."""
 
-from typing import Any, Dict, List, Optional, Tuple
+import base64
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from inference_models.base_inference_model import InferenceModel, InferenceModelError
+from inference_models.config_mapper import AdapterMappingConfig, GenericTritonMapper
 
 
 class ASRInferenceModel(InferenceModel):
-    """
-    InferenceModel for Automatic Speech Recognition.
-    Converts ASR request payloads to Triton format and back.
-    Handles audio encoding, resampling, and chunking.
-    """
+    """ASR mapper-backed converter with audio context enrichment."""
 
-    def __init__(self, model_name: str, endpoint_schema: Optional[Dict[str, Any]] = None):
-        """
-        Initialize ASR inference model converter.
-
-        Args:
-            model_name: ASR model name in Triton
-            endpoint_schema: Optional Triton endpoint schema
-        """
-        pass
+    def __init__(
+        self,
+        model_name: str = "",
+        endpoint_schema: Optional[Dict[str, Any]] = None,
+        adapter_config: Optional[Union[AdapterMappingConfig, Dict[str, Any]]] = None,
+    ):
+        super().__init__(model_name=model_name, endpoint_schema=endpoint_schema)
+        # Adapter config can come directly or from resolved endpoint metadata.
+        config_payload = adapter_config or (endpoint_schema or {}).get("adapter_config")
+        self.mapper: Optional[GenericTritonMapper] = (
+            GenericTritonMapper(config_payload) if config_payload else None
+        )
 
     async def convert_payload_to_triton_format(
         self,
         input_data: List[Dict[str, Any]],
         config: Dict[str, Any],
     ) -> Tuple[Dict[str, Any], List[str]]:
-        """
-        Convert ASR request to Triton format.
-        Prepares audio inputs with language and audio parameters for Triton.
-
-        Args:
-            input_data: List of AudioInput dicts with 'audio_content' or 'audio_uri'
-            config: ASR config with language and audio parameters
-
-        Returns:
-            Tuple of (triton_inputs, output_names)
-        """
-        pass
+        if not self.mapper:
+            raise InferenceModelError("ASR adapter_config is not configured")
+        # ASR adds derived audio context so configs can map audio.* fields
+        # without hardcoding tensor assembly here.
+        return self.mapper.render_inputs(
+            input_data=input_data,
+            config=config,
+            context_builder=self._build_audio_context,
+        )
 
     async def convert_triton_output_to_task_format(
         self,
         triton_output: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
-        """
-        Convert Triton output to ASR response format.
-        Formats transcriptions as TranscriptionOutput items.
+        if not self.mapper:
+            raise InferenceModelError("ASR adapter_config is not configured")
+        # Output mapping remains declaration-driven (maps_to roles).
+        mapped = self.mapper.map_outputs(triton_output)
+        return self.mapper.to_output_items(mapped)
 
-        Args:
-            triton_output: Raw Triton output with transcriptions
-
-        Returns:
-            List of TranscriptionOutput dicts with 'transcript' and optional 'alternatives'
-        """
-        pass
-
-    async def _prepare_audio_for_triton(
+    def _build_audio_context(
         self,
-        audio_bytes: bytes,
-        sample_rate: int,
-        target_sample_rate: int,
+        item: Dict[str, Any],
+        index: int,
+        config: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """
-        Prepare audio in Triton format.
-        Resamples and chunks audio as needed.
+        _ = index
+        samples = item.get("samples")
+        if samples is None:
+            audio_content = item.get("audio_content")
+            if audio_content:
+                try:
+                    # Minimal safe fallback: if decoded PCM samples are not prepared
+                    # upstream, derive byte-level sequence from base64 payload.
+                    raw = base64.b64decode(audio_content)
+                    samples = list(raw)
+                except Exception:
+                    samples = []
+            else:
+                samples = []
 
-        Args:
-            audio_bytes: Raw audio data
-            sample_rate: Current sample rate
-            target_sample_rate: Target sample rate for Triton model
-
-        Returns:
-            Dict with 'AUDIO_DATA' and 'AUDIO_LENGTH' tensors
-        """
-        pass
-
-    async def _extract_transcriptions_from_triton(
-        self,
-        triton_output: Dict[str, Any],
-        n_best: int = 1,
-    ) -> List[List[str]]:
-        """
-        Extract transcriptions from Triton output.
-
-        Args:
-            triton_output: Raw Triton output
-            n_best: Number of best alternatives to extract
-
-        Returns:
-            List of [primary_transcript, alt1, alt2, ...] per audio
-        """
-        pass
-
-    async def _resample_audio_chunk(
-        self,
-        audio_chunk: bytes,
-        from_sr: int,
-        to_sr: int,
-    ) -> bytes:
-        """
-        Resample audio chunk to target sample rate.
-
-        Args:
-            audio_chunk: Audio data chunk
-            from_sr: Source sample rate
-            to_sr: Target sample rate
-
-        Returns:
-            Resampled audio bytes
-        """
-        pass
-
-    async def _chunk_audio(
-        self,
-        audio_bytes: bytes,
-        chunk_size_ms: int = 500,
-    ) -> List[bytes]:
-        """
-        Chunk audio into overlapping segments for streaming inference.
-
-        Args:
-            audio_bytes: Full audio data
-            chunk_size_ms: Chunk size in milliseconds
-
-        Returns:
-            List of audio chunks
-        """
-        pass
+        # Standardized context contract consumed by value_path declarations:
+        # audio.samples, audio.num_samples, audio.sample_rate
+        sample_rate = item.get("sample_rate") or config.get("sample_rate")
+        return {
+            "audio": {
+                "samples": samples,
+                "num_samples": item.get("num_samples", len(samples)),
+                "sample_rate": sample_rate,
+            }
+        }
