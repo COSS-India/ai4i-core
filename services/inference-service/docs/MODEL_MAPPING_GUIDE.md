@@ -1,4 +1,4 @@
-# Model Mapping Guide (Inference Service)
+# Model Config Mapper (Inference Service)
 
 This guide explains how model-specific tensor mappings work in the new inference flow for `NMT` and `ASR`.
 
