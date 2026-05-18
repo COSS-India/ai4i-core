@@ -35,6 +35,7 @@ MANIFEST
 venv/
 env/
 ENV/
+!libs/ai4icore_core/ai4icore_core/env/
 env.bak/
 venv.bak/
 
