@@ -8,9 +8,8 @@ Env var naming preserved: all fields are bound to ``OBSERVE_UTIL_*``
 env vars (matching the historical schema in ``.env`` files), via the
 ``env_prefix`` config option.
 """
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -48,19 +47,6 @@ class PluginConfig(BaseSettings):
     metrics_update_interval: int = 60
     system_metrics_interval: int = 30
 
-    # Comma-separated lists; parsed in the properties below.
-    # Field name combined with env_prefix yields OBSERVE_UTIL_APPS / OBSERVE_UTIL_CUSTOMERS.
-    apps_raw: str = Field(default="", validation_alias=AliasChoices("OBSERVE_UTIL_APPS", "apps_raw"))
-    customers_raw: str = Field(default="", validation_alias=AliasChoices("OBSERVE_UTIL_CUSTOMERS", "customers_raw"))
-
-    @property
-    def apps(self) -> List[str]:
-        return [a.strip() for a in self.apps_raw.split(",") if a.strip()] if self.apps_raw else []
-
-    @property
-    def customers(self) -> List[str]:
-        return [c.strip() for c in self.customers_raw.split(",") if c.strip()] if self.customers_raw else []
-
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""
         return {
@@ -77,19 +63,12 @@ class PluginConfig(BaseSettings):
             "max_completed_requests": self.max_completed_requests,
             "metrics_update_interval": self.metrics_update_interval,
             "system_metrics_interval": self.system_metrics_interval,
-            "customers": self.customers,
-            "apps": self.apps,
         }
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "PluginConfig":
         """Create configuration from dictionary."""
-        d = dict(config_dict)
-        if isinstance(d.get("customers"), list):
-            d["customers_raw"] = ",".join(d.pop("customers"))
-        if isinstance(d.get("apps"), list):
-            d["apps_raw"] = ",".join(d.pop("apps"))
-        return cls(**d)
+        return cls(**config_dict)
 
     @classmethod
     def from_env(cls) -> "PluginConfig":
