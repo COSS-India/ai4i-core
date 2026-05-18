@@ -8,7 +8,7 @@ import logging
 import sys
 from typing import Optional
 
-from ai4icore_core.env import app_env
+from .config import get_default_config
 
 try:
     from kafka import KafkaProducer
@@ -45,11 +45,8 @@ class KafkaHandler(logging.Handler):
         self.producer = None
         self.kafka_available = False
 
-        # Get Kafka servers from env or parameter
-        self.bootstrap_servers = (
-            bootstrap_servers or
-            app_env.kafka_bootstrap_servers
-        )
+        # Get Kafka servers from parameter or LoggingConfig
+        self.bootstrap_servers = bootstrap_servers or get_default_config().kafka_bootstrap_servers
 
         # Try to initialize Kafka producer
         if KAFKA_AVAILABLE:

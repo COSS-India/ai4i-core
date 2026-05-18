@@ -9,8 +9,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from ai4icore_core.env import app_env
-
+from .config import get_default_config
 from .context import get_trace_id, get_organization
 
 # Try to import OpenTelemetry for trace ID extraction
@@ -52,9 +51,10 @@ class JSONFormatter(logging.Formatter):
         """
         super().__init__()
 
-        self.service_name = service_name or app_env.service_name or "unknown"
-        self.service_version = service_version or app_env.service_version or "1.0.0"
-        self.environment = environment or app_env.environment or "development"
+        cfg = get_default_config()
+        self.service_name = service_name or cfg.service_name or "unknown"
+        self.service_version = service_version or cfg.service_version or "1.0.0"
+        self.environment = environment or cfg.environment or "development"
         self.include_hostname = include_hostname
 
         if include_hostname:

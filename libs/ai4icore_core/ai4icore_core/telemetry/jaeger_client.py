@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 import httpx
 
-from ai4icore_core.env import app_env
+from .config import get_default_config
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +32,10 @@ class JaegerQueryClient:
             url: Jaeger Query API URL (defaults to JAEGER_QUERY_URL env var)
             timeout: Request timeout in seconds
         """
-        base_url = (url or app_env.jaeger_query_url or "http://jaeger:16686").rstrip("/")
-        # Jaeger may have a base path (e.g., /jaeger) configured via QUERY_BASE_PATH
-        # Check db_settings or default to /jaeger if QUERY_BASE_PATH is set
-        query_base_path = app_env.jaeger_query_base_path or "/jaeger"
+        cfg = get_default_config()
+        base_url = (url or cfg.jaeger_query_url or "http://jaeger:16686").rstrip("/")
+        # Jaeger may have a base path (e.g., /jaeger) configured via JAEGER_QUERY_BASE_PATH
+        query_base_path = cfg.jaeger_query_base_path or "/jaeger"
         self.url = base_url
         self.base_path = query_base_path if query_base_path else ""
         self.timeout = timeout
