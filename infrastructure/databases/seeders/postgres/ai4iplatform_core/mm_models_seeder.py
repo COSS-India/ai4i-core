@@ -7,6 +7,7 @@ Discovery order is guaranteed: sorted *_seeder.py filenames place this seeder
 alphabetically before mm_services_seeder.py.
 """
 import json
+import os
 
 from infrastructure.databases.core.base_seeder import BaseSeeder
 from infrastructure.databases.seeders.postgres.ai4iplatform_core._models_data import (
@@ -15,11 +16,6 @@ from infrastructure.databases.seeders.postgres.ai4iplatform_core._models_data im
     generate_model_id,
     generate_uuid,
 )
-
-try:
-    from ai4icore_env import app_env
-except ImportError:
-    app_env = None  # type: ignore[assignment]
 
 _SUBMITTER = json.dumps({
     "name": "AI4Bharat",
@@ -41,7 +37,7 @@ class MmModelsSeeder(BaseSeeder):
             version = m["version"]
             task_type = m["task_type"]
             triton_model_name = m.get("triton_model_name", name)
-            endpoint_url = (getattr(app_env, m["endpoint_attr"], "") or "") if app_env else ""
+            endpoint_url = os.getenv(m["endpoint_attr"].upper(), "")
             model_id = generate_model_id(name, version)
 
             inference_endpoint = {

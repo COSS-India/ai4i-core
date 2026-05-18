@@ -2,24 +2,8 @@
 Migration Configuration
 Database connection configurations for all databases
 """
+import os
 from typing import Dict, Any
-from pathlib import Path
-import sys
-
-try:
-    from ai4icore_env import app_env
-except ModuleNotFoundError:
-    # Fallback for local dev environments where the shared lib is not installed.
-    project_root = Path(__file__).resolve().parents[2]
-    candidate_paths = [
-        project_root / "libs" / "ai4icore_env",
-        project_root / "libs",
-    ]
-    for candidate in candidate_paths:
-        candidate_str = str(candidate)
-        if candidate.exists() and candidate_str not in sys.path:
-            sys.path.insert(0, candidate_str)
-    from ai4icore_env import app_env
 
 
 class MigrationConfig:
@@ -29,10 +13,10 @@ class MigrationConfig:
     def get_postgres_config(database: str = 'auth_db') -> Dict[str, Any]:
         """Get PostgreSQL configuration"""
         return {
-            'host': app_env.postgres_host,
-            'port': app_env.postgres_port,
-            'user': app_env.postgres_user,
-            'password': app_env.postgres_password,
+            'host': os.getenv('POSTGRES_HOST'),
+            'port': int(os.getenv('POSTGRES_PORT')),
+            'user': os.getenv('POSTGRES_USER'),
+            'password': os.getenv('POSTGRES_PASSWORD'),
             'database': database,
             'async': False
         }
