@@ -165,13 +165,21 @@ def render_item(type_, obj, autogen_context):
     return False
 
 
-def _is_tenants_status_column(inspected_column) -> bool:
-    if inspected_column is None:
+def _skip_tenants_status_enum_compare(inspected_column) -> bool:
+    """Skip tenants.status comparison during enum migration."""
+    if not inspected_column:
         return False
-    if getattr(inspected_column, "name", None) != "status":
-        return False
-    table = getattr(inspected_column, "table", None)
-    return getattr(table, "name", None) == "tenants"
+    return (
+        getattr(inspected_column, "name", None) == "status"
+        and getattr(getattr(inspected_column, "table", None), "name", None) == "tenants"
+    )
+
+
+def _tenants_status_autogenerate_compare_result(inspected_column):
+    """Return True to suppress diff, None to defer to Alembic defaults."""
+    if is_autogenerate and _skip_tenants_status_enum_compare(inspected_column):
+        return True
+    return None
 
 
 # Temporary autogenerate overrides for ai4iplatform_auth.tenants.status (remove after
@@ -218,9 +226,7 @@ def compare_server_default(
 
     Temporary: remove once c4e8f1a2b3d0 is applied everywhere (see block comment above).
     """
-    if is_autogenerate and _is_tenants_status_column(inspected_column):
-        return True
-    return None
+    return _tenants_status_autogenerate_compare_result(inspected_column)
 
 
 def compare_type(context, inspected_column, metadata_column, inspected_type, metadata_type):
@@ -245,9 +251,7 @@ def compare_type(context, inspected_column, metadata_column, inspected_type, met
 
     Temporary: remove once c4e8f1a2b3d0 is applied everywhere (see block comment above).
     """
-    if is_autogenerate and _is_tenants_status_column(inspected_column):
-        return True
-    return None
+    return _tenants_status_autogenerate_compare_result(inspected_column)
 
 
 def get_context_config_kwargs() -> dict:
