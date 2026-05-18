@@ -30,10 +30,6 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import declarative_base
 
-# NOTE: app_env must be imported AFTER load_dotenv() below so the singleton
-# picks up all environment variables.  The deferred import is done inside
-# ensure_database_exists().
-
 ALEMBIC_DIR = Path(__file__).resolve().parent
 # PROJECT_ROOT used to be the repository root when Alembic lived at the top level.
 # After moving Alembic under infrastructure/databases/migrations/postgres,
@@ -491,19 +487,7 @@ def supports_autogenerate(name: str) -> bool:
 def ensure_database_exists(name: str) -> None:
     parts = get_connection_parts(name)
     target_database = parts["database"]
-    try:
-        from ai4icore_env import app_env
-    except ModuleNotFoundError:
-        candidate_paths = [
-            PROJECT_ROOT / "libs" / "ai4icore_env",
-            PROJECT_ROOT / "libs",
-        ]
-        for candidate in candidate_paths:
-            candidate_str = str(candidate)
-            if candidate.exists() and candidate_str not in sys.path:
-                sys.path.insert(0, candidate_str)
-        from ai4icore_env import app_env
-    ai4i_platform_db = app_env.ai4i_platform_db_name
+    ai4i_platform_db = os.getenv("AI4I_PLATFORM_DB_NAME", "")
     maintenance_databases = tuple(db for db in ("postgres", ai4i_platform_db, target_database) if db)
     last_error: Exception | None = None
 

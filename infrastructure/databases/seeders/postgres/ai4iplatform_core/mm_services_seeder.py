@@ -6,6 +6,8 @@ Depends on mm_models_seeder having run first (FK: model_id → mm_models.model_i
 Discovery order is guaranteed: sorted *_seeder.py filenames place this seeder
 alphabetically after mm_models_seeder.py.
 """
+import os
+
 from infrastructure.databases.core.base_seeder import BaseSeeder
 from infrastructure.databases.seeders.postgres.ai4iplatform_core._models_data import (
     MODELS,
@@ -14,11 +16,6 @@ from infrastructure.databases.seeders.postgres.ai4iplatform_core._models_data im
     generate_service_id,
     generate_uuid,
 )
-
-try:
-    from ai4icore_env import app_env
-except ImportError:
-    app_env = None  # type: ignore[assignment]
 
 
 class MmServicesSeeder(BaseSeeder):
@@ -34,7 +31,7 @@ class MmServicesSeeder(BaseSeeder):
             name = m["name"]
             version = m["version"]
             task_type = m["task_type"]
-            endpoint_url = (getattr(app_env, m["endpoint_attr"], "") or "") if app_env else ""
+            endpoint_url = os.getenv(m["endpoint_attr"].upper(), "")
             model_id = generate_model_id(name, version)
             ist = "http" if task_type == "llm" else "triton"
 

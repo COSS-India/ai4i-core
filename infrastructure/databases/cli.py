@@ -37,7 +37,6 @@ class MigrationCLI:
 
     DATABASES = ['postgres']
     POSTGRES_DBS = [
-        'auth_db',
         'ai4iplatform_auth',
         'ai4iplatform_core',
         'config_db',
@@ -45,7 +44,7 @@ class MigrationCLI:
         'metrics_db',
         'telemetry_db',
         'dashboard_db',
-        'model_management_db',
+        'policy_db',
         'ai4i_platform'
     ]
 
@@ -64,7 +63,7 @@ Examples:
 
   # Run migrations for specific database
   python cli.py migrate --database postgres
-  python cli.py migrate --database postgres --postgres-db auth_db
+  python cli.py migrate --database postgres --postgres-db ai4iplatform_auth
 
   # Run specific number of migrations
   python cli.py migrate --database postgres --steps 3
@@ -100,8 +99,8 @@ Examples:
         parser.add_argument('command', help='Command to run')
         parser.add_argument('name', nargs='?', help='Migration or seeder name (for make:migration)')
         parser.add_argument('--database', '-d', choices=self.DATABASES, help='Database type')
-        parser.add_argument('--postgres-db', choices=self.POSTGRES_DBS, default='auth_db',
-                          help='PostgreSQL database name (default: auth_db)')
+        parser.add_argument('--postgres-db', choices=self.POSTGRES_DBS, default='ai4iplatform_auth',
+                          help='PostgreSQL database name (default: ai4iplatform_auth)')
         parser.add_argument('--steps', '-s', type=int, help='Number of steps')
         parser.add_argument('--class', '-c', dest='seeder_class', help='Seeder class name')
         parser.add_argument('--seed', action='store_true', help='Run seeders after migration')
@@ -325,9 +324,9 @@ Examples:
 
         # Databases that have seeders
         postgres_dbs_with_seeders = [
-            'auth_db', 'ai4iplatform_auth', 'ai4iplatform_core',
+            'ai4iplatform_auth', 'ai4iplatform_core',
             'config_db', 'alerting_db',
-            'dashboard_db', 'model_management_db', 'ai4i_platform'
+            'dashboard_db', 'policy_db', 'ai4i_platform'
         ]
 
         # Seed PostgreSQL databases
