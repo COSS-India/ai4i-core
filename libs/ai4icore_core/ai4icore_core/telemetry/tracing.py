@@ -8,7 +8,7 @@ and exports traces to Jaeger.
 import logging
 from typing import Optional
 
-from ai4icore_core.env import app_env
+from .config import get_default_config
 
 logger = logging.getLogger(__name__)
 
@@ -58,15 +58,16 @@ def setup_tracing(service_name: str, jaeger_endpoint: Optional[str] = None) -> O
         return None
 
     try:
-        # Get Jaeger endpoint from parameter or environment
+        # Get Jaeger endpoint from parameter or TelemetryConfig
+        cfg = get_default_config()
         if not jaeger_endpoint:
-            jaeger_endpoint = app_env.jaeger_endpoint or "http://jaeger:4317"
+            jaeger_endpoint = cfg.jaeger_endpoint or "http://jaeger:4317"
 
         # Create resource with service name
         # Avoid hardcoded defaults for service.version — only emit it when configured.
         resource_attrs = {"service.name": service_name}
-        if app_env.service_version:
-            resource_attrs["service.version"] = app_env.service_version
+        if cfg.service_version:
+            resource_attrs["service.version"] = cfg.service_version
         resource = Resource.create(resource_attrs)
 
         # Setup tracer provider

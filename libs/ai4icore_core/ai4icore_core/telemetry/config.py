@@ -1,64 +1,65 @@
 """
 Configuration system for AI4ICore Telemetry Plugin
 
-Handles environment variables, defaults, and plugin configuration.
+Reads its own environment variables via pydantic-settings — no dependency
+on ai4icore_core.env. Field names map 1:1 to the existing
+``TELEMETRY_*`` / ``JAEGER_*`` / ``SERVICE_*`` env vars used historically.
 """
-from typing import Optional, Dict, Any
-from dataclasses import dataclass
+from typing import Any, Dict, Optional
 
-from ai4icore_core.env import app_env
+from pydantic import AliasChoices, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-@dataclass
-class TelemetryConfig:
+class TelemetryConfig(BaseSettings):
     """Configuration for AI4ICore Telemetry Plugin."""
 
-    # Core settings
-    enabled: bool = True
-    service_name: Optional[str] = None
-    service_version: Optional[str] = None
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
-    # Jaeger/OTLP settings
+    # Core (service identity reused across logging/telemetry; no prefix)
+    service_name: str = ""
+    service_version: str = "1.0.0"
+
+    # Master switch
+    enabled: bool = Field(default=True, validation_alias=AliasChoices("TELEMETRY_ENABLED", "enabled"))
+
+    # Jaeger / OTLP endpoint
     jaeger_endpoint: Optional[str] = None
 
-    # Instrumentation settings
-    instrument_fastapi: bool = True
-    instrument_httpx: bool = True
-    instrument_requests: bool = False
+    # Instrumentation toggles
+    instrument_fastapi: bool = Field(
+        default=True, validation_alias=AliasChoices("TELEMETRY_INSTRUMENT_FASTAPI", "instrument_fastapi")
+    )
+    instrument_httpx: bool = Field(
+        default=False, validation_alias=AliasChoices("TELEMETRY_INSTRUMENT_HTTPX", "instrument_httpx")
+    )
+    instrument_requests: bool = Field(
+        default=False, validation_alias=AliasChoices("TELEMETRY_INSTRUMENT_REQUESTS", "instrument_requests")
+    )
 
-    # IP capture middleware settings
-    ip_capture_enabled: bool = True
+    # IP capture
+    ip_capture_enabled: bool = Field(
+        default=False, validation_alias=AliasChoices("TELEMETRY_IP_CAPTURE_ENABLED", "ip_capture_enabled")
+    )
 
-    # Span filtering settings
-    filter_http_spans: bool = True  # Filter out noisy http receive/send spans
+    # Span filtering
+    filter_http_spans: bool = Field(
+        default=False, validation_alias=AliasChoices("TELEMETRY_FILTER_HTTP_SPANS", "filter_http_spans")
+    )
 
-    def __post_init__(self):
-        """Initialize configuration from app_env."""
-        # Core settings
-        if self.service_name is None:
-            self.service_name = app_env.service_name
-        if self.service_version is None:
-            self.service_version = app_env.service_version
+    # ── Jaeger Query API (used by JaegerQueryClient) ──
+    jaeger_query_url: Optional[str] = None
+    jaeger_query_base_path: str = "/jaeger"
 
-        # Check if telemetry is enabled
-        self.enabled = app_env.telemetry_enabled
-
-        # Jaeger/OTLP settings
-        if self.jaeger_endpoint is None:
-            self.jaeger_endpoint = app_env.jaeger_endpoint or None
-
-        # Instrumentation settings
-        self.instrument_fastapi = app_env.telemetry_instrument_fastapi
-
-        self.instrument_httpx = app_env.telemetry_instrument_httpx
-
-        self.instrument_requests = app_env.telemetry_instrument_requests
-
-        # IP capture middleware settings
-        self.ip_capture_enabled = app_env.telemetry_ip_capture_enabled
-
-        # Span filtering settings
-        self.filter_http_spans = app_env.telemetry_filter_http_spans
+    # ── OpenSearch (used by OpenSearchQueryClient) ──
+    opensearch_url: Optional[str] = None
+    opensearch_username: Optional[str] = None
+    opensearch_password: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""
@@ -66,7 +67,7 @@ class TelemetryConfig:
             "enabled": self.enabled,
             "service_name": self.service_name,
             "service_version": self.service_version,
-            "jaeger_endpoint": self.jaeger_endpoint,
+            "jaeger_endpoint": self.jaeger_endpoint or None,
             "instrument_fastapi": self.instrument_fastapi,
             "instrument_httpx": self.instrument_httpx,
             "instrument_requests": self.instrument_requests,
@@ -83,3 +84,17 @@ class TelemetryConfig:
     def from_env(cls) -> "TelemetryConfig":
         """Create configuration from environment variables."""
         return cls()
+
+
+# Lazy module-level singleton — used by the standalone client classes
+# (JaegerQueryClient, OpenSearchQueryClient) and setup_tracing(). Same
+# pattern as LoggingConfig.get_default_config().
+_default_config: Optional["TelemetryConfig"] = None
+
+
+def get_default_config() -> "TelemetryConfig":
+    """Return the cached default TelemetryConfig, instantiating on first call."""
+    global _default_config
+    if _default_config is None:
+        _default_config = TelemetryConfig()
+    return _default_config
