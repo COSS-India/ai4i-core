@@ -213,13 +213,6 @@ services:
       - ./services/auth-service/.env
     volumes:
       - ./services/auth-service:/app
-      - ./libs/ai4icore_exceptions:/tmp/ai4icore_exceptions
-      - ./libs/ai4icore_constants:/tmp/ai4icore_constants
-      - ./libs/ai4icore_env:/tmp/ai4icore_env
-      - ./libs/ai4icore_logging:/tmp/ai4icore_logging
-      - ./libs/ai4icore_auth:/tmp/ai4icore_auth
-      - ./libs/ai4icore_bootstrap:/tmp/ai4icore_bootstrap
-      - ./libs/ai4icore_email:/tmp/ai4icore_email
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
     depends_on:
       postgres:
@@ -797,13 +790,6 @@ services:
     volumes:
       # Bind-mount app code for hot-reload without image rebuilds
       - ./services/platform-core-service:/app
-      # Shared platform libraries (editable installs via bind-mount)
-      - ./libs/ai4icore_exceptions:/tmp/ai4icore_exceptions
-      - ./libs/ai4icore_constants:/tmp/ai4icore_constants
-      - ./libs/ai4icore_env:/tmp/ai4icore_env
-      - ./libs/ai4icore_logging:/tmp/ai4icore_logging
-      - ./libs/ai4icore_auth:/tmp/ai4icore_auth
-      - ./libs/ai4icore_bootstrap:/tmp/ai4icore_bootstrap
     command:
       - "uvicorn"
       - "app.main:app"
