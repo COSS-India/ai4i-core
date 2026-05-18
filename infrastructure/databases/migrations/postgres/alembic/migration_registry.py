@@ -64,7 +64,6 @@ DATABASE_ORDER = [
     "alerting_db",
     "ai4iplatform_auth",
     "config_db",
-    "dashboard_db",
     "ai4i_platform_db",
     "metrics_db",
     "ai4iplatform_core",
@@ -335,15 +334,6 @@ DATABASE_SPECS = {
         port_key="POSTGRES_PORT",
         database_name_key="CONFIG_DB_NAME",
         metadata_loader=_load_config_metadata,
-    ),
-    "dashboard_db": DatabaseSpec(
-        name="dashboard_db",
-        user_key="POSTGRES_USER",
-        password_key="POSTGRES_PASSWORD",
-        host_key="POSTGRES_HOST",
-        port_key="POSTGRES_PORT",
-        database_name_key="DASHBOARD_DB_NAME",
-        metadata_loader=None,
     ),
     "ai4i_platform_db": DatabaseSpec(
         name="ai4i_platform_db",
