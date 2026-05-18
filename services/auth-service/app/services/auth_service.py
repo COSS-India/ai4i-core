@@ -8,8 +8,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
-from ai4icore_email import EmailClient
-from ai4icore_exceptions import AuthorizationError
 from ai4icore_core.email import EmailClient
 from fastapi import BackgroundTasks
 
@@ -17,6 +15,7 @@ from app.core.config import settings
 from app.core.constants import TokenType
 from app.models.role_name import RoleName
 from app.core.exceptions import (
+    AuthorizationError,
     DuplicateEntityError,
     EntityNotFoundError,
     InvalidCredentialsError,

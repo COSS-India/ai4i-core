@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from ai4icore_exceptions import AuthorizationError
+from app.core.exceptions import AuthorizationError
 
 from app.models.tenant import Tenant, TenantStatus
 
