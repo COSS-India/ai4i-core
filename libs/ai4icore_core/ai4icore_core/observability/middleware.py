@@ -10,7 +10,7 @@ work as little as possible:
 
   * Pre-``call_next`` we only do work that downstream middleware/handlers
     *depend* on: a single JWT decode, populating ``request.state``, and
-    seeding the tracing/logging context with org & tenant.
+    seeding the tracing/logging context with tenant.
   * The request body is still buffered before ``call_next`` (Starlette needs
     that to replay it to the inner app), but it is NOT parsed there.
   * All payload-size calculations (token counts, character counts, audio
@@ -42,12 +42,8 @@ except Exception:  # pragma: no cover - tracing is optional
     _otel_trace = None
 
 try:
-    from ai4icore_core.logging.context import (
-        set_organization as _set_organization,
-        set_tenant_id as _set_tenant_id,
-    )
+    from ai4icore_core.logging.context import set_tenant_id as _set_tenant_id
 except Exception:  # pragma: no cover - logging context is optional
-    _set_organization = None
     _set_tenant_id = None
 
 logger = logging.getLogger(__name__)
@@ -84,65 +80,42 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         method = request.method
 
-        # --- Single JWT decode, shared by org + tenant extraction ---
+        # Decode JWT (without verification) to extract tenant_id.
         decoded_token: Optional[Dict[str, Any]] = None
         auth_header = request.headers.get("authorization", "")
         if auth_header:
             decoded_token = self._decode_jwt_token(auth_header)
 
-        # Priority 1: X-Customer-ID header (explicit org identifier)
-        # Priority 2: JWT 'name' claim (non-numeric)
-        organization: Optional[str] = request.headers.get("X-Customer-ID") or None
-        if organization is None and decoded_token is not None:
-            name = decoded_token.get("name")
-            if name and not str(name).isdigit():
-                organization = str(name)
-
-        # Tenant info (JWT-only since the standalone multi-tenant service
-        # was consolidated into auth-service).
         tenant_id: Optional[str] = None
-        tenant_org_name: Optional[str] = None
         if decoded_token is not None:
             tid = decoded_token.get("tenant_id")
             if tid not in (None, ""):
                 tenant_id = str(tid)
-                tenant_org_name = self._extract_organization_name(decoded_token)
 
-        # Priority 3: fall back to tenant's organization name from JWT.
-        if organization is None:
-            organization = tenant_org_name
-
-        # Normalize labels (backward compatible with existing dashboards).
-        organization_label = organization if organization else "unknown"
         tenant_label = tenant_id if tenant_id else "unknown"
-        app_id = request.headers.get("X-App-ID") or "unknown"
 
-        # Downstream middlewares/handlers read these off request.state, so
-        # they MUST be set before call_next.
-        request.state.organization = organization_label
+        # Downstream middlewares/handlers may read tenant_id off request.state.
         request.state.tenant_id = tenant_id
 
-        # Seed tracing span with org/tenant so any spans started during
-        # request handling are labeled correctly.
+        # Seed tracing span with tenant so any spans started during request
+        # handling are labeled correctly.
         if _otel_trace is not None:
             try:
                 current_span = _otel_trace.get_current_span()
                 if current_span:
-                    current_span.set_attribute("organization", organization_label)
                     current_span.set_attribute("tenant_id", tenant_label)
             except Exception:
                 pass
 
         # Seed logging context so log records emitted during handling carry
-        # org/tenant. We set context vars on the current task here; the
-        # background metrics task does not need them (it passes labels in).
-        if _set_organization is not None:
+        # tenant. The background metrics task does not need it (it passes
+        # the tenant label in directly).
+        if _set_tenant_id is not None:
             try:
-                _set_organization(organization_label)
                 _set_tenant_id(tenant_id)
             except Exception:
                 if self.config.debug:
-                    logger.debug("Failed to set org/tenant in logging context", exc_info=True)
+                    logger.debug("Failed to set tenant in logging context", exc_info=True)
 
         # Detect service type up front (cheap string ops) so we know whether
         # we need to buffer the body for later metric extraction.
@@ -171,7 +144,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         if self.config.debug:
             logger.debug(
                 f"Request: {method} {path} -> Service: {service_type}, "
-                f"Organization: {organization_label}, App: {app_id}"
+                f"Tenant: {tenant_label}"
             )
 
         # --- Process request. Everything observability-related from here
@@ -192,8 +165,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             method=method,
             is_generic_pipeline=is_generic_pipeline,
             service_type=service_type,
-            organization=organization_label,
-            app=app_id,
             tenant=tenant_label,
             service_id=service_id,
             status_code=response.status_code,
@@ -214,8 +185,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         method: str,
         is_generic_pipeline: bool,
         service_type: str,
-        organization: str,
-        app: str,
         tenant: str,
         service_id: str,
         status_code: int,
@@ -285,8 +254,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 logger.debug(f"Tracking metrics for endpoint: {path}, service_type: {service_type}")
 
             self.metrics_collector.track_request(
-                organization=organization,
-                app=app,
                 method=method,
                 endpoint=path,
                 status_code=status_code,
@@ -297,7 +264,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             )
 
             self._track_additional_metrics(
-                organization, app, tenant, service_type, path, duration,
+                tenant, service_type, path, duration,
                 tts_characters, translation_characters, asr_audio_length,
                 ocr_characters, ocr_image_size_kb, transliteration_characters,
                 language_detection_characters, audio_lang_detection_length,
@@ -311,14 +278,13 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     def _decode_jwt_token(self, authorization_header: str) -> Optional[Dict[str, Any]]:
         """Decode JWT token from authorization header."""
         try:
-            # Extract token from "Bearer <token>" format
             if not authorization_header.startswith("Bearer "):
                 return None
 
             token = authorization_header[7:]  # Remove "Bearer " prefix
 
-            # Decode without verification to get claims (for customer name extraction)
-            # In production, you might want to verify the token with proper secret
+            # Decode without verification — we only need the tenant_id claim
+            # for metric labeling, not authentication.
             decoded_token = jwt.decode(token, options={"verify_signature": False})
 
             return decoded_token
@@ -326,18 +292,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if self.config.debug:
                 logger.debug(f"[TENANT_DEBUG] JWT decoding failed: {type(e).__name__}: {e}", exc_info=True)
             return None
-
-    @staticmethod
-    def _extract_organization_name(payload: Dict[str, Any]) -> Optional[str]:
-        """Extract organization name from a JWT payload, with a small set of field fallbacks."""
-        value = (
-            payload.get("organization_name")
-            or payload.get("organization")
-            or payload.get("org_name")
-            or payload.get("tenant_name")
-            or payload.get("name")
-        )
-        return str(value) if value else None
 
     def _detect_service_type(self, path: str) -> str:
         """Detect service type from URL path."""
@@ -403,13 +357,30 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         else:
             return "unknown"
 
-    def _track_additional_metrics(self, organization: str, app: str, tenant: str, service_type: str, path: str, duration: float, tts_characters: int = 0, translation_characters: int = 0, asr_audio_length: float = 0, ocr_characters: int = 0, ocr_image_size_kb: float = 0.0, transliteration_characters: int = 0, language_detection_characters: int = 0, audio_lang_detection_length: float = 0, ner_tokens: int = 0, speaker_verification_length: float = 0, speaker_diarization_length: float = 0, language_diarization_length: float = 0, service_id: str = ""):
+    def _track_additional_metrics(
+        self,
+        tenant: str,
+        service_type: str,
+        path: str,
+        duration: float,
+        tts_characters: int = 0,
+        translation_characters: int = 0,
+        asr_audio_length: float = 0,
+        ocr_characters: int = 0,
+        ocr_image_size_kb: float = 0.0,
+        transliteration_characters: int = 0,
+        language_detection_characters: int = 0,
+        audio_lang_detection_length: float = 0,
+        ner_tokens: int = 0,
+        speaker_verification_length: float = 0,
+        speaker_diarization_length: float = 0,
+        language_diarization_length: float = 0,
+        service_id: str = "",
+    ):
         """Track additional metrics based on service type."""
         try:
             # Track component latency
             self.metrics_collector.track_component_latency(
-                organization=organization,
-                app=app,
                 component=service_type,
                 duration=duration,
                 tenant=tenant,
@@ -420,8 +391,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 # Mock LLM token processing
                 tokens = self._estimate_llm_tokens(path)
                 self.metrics_collector.track_llm_tokens(
-                    organization=organization,
-                    app=app,
                     model="gpt-3.5-turbo",  # Mock model
                     tokens=tokens,
                     tenant=tenant,
@@ -429,8 +398,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             elif service_type == "tts":
                 if tts_characters > 0:
                     self.metrics_collector.track_tts_characters(
-                        organization=organization,
-                        app=app,
                         language="en",
                         characters=tts_characters,
                         tenant=tenant,
@@ -439,8 +406,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             elif service_type == "translation":
                 if translation_characters > 0:
                     self.metrics_collector.track_nmt_characters(
-                        organization=organization,
-                        app=app,
                         source_lang="en",
                         target_lang="hi",
                         characters=translation_characters,
@@ -450,8 +415,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             elif service_type == "asr":
                 if asr_audio_length > 0:
                     self.metrics_collector.track_asr_audio_length(
-                        organization=organization,
-                        app=app,
                         language="en",
                         audio_seconds=asr_audio_length,
                         tenant=tenant,
@@ -460,16 +423,12 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             elif service_type == "ocr":
                 if ocr_characters > 0:
                     self.metrics_collector.track_ocr_characters(
-                        organization=organization,
-                        app=app,
                         characters=ocr_characters,
                         tenant=tenant,
                         service_id=service_id,
                     )
                 if ocr_image_size_kb > 0:
                     self.metrics_collector.track_ocr_image_size(
-                        organization=organization,
-                        app=app,
                         image_size_kb=ocr_image_size_kb,
                         tenant=tenant,
                         service_id=service_id,
@@ -477,8 +436,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             elif service_type == "transliteration":
                 if transliteration_characters > 0:
                     self.metrics_collector.track_transliteration_characters(
-                        organization=organization,
-                        app=app,
                         source_lang="en",
                         target_lang="hi",
                         characters=transliteration_characters,
@@ -488,8 +445,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             elif service_type == "language_detection":
                 if language_detection_characters > 0:
                     self.metrics_collector.track_language_detection_characters(
-                        organization=organization,
-                        app=app,
                         characters=language_detection_characters,
                         tenant=tenant,
                         service_id=service_id,
@@ -497,8 +452,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             elif service_type == "audio_lang_detection":
                 if audio_lang_detection_length > 0:
                     self.metrics_collector.track_audio_lang_detection_length(
-                        organization=organization,
-                        app=app,
                         audio_seconds=audio_lang_detection_length,
                         tenant=tenant,
                         service_id=service_id,
@@ -506,8 +459,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             elif service_type == "ner":
                 if ner_tokens > 0:
                     self.metrics_collector.track_ner_tokens(
-                        organization=organization,
-                        app=app,
                         tokens=ner_tokens,
                         tenant=tenant,
                         service_id=service_id,
@@ -515,8 +466,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             elif service_type == "speaker_verification":
                 if speaker_verification_length > 0:
                     self.metrics_collector.track_speaker_verification_length(
-                        organization=organization,
-                        app=app,
                         audio_seconds=speaker_verification_length,
                         tenant=tenant,
                         service_id=service_id,
@@ -524,8 +473,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             elif service_type == "speaker_diarization":
                 if speaker_diarization_length > 0:
                     self.metrics_collector.track_speaker_diarization_length(
-                        organization=organization,
-                        app=app,
                         audio_seconds=speaker_diarization_length,
                         tenant=tenant,
                         service_id=service_id,
@@ -533,8 +480,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             elif service_type == "language_diarization":
                 if language_diarization_length > 0:
                     self.metrics_collector.track_language_diarization_length(
-                        organization=organization,
-                        app=app,
                         audio_seconds=language_diarization_length,
                         tenant=tenant,
                         service_id=service_id,
@@ -543,8 +488,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             # Update SLA compliance (mock calculation)
             compliance = self._calculate_sla_compliance(service_type, duration)
             self.metrics_collector.update_sla_compliance(
-                organization=organization,
-                app=app,
                 sla_type=f"{service_type}_availability",
                 compliance_percent=compliance,
                 tenant=tenant,
