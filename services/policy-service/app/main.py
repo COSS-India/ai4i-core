@@ -10,8 +10,6 @@ from app.api.routes.pii_types import router as pii_types_router
 from app.api.routes.policies import router as policies_router
 from app.api.routes.audit_logs import router as audit_logs_router
 from app.core.config import get_settings
-from app.db.base import AppDBBase as Base
-from app.db.session import get_engine
 import logging
 
 from ai4icore_exceptions import register_exception_handlers  # type: ignore
@@ -20,15 +18,6 @@ from ai4icore_logging import register_logging_plugin  # type: ignore
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    settings = get_settings()
-    engine = get_engine()
-    if engine is not None and settings.auto_create_tables:
-        logging.getLogger(__name__).warning(
-            "AUTO_CREATE_TABLES is enabled; creating tables from ORM metadata at startup. "
-            "Disable this in environments managed by Alembic migrations."
-        )
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
     yield
 
 
