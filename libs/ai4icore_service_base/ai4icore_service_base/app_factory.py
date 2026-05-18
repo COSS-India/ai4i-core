@@ -297,6 +297,7 @@ def create_inference_app(
     extra_state: Optional[Dict[str, Any]] = None,
     observability_app: str = "",
     cors_origins: Optional[List[str]] = None,
+    hide_docs: bool = False,
 ) -> FastAPI:
     """
     Create a fully configured FastAPI application for an inference service.
@@ -317,6 +318,8 @@ def create_inference_app(
         observability_app: Observability app tag (defaults to service_name
             minus the ``"-service"`` suffix).
         cors_origins: Allowed CORS origins (defaults to ``["*"]``).
+        hide_docs: When True, disables /docs, /redoc and /openapi.json.
+                   Set based on ENVIRONMENT != "development".
     """
     config = InferenceServiceConfig(
         service_name=service_name,
@@ -334,6 +337,9 @@ def create_inference_app(
         version=config.version,
         description=config.description,
         lifespan=_build_lifespan(config, db_base),
+        docs_url=None if hide_docs else "/docs",
+        redoc_url=None if hide_docs else "/redoc",
+        openapi_url=None if hide_docs else "/openapi.json",
     )
 
     # ── Observability ──

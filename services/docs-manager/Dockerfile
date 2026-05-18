@@ -1,4 +1,4 @@
-# Docs Manager - serves merged OpenAPI spec and Swagger UI
+# Docs Manager - serves unified Swagger UI fetched from live services
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -16,4 +16,4 @@ EXPOSE 8103
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:8103/health || exit 1
 
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8103"]
+ENTRYPOINT ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8103"]
