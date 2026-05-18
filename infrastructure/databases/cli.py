@@ -78,19 +78,13 @@ Examples:
 
   # Fresh migration (drop all and re-run)
   python cli.py migrate:fresh --database postgres
-  python cli.py migrate:fresh --seed --database postgres
   python cli.py migrate:fresh:all --force
-  python cli.py migrate:fresh:all --seed --force
 
   # Report DBs, tables, row counts
   python cli.py report
 
   # Create new migration
   python cli.py make:migration create_users_table --database postgres
-
-  # Run seeders
-  python cli.py seed --database postgres
-  python cli.py seed --class DefaultRolesSeeder --database postgres
             """
         )
 
@@ -100,8 +94,6 @@ Examples:
         parser.add_argument('--postgres-db', choices=self.POSTGRES_DBS, default='ai4iplatform_auth',
                           help='PostgreSQL database name (default: ai4iplatform_auth)')
         parser.add_argument('--steps', '-s', type=int, help='Number of steps')
-        parser.add_argument('--class', '-c', dest='seeder_class', help='Seeder class name')
-        parser.add_argument('--seed', action='store_true', help='Run seeders after migration')
         parser.add_argument('--force', '-y', action='store_true', dest='force',
                           help='Skip confirmation prompts (e.g. for migrate:fresh)')
 
@@ -116,8 +108,6 @@ Examples:
             'migrate:fresh': self.fresh,
             'migrate:fresh:all': self.fresh_all,
             'make:migration': self.make_migration,
-            'seed': self.seed,
-            'seed:all': self.seed_all,
             'report': self.report,
         }
 
@@ -210,7 +200,7 @@ Examples:
         print("=" * 80)
 
         manager = self._get_manager(args.database, args.postgres_db if args.database == 'postgres' else None)
-        manager.fresh(seed=args.seed)
+        manager.fresh()
 
         print("=" * 80 + "\n")
 
@@ -232,7 +222,7 @@ Examples:
             try:
                 print(f"\n  🗄️  Fresh: {db}...")
                 manager = self._get_manager('postgres', db)
-                manager.fresh(seed=False)
+                manager.fresh()
             except Exception as e:
                 print(f"  ❌ Failed: {db} - {str(e)}")
                 failed.append((db, str(e)))
@@ -245,10 +235,6 @@ Examples:
         else:
             print("✅ Fresh (clean + migrate) completed for all Postgres DBs!")
         print("=" * 80 + "\n")
-
-        if getattr(args, 'seed', False) and not failed:
-            print("🌱 Running seed:all...\n")
-            self.seed_all(args)
 
     def make_migration(self, args):
         """Create new migration file"""
@@ -271,20 +257,6 @@ Examples:
         print(f"   {filepath}\n")
         print("=" * 80 + "\n")
 
-    def seed(self, args):
-        """Run database seeders"""
-        if not args.database:
-            print("❌ Please specify --database for seeding")
-            sys.exit(1)
-
-        print("\n" + "=" * 80)
-        print(f"🌱 Running {args.database.upper()} Seeders")
-        print("=" * 80)
-
-        manager = self._get_manager(args.database, args.postgres_db if args.database == 'postgres' else None)
-        manager.seed(seeder_class=args.seeder_class)
-
-        print("=" * 80 + "\n")
 
     def migrate_all(self, args):
         """Migrate all databases automatically"""
@@ -314,32 +286,6 @@ Examples:
             print("✅ All databases migrated successfully!")
         print("="*80 + "\n")
 
-    def seed_all(self, args):
-        """Seed all databases automatically"""
-        print("\n" + "="*80)
-        print("🌱 Seeding ALL Databases (Auto-Discovery)")
-        print("="*80 + "\n")
-
-        # Databases that have seeders
-        postgres_dbs_with_seeders = [
-            'ai4iplatform_auth', 'ai4iplatform_core',
-            'config_db', 'alerting_db',
-            'policy_db', 'ai4i_platform'
-        ]
-
-        # Seed PostgreSQL databases
-        print("📊 PostgreSQL Databases:")
-        for db in postgres_dbs_with_seeders:
-            try:
-                print(f"\n  🌱 Seeding {db}...")
-                manager = self._get_manager('postgres', db)
-                manager.seed()
-            except Exception as e:
-                print(f"  ⚠️  Failed seeding {db}: {e}")
-
-        print("\n" + "="*80)
-        print("✅ Seeding completed!")
-        print("="*80 + "\n")
 
     def report(self, args):
         """Report: how many Postgres DBs, tables per DB, and row counts."""
