@@ -24,6 +24,7 @@ from app.core.exceptions import (
     UserInactiveError,
 )
 from app.models.credentials import UserCredentials
+from app.models.tenant import TenantStatus
 from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
 from app.repositories.credentials_repository import CredentialsRepository
@@ -41,6 +42,10 @@ from app.services.auth_email_templates import (
 )
 from app.core.security import password_manager
 from app.services.email_helpers import enqueue_email, issue_session, persist_token_verification, resolve_tenant_id, setup_token_expires_at
+from app.services.tenant_auth_helpers import (
+    assert_tenant_allows_authentication,
+    assert_tenant_allows_onboarding,
+)
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
 
@@ -186,11 +191,13 @@ class AuthService:
         token: str,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> None:
-        """Consume a verify token and flip the user to active. The user already
-        has credentials (set during register), so this is a pure activation —
-        no password change. Sends a welcome email after activation.
+        """Consume a verify token and activate the user (/auth/register flow).
+
+        Tenant admins use setup-password links instead; they must not rely on
+        verify-email for onboarding.
         """
         token_obj, user = await self._resolve_verified_token(token, TokenType.VERIFY, "verification link")
+        await self._assert_user_tenant_onboarding(user)
 
         user.is_active = True
         await self._verifications.deactivate(token_obj)
@@ -208,8 +215,8 @@ class AuthService:
         """Invalidate any active verify tokens for this user and issue a new one.
 
         Anti-enumeration: always returns successfully. Only sends email to users
-        who registered via /auth/register, have credentials, and are inactive.
-        Silently skips for non-existent users, already-active users, or passwordless accounts.
+        who registered via /auth/register (have credentials, inactive).
+        Tenant contact admins must use /auth/resend-setup-link instead.
         """
         user = await self._users.get_by_email(email)
         if not user or user.is_active:
@@ -217,7 +224,7 @@ class AuthService:
 
         existing_creds = await self._credentials.get_by_user_id(user.id)
         if not existing_creds:
-            return  # silent no-op — no credentials (wrong resend flow)
+            return  # passwordless onboarding — use /auth/resend-setup-link
 
         user_id_str = str(user.id)
         await self._verifications.deactivate_all_for_user(user_id_str, token_type=TokenType.VERIFY)
@@ -303,6 +310,40 @@ class AuthService:
 
     # ── Login ──
 
+    async def _assert_user_tenant_active(self, user: User) -> None:
+        if user.tenant_id is None:
+            return
+        tenant = await self._tenants.get_by_id(user.tenant_id)
+        assert_tenant_allows_authentication(tenant)
+
+    async def _assert_user_tenant_onboarding(self, user: User) -> None:
+        if user.tenant_id is None:
+            return
+        tenant = await self._tenants.get_by_id(user.tenant_id)
+        assert_tenant_allows_onboarding(tenant)
+
+    async def _is_pending_tenant_contact_admin(self, user: User) -> bool:
+        """True when user is the provisioned admin for a PENDING tenant."""
+        if user.tenant_id is None:
+            return False
+        tenant = await self._tenants.get_by_id(user.tenant_id)
+        if not tenant or tenant.status != TenantStatus.PENDING:
+            return False
+        return tenant.email.lower().strip() == user.email.lower().strip()
+
+    async def _activate_pending_tenant_for_contact_admin(self, user: User) -> None:
+        """After contact admin sets password, move tenant PENDING → ACTIVE."""
+        if not await self._is_pending_tenant_contact_admin(user):
+            return
+        tenant = await self._tenants.get_by_id(user.tenant_id)
+        assert tenant is not None
+        await self._tenants.update(tenant, {"status": TenantStatus.ACTIVE})
+        logger.info(
+            "Tenant %s activated after contact admin set password (user id=%s)",
+            tenant.id,
+            user.id,
+        )
+
     async def login(self, email: str, password: str) -> LoginResponse:
         """Authenticate a user and return access + refresh tokens."""
         user = await self._users.get_by_email(email)
@@ -311,6 +352,8 @@ class AuthService:
 
         if not user.is_active:
             raise UserInactiveError()
+
+        await self._assert_user_tenant_active(user)
 
         creds = await self._credentials.get_by_user_id(user.id)
         if not creds or not creds.password_hash or not creds.password_salt:
@@ -347,6 +390,10 @@ class AuthService:
         user_id = UUID(payload.sub)
         if not await self._users.is_active(user_id):
             raise UserInactiveError()
+
+        user = await self._users.get_by_id(user_id)
+        if user:
+            await self._assert_user_tenant_active(user)
 
         # Tenant ID is already in the payload (set at login/token creation)
         tenant_id = payload.tenant_id
@@ -406,11 +453,14 @@ class AuthService:
         confirm_password: str,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> None:
-        """Consume a setup token, create credentials, activate the user, send
-        welcome email."""
+        """Consume a setup token, create credentials, activate the user.
+
+        Tenant contact admins: tenant moves PENDING → ACTIVE here, then welcome email.
+        """
         password_manager.validate_and_confirm(new_password, confirm_password)
 
         token_obj, user = await self._resolve_verified_token(token, TokenType.SETUP, "setup link")
+        await self._assert_user_tenant_onboarding(user)
 
         hash_result = await password_manager.hash_password_async(new_password)
         creds = UserCredentials(
@@ -420,11 +470,14 @@ class AuthService:
         )
         await self._credentials.create(creds)
 
+        was_inactive = not user.is_active
         user.is_active = True
         await self._verifications.deactivate(token_obj)
+        await self._activate_pending_tenant_for_contact_admin(user)
         await self._users.commit()
         logger.info("Password set via activation link for user id=%s", user.id)
-        enqueue_email(background_tasks, self._email, lambda: render_welcome(user))
+        if was_inactive:
+            enqueue_email(background_tasks, self._email, lambda: render_welcome(user))
 
     # ── Email Activation: Token Status ──
 
@@ -455,11 +508,11 @@ class AuthService:
         email: str,
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> None:
-        """Invalidate old setup tokens and issue a new one.
+        """Invalidate old setup tokens and issue a new welcome/set-password email.
 
         Anti-enumeration: always returns successfully. Only sends email to users
-        who have NOT yet set a password (no credentials). Silently skips for
-        non-existent users or already-activated users.
+        who have NOT yet set a password (no credentials). Works for tenant contact
+        admins while the tenant is still PENDING.
         """
         user = await self._users.get_by_email(email)
         if not user:
@@ -467,7 +520,7 @@ class AuthService:
 
         existing_creds = await self._credentials.get_by_user_id(user.id)
         if existing_creds:
-            return  # silent no-op — user already activated
+            return  # silent no-op — onboarding complete
 
         user_id_str = str(user.id)
         await self._verifications.deactivate_all_for_user(user_id_str, token_type=TokenType.SETUP)

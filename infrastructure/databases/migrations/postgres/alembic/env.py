@@ -165,11 +165,44 @@ def render_item(type_, obj, autogen_context):
     return False
 
 
+def _is_tenants_status_column(inspected_column) -> bool:
+    if inspected_column is None:
+        return False
+    if getattr(inspected_column, "name", None) != "status":
+        return False
+    table = getattr(inspected_column, "table", None)
+    return getattr(table, "name", None) == "tenants"
+
+
+def compare_server_default(
+    context,
+    inspected_column,
+    metadata_column,
+    rendered_inspected_default,
+    metadata_server_default,
+    rendered_metadata_default,
+):
+    """Skip tenants.status default compare while legacy enum labels exist in DB.
+
+    Signature matches Alembic 1.14+ (see autogenerate/compare/server_defaults.py).
+    """
+    if is_autogenerate and _is_tenants_status_column(inspected_column):
+        return True
+    return None
+
+
+def compare_type(context, inspected_column, metadata_column, inspected_type, metadata_type):
+    """Enum migration for tenants.status is handled by revision c4e8f1a2b3d0."""
+    if is_autogenerate and _is_tenants_status_column(inspected_column):
+        return True
+    return None
+
+
 def get_context_config_kwargs() -> dict:
     kwargs = {
         "target_metadata": target_metadata,
-        "compare_type": True,
-        "compare_server_default": True,
+        "compare_type": compare_type,
+        "compare_server_default": compare_server_default,
         "include_object": include_object,
         "render_item": render_item,
         "process_revision_directives": process_revision_directives,

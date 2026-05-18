@@ -54,7 +54,7 @@ class AuthServiceDefaultTenantSeeder(BaseSeeder):
                 UPDATE tenants
                 SET name       = :contact,
                     email      = :email,
-                    status     = 'activated',
+                    status     = 'ACTIVE',
                     updated_by = :seeder_id
                 WHERE organisation = :org
                 """,
@@ -65,7 +65,7 @@ class AuthServiceDefaultTenantSeeder(BaseSeeder):
             adapter.execute(
                 """
                 INSERT INTO tenants (name, organisation, email, status, created_by)
-                VALUES (:contact, :org, :email, 'activated', :seeder_id)
+                VALUES (:contact, :org, :email, 'ACTIVE', :seeder_id)
                 """,
                 {
                     "contact": contact,
