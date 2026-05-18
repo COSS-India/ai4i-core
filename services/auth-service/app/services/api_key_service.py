@@ -65,9 +65,19 @@ class APIKeyService:
         Generate a hex API key, persist to DB, cache in Redis.
         Returns (raw_hex_key, api_key_record). Raw key is shown once and never stored again.
         """
+        # Validate expires_days if provided
+        if expires_days is not None:
+            if not isinstance(expires_days, int) or expires_days < 1:
+                raise ValidationError(
+                    message="Invalid expires_days. Must be a positive integer.",
+                    code="INVALID_EXPIRES_DAYS",
+                )
+
         permission_ids = list(dict.fromkeys(permissions or []))
 
-        await self._validate_permission_ids(permission_ids)
+        # Validate permission IDs
+        if permission_ids:
+            await self._validate_permission_ids(permission_ids)
 
         raw_key = self.generate_api_key()
         days = expires_days or settings.api_key_expire_days
@@ -98,7 +108,7 @@ class APIKeyService:
             },
         )
 
-        logger.info("API key created: name=%s user=%s", key_name, user_id)
+        logger.info("API key created: name=%s user=%s permissions=%s", key_name, user_id, permission_ids)
         return raw_key, api_key
 
     async def validate_api_key(self, token: str) -> dict:
@@ -125,18 +135,31 @@ class APIKeyService:
         api_key_value: str,
         user_id: Optional[UUID] = None,
     ) -> None:
+        # Validate API key format
+        if not self._is_api_key(api_key_value):
+            raise ValidationError(
+                message="Invalid API key format. Must be a 32-character hex string.",
+                code="INVALID_API_KEY_FORMAT",
+            )
+
+        # Check if API key exists
         db_key = await self._repo.get_by_api_key(api_key_value)
         if not db_key:
             raise EntityNotFoundError("API key")
+
+        # Check authorization (owner can only revoke own keys unless admin)
         if user_id is not None and db_key.user_id != user_id:
-            raise AuthorizationError("API key does not belong to you.")
+            raise AuthorizationError(
+                message="You do not have permission to revoke this API key. API keys can only be revoked by their owner.",
+                code="UNAUTHORIZED_API_KEY_REVOCATION",
+            )
 
         await self._repo.revoke(db_key)
         await self._repo.commit()
 
         # Evict from Redis AFTER DB commit to ensure atomicity
         await self._cache.delete_api_key_cache(api_key_value)
-        logger.info("API key revoked: api_key=%s", api_key_value)
+        logger.info("API key revoked: api_key=%s user=%s", api_key_value, db_key.user_id)
 
     async def update_key(
         self,
@@ -144,18 +167,45 @@ class APIKeyService:
         data: dict,
         user_id: Optional[UUID] = None,
     ) -> APIKey:
+        # Validate API key format
+        if not self._is_api_key(api_key_value):
+            raise ValidationError(
+                message="Invalid API key format. Must be a 32-character hex string.",
+                code="INVALID_API_KEY_FORMAT",
+            )
+
+        # Check if API key exists
         db_key = await self._repo.get_by_api_key(api_key_value)
         if not db_key:
             raise EntityNotFoundError("API key")
-        if user_id is not None and db_key.user_id != user_id:
-            raise AuthorizationError("API key does not belong to you.")
 
+        # Check authorization (owner can only update own keys)
+        if user_id is not None and db_key.user_id != user_id:
+            raise AuthorizationError(
+                message="You do not have permission to update this API key. API keys can only be updated by their owner.",
+                code="UNAUTHORIZED_API_KEY_UPDATE",
+            )
+
+        # Validate permissions if provided
+        permissions = data.get("permissions")
+        if permissions is not None:
+            await self._validate_permission_ids(permissions)
+
+        # Validate expires_days if provided
         expires_days = data.pop("expires_days", None)
         if expires_days is not None:
+            if not isinstance(expires_days, int) or expires_days < 1:
+                raise ValidationError(
+                    message="Invalid expires_days. Must be a positive integer.",
+                    code="INVALID_EXPIRES_DAYS",
+                )
             data["expires_at"] = datetime.now(timezone.utc) + timedelta(days=expires_days)
+
+        # Set updated_by
         if user_id is not None:
             data["updated_by"] = str(user_id)
 
+        # Update in database
         await self._repo.update(db_key, data)
         await self._repo.refresh(db_key)
 
@@ -174,6 +224,7 @@ class APIKeyService:
             )
 
         await self._repo.commit()
+        logger.info("API key updated: api_key=%s user=%s", api_key_value, db_key.user_id)
         return db_key
 
     async def list_by_user(self, user_id: UUID) -> list[APIKey]:
