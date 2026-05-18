@@ -16,6 +16,7 @@ from ai4icore_email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks, HTTPException, status
 
 from app.core.config import settings
+from app.core.constants import USERNAME_MAX_LENGTH
 from app.core.exceptions import (
     DuplicateEntityError,
     EntityNotFoundError,
@@ -66,17 +67,38 @@ class TenantService:
     # ── Helpers ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def derive_username_from_email(email: str) -> str:
-        """Build a default username from the email's local part.
+    def _sanitize_username_segment(value: str) -> str:
+        """Keep only [a-zA-Z0-9_]; collapse to a single underscore-separated segment."""
+        return re.sub(r"[^a-zA-Z0-9_]", "_", (value or "").strip()).strip("_") or "user"
 
-        Used when auto-provisioning a tenant admin from the contact email.
-        Replaces non [a-zA-Z0-9_] chars with underscores; pads to ≥3 chars.
+    @classmethod
+    def derive_tenant_admin_username(cls, email: str, organisation: str) -> str:
+        """Build a tenant-admin username from email local part + organisation.
+
+        Same person at different orgs (e.g. name@tarento.com vs name@irctc.com)
+        gets distinct usernames: ``ambarish_ganguly_tarento`` vs ``ambarish_ganguly_irctc``.
         """
-        local = email.split("@", 1)[0]
-        sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", local).strip("_") or "user"
-        if len(sanitized) < 3:
-            sanitized = (sanitized + "_user")[:100]
-        return sanitized[:100]
+        local = cls._sanitize_username_segment(email.split("@", 1)[0])
+        org = cls._sanitize_username_segment(organisation)
+        if len(local) < 3:
+            local = f"{local}_user"[:50]
+        base = f"{local}_{org}"
+        if len(base) < 3:
+            base = "tenant_admin"
+        return base[:USERNAME_MAX_LENGTH]
+
+    async def _allocate_unique_username(self, base: str) -> str:
+        """Return ``base`` or ``base_2``, ``base_3``, … if the username is taken."""
+        candidate = base[:USERNAME_MAX_LENGTH]
+        if not await self._users.get_by_username(candidate):
+            return candidate
+        for counter in range(2, 10_000):
+            suffix = f"_{counter}"
+            trimmed = base[: USERNAME_MAX_LENGTH - len(suffix)]
+            candidate = f"{trimmed}{suffix}"
+            if not await self._users.get_by_username(candidate):
+                return candidate
+        raise DuplicateEntityError("User", "username")
 
     async def is_system_admin(self, user: User) -> bool:
         roles = await self._roles.get_user_roles(user.id)
@@ -225,19 +247,19 @@ class TenantService:
         )
         await self._tenants.create(tenant)  # flush only — tenant_id now populated
 
-        # Auto-provision the first admin user for this tenant. Username derives
-        # from the email local part; on collision DuplicateEntityError rolls
-        # the whole transaction back.
+        admin_username = await self._allocate_unique_username(
+            self.derive_tenant_admin_username(body.email, body.organisation)
+        )
         await self.provision_user(
             email=body.email,
-            username=self.derive_username_from_email(body.email),
+            username=admin_username,
             full_name=body.contact_name,
             phone_number=body.phone_number,
             tenant_id=str(tenant.id),
             creation_type="tenant",
             role_name=RoleName.TENANT_ADMIN,
             background_tasks=background_tasks,
-            email_kind="setup", # just change this to "verify" if you want to send a verify-email link instead
+            email_kind="setup",
         )
 
         # provision_user committed; refresh to surface server-side defaults.
