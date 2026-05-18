@@ -3,11 +3,13 @@ Authentication routes: register, login, logout, refresh, password management,
 and email activation (provision + set-password).
 """
 
+from uuid import UUID
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from app.core.config import settings
 from app.core.responses import success_response
-from app.dependencies.auth import get_current_user
+from app.dependencies.auth import get_current_user, get_current_user_id
 from app.dependencies.services import get_auth_service
 from app.models.user import User
 from app.schemas.auth import (
@@ -156,10 +158,10 @@ async def refresh_token(
 
 @router.post("/logout")
 async def logout(
-    current_user: User = Depends(get_current_user),
+    user_id: UUID = Depends(get_current_user_id),
     svc: AuthService = Depends(get_auth_service),
 ):
-    await svc.logout(user_id=current_user.id)
+    await svc.logout(user_id=user_id)
     return LogoutResponse(message="Logged out successfully.", logged_out=True)
 
 

@@ -22,8 +22,8 @@ class UpdateAPIKeyRequest(BaseSchema):
     key_name: Optional[str] = Field(None, min_length=1, max_length=100)
     permissions: Optional[list[int]] = None
     expires_days: Optional[int] = Field(None, ge=1)
+    is_active: Optional[bool] = None
     # api_key is now provided as a path parameter
-    # is_active is intentionally excluded — revocation is only via DELETE /api-keys/{api_key}
 
 
 # ── Responses ──

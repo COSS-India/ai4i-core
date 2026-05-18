@@ -209,19 +209,27 @@ class APIKeyService:
         await self._repo.update(db_key, data)
         await self._repo.refresh(db_key)
 
-        # Refresh Redis with updated data
-        updated_permissions = data.get("permissions") or db_key.permissions or []
-        expires_at = db_key.expires_at
-        if expires_at:
-            ttl = max(0, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
+        # If key is being revoked (is_active set to False), evict from Redis
+        if data.get("is_active") is False:
+            await self._cache.delete_api_key_cache(api_key_value)
         else:
-            ttl = int(timedelta(days=settings.api_key_expire_days).total_seconds())
-        if ttl > 0:
-            await self._cache.set_api_key_cache(
-                api_key_value,
-                ttl,
-                {"api_key": api_key_value, "permissions": updated_permissions, "user_id": str(db_key.user_id)},
-            )
+            # Otherwise refresh Redis with updated data
+            updated_permissions = data.get("permissions") or db_key.permissions or []
+            expires_at = db_key.expires_at
+            if expires_at:
+                ttl = max(0, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
+            else:
+                ttl = int(timedelta(days=settings.api_key_expire_days).total_seconds())
+            if ttl > 0:
+                await self._cache.set_api_key_cache(
+                    api_key_value,
+                    ttl,
+                    {
+                        "api_key": api_key_value,
+                        "permissions": updated_permissions,
+                        "user_id": str(db_key.user_id),
+                    },
+                )
 
         await self._repo.commit()
         logger.info("API key updated: api_key=%s user=%s", api_key_value, db_key.user_id)

@@ -48,7 +48,7 @@ class AuthService {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
-    
+
     const defaultHeaders: HeadersInit = {
       'Content-Type': 'application/json',
     };
@@ -71,15 +71,15 @@ class AuthService {
     const timeoutMs = 10000;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    
+
     try {
       const response = await fetch(url, {
         ...config,
         signal: controller.signal,
       });
-      
+
       clearTimeout(timeoutId);
-      
+
       if (!response.ok) {
         let errorData: any = {};
         try {
@@ -106,7 +106,7 @@ class AuthService {
           }
           throw new Error('Your organization account is no longer active. Please sign in again.');
         }
-        
+
         // Extract error message from various possible formats (avoid [object Object] when detail is an object)
         let errorMessage = `HTTP error! status: ${response.status}`;
         if (errorData?.detail) {
@@ -127,12 +127,12 @@ class AuthService {
         } else if (Array.isArray(errorData) && errorData.length > 0) {
           errorMessage = errorData.map((err: any) => err.detail?.message ?? err.detail ?? err.message ?? String(err)).join(', ');
         }
-        
+
         // Check if error is "Invalid authentication credentials" (session expiry)
         const errorMessageLower = errorMessage.toLowerCase();
         const isInvalidAuth = errorMessageLower.includes('invalid authentication credentials') ||
                             (response.status === 401 && errorMessageLower.includes('invalid'));
-        
+
         if (isInvalidAuth && typeof window !== 'undefined') {
           // Clear tokens and redirect to login
           this.clearAuthTokens();
@@ -140,7 +140,7 @@ class AuthService {
           window.location.href = '/';
           throw new Error('Session expired. Please sign in again.');
         }
-        
+
         // Add status code to error message for debugging
         const error = new Error(errorMessage);
         (error as any).status = response.status;
@@ -242,7 +242,7 @@ class AuthService {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
-    
+
     const defaultHeaders: HeadersInit = {
       'Content-Type': 'application/json',
     };
@@ -257,7 +257,7 @@ class AuthService {
 
     try {
       const response = await fetch(url, config);
-      
+
       if (!response.ok) {
         let errorData: any = {};
         try {
@@ -274,7 +274,7 @@ class AuthService {
           console.error('Failed to parse error response:', textError);
           errorData = {};
         }
-        
+
         // Handle different error response formats (avoid [object Object] when detail is an object)
         let errorMessage = `HTTP error! status: ${response.status}`;
         if (typeof errorData === 'string') {
@@ -303,7 +303,7 @@ class AuthService {
             ? String((d as any).message)
             : d != null ? String(d) : JSON.stringify(errorData);
         }
-        
+
         // Add status code to error for better debugging
         const error = new Error(errorMessage);
         (error as any).status = response.status;
@@ -344,7 +344,7 @@ class AuthService {
   async logout(data: LogoutRequest = {}): Promise<LogoutResponse> {
     // Get refresh token from storage (received during login)
     const refreshToken = this.getRefreshToken();
-    
+
     // Always clear local state, even if API call fails
     const clearLocalState = () => {
       this.clearTokens();
@@ -425,7 +425,7 @@ class AuthService {
     timeoutMs: number = 10000
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
-    
+
     const defaultHeaders: HeadersInit = {
       'Content-Type': 'application/json',
     };
@@ -447,15 +447,15 @@ class AuthService {
     // Use custom timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    
+
     try {
       const response = await fetch(url, {
         ...config,
         signal: controller.signal,
       });
-      
+
       clearTimeout(timeoutId);
-      
+
       if (!response.ok) {
         let errorData: any = {};
         try {
@@ -467,7 +467,7 @@ class AuthService {
           // If JSON parsing fails, use empty object
           errorData = {};
         }
-        
+
         // Extract error message from various possible formats
         let errorMessage = `HTTP error! status: ${response.status}`;
         if (errorData?.detail) {
@@ -479,7 +479,7 @@ class AuthService {
         } else if (Array.isArray(errorData) && errorData.length > 0) {
           errorMessage = errorData.map((err: any) => err.detail || err.message || String(err)).join(', ');
         }
-        
+
         // Add status code to error for better debugging
         const error = new Error(errorMessage);
         (error as any).status = response.status;
@@ -611,14 +611,14 @@ class AuthService {
     return this.request<AdminAPIKeyWithUserResponse[]>('/api-keys/all');
   }
 
-  async revokeApiKey(keyId: number): Promise<{ message: string }> {
-    return this.request<{ message: string }>(`/api-keys/${keyId}`, {
+  async revokeApiKey(apiKeyValue: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/api-keys/${apiKeyValue}`, {
       method: 'DELETE',
     });
   }
 
-  async updateApiKey(keyId: number, updateData: APIKeyUpdate): Promise<APIKeyResponse> {
-    return this.request<APIKeyResponse>(`/api-keys/${keyId}`, {
+  async updateApiKey(apiKeyValue: string, updateData: APIKeyUpdate): Promise<APIKeyResponse> {
+    return this.request<APIKeyResponse>(`/api-keys/${apiKeyValue}`, {
       method: 'PATCH',
       body: JSON.stringify(updateData),
     });
@@ -698,7 +698,7 @@ class AuthService {
       if (parts.length !== 3) {
         return null;
       }
-      
+
       // Decode the payload (second part)
       const payload = parts[1];
       const decoded = atob(payload);
@@ -751,7 +751,7 @@ class AuthService {
 
     const thresholdMs = thresholdMinutes * 60 * 1000;
     const timeUntilExpiry = expiry - Date.now();
-    
+
     return timeUntilExpiry < thresholdMs;
   }
 
@@ -856,7 +856,7 @@ class AuthService {
     }
     const now = Date.now();
     const rememberMe = localStorage.getItem('remember_me') === 'true';
-    const sessionDurationMs = rememberMe 
+    const sessionDurationMs = rememberMe
       ? 7 * 24 * 60 * 60 * 1000  // 7 days
       : 24 * 60 * 60 * 1000;      // 24 hours
     return (now - loginTimestamp) >= sessionDurationMs;
@@ -874,7 +874,7 @@ class AuthService {
     }
     const now = Date.now();
     const rememberMe = localStorage.getItem('remember_me') === 'true';
-    const sessionDurationMs = rememberMe 
+    const sessionDurationMs = rememberMe
       ? 7 * 24 * 60 * 60 * 1000  // 7 days
       : 24 * 60 * 60 * 1000;      // 24 hours
     const timeRemaining = sessionDurationMs - (now - loginTimestamp);
