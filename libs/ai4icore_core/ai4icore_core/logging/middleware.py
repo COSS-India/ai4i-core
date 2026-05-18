@@ -11,8 +11,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request, Response
 from typing import Optional
 
-from ai4icore_core.env import app_env
-
+from .config import get_default_config
 from .context import set_trace_id, get_trace_id, generate_trace_id
 from .logger import get_logger
 
@@ -148,12 +147,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
 
-        # Read filtering configuration from db_settings
-        self.exclude_health_logs = app_env.exclude_health_logs
-        self.exclude_metrics_logs = app_env.exclude_metrics_logs
+        # Read filtering configuration from LoggingConfig
+        cfg = get_default_config()
+        self.exclude_health_logs = cfg.exclude_health_logs
+        self.exclude_metrics_logs = cfg.exclude_metrics_logs
 
         # Parse minimum log level
-        min_log_level_str = app_env.min_log_level.upper()
+        min_log_level_str = (cfg.min_log_level or "INFO").upper()
         self.min_log_level = getattr(logging, min_log_level_str, logging.INFO)
 
         # Get logger

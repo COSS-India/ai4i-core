@@ -16,8 +16,7 @@ from typing import Any, Callable, Dict, Optional, Set
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from ai4icore_core.env import app_env
-
+from .config import get_default_config
 from .logger import get_logger
 from .middleware import get_correlation_id
 
@@ -27,11 +26,6 @@ try:
     TRACING_AVAILABLE = True
 except Exception:
     TRACING_AVAILABLE = False
-
-
-def _parse_bool_env(name: str, default: str = "false") -> bool:
-    raw = getattr(app_env, name.lower(), default)
-    return bool(raw) if isinstance(raw, bool) else str(raw).lower().strip() in ("true", "1", "yes", "on")
 
 
 def _parse_allowed_levels_env(raw: str) -> Set[int]:
@@ -89,27 +83,26 @@ class ServiceRequestLoggingMiddleware(BaseHTTPMiddleware):
     ):
         super().__init__(app)
 
-        # Filtering configuration
-        self.exclude_health_logs = app_env.exclude_health_logs
-        self.exclude_metrics_logs = app_env.exclude_metrics_logs
-        self.exclude_options_logs = app_env.exclude_options_logs
+        # Filtering configuration (read from LoggingConfig)
+        cfg = get_default_config()
+        self.exclude_health_logs = cfg.exclude_health_logs
+        self.exclude_metrics_logs = cfg.exclude_metrics_logs
+        self.exclude_options_logs = cfg.exclude_options_logs
         self.include_4xx = include_4xx
-        include_paths_raw = app_env.request_log_include_paths
-        self.include_paths = _parse_csv_paths_env(include_paths_raw)
+        self.include_paths = _parse_csv_paths_env(cfg.request_log_include_paths)
 
         # Allowed levels configuration
-        allowed_raw = app_env.allowed_log_levels
-        self.allowed_log_levels = _parse_allowed_levels_env(allowed_raw)
+        self.allowed_log_levels = _parse_allowed_levels_env(cfg.allowed_log_levels)
 
         # Minimum log level fallback (only used when allowed_log_levels ends up empty)
-        min_log_level_str = app_env.min_log_level.upper()
+        min_log_level_str = (cfg.min_log_level or "INFO").upper()
         self.min_log_level = getattr(logging, min_log_level_str, logging.INFO)
 
         # Logger configuration
-        use_kafka = app_env.use_kafka_logging
+        use_kafka = cfg.use_kafka
         # If not provided, use a stable name per service for easier filtering
         if not logger_name:
-            svc = app_env.service_name
+            svc = cfg.service_name or ""
             logger_name = f"{svc}.request"
         self.logger = get_logger(logger_name, use_kafka=use_kafka)
 

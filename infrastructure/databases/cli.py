@@ -34,24 +34,21 @@ from infrastructure.databases.config import MigrationConfig
 
 class MigrationCLI:
     """Command-line interface for migrations"""
-    
-    DATABASES = ['postgres', 'redis', 'influxdb', 'elasticsearch', 'kafka']
+
+    DATABASES = ['postgres']
     POSTGRES_DBS = [
-        'auth_db',
         'ai4iplatform_auth',
         'ai4iplatform_core',
-        'config_db', 
+        'config_db',
         'alerting_db',
-        'metrics_db',
         'telemetry_db',
-        'dashboard_db',
-        'model_management_db',
+        'policy_db',
         'ai4i_platform'
     ]
-    
+
     def __init__(self):
         self.migrations_path = project_root / 'infrastructure' / 'databases' / 'migrations'
-        
+
     def run(self):
         """Run CLI"""
         parser = argparse.ArgumentParser(
@@ -59,13 +56,12 @@ class MigrationCLI:
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="""
 Examples:
-  # Run all pending migrations for all databases
+  # Run all pending migrations
   python cli.py migrate
 
-  # Run migrations for specific database (avoids InfluxDB/ES/Kafka errors if not running)
+  # Run migrations for specific database
   python cli.py migrate --database postgres
-  python cli.py migrate --database postgres --postgres-db auth_db
-  python cli.py migrate --database redis
+  python cli.py migrate --database postgres --postgres-db ai4iplatform_auth
 
   # Run specific number of migrations
   python cli.py migrate --database postgres --steps 3
@@ -97,20 +93,20 @@ Examples:
   python cli.py seed --class DefaultRolesSeeder --database postgres
             """
         )
-        
+
         parser.add_argument('command', help='Command to run')
         parser.add_argument('name', nargs='?', help='Migration or seeder name (for make:migration)')
         parser.add_argument('--database', '-d', choices=self.DATABASES, help='Database type')
-        parser.add_argument('--postgres-db', choices=self.POSTGRES_DBS, default='auth_db',
-                          help='PostgreSQL database name (default: auth_db)')
+        parser.add_argument('--postgres-db', choices=self.POSTGRES_DBS, default='ai4iplatform_auth',
+                          help='PostgreSQL database name (default: ai4iplatform_auth)')
         parser.add_argument('--steps', '-s', type=int, help='Number of steps')
         parser.add_argument('--class', '-c', dest='seeder_class', help='Seeder class name')
         parser.add_argument('--seed', action='store_true', help='Run seeders after migration')
         parser.add_argument('--force', '-y', action='store_true', dest='force',
                           help='Skip confirmation prompts (e.g. for migrate:fresh)')
-        
+
         args = parser.parse_args()
-        
+
         # Route to appropriate command
         command_map = {
             'migrate': self.migrate,
@@ -124,12 +120,12 @@ Examples:
             'seed:all': self.seed_all,
             'report': self.report,
         }
-        
+
         if args.command not in command_map:
             print(f"❌ Unknown command: {args.command}")
             parser.print_help()
             sys.exit(1)
-        
+
         # Execute command
         try:
             command_map[args.command](args)
@@ -141,64 +137,64 @@ Examples:
             import traceback
             traceback.print_exc()
             sys.exit(1)
-    
+
     def migrate(self, args):
         """Run migrations"""
         databases = [args.database] if args.database else self.DATABASES
-        
+
         print("\n" + "=" * 80)
         print("🚀 Running Database Migrations")
         print("=" * 80)
-        
+
         for db_type in databases:
             try:
                 manager = self._get_manager(db_type, args.postgres_db if db_type == 'postgres' else None)
                 manager.migrate(steps=args.steps)
             except Exception as e:
                 print(f"❌ Error migrating {db_type}: {str(e)}")
-        
+
         print("=" * 80)
         print("✅ Migration process completed!")
         print("=" * 80 + "\n")
-    
+
     def rollback(self, args):
         """Rollback migrations"""
         if not args.database:
             print("❌ Please specify --database for rollback")
             sys.exit(1)
-        
+
         print("\n" + "=" * 80)
         print(f"🔄 Rolling Back {args.database.upper()} Migrations")
         print("=" * 80)
-        
+
         manager = self._get_manager(args.database, args.postgres_db if args.database == 'postgres' else None)
         manager.rollback(steps=args.steps or 1)
-        
+
         print("=" * 80 + "\n")
-    
+
     def status(self, args):
         """Show migration status"""
         databases = [args.database] if args.database else self.DATABASES
-        
+
         print("\n" + "=" * 80)
         print("📊 Migration Status")
         print("=" * 80 + "\n")
-        
+
         for db_type in databases:
             try:
                 manager = self._get_manager(db_type, args.postgres_db if db_type == 'postgres' else None)
                 manager.status()
             except Exception as e:
                 print(f"❌ Error checking status for {db_type}: {str(e)}\n")
-        
+
         print("=" * 80 + "\n")
-    
+
     def fresh(self, args):
         """Fresh migration (drop all and re-run)"""
         if not args.database:
             print("❌ Please specify --database for fresh migration")
             sys.exit(1)
-        
+
         # Confirmation unless --force / -y
         if not getattr(args, 'force', False):
             print("\n⚠️  WARNING: This will DROP ALL DATA in the database!")
@@ -206,16 +202,16 @@ Examples:
             if response.lower() != 'yes':
                 print("❌ Operation cancelled")
                 sys.exit(0)
-        
+
         print("\n" + "=" * 80)
         print(f"🔨 Fresh Migration for {args.database.upper()}")
         if args.database == 'postgres':
             print(f"   Database: {args.postgres_db}")
         print("=" * 80)
-        
+
         manager = self._get_manager(args.database, args.postgres_db if args.database == 'postgres' else None)
         manager.fresh(seed=args.seed)
-        
+
         print("=" * 80 + "\n")
 
     def fresh_all(self, args):
@@ -226,11 +222,11 @@ Examples:
             if response.lower() != 'yes':
                 print("❌ Operation cancelled")
                 sys.exit(0)
-        
+
         print("\n" + "=" * 80)
         print("🔨 Fresh Migration for ALL Postgres Databases")
         print("=" * 80)
-        
+
         failed = []
         for db in self.POSTGRES_DBS:
             try:
@@ -240,7 +236,7 @@ Examples:
             except Exception as e:
                 print(f"  ❌ Failed: {db} - {str(e)}")
                 failed.append((db, str(e)))
-        
+
         print("\n" + "=" * 80)
         if failed:
             print(f"⚠️  Fresh completed with {len(failed)} failure(s). Ensure PostgreSQL is running (e.g. localhost:5432, or 5434 if using docker-compose-simple.yml).")
@@ -249,55 +245,55 @@ Examples:
         else:
             print("✅ Fresh (clean + migrate) completed for all Postgres DBs!")
         print("=" * 80 + "\n")
-        
+
         if getattr(args, 'seed', False) and not failed:
             print("🌱 Running seed:all...\n")
             self.seed_all(args)
-    
+
     def make_migration(self, args):
         """Create new migration file"""
         if not args.name:
             print("❌ Please provide migration name")
             sys.exit(1)
-        
+
         if not args.database:
             print("❌ Please specify --database")
             sys.exit(1)
-        
+
         print("\n" + "=" * 80)
         print("📝 Creating New Migration")
         print("=" * 80 + "\n")
-        
+
         manager = self._get_manager(args.database, args.postgres_db if args.database == 'postgres' else None)
         filepath = manager.make_migration(args.name)
-        
+
         print(f"\n📄 Migration file created at:")
         print(f"   {filepath}\n")
         print("=" * 80 + "\n")
-    
+
     def seed(self, args):
         """Run database seeders"""
         if not args.database:
             print("❌ Please specify --database for seeding")
             sys.exit(1)
-        
+
         print("\n" + "=" * 80)
         print(f"🌱 Running {args.database.upper()} Seeders")
         print("=" * 80)
-        
+
         manager = self._get_manager(args.database, args.postgres_db if args.database == 'postgres' else None)
         manager.seed(seeder_class=args.seeder_class)
-        
+
         print("=" * 80 + "\n")
-    
+
     def migrate_all(self, args):
         """Migrate all databases automatically"""
         print("\n" + "="*80)
         print("🚀 Migrating ALL Databases (Auto-Discovery)")
         print("="*80 + "\n")
-        
+
         failed = []
-        
+
         # Migrate all PostgreSQL databases
         print("📊 PostgreSQL Databases:")
         for db in self.POSTGRES_DBS:
@@ -308,18 +304,7 @@ Examples:
             except Exception as e:
                 print(f"  ❌ Failed: {db} - {str(e)}")
                 failed.append(('postgres', db))
-        
-        # Migrate other databases
-        print("\n📊 Other Databases:")
-        for db in ['redis', 'influxdb', 'elasticsearch', 'kafka']:
-            try:
-                print(f"\n  🗄️  Migrating {db}...")
-                manager = self._get_manager(db)
-                manager.migrate()
-            except Exception as e:
-                print(f"  ❌ Failed: {db} - {str(e)}")
-                failed.append((db, None))
-        
+
         print("\n" + "="*80)
         if failed:
             print(f"⚠️  {len(failed)} database(s) failed:")
@@ -328,20 +313,20 @@ Examples:
         else:
             print("✅ All databases migrated successfully!")
         print("="*80 + "\n")
-    
+
     def seed_all(self, args):
         """Seed all databases automatically"""
         print("\n" + "="*80)
         print("🌱 Seeding ALL Databases (Auto-Discovery)")
         print("="*80 + "\n")
-        
+
         # Databases that have seeders
         postgres_dbs_with_seeders = [
-            'auth_db', 'ai4iplatform_auth', 'ai4iplatform_core',
+            'ai4iplatform_auth', 'ai4iplatform_core',
             'config_db', 'alerting_db',
-            'dashboard_db', 'model_management_db', 'ai4i_platform'
+            'policy_db', 'ai4i_platform'
         ]
-        
+
         # Seed PostgreSQL databases
         print("📊 PostgreSQL Databases:")
         for db in postgres_dbs_with_seeders:
@@ -352,30 +337,20 @@ Examples:
             except Exception as e:
                 print(f"  ⚠️  Failed seeding {db}: {e}")
 
-        # Seed other databases
-        print("\n📊 Other Databases:")
-        for db in ['redis', 'influxdb']:
-            try:
-                print(f"\n  🌱 Seeding {db}...")
-                manager = self._get_manager(db)
-                manager.seed()
-            except Exception as e:
-                print(f"  ⚠️  Failed seeding {db}: {e}")
-        
         print("\n" + "="*80)
         print("✅ Seeding completed!")
         print("="*80 + "\n")
-    
+
     def report(self, args):
         """Report: how many Postgres DBs, tables per DB, and row counts."""
         print("\n" + "=" * 80)
         print("📊 Postgres Databases Report (tables + row counts)")
         print("=" * 80)
-        
+
         total_dbs = 0
         total_tables = 0
         total_rows = 0
-        
+
         for db in self.POSTGRES_DBS:
             try:
                 manager = self._get_manager('postgres', db)
@@ -387,11 +362,11 @@ Examples:
                     tables = [r[0] for r in tables_result]
                     total_dbs += 1
                     db_rows = 0
-                    
+
                     if not tables:
                         print(f"\n  📁 {db}: 0 tables, 0 rows")
                         continue
-                    
+
                     print(f"\n  📁 {db}: {len(tables)} table(s)")
                     for t in tables:
                         try:
@@ -407,7 +382,7 @@ Examples:
                     print(f"      Subtotal: {len(tables)} tables, {db_rows} rows")
             except Exception as e:
                 print(f"\n  ⚠️  {db}: skip ({e})")
-        
+
         print("\n" + "=" * 80)
         print(f"  Total: {total_dbs} database(s), {total_tables} table(s), {total_rows} row(s)")
         print("=" * 80 + "\n")
@@ -415,11 +390,11 @@ Examples:
     def _get_manager(self, database_type: str, postgres_db: str = None) -> MigrationManager:
         """
         Get migration manager for database type
-        
+
         Args:
             database_type: Type of database
             postgres_db: PostgreSQL database name (for postgres only)
-            
+
         Returns:
             MigrationManager instance
         """
@@ -427,13 +402,13 @@ Examples:
         kwargs = {}
         if database_type == 'postgres' and postgres_db:
             kwargs['database'] = postgres_db
-        
+
         config = MigrationConfig.get_config_for_database(database_type, **kwargs)
-        
+
         # Get adapter
         adapter_class = MigrationConfig.get_adapter_class(database_type)
         adapter = adapter_class(config)
-        
+
         # Create manager
         return MigrationManager(
             migrations_path=str(self.migrations_path),

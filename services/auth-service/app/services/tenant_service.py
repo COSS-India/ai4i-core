@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Literal, Optional
 from uuid import UUID
 
-from ai4icore_email import EmailClient, EmailMessage
+from ai4icore_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks, HTTPException, status
 
 from app.core.config import settings

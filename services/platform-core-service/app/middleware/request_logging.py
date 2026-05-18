@@ -6,7 +6,7 @@ available (e.g. test environments without the lib installed).
 """
 
 try:
-    from ai4icore_logging import RequestLoggingMiddleware  # type: ignore  # noqa: F401
+    from ai4icore_core.logging import RequestLoggingMiddleware  # type: ignore  # noqa: F401
 
 except ImportError:
     import logging

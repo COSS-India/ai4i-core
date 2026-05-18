@@ -1,5 +1,7 @@
 """
-Auth service configuration — extends ai4icore_env with auth-specific settings.
+Auth service configuration — self-contained pydantic-settings class.
+
+Reads its own environment variables; no dependency on a shared env library.
 """
 
 from pathlib import Path

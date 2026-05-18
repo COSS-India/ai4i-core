@@ -9,7 +9,7 @@ import logging
 from typing import Optional
 
 import redis.asyncio as aioredis
-from ai4icore_bootstrap.cache import CacheService as _BaseCacheService
+from ai4icore_core.bootstrap.cache import CacheService as _BaseCacheService
 
 logger = logging.getLogger(__name__)
 
@@ -48,4 +48,3 @@ class CacheService(_BaseCacheService):
     async def delete_api_key_cache(self, api_key: str) -> None:
         """Immediately invalidate an API key — used on revocation."""
         await self._redis.delete(f"{REDIS_API_KEY_PREFIX}{api_key}")
-

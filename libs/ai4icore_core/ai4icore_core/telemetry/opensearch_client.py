@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 import httpx
 
-from ai4icore_core.env import app_env
+from .config import get_default_config
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +40,10 @@ class OpenSearchQueryClient:
             verify_certs: Whether to verify SSL certificates
             index_pattern: Index pattern to search (default: "logs-*")
         """
-        self.url = url or app_env.opensearch_url
-        self.username = username or app_env.opensearch_username
-        self.password = password or app_env.opensearch_password
+        cfg = get_default_config()
+        self.url = url or cfg.opensearch_url
+        self.username = username or cfg.opensearch_username
+        self.password = password or cfg.opensearch_password
         self.index_pattern = index_pattern
         self.verify_certs = verify_certs
 

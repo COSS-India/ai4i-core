@@ -1,95 +1,79 @@
 """
 Configuration system for AI4ICore Logging Plugin
 
-Handles environment variables, defaults, and plugin configuration.
+Reads its own environment variables via pydantic-settings — no dependency
+on ai4icore_core.env. All historical env var names are preserved.
 """
 import logging
-from typing import Optional, Dict, Any
-from dataclasses import dataclass
+from typing import Any, Dict, Optional
 
-from ai4icore_core.env import app_env
+from pydantic import AliasChoices, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-@dataclass
-class LoggingConfig:
+def _level_from_str(s: Optional[str], default: int) -> int:
+    """Convert a string log level (e.g. 'INFO') to logging.<LEVEL>, with a default."""
+    if not s:
+        return default
+    return getattr(logging, s.upper(), default)
+
+
+class LoggingConfig(BaseSettings):
     """Configuration for AI4ICore Logging Plugin."""
 
-    # Core settings
-    enabled: bool = True
-    service_name: Optional[str] = None
-    service_version: Optional[str] = None
-    environment: Optional[str] = None
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
-    # Logging settings
-    log_level: Optional[int] = None
-    root_level: Optional[int] = None
-    use_kafka: bool = False
-    kafka_topic: str = "logs"
+    # ── Service identity (shared env vars; no prefix) ──
+    service_name: str = ""
+    service_version: str = "1.0.0"
+    environment: str = Field(default="development", validation_alias=AliasChoices("ENVIRONMENT", "ENV", "environment"))
 
-    # Middleware settings
+    # ── Master toggle ──
+    enabled: bool = Field(default=True, validation_alias=AliasChoices("LOGGING_PLUGIN_ENABLED", "enabled"))
+
+    # ── Log level (raw string from env; resolved property below) ──
+    log_level_raw: str = Field(default="INFO", validation_alias=AliasChoices("LOG_LEVEL", "log_level_raw"))
+    root_log_level_raw: Optional[str] = Field(
+        default=None, validation_alias=AliasChoices("ROOT_LOG_LEVEL", "root_log_level_raw")
+    )
+
+    # ── Kafka shipping ──
+    use_kafka: bool = Field(default=False, validation_alias=AliasChoices("USE_KAFKA_LOGGING", "use_kafka"))
+    kafka_topic: str = Field(default="logs", validation_alias=AliasChoices("KAFKA_LOG_TOPIC", "kafka_topic"))
+    kafka_bootstrap_servers: str = ""
+
+    # ── Middleware toggles ──
     correlation_middleware_enabled: bool = True
     request_logging_middleware_enabled: bool = True
 
-    # Request logging filtering
+    # ── Request-logging filtering ──
     exclude_health_logs: bool = False
     exclude_metrics_logs: bool = False
     exclude_options_logs: bool = True
-    allowed_log_levels: Optional[str] = None  # Comma-separated: "DEBUG,INFO,WARNING,ERROR"
-    min_log_level: Optional[str] = None  # Fallback: "INFO"
-    include_4xx_logs: bool = False  # Default: skip 4xx (gateway logs them)
+    allowed_log_levels: str = ""
+    min_log_level: str = "INFO"
+    include_4xx_logs: bool = False
 
-    # Correlation middleware settings
+    # ── Correlation middleware ──
     correlation_header_name: str = "X-Correlation-ID"
 
-    def __post_init__(self):
-        """Initialize configuration from environment variables."""
-        # Core settings
-        if self.service_name is None:
-            self.service_name = app_env.service_name
-        if self.service_version is None:
-            self.service_version = app_env.service_version
-        if self.environment is None:
-            self.environment = app_env.environment or app_env.env
+    # ── Service-to-service request logging ──
+    request_log_include_paths: str = ""
 
-        # Logging settings
-        if self.log_level is None:
-            log_level_str = app_env.log_level.upper()
-            self.log_level = getattr(logging, log_level_str, logging.INFO)
-        if self.root_level is None:
-            root_level_str = app_env.root_log_level
-            if root_level_str:
-                self.root_level = getattr(logging, root_level_str.upper(), logging.WARNING)
-            else:
-                self.root_level = logging.WARNING
+    # ---- Derived properties ----
 
-        self.use_kafka = app_env.use_kafka_logging
+    @property
+    def log_level(self) -> int:
+        return _level_from_str(self.log_level_raw, logging.INFO)
 
-        self.kafka_topic = app_env.kafka_log_topic or self.kafka_topic
-
-        # Middleware settings
-        self.enabled = app_env.logging_plugin_enabled
-
-        self.correlation_middleware_enabled = app_env.correlation_middleware_enabled
-
-        self.request_logging_middleware_enabled = app_env.request_logging_middleware_enabled
-
-        # Request logging filtering
-        self.exclude_health_logs = app_env.exclude_health_logs
-
-        self.exclude_metrics_logs = app_env.exclude_metrics_logs
-
-        self.exclude_options_logs = app_env.exclude_options_logs
-
-        if self.allowed_log_levels is None:
-            self.allowed_log_levels = app_env.allowed_log_levels
-
-        if self.min_log_level is None:
-            self.min_log_level = app_env.min_log_level
-
-        self.include_4xx_logs = app_env.include_4xx_logs
-
-        # Correlation middleware settings
-        self.correlation_header_name = app_env.correlation_header_name or self.correlation_header_name
+    @property
+    def root_level(self) -> int:
+        return _level_from_str(self.root_log_level_raw, logging.WARNING)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""
@@ -122,3 +106,17 @@ class LoggingConfig:
     def from_env(cls) -> "LoggingConfig":
         """Create configuration from environment variables."""
         return cls()
+
+
+# Lazy module-level singleton — used by formatters/handlers/middleware that
+# need a config but aren't passed one explicitly. We instantiate lazily so
+# that env vars set after import time (e.g. in tests) still take effect.
+_default_config: Optional[LoggingConfig] = None
+
+
+def get_default_config() -> LoggingConfig:
+    """Return the cached default LoggingConfig, instantiating on first call."""
+    global _default_config
+    if _default_config is None:
+        _default_config = LoggingConfig()
+    return _default_config
