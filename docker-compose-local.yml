@@ -283,27 +283,6 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  docs-manager:
-    build:
-      context: .
-      dockerfile: ./services/docs-manager/Dockerfile
-    container_name: ai4v-docs-manager
-    ports:
-      - "8106:8103"
-    environment:
-      - SPECS_ROOT=/app/specs
-      - SERVICE_DOCS_REGISTRY_PATH=/app/specs/service-docs-registry.yaml
-    env_file:
-      - ./.env
-    volumes:
-      - ./services/docs-manager:/app
-    command: ["--reload"]
-    networks:
-      microservices-network:
-        aliases:
-          - docs-manager-service
-    restart: unless-stopped
-
   metrics-service:
     build:
       context: .
