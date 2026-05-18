@@ -67,25 +67,34 @@ async def list_api_keys(
     return success_response(data={"api_keys": [_key_dict(k) for k in keys]})
 
 
-@router.patch("/api-keys")
+@router.patch("/api-keys/{api_key}")
 async def update_api_key(
+    api_key: str,
     body: UpdateAPIKeyRequest,
     current_user: User = Depends(get_current_user),
     svc: APIKeyService = Depends(get_api_key_service),
 ):
+    # Only allow updating if at least one field is provided
     update_data = body.model_dump(exclude={"api_key", "is_active"}, exclude_unset=True)
-    api_key = await svc.update_key(
-        api_key_value=body.api_key,
+    if not update_data:
+        from app.core.exceptions import ValidationError
+        raise ValidationError(
+            message="No fields to update. Provide at least one of: key_name, permissions, expires_days.",
+            code="NOTHING_TO_UPDATE",
+        )
+
+    updated_key = await svc.update_key(
+        api_key_value=api_key,
         data=update_data,
         user_id=current_user.id,
     )
     return success_response(data={
-        "api_key": api_key.api_key,
-        "key_name": api_key.key_name,
-        "user_id": str(api_key.user_id),
-        "permissions": api_key.permissions or [],
-        "expires_at": api_key.expires_at.isoformat() if api_key.expires_at else None,
-        "is_active": api_key.is_active,
+        "api_key": updated_key.api_key,
+        "key_name": updated_key.key_name,
+        "user_id": str(updated_key.user_id),
+        "permissions": updated_key.permissions or [],
+        "expires_at": updated_key.expires_at.isoformat() if updated_key.expires_at else None,
+        "is_active": updated_key.is_active,
     })
 
 
