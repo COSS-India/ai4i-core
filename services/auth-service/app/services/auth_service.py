@@ -9,6 +9,7 @@ from typing import Optional
 from uuid import UUID
 
 from ai4icore_email import EmailClient
+from ai4icore_exceptions import AuthorizationError
 from fastapi import BackgroundTasks
 
 from app.core.config import settings
@@ -24,7 +25,7 @@ from app.core.exceptions import (
     UserInactiveError,
 )
 from app.models.credentials import UserCredentials
-from app.models.tenant import TenantStatus
+from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
 from app.repositories.credentials_repository import CredentialsRepository
@@ -42,14 +43,53 @@ from app.services.auth_email_templates import (
 )
 from app.core.security import password_manager
 from app.services.email_helpers import enqueue_email, issue_session, persist_token_verification, resolve_tenant_id, setup_token_expires_at
-from app.services.tenant_auth_helpers import (
-    assert_tenant_allows_authentication,
-    assert_tenant_allows_onboarding,
-)
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
 
 logger = logging.getLogger(__name__)
+
+
+def assert_tenant_allows_authentication(tenant: Optional[Tenant]) -> None:
+    """Reject sign-in when the tenant is not ACTIVE."""
+    if tenant is None:
+        return
+
+    if tenant.status == TenantStatus.ACTIVE:
+        return
+
+    if tenant.status == TenantStatus.PENDING:
+        raise AuthorizationError(
+            message="Tenant status is pending. Complete tenant activation before signing in.",
+            code="TENANT_INACTIVE",
+        )
+    if tenant.status == TenantStatus.SUSPENDED:
+        raise AuthorizationError(
+            message="Your account access has been suspended. Please contact support.",
+            code="TENANT_SUSPENDED",
+        )
+    raise AuthorizationError(
+        message="Tenant is deactivated.",
+        code="TENANT_INACTIVE",
+    )
+
+
+def assert_tenant_allows_onboarding(tenant: Optional[Tenant]) -> None:
+    """Allow email verification and password setup while tenant is PENDING or ACTIVE."""
+    if tenant is None:
+        return
+
+    if tenant.status in (TenantStatus.PENDING, TenantStatus.ACTIVE):
+        return
+
+    if tenant.status == TenantStatus.SUSPENDED:
+        raise AuthorizationError(
+            message="Your account access has been suspended. Please contact support.",
+            code="TENANT_SUSPENDED",
+        )
+    raise AuthorizationError(
+        message="Tenant is deactivated.",
+        code="TENANT_INACTIVE",
+    )
 
 
 class AuthService:

@@ -4,6 +4,11 @@ Revision ID: c4e8f1a2b3d0
 Revises: b66dd69a00df
 Create Date: 2026-05-18 12:00:00.000000
 
+One-way migration: downgrade is intentionally unsupported.
+
+The legacy enum (activated, deactivated, suspended) has no PENDING label.
+Any downgrade that maps PENDING -> activated would silently collapse distinct
+tenant states. Restore from backup if rollback is required.
 """
 from typing import Sequence, Union
 
@@ -66,28 +71,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(
-        """
-        DO $migration$
-        BEGIN
-            ALTER TYPE tenant_status_enum RENAME TO tenant_status_enum_old;
-            CREATE TYPE tenant_status_enum AS ENUM (
-                'activated', 'deactivated', 'suspended'
-            );
-            ALTER TABLE tenants ALTER COLUMN status DROP DEFAULT;
-            ALTER TABLE tenants
-                ALTER COLUMN status TYPE tenant_status_enum
-                USING (
-                    CASE status::text
-                        WHEN 'ACTIVE' THEN 'activated'
-                        WHEN 'DEACTIVATED' THEN 'deactivated'
-                        WHEN 'SUSPENDED' THEN 'suspended'
-                        WHEN 'PENDING' THEN 'activated'
-                        ELSE 'activated'
-                    END
-                )::tenant_status_enum;
-            DROP TYPE tenant_status_enum_old;
-            ALTER TABLE tenants ALTER COLUMN status SET DEFAULT 'activated';
-        END $migration$;
-        """
+    raise NotImplementedError(
+        "Downgrade is not supported: legacy tenant_status_enum has no PENDING "
+        "label, so reverting would map PENDING tenants to 'activated' and lose "
+        "state. Restore from backup if rollback is required."
     )

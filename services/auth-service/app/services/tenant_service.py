@@ -88,14 +88,14 @@ class TenantService:
         return base[:USERNAME_MAX_LENGTH]
 
     async def _allocate_unique_username(self, base: str) -> str:
-        """Return ``base`` or ``base_2``, ``base_3``, … if the username is taken."""
-        candidate = base[:USERNAME_MAX_LENGTH]
-        if not await self._users.get_by_username(candidate):
-            return candidate
-        for counter in range(2, 10_000):
-            suffix = f"_{counter}"
-            trimmed = base[: USERNAME_MAX_LENGTH - len(suffix)]
-            candidate = f"{trimmed}{suffix}"
+        """Return ``base`` or ``base_2``, ``base_3`` if the username is taken."""
+        for i in range(3):
+            if i == 0:
+                candidate = base[:USERNAME_MAX_LENGTH]
+            else:
+                suffix = f"_{i + 1}"
+                trimmed = base[: USERNAME_MAX_LENGTH - len(suffix)]
+                candidate = f"{trimmed}{suffix}"
             if not await self._users.get_by_username(candidate):
                 return candidate
         raise DuplicateEntityError("User", "username")
