@@ -73,7 +73,7 @@ const apiKeyResponseRawSchema = z
     key_id: z.coerce.number().optional(),
     key_name: z.string(),
     api_key: z.string().optional(),
-    permissions: z.array(z.string()),
+    permissions: z.array(z.coerce.number()),
     is_active: z.boolean(),
     is_revoked: z.boolean(),
     created_at: z.string(),
