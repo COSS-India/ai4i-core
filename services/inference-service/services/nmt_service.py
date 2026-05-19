@@ -1,6 +1,7 @@
 """NMT (Neural Machine Translation) TaskService implementation."""
 
 import logging
+import os
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 from pydantic import BaseModel
@@ -369,7 +370,9 @@ class NMTTaskService(BaseTaskService):
             raise RuntimeError(f"NMT: Failed to resolve service {service_id}: {str(e)}") from e
 
         model_name = service_info.get("name", "")
-        triton_endpoint = service_info.get("endpoint", "")
+        # NMT_TRITON_ENDPOINT replaces the endpoint from MMS — use for real Triton server.
+        # Comment out in .env to fall back to what MMS returns (e.g. mock server).
+        triton_endpoint = os.getenv("NMT_TRITON_ENDPOINT") or service_info.get("endpoint", "")
         api_key = service_info.get("api_key")
         # adapter_config carries the tensor mapping (inputs/outputs) for this specific model
         adapter_config = service_info.get("adapter_config")
