@@ -57,13 +57,6 @@ class Settings(BaseSettings):
 
     # Triton configuration
     DEFAULT_TRITON_TIMEOUT: int = Field(60, description="Default Triton timeout in seconds")
-    # Per-service Triton endpoints. Each overrides the endpoint returned by MMS.
-    # Comment out in .env to fall back to the MMS response value.
-    NMT_TRITON_ENDPOINT: Optional[str] = Field(None, description="NMT Triton endpoint")
-    ASR_TRITON_ENDPOINT: Optional[str] = Field(None, description="ASR Triton endpoint")
-    TTS_TRITON_ENDPOINT: Optional[str] = Field(None, description="TTS Triton endpoint")
-    OCR_TRITON_ENDPOINT: Optional[str] = Field(None, description="OCR Triton endpoint")
-    NER_TRITON_ENDPOINT: Optional[str] = Field(None, description="NER Triton endpoint")
 
     # SmartModelRouter configuration
     SMR_SERVICE_URL: Optional[str] = Field(None, description="SmartModelRouter service URL")
