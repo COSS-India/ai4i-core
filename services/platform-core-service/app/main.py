@@ -19,6 +19,7 @@ _uvicorn_access.propagate = False
 _uvicorn_access.disabled = True
 
 from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi
 from app.core.config import settings
 from app.core.database import close_database, init_database
 from app.core.exceptions import register_exception_handlers
@@ -98,6 +99,35 @@ def create_app() -> FastAPI:
 
     # ── Routes ──
     app.include_router(api_router)
+
+    # OpenAPI security: Bearer JWT lock on all endpoints except health/root.
+    _PUBLIC_PATHS = {"/", "/health", "/ready", "/docs", "/redoc", "/openapi.json"}
+
+    def _custom_openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        components = schema.setdefault("components", {})
+        components.setdefault("securitySchemes", {})["bearerAuth"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+        for path, methods in (schema.get("paths") or {}).items():
+            if path in _PUBLIC_PATHS:
+                continue
+            for _method, op in (methods or {}).items():
+                if isinstance(op, dict):
+                    op.setdefault("security", [{"bearerAuth": []}])
+        app.openapi_schema = schema
+        return app.openapi_schema
+
+    app.openapi = _custom_openapi  # type: ignore[assignment]
 
     return app
 

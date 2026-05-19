@@ -22,6 +22,7 @@ _uvicorn_access.disabled = True
 _uvicorn_access.setLevel(logging.CRITICAL + 1)
 
 from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi
 
 from app.core.permission_checker import PermissionChecker, set_global_endpoint_permission_map
 
@@ -175,8 +176,7 @@ async def _load_api_permissions_with_retry(
 
 def create_app() -> FastAPI:
     """Build and return the FastAPI application."""
-    # /docs, /redoc, /openapi.json are dev-only.
-    hide_docs = settings.environment != ENV_DEVELOPMENT
+    hide_docs = False
     app = FastAPI(
         title="Auth Service",
         version=settings.service_version,
@@ -199,6 +199,37 @@ def create_app() -> FastAPI:
 
     # Routes
     app.include_router(api_router)
+
+    # OpenAPI security: Bearer JWT lock on all endpoints except public auth routes.
+    # Routes tagged "Authentication" (auth.py: login, register, etc.) stay unlocked.
+    _PUBLIC_PATHS = {"/", "/health", "/ready", "/docs", "/redoc", "/openapi.json"}
+    _PUBLIC_TAG = "Authentication"
+
+    def _custom_openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        components = schema.setdefault("components", {})
+        components.setdefault("securitySchemes", {})["bearerAuth"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+        for path, methods in (schema.get("paths") or {}).items():
+            if path in _PUBLIC_PATHS:
+                continue
+            for _method, op in (methods or {}).items():
+                if isinstance(op, dict) and _PUBLIC_TAG not in (op.get("tags") or []):
+                    op.setdefault("security", [{"bearerAuth": []}])
+        app.openapi_schema = schema
+        return app.openapi_schema
+
+    app.openapi = _custom_openapi  # type: ignore[assignment]
 
     return app
 
