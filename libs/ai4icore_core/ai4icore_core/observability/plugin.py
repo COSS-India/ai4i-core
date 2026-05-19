@@ -80,30 +80,10 @@ class ObservabilityPlugin:
         self.register_middleware(app)
         self.register_endpoints(app)
 
-        # Initialize customer quotas
-        self._initialize_customer_quotas()
-
         self._initialized = True
 
         if self.config.debug:
             print("🚀 AI4ICore Observability plugin initialized successfully")
-
-    def _initialize_customer_quotas(self):
-        """Initialize customer quotas."""
-        try:
-            for customer in self.config.customers:
-                # MetricsCollector exposes update_organization_quotas (not update_customer_quotas)
-                # call the correct method and pass the organization name
-                self.metrics.update_organization_quotas(
-                    organization=customer,
-                    llm_quota=1000000,  # 1M tokens per month
-                    tts_quota=1000000,  # 1M characters per month
-                    nmt_quota=1000000,  # 1M characters per month
-                    asr_quota=1000000   # 1M audio-seconds per month (approx)
-                )
-        except Exception as e:
-            if self.config.debug:
-                print(f"⚠️ Customer quota initialization failed: {e}")
 
     def get_metrics_collector(self) -> MetricsCollector:
         """Get the metrics collector instance."""
@@ -129,8 +109,6 @@ class ObservabilityPlugin:
             "initialized": self._initialized,
             "enabled": self.config.enabled,
             "debug": self.config.debug,
-            "customers": self.config.customers,
-            "apps": self.config.apps,
             "metrics_path": self.config.metrics_path,
             "health_path": self.config.health_path,
         }

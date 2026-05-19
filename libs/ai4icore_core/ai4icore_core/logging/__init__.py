@@ -1,59 +1,46 @@
 """
-AI4ICore Logging Library
+AI4ICore structured logging.
 
-Structured JSON logging with trace correlation for AI4ICore microservices.
+Usage in a service:
+
+    from ai4icore_core.logging import configure_logging, RequestMiddleware
+
+    configure_logging(service_name="my-service")
+    app.add_middleware(RequestMiddleware)
+
+Then use standard Python logging anywhere:
+
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("something happened")
 """
 
-__version__ = "1.0.0"
-__author__ = "AI4I Team"
-
 from .logger import get_logger, configure_logging
+from .formatters import JSONFormatter
+from .middleware import RequestMiddleware
+from .config import LoggingConfig, get_default_config
 from .context import (
+    generate_trace_id,
     set_trace_id,
     get_trace_id,
-    clear_trace_id,
-    TraceContext,
-    generate_trace_id,
-    set_organization,
-    get_organization,
-    clear_organization,
-)
-from .formatters import JSONFormatter
-from .handlers import KafkaHandler
-from .middleware import (
-    CorrelationMiddleware,
-    RequestLoggingMiddleware,
-    get_correlation_id,
-    get_trace_id_from_request,
-)
-from .service_request_logging import ServiceRequestLoggingMiddleware
-from .config import LoggingConfig
-from .plugin import (
-    LoggingPlugin,
-    create_logging_plugin,
-    register_logging_plugin,
+    reset_trace_id,
+    set_tenant_id,
+    get_tenant_id,
+    reset_tenant_id,
 )
 
 __all__ = [
     "get_logger",
     "configure_logging",
+    "JSONFormatter",
+    "RequestMiddleware",
+    "LoggingConfig",
+    "get_default_config",
+    "generate_trace_id",
     "set_trace_id",
     "get_trace_id",
-    "clear_trace_id",
-    "TraceContext",
-    "generate_trace_id",
-    "set_organization",
-    "get_organization",
-    "clear_organization",
-    "JSONFormatter",
-    "KafkaHandler",
-    "CorrelationMiddleware",
-    "RequestLoggingMiddleware",
-    "ServiceRequestLoggingMiddleware",
-    "get_correlation_id",
-    "get_trace_id_from_request",
-    "LoggingConfig",
-    "LoggingPlugin",
-    "create_logging_plugin",
-    "register_logging_plugin",
+    "reset_trace_id",
+    "set_tenant_id",
+    "get_tenant_id",
+    "reset_tenant_id",
 ]

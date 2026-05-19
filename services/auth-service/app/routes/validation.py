@@ -94,7 +94,11 @@ async def _validate_anonymous(request: Request) -> Response:
     """No token: allow only when X-Original-* point at a public endpoint."""
     looked_up, required = await _required_endpoint_permission(request)
     if looked_up and required is None:
-        return TokenValidationResponse(valid=True)
+        resp = JSONResponse(
+            content=TokenValidationResponse(valid=True).model_dump(),
+            headers={"X-User-ID": "", "X-Tenant-ID": ""}
+        )
+        return resp
     raise AuthenticationRequiredError()
 
 
@@ -113,7 +117,7 @@ async def _validate_api_key(
             content=ValidateAPIKeyErrorResponse(error="API key not found or revoked.", message="API key not found or has been revoked.").model_dump(),
         )
 
-    permission_ids = result.get("permission_ids") or []
+    permission_ids = result.get("permissions") or result.get("permission_ids") or []
     if not await _check_endpoint_permission(request, permission_ids):
         return JSONResponse(status_code=403, content={"valid": False, "error": "INSUFFICIENT_PERMISSIONS", "message": "You do not have permission to access this endpoint."})
 

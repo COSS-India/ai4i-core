@@ -111,6 +111,10 @@ async def lifespan(app: FastAPI):
     logger.info("Pipeline Service stopped")
 
 
+ENV_DEVELOPMENT = "development"
+_hide_docs = app_env.environment != ENV_DEVELOPMENT
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     application = FastAPI(
@@ -118,6 +122,9 @@ def create_app() -> FastAPI:
         version="1.0.0",
         description="Multi-task AI pipeline orchestration microservice.",
         lifespan=lifespan,
+        docs_url=None if _hide_docs else "/docs",
+        redoc_url=None if _hide_docs else "/redoc",
+        openapi_url=None if _hide_docs else "/openapi.json",
     )
 
     # -- Observability --

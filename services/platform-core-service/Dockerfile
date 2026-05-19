@@ -9,22 +9,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc libpq-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
-# ── Install shared platform libraries (cacheable layer) ──
-# Dependency order: exceptions → constants → env → logging → bootstrap
-COPY libs/ai4icore_exceptions /tmp/ai4icore_exceptions
-COPY libs/ai4icore_constants  /tmp/ai4icore_constants
-COPY libs/ai4icore_env        /tmp/ai4icore_env
-COPY libs/ai4icore_logging    /tmp/ai4icore_logging
-COPY libs/ai4icore_bootstrap  /tmp/ai4icore_bootstrap
-RUN pip install --no-cache-dir \
-    /tmp/ai4icore_exceptions \
-    /tmp/ai4icore_constants \
-    /tmp/ai4icore_env \
-    /tmp/ai4icore_logging \
-    /tmp/ai4icore_bootstrap && \
-    rm -rf /tmp/ai4icore_*
-
-# ── Install service dependencies ──
+# ── Install service dependencies (ai4icore-core is pulled from PyPI via requirements.txt) ──
 COPY services/platform-core-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

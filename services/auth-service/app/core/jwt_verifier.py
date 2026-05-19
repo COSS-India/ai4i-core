@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicNumbers
 from jose import jwt, JWTError, ExpiredSignatureError
 import httpx
 
-from ai4icore_exceptions import (
+from ai4icore_core.exceptions import (
     TokenExpiredError,
     TokenInvalidError,
 )

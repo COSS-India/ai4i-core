@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
-from ai4icore_email import EmailClient, EmailMessage
+from ai4icore_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks
 
 from app.core.config import settings
