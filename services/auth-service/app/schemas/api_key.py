@@ -19,11 +19,11 @@ class CreateAPIKeyRequest(BaseSchema):
 
 
 class UpdateAPIKeyRequest(BaseSchema):
-    api_key: str = Field(..., min_length=32, max_length=32, description="Hex key to update")
     key_name: Optional[str] = Field(None, min_length=1, max_length=100)
     permissions: Optional[list[int]] = None
     expires_days: Optional[int] = Field(None, ge=1)
-    # is_active is intentionally excluded — revocation is only via DELETE /api-keys/{api_key}
+    is_active: Optional[bool] = None
+    # api_key is now provided as a path parameter
 
 
 # ── Responses ──
@@ -38,7 +38,6 @@ class CreateAPIKeyResponse(BaseSchema):
 class ValidateAPIKeyResponse(BaseSchema):
     valid: bool = True
     user_id: Optional[str] = None
-    
     permission_ids: list[int] = []
     token_type: str = "api_key"
 
