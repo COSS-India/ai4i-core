@@ -75,7 +75,7 @@ async def query_tenant_id_from_db(user_id: str) -> Optional[str]:
                     FROM users u
                     JOIN tenants t ON t.tenant_id = u.tenant_id
                     WHERE u.user_id = :user_id
-                      AND t.status = 'activated'
+                      AND t.status = 'ACTIVE'
                       AND u.is_active = true
                       AND COALESCE(u.is_tenant_active, true) = true
                     LIMIT 1

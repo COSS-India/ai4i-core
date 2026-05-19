@@ -9,13 +9,14 @@ repository access and provisioning lives in this file.
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 from uuid import UUID
 
 from ai4icore_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks, HTTPException, status
 
 from app.core.config import settings
+from app.core.constants import USERNAME_MAX_LENGTH
 from app.core.exceptions import (
     DuplicateEntityError,
     EntityNotFoundError,
@@ -36,10 +37,11 @@ from app.schemas.tenant import (
     TenantUserStatusUpdate,
     TenantUserUpdate,
 )
-from app.services.auth_email_templates import render_setup_link
+from app.services.auth_email_templates import render_setup_link, render_verify_email
 from app.services.email_helpers import enqueue_email, persist_token_verification, resolve_tenant_id, setup_token_expires_at
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
+from app.utils.username import allocate_unique_username, derive_username_from_email
 
 logger = logging.getLogger(__name__)
 
@@ -66,17 +68,31 @@ class TenantService:
     # ── Helpers ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def derive_username_from_email(email: str) -> str:
-        """Build a default username from the email's local part.
+    def _sanitize_username_segment(value: str) -> str:
+        """Keep only [a-zA-Z0-9_]; collapse to a single underscore-separated segment."""
+        return re.sub(r"[^a-zA-Z0-9_]", "_", (value or "").strip()).strip("_") or "user"
 
-        Used when auto-provisioning a tenant admin from the contact email.
-        Replaces non [a-zA-Z0-9_] chars with underscores; pads to ≥3 chars.
+    @classmethod
+    def derive_tenant_admin_username(cls, email: str, organisation: str) -> str:
+        """Build a tenant-admin username from email local part + organisation.
+
+        Same person at different orgs (e.g. name@tarento.com vs name@irctc.com)
+        gets distinct usernames: ``ambarish_ganguly_tarento`` vs ``ambarish_ganguly_irctc``.
         """
-        local = email.split("@", 1)[0]
-        sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", local).strip("_") or "user"
-        if len(sanitized) < 3:
-            sanitized = (sanitized + "_user")[:100]
-        return sanitized[:100]
+        local = cls._sanitize_username_segment(email.split("@", 1)[0])
+        org = cls._sanitize_username_segment(organisation)
+        if len(local) < 3:
+            local = f"{local}_user"[:50]
+        base = f"{local}_{org}"
+        if len(base) < 3:
+            base = "tenant_admin"
+        return base[:USERNAME_MAX_LENGTH]
+
+    async def _allocate_unique_username(self, base: str) -> str:
+        """Return ``base`` or ``base_2``, ``base_3`` if the username is taken."""
+        return await allocate_unique_username(
+            self._users.list_usernames_in_collision_family, base
+        )
 
     async def is_system_admin(self, user: User) -> bool:
         roles = await self._roles.get_user_roles(user.id)
@@ -92,13 +108,16 @@ class TenantService:
         creation_type: str = "default",
         role_name: str = RoleName.USER,
         background_tasks: Optional[BackgroundTasks] = None,
+        email_kind: Literal["setup", "verify", "none"] = "setup",
     ) -> tuple[str, str]:
-        """Create an inactive user without credentials and generate a setup token.
-        Returns (user_id_str, setup_token).
+        """Create an inactive user without credentials.
 
-        ``role_name`` decides which role is assigned. Default ``RoleName.USER``
-        for regular tenant members; pass ``RoleName.TENANT_ADMIN`` when
-        provisioning the first admin user of a new tenant.
+        Returns (user_id_str, token) where token is a setup or verify JWT.
+
+        ``email_kind`` selects the onboarding email:
+        - ``setup``: welcome + set-password link (new tenant admins and invited users)
+        - ``verify``: verify-email link (/auth/register self-signup only)
+        - ``none``: no email
         """
         if await self._users.get_by_email(email):
             raise DuplicateEntityError("User", "email")
@@ -128,19 +147,36 @@ class TenantService:
             logger.warning("Role %r not found, skipping role assignment.", role_name)
 
         user_id_str = str(user.id)
-        setup_token = self._tokens.create_setup_token(user_id=user_id_str, email=email)
+        expires_at = setup_token_expires_at()
 
+        if email_kind == "verify":
+            token = self._tokens.create_verify_token(user_id=user_id_str, email=email)
+            await persist_token_verification(
+                self._verifications, token, user.id, expires_at
+            )
+            await self._users.commit()
+            logger.info("User provisioned (verify email): %s (id=%s)", email, user.id)
+            enqueue_email(
+                background_tasks,
+                self._email,
+                lambda: render_verify_email(user, token),
+            )
+            return user_id_str, token
+
+        token = self._tokens.create_setup_token(user_id=user_id_str, email=email)
         await persist_token_verification(
-            self._verifications,
-            setup_token,
-            user.id,
-            setup_token_expires_at(),
+            self._verifications, token, user.id, expires_at
         )
         await self._users.commit()
 
         logger.info("User provisioned (no credentials): %s (id=%s)", email, user.id)
-        enqueue_email(background_tasks, self._email, lambda: render_setup_link(user, setup_token))
-        return user_id_str, setup_token
+        if email_kind == "setup":
+            enqueue_email(
+                background_tasks,
+                self._email,
+                lambda: render_setup_link(user, token),
+            )
+        return user_id_str, token
 
     async def enforce_scope(self, user: User, target_tenant_id: int) -> None:
         """Allow system admins; otherwise tenant must equal caller's tenant."""
@@ -186,7 +222,8 @@ class TenantService:
         so if user provisioning fails (duplicate email/username) the tenant
         insert is also rolled back.
 
-        Side effect: a setup-link email is enqueued to the contact email.
+        Tenant starts PENDING. The contact admin receives one welcome/set-password email.
+        Tenant becomes ACTIVE only after they set a password (see AuthService.set_password_with_token).
         """
         if await self._tenants.get_by_email(body.email):
             raise HTTPException(
@@ -199,23 +236,24 @@ class TenantService:
             organisation=body.organisation,
             email=body.email,
             phone_number=body.phone_number,
-            status=TenantStatus.ACTIVATED,
+            status=TenantStatus.PENDING,
             created_by=current_user.id,
         )
         await self._tenants.create(tenant)  # flush only — tenant_id now populated
 
-        # Auto-provision the first admin user for this tenant. Username derives
-        # from the email local part; on collision DuplicateEntityError rolls
-        # the whole transaction back.
+        admin_username = await self._allocate_unique_username(
+            self.derive_tenant_admin_username(body.email, body.organisation)
+        )
         await self.provision_user(
             email=body.email,
-            username=self.derive_username_from_email(body.email),
+            username=admin_username,
             full_name=body.contact_name,
             phone_number=body.phone_number,
             tenant_id=str(tenant.id),
             creation_type="tenant",
             role_name=RoleName.TENANT_ADMIN,
             background_tasks=background_tasks,
+            email_kind="setup",
         )
 
         # provision_user committed; refresh to surface server-side defaults.
@@ -258,7 +296,10 @@ class TenantService:
         return tenant
 
     async def update_tenant_status(
-        self, current_user: User, tenant_id: int, body: TenantStatusUpdate
+        self,
+        current_user: User,
+        tenant_id: int,
+        body: TenantStatusUpdate,
     ) -> Tenant:
         tenant = await self._load_tenant_or_404(tenant_id)
         await self._tenants.update(
@@ -286,9 +327,14 @@ class TenantService:
         await self.enforce_scope(current_user, tenant_id)
         if not await self._tenants.get_by_id(tenant_id):
             raise EntityNotFoundError(f"Tenant {tenant_id}")
+        email = body.email.lower().strip()
+        username = await allocate_unique_username(
+            self._users.list_usernames_in_collision_family,
+            derive_username_from_email(email),
+        )
         return await self.provision_user(
-            email=body.email,
-            username=body.username,
+            email=email,
+            username=username,
             full_name=body.full_name,
             phone_number=body.phone_number,
             tenant_id=str(tenant_id),
