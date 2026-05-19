@@ -121,6 +121,14 @@ export default function ApiKeyManagementTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive]);
 
+  // Ensure permissions are loaded whenever we mount or they become empty
+  useEffect(() => {
+    if (mgmt.permissions.length === 0 && !mgmt.isLoadingAllApiKeys) {
+      mgmt.handleFetchAllApiKeys();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <>
       <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
@@ -152,11 +160,6 @@ export default function ApiKeyManagementTab({
                   mgmt.filterUser !== "all" ||
                   mgmt.filterPermission !== "all" ||
                   mgmt.filterActive !== "all";
-
-                const permissionOptions =
-                  mgmt.allUniquePermissions.length > 0
-                    ? mgmt.allUniquePermissions
-                    : mgmt.permissions.map((p) => p.name);
 
                 return (
                   <TableFilterToolbar
@@ -199,7 +202,7 @@ export default function ApiKeyManagementTab({
                         bg={cardBg}
                       >
                         <option value="all">All Permissions</option>
-                        {permissionOptions.map((perm) => (
+                        {mgmt.permissionOptionsForFilter.map((perm) => (
                           <option key={perm} value={perm}>
                             {perm}
                           </option>
@@ -285,11 +288,14 @@ export default function ApiKeyManagementTab({
                         </Td>
                         <Td>
                           <HStack flexWrap="wrap" spacing={1}>
-                            {key.permissions.slice(0, 3).map((perm) => (
-                              <Badge key={perm} colorScheme="blue" fontSize="xs">
-                                {perm}
-                              </Badge>
-                            ))}
+                            {key.permissions.slice(0, 3).map((permId) => {
+                              const permName = mgmt.permissions.find(p => p.id === permId)?.name || String(permId);
+                              return (
+                                <Badge key={permId} colorScheme="blue" fontSize="xs">
+                                  {permName}
+                                </Badge>
+                              );
+                            })}
                             {key.permissions.length > 3 && (
                               <Badge colorScheme="gray" fontSize="xs">
                                 +{key.permissions.length - 3}
@@ -328,11 +334,7 @@ export default function ApiKeyManagementTab({
                             </Tooltip>
                             <Tooltip
                               hasArrow
-                              label={
-                                key.is_active
-                                  ? "Update key"
-                                  : "This API key has been revoked and cannot be updated."
-                              }
+                              label="Update key"
                             >
                               <IconButton
                                 aria-label="Update API key"
@@ -345,7 +347,6 @@ export default function ApiKeyManagementTab({
                                   e.stopPropagation();
                                   mgmt.handleOpenUpdateModal(key);
                                 }}
-                                isDisabled={!key.is_active}
                               />
                             </Tooltip>
                             <Tooltip
@@ -446,11 +447,14 @@ export default function ApiKeyManagementTab({
                   </Text>
                   {mgmt.selectedKeyForView.permissions.length > 0 ? (
                     <HStack flexWrap="wrap" spacing={2}>
-                      {mgmt.selectedKeyForView.permissions.map((perm) => (
-                        <Badge key={perm} colorScheme="blue" fontSize="sm" p={2}>
-                          {perm}
-                        </Badge>
-                      ))}
+                      {mgmt.selectedKeyForView.permissions.map((permId) => {
+                        const permName = mgmt.permissions.find(p => p.id === permId)?.name || String(permId);
+                        return (
+                          <Badge key={permId} colorScheme="blue" fontSize="sm" p={2}>
+                            {permName}
+                          </Badge>
+                        );
+                      })}
                     </HStack>
                   ) : (
                     <Text fontSize="sm" color="gray.500">
@@ -498,12 +502,12 @@ export default function ApiKeyManagementTab({
                     </Text>
                   </Box>
                 )}
-                <Box>
+                <Box gridColumn={{ base: "span 1", md: "span 2" }}>
                   <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                    Key ID
+                    API Key
                   </Text>
-                  <Text fontSize="sm" fontFamily="mono" color="gray.700">
-                    {mgmt.selectedKeyForView.id}
+                  <Text fontSize="sm" fontFamily="mono" color="gray.700" wordBreak="break-all" p={2} bg="gray.50" borderRadius="md">
+                    {mgmt.selectedKeyForView.api_key}
                   </Text>
                 </Box>
               </SimpleGrid>
@@ -584,17 +588,17 @@ export default function ApiKeyManagementTab({
                     overflowY="auto"
                   >
                     <CheckboxGroup
-                      value={mgmt.updateFormData.permissions || []}
+                      value={(mgmt.updateFormData.permissions || []).map(p => String(p))}
                       onChange={(values) =>
                         mgmt.setUpdateFormData({
                           ...mgmt.updateFormData,
-                          permissions: values as string[],
+                          permissions: values.map(v => parseInt(v, 10)),
                         })
                       }
                     >
                       <SimpleGrid columns={2} spacing={3}>
                         {mgmt.permissions.map((perm) => (
-                          <Checkbox key={perm.name} value={perm.name} colorScheme="blue">
+                          <Checkbox key={perm.id} value={String(perm.id)} colorScheme="blue">
                             <Text fontSize="sm">{perm.name}</Text>
                           </Checkbox>
                         ))}
@@ -612,14 +616,22 @@ export default function ApiKeyManagementTab({
                 )}
               </FormControl>
               {mgmt.selectedKeyForUpdate && (
-                <Box>
-                  <Text fontSize="sm" fontWeight="semibold" mb={2}>
-                    User: {mgmt.selectedKeyForUpdate.user_email}
-                  </Text>
-                  <Text fontSize="xs" color="gray.500">
-                    Key ID: {mgmt.selectedKeyForUpdate.id}
-                  </Text>
-                </Box>
+                <VStack align="start" spacing={3} mt={4} pt={4} borderTopWidth="1px" borderColor="gray.200">
+                  <Box w="100%">
+                    <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={1}>
+                      User
+                    </Text>
+                    <Text fontSize="sm">{mgmt.selectedKeyForUpdate.user_email}</Text>
+                  </Box>
+                  <Box w="100%">
+                    <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={1}>
+                      API Key
+                    </Text>
+                    <Text fontSize="xs" fontFamily="mono" color="gray.700" wordBreak="break-all" p={2} bg="gray.50" borderRadius="md">
+                      {mgmt.selectedKeyForUpdate.api_key}
+                    </Text>
+                  </Box>
+                </VStack>
               )}
         </VStack>
       </StandardModal>
@@ -667,11 +679,14 @@ export default function ApiKeyManagementTab({
                       Permissions (will be revoked):
                     </Text>
                     <HStack flexWrap="wrap" spacing={2}>
-                      {mgmt.keyToRevoke.permissions.map((perm) => (
-                        <Badge key={perm} colorScheme="orange" fontSize="xs">
-                          {perm}
-                        </Badge>
-                      ))}
+                      {mgmt.keyToRevoke.permissions.map((permId) => {
+                        const permName = mgmt.permissions.find(p => p.id === permId)?.name || String(permId);
+                        return (
+                          <Badge key={permId} colorScheme="orange" fontSize="xs">
+                            {permName}
+                          </Badge>
+                        );
+                      })}
                     </HStack>
                   </Box>
                 )}
