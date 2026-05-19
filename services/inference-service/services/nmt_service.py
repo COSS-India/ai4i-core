@@ -32,7 +32,7 @@ def get_nmt_inference_model():
                 def convert_payload_to_triton_format(self, request):
                     return {}, []
                 def convert_triton_output_to_task_format(self, output):
-                    return {'output': []}
+                    return {'output': output.get('outputs', [])}
             _NMTInferenceModel = NMTInferenceModel
     return _NMTInferenceModel
 
@@ -199,6 +199,16 @@ class NMTTaskService(BaseTaskService):
         nmt_request = cast(NMTInferenceRequest, request)
         config: NMTConfig = nmt_request.config
 
+        # Extract source texts upfront for use in error handling
+        source_texts = []
+        for item in nmt_request.input:
+            if isinstance(item, dict):
+                source_texts.append(item.get('source', ''))
+            elif hasattr(item, 'source'):
+                source_texts.append(item.source)
+            else:
+                source_texts.append('')
+
         try:
             # 1. Resolve service and model
             self.logger.info(
@@ -220,7 +230,10 @@ class NMTTaskService(BaseTaskService):
             # 3. Call Triton inference server
             self.logger.info(f"Calling Triton inference server: {triton_endpoint}")
             raw_triton_output = await self._call_triton_inference(
+                # TODO: Use actual endpoint and model name from resolver instead of hardcoded values
+                # Use Postman mock server for local testing if needed
                 triton_endpoint=triton_endpoint,
+                # triton_endpoint= "https://58e8eac8-a3e0-41ed-bd29-cb1d899c7b36.mock.pstmn.io",
                 model_name=model_name,
                 triton_inputs=triton_inputs,
                 triton_outputs=output_names,
@@ -231,8 +244,8 @@ class NMTTaskService(BaseTaskService):
             self.logger.debug("Converting Triton output to NMT response format")
             response_data = inference_model.convert_triton_output_to_task_format(raw_triton_output)
 
-            # 5. Post-process output
-            postprocessed = await self.postprocess_output(response_data)
+            # 5. Post-process output and pair with source inputs
+            postprocessed = await self.postprocess_output(response_data, source_texts)
 
             # 6. Create and return response
             response = NMTInferenceResponse(
@@ -268,24 +281,25 @@ class NMTTaskService(BaseTaskService):
                 response_data = inference_model.convert_triton_output_to_task_format(
                     raw_triton_output
                 )
-                postprocessed = await self.postprocess_output(response_data)
+                postprocessed = await self.postprocess_output(response_data, source_texts)
                 return NMTInferenceResponse(output=postprocessed['output'], smr_response=None)
 
             # If no fallback, re-raise error
             raise
 
     async def postprocess_output(
-        self, raw_triton_output: Dict[str, Any]
+        self, raw_triton_output: Dict[str, Any], source_texts: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Post-process raw Triton output for NMT.
-        Decodes translations, formats output, etc.
+        Decodes translations, formats output, and pairs with source texts.
 
         Args:
             raw_triton_output: Raw output from Triton server
+            source_texts: Optional list of source texts to pair with translations
 
         Returns:
-            Formatted output dictionary
+            Formatted output dictionary with TranslationOutput objects
         """
         # Call base post-processing
         postprocessed = await super().postprocess_output(raw_triton_output)
@@ -295,17 +309,27 @@ class NMTTaskService(BaseTaskService):
         if 'translations' in postprocessed:
             translations = postprocessed['translations']
         elif 'output' in postprocessed:
-            translations = postprocessed['output']
+            output_val = postprocessed['output']
+            if isinstance(output_val, list) and output_val:
+                if isinstance(output_val[0], dict):
+                    translations = output_val[0].get('data', [])
+                else:
+                    translations = output_val
 
         # Ensure translations are strings
         output_list = []
-        for translation in translations:
+        for idx, translation in enumerate(translations):
             if isinstance(translation, bytes):
-                output_list.append(translation.decode('utf-8'))
+                target_text = translation.decode('utf-8')
             elif isinstance(translation, str):
-                output_list.append(translation)
+                target_text = translation
             else:
-                output_list.append(str(translation))
+                target_text = str(translation)
+
+            # Create TranslationOutput with source and target
+            source_text = source_texts[idx] if source_texts and idx < len(source_texts) else ""
+            from models.schemas.nmt import TranslationOutput
+            output_list.append(TranslationOutput(source=source_text, target=target_text))
 
         self.logger.debug(f"NMT post-processed {len(output_list)} translations")
         return {'output': output_list}
@@ -339,12 +363,15 @@ class NMTTaskService(BaseTaskService):
         try:
             service_info = await self.inference_server_resolver.resolve_service(service_id)
         except Exception as e:
-            self.logger.error(f"Failed to resolve service {service_id}: {str(e)}")
-            raise RuntimeError(f"NMT: Failed to resolve service {service_id}") from e
+            self.logger.error(
+                f"Failed to resolve service {service_id}: {type(e).__name__}: {str(e)}",
+                exc_info=True
+            )
+            raise RuntimeError(f"NMT: Failed to resolve service {service_id}: {str(e)}") from e
 
         # Extract fields from dict response
-        model_name = service_info.get('model_name', '')
-        triton_endpoint = service_info.get('triton_endpoint', '')
+        model_name = service_info.get('name', '')
+        triton_endpoint = service_info.get('endpoint', '')
         api_key = service_info.get('api_key')
 
         if not model_name or not triton_endpoint:

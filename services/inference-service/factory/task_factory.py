@@ -66,13 +66,10 @@ class TaskFactory:
             if task_type == "NMT":
                 try:
                     from services.nmt_service import NMTTaskService
+                    from inference.inference_server_resolver import InferenceServerResolver
                     
-                    # Create a simple resolver
-                    class SimpleResolver:
-                        async def resolve(self, config, session_id=None):
-                            return ("mock-service", "mock-model", "http://localhost:8000", "mock-key")
-                    
-                    resolver = SimpleResolver()  # type: ignore
+                    # Create resolver instance
+                    resolver = InferenceServerResolver()
                     service = NMTTaskService(inference_server_resolver=resolver)  # type: ignore
                     self._service_cache[task_type] = service  # type: ignore
                     return service  # type: ignore

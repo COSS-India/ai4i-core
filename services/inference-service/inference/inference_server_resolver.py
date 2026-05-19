@@ -6,6 +6,9 @@ Provides caching with Redis and in-memory cache for efficient server resolution.
 from typing import Any, Dict, Optional, Tuple
 import logging
 import time
+import os
+
+from utils import HTTPServiceClient, ServiceNotFoundError as HTTPServiceNotFoundError
 
 
 logger = logging.getLogger(__name__)
@@ -22,11 +25,13 @@ class CacheEntry:
             value: Value to cache
             ttl_seconds: Time-to-live in seconds
         """
-        pass
+        self.value = value
+        self.ttl_seconds = ttl_seconds
+        self.created_at = time.time()
 
     def is_expired(self) -> bool:
         """Check if cache entry has expired."""
-        pass
+        return time.time() - self.created_at > self.ttl_seconds
 
 
 class InferenceServerResolverError(Exception):
@@ -48,26 +53,15 @@ class InferenceServerResolver:
     Supports both required and SMR-optional service_id patterns.
     """
 
-    def __init__(
-        self,
-        redis_client: Any,
-        model_management_client: Any,
-        cache_ttl_seconds: int = 300,
-    ):
+    def __init__(self):
         """
-        Initialize inference server resolver.
-
-        Args:
-            redis_client: Redis client for distributed caching
-            model_management_client: Client to query model management service
-            cache_ttl_seconds: Cache time-to-live in seconds (default 300)
+        Initialize inference server resolver with in-memory caching only.
         """
-        pass
+        self._memory_cache: Dict[str, Any] = {}
 
     async def resolve_service(
         self,
         service_id: str,
-        session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Resolve inference service information.
@@ -88,7 +82,20 @@ class InferenceServerResolver:
         Raises:
             ServiceNotFoundError: If service cannot be resolved
         """
-        pass
+        # Check cache
+        cached = await self._get_from_cache(service_id)
+        if cached:
+            self._log_cache_hit(service_id, "cache")
+            return cached
+        
+        # Query model management service
+        try:
+            service_info = await self._query_model_management_service(service_id)
+            await self._cache_service_info(service_id, service_info)
+            return service_info
+        except ServiceNotFoundError:
+            self._log_resolution_error(service_id, "Service not found in management service")
+            raise
 
     async def resolve_smr_service(
         self,
@@ -109,7 +116,8 @@ class InferenceServerResolver:
         Raises:
             ServiceNotFoundError: If SMR routing fails
         """
-        pass
+        # For now, return default service_id
+        return "indictrans-v2-all"
 
     async def _get_from_cache(self, service_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -122,7 +130,10 @@ class InferenceServerResolver:
         Returns:
             Service info dict or None if not found
         """
-        pass
+        # Check memory cache first
+        if service_id in self._memory_cache:
+            return self._memory_cache[service_id]
+        return None
 
     async def _get_from_memory_cache(self, service_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -134,40 +145,45 @@ class InferenceServerResolver:
         Returns:
             Service info dict or None if not found/expired
         """
-        pass
-
-    async def _get_from_redis_cache(self, service_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get service information from Redis cache.
-
-        Args:
-            service_id: Service ID to lookup
-
-        Returns:
-            Service info dict or None if not found
-        """
-        pass
+        return self._memory_cache.get(service_id)
 
     async def _query_model_management_service(
         self,
         service_id: str,
-        session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Query model management service for service information.
-        Falls back to database query if service is not available.
+        Calls the MODEL_MANAGEMENT_SERVICE_URL endpoint to fetch service details.
 
         Args:
             service_id: Service ID to query
-            session_id: Optional session ID for tracing
 
         Returns:
             Service info dict with model_name, triton_endpoint, etc.
 
         Raises:
-            ServiceNotFoundError: If service not found in management service or DB
+            ServiceNotFoundError: If service not found or API call fails
         """
-        pass
+        model_management_url = os.getenv("MODEL_MANAGEMENT_SERVICE_URL")
+        if not model_management_url:
+            logger.error("MODEL_MANAGEMENT_SERVICE_URL not configured")
+            raise ServiceNotFoundError(f"Service {service_id} not found: Model management service not configured")
+        
+        try:
+            # Use HTTP client utility for external service call
+            http_client = HTTPServiceClient(timeout=30)
+            url = f"{model_management_url}/api/v1/model-management/services/{service_id}"
+            service_info = await http_client.post_json(url, {})
+            
+            logger.debug(f"Resolved service {service_id}: {service_info}")
+            return service_info
+                
+        except HTTPServiceNotFoundError as e:
+            logger.error(f"Service {service_id} not found: {str(e)}")
+            raise ServiceNotFoundError(f"Service {service_id} not found") from e
+        except Exception as e:
+            logger.error(f"Failed to query model management service: {str(e)}")
+            raise ServiceNotFoundError(f"Service {service_id} not found: {str(e)}") from e
 
     async def _cache_service_info(
         self,
@@ -181,21 +197,7 @@ class InferenceServerResolver:
             service_id: Service ID
             service_info: Service information to cache
         """
-        pass
-
-    async def _cache_to_redis(
-        self,
-        service_id: str,
-        service_info: Dict[str, Any],
-    ) -> None:
-        """
-        Cache service information to Redis.
-
-        Args:
-            service_id: Service ID
-            service_info: Service information to cache
-        """
-        pass
+        await self._cache_to_memory(service_id, service_info)
 
     async def _cache_to_memory(
         self,
@@ -209,7 +211,7 @@ class InferenceServerResolver:
             service_id: Service ID
             service_info: Service information to cache
         """
-        pass
+        self._memory_cache[service_id] = service_info
 
     async def _query_database(
         self,
@@ -225,7 +227,7 @@ class InferenceServerResolver:
         Returns:
             Service info dict or None if not found
         """
-        pass
+        return None
 
     def _format_cache_key(self, service_id: str) -> str:
         """
@@ -237,7 +239,7 @@ class InferenceServerResolver:
         Returns:
             Formatted cache key
         """
-        pass
+        return f"service:{service_id}"
 
     def _log_cache_hit(self, service_id: str, cache_type: str) -> None:
         """
@@ -247,7 +249,7 @@ class InferenceServerResolver:
             service_id: Service ID
             cache_type: Type of cache hit (memory, redis, db)
         """
-        pass
+        logger.debug(f"Cache hit for service {service_id} from {cache_type}")
 
     def _log_resolution_error(
         self,
@@ -261,7 +263,7 @@ class InferenceServerResolver:
             service_id: Service ID that failed to resolve
             error_msg: Error message
         """
-        pass
+        logger.error(f"Failed to resolve service {service_id}: {error_msg}")
 
     async def clear_cache(self, service_id: Optional[str] = None) -> None:
         """
@@ -270,4 +272,7 @@ class InferenceServerResolver:
         Args:
             service_id: Optional specific service to clear, or all if None
         """
-        pass
+        if service_id:
+            self._memory_cache.pop(service_id, None)
+        else:
+            self._memory_cache.clear()

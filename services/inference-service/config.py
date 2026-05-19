@@ -6,7 +6,12 @@ Loads settings from environment variables and defaults.
 from typing import Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
+from dotenv import load_dotenv
 import os
+
+
+# Load .env file
+load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -28,6 +33,11 @@ class Settings(BaseSettings):
     )
 
     # Database configuration
+    POSTGRES_HOST: str = Field("postgres", description="PostgreSQL host")
+    POSTGRES_PORT: int = Field(5432, description="PostgreSQL port")
+    POSTGRES_USER: str = Field("postgres", description="PostgreSQL user")
+    POSTGRES_PASSWORD: str = Field("postgres", description="PostgreSQL password")
+    POSTGRES_DB: str = Field("core_db", description="PostgreSQL database name")
     DATABASE_URL: Optional[str] = Field(None, description="Database connection URL")
     DATABASE_POOL_SIZE: int = Field(10, description="Database connection pool size")
     DATABASE_ECHO: bool = Field(False, description="Echo SQL statements")
@@ -59,12 +69,13 @@ class Settings(BaseSettings):
     )
 
     class Config:
-        """Pydantic config."""
-
+        """Pydantic config for loading from .env file."""
         env_file = ".env"
+        env_file_encoding = "utf-8"
         case_sensitive = True
 
 
 # Global settings instance
 settings = Settings()
+
 
