@@ -1,12 +1,5 @@
-# ── Shared platform libraries ──
-# Local dev: pip install -e ../../libs/<name>
-# Docker:    COPY libs/ /tmp/libs/ && pip install /tmp/libs/ai4icore_*
-ai4icore-core>=1.0.0
-ai4icore-exceptions>=1.0.0
-ai4icore-constants>=1.0.0
-ai4icore-logging>=1.0.0
-ai4icore-env>=1.0.0
-ai4icore-bootstrap>=1.0.0
+# ── Shared platform library (consolidated) ──
+ai4icore-core>=1.1.0
 
 # ── Core framework ──
 fastapi>=0.104.0

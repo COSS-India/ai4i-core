@@ -1,15 +1,14 @@
 """
 Service app factory — the single way to create a FastAPI app in AI4I-Core.
 
-Wires up everything that every service needs:
-1. Standardized exception handlers (from ai4icore_constants)
-2. Structured JSON logging (from ai4icore_logging)
-3. CORS configuration (production-safe)
-4. Request logging middleware
-5. Health endpoint
-6. Telemetry (optional)
+Middleware execution order (LIFO — last added runs first on request):
 
-Auth validation is delegated to API gateway (APISIX/nginx); services read pre-validated headers.
+  RequestMiddleware            ← outermost: seeds trace_id, logs the request
+  OTel / FastAPIInstrumentor   ← CorrelationPropagator reads trace_id here
+  CORSMiddleware               ← innermost
+
+RequestMiddleware MUST be added last so it executes first and the trace ID
+is in context before OTel's propagator runs.
 """
 
 import logging
@@ -24,60 +23,31 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ServiceConfig:
-    """Configuration for service bootstrap."""
-
     service_name: str
     version: str = "1.0.0"
     description: str = ""
     environment: str = "development"
 
-    # Auth
-    jwks_url: Optional[str] = None
-    jwt_issuer: str = "auth-service"
-    jwt_audience: Optional[str] = None
-    require_auth: bool = False  # False = context extraction only, True = block unauthenticated
-
-    # CORS
     cors_origins: list[str] = field(default_factory=lambda: ["*"])
-
-    # Docs
     hide_docs_in_production: bool = True
 
-    # Telemetry
     telemetry_enabled: bool = True
     jaeger_endpoint: Optional[str] = None
 
-    # Logging
     log_level: str = "INFO"
 
-    # Skip auth paths
-    auth_skip_paths: set[str] = field(default_factory=lambda: {
-        "/", "/health", "/ready", "/docs", "/redoc", "/openapi.json",
+    telemetry_exclude_paths: set[str] = field(default_factory=lambda: {
+        "/health", "/ready", "/docs", "/redoc", "/openapi.json",
     })
 
 
-def create_service_app(
-    config: Optional[ServiceConfig] = None,
-    **kwargs,
-) -> FastAPI:
-    """
-    Create a fully bootstrapped FastAPI application.
-
-    This is the STANDARD way to create a service in AI4I-Core.
-    Every service gets identical: exception handling, logging, auth, CORS.
-
-    Args:
-        config: ServiceConfig object, or pass kwargs directly.
-
-    Returns:
-        Configured FastAPI app ready for route registration.
-    """
+def create_service_app(config: Optional[ServiceConfig] = None, **kwargs) -> FastAPI:
+    """Create a fully bootstrapped FastAPI application."""
     if config is None:
         config = ServiceConfig(**kwargs)
 
     is_prod = config.environment in ("production", "staging")
 
-    # ── Create app ──
     app = FastAPI(
         title=config.service_name,
         version=config.version,
@@ -87,18 +57,19 @@ def create_service_app(
         openapi_url=None if (is_prod and config.hide_docs_in_production) else "/openapi.json",
     )
 
-    # ── 1. Exception handlers (from ai4icore_exceptions) ──
+    # ── 1. Exception handlers ──
     try:
         from ai4icore_core.exceptions import register_exception_handlers
         register_exception_handlers(app)
-        logger.info("[bootstrap] Exception handlers registered.")
     except ImportError:
-        logger.warning("[bootstrap] ai4icore_exceptions not available, using default exception handling.")
+        pass
 
-    # ── 2. CORS ──
+    # ── 2. Configure logging ──
+    from ai4icore_core.logging import configure_logging
+    configure_logging(service_name=config.service_name, log_level=config.log_level)
+
+    # ── 3. CORS (innermost — added first) ──
     allow_all = config.cors_origins == ["*"]
-    if is_prod and allow_all:
-        logger.warning("[bootstrap] CORS_ORIGINS='*' in production — restrict to specific origins.")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=config.cors_origins,
@@ -107,42 +78,29 @@ def create_service_app(
         allow_headers=["*"],
     )
 
-    # ── 3. Logging middleware (from ai4icore_logging) ──
-    try:
-        from ai4icore_core.logging import (
-            configure_logging,
-            CorrelationMiddleware,
-            RequestLoggingMiddleware,
-        )
-        configure_logging(
-            service_name=config.service_name,
-            log_level=config.log_level,
-        )
-        app.add_middleware(RequestLoggingMiddleware)
-        app.add_middleware(CorrelationMiddleware)
-        logger.info("[bootstrap] Structured logging configured via ai4icore_logging.")
-    except ImportError:
-        logger.warning("[bootstrap] ai4icore_logging not available, using basic logging.")
-        logging.basicConfig(level=getattr(logging, config.log_level, logging.INFO))
-
-    # ── 4. Auth validation delegated to API gateway ──
-    # Services no longer perform JWT verification; APISIX/nginx handles all token validation.
-    # Services read pre-validated identity headers from the gateway.
-    logger.info("[bootstrap] Auth validation delegated to API gateway (APISIX/nginx).")
-
-    # ── 5. Telemetry (optional) ──
+    # ── 4. OTel instrumentation (added before RequestMiddleware so it runs
+    #       after RequestMiddleware in the request chain) ──
     if config.telemetry_enabled:
+        try:
+            from ai4icore_core.telemetry import setup_tracing
+            setup_tracing(config.service_name, config.jaeger_endpoint)
+        except ImportError:
+            pass
+
         try:
             from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
             FastAPIInstrumentor.instrument_app(
                 app,
-                excluded_urls=",".join(config.auth_skip_paths - {"/"}),
+                excluded_urls=",".join(config.telemetry_exclude_paths),
             )
-            logger.info("[bootstrap] OpenTelemetry FastAPI instrumentation enabled.")
         except ImportError:
             pass
 
-    # ── 6. Health endpoint ──
+    # ── 5. Request middleware (outermost — added last, runs first) ──
+    from ai4icore_core.logging import RequestMiddleware
+    app.add_middleware(RequestMiddleware)
+
+    # ── 6. Health endpoints ──
     @app.get("/")
     async def _root():
         return {"service": config.service_name, "version": config.version, "status": "running"}
@@ -151,12 +109,6 @@ def create_service_app(
     async def _health():
         return {"status": "healthy"}
 
-    # Store config on app for downstream access
     app.state.service_config = config
-
-    logger.info(
-        "[bootstrap] %s v%s ready [%s]",
-        config.service_name, config.version, config.environment,
-    )
-
+    logger.info("[bootstrap] %s v%s ready [%s]", config.service_name, config.version, config.environment)
     return app

@@ -16,7 +16,7 @@ from models.database_models import (
     Configuration,
     ServiceRegistry,
     ConfigurationHistory,
-) 
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -43,39 +43,39 @@ health_monitor_task = None
 async def periodic_health_check():
     """Background task for periodic health checks"""
     global health_monitor_service, registry_client, db_session, redis_client
-    
+
     if not health_monitor_service:
         logger.warning("Health monitor service not initialized, skipping periodic checks")
         return
-    
+
     health_check_interval = app_env.service_health_check_interval
     additional_endpoints = app_env.health_check_additional_endpoints.split(",")
     additional_endpoints = [e.strip() for e in additional_endpoints if e.strip()]
-    
+
     logger.info(
         f"Starting periodic health check monitor "
         f"(interval: {health_check_interval}s, additional endpoints: {additional_endpoints})"
     )
-    
+
     while True:
         try:
             # Get function to retrieve service instances
             async def get_service_instances(service_name: str):
                 from services.service_registry_service import ServiceRegistryService
                 from repositories.service_registry_repository import ServiceRegistryRepository
-                
+
                 repo = ServiceRegistryRepository(db_session)
                 service = ServiceRegistryService(
                     registry_client, repo, redis_client, health_monitor=health_monitor_service
                 )
                 return await service.get_service_instances(service_name)
-            
+
             # Monitor all services
             results = await health_monitor_service.monitor_all_services(
                 get_service_instances,
                 additional_endpoints if additional_endpoints else None,
             )
-            
+
             # Cache a lightweight health snapshot per service for internal consumers.
             # This enables GET /internal/health-status to serve from cache only (<5ms),
             # without DB reads or live probes on request.
@@ -86,10 +86,10 @@ async def periodic_health_check():
             )
 
             logger.debug(f"Completed health check cycle for {len(results)} services")
-            
+
         except Exception as e:
             logger.error(f"Error in periodic health check: {e}", exc_info=True)
-        
+
         # Wait for next cycle
         await asyncio.sleep(health_check_interval)
 
@@ -98,7 +98,7 @@ async def periodic_health_check():
 async def startup_event():
     """Initialize connections on startup"""
     global redis_client, db_engine, db_session, kafka_producer, health_monitor_service, health_monitor_task
-    
+
     try:
         # Initialize Redis connection
         redis_client = redis.from_url(app_env.get_redis_url())
@@ -106,7 +106,7 @@ async def startup_event():
         logger.info("Connected to Redis")
         # Expose on app.state for routers (avoids circular imports).
         app.state.redis_client = redis_client
-        
+
         # Initialize PostgreSQL connection
         database_url = app_env.get_database_url()
         db_engine = create_async_engine(
@@ -116,20 +116,12 @@ async def startup_event():
             echo=False
         )
         db_session = sessionmaker(
-            db_engine, 
-            class_=AsyncSession, 
+            db_engine,
+            class_=AsyncSession,
             expire_on_commit=False
         )
         logger.info("Connected to PostgreSQL")
 
-        # Create tables if they do not exist
-        try:
-            async with db_engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-        except Exception as e:
-            logger.error(f"Failed to create database tables: {e}")
-            raise
-        
         # Initialize Kafka producer (optional)
         try:
             kafka_servers = app_env.kafka_bootstrap_servers
@@ -141,7 +133,7 @@ async def startup_event():
         except Exception as kafka_exc:
             kafka_producer = None
             logger.warning(f"Kafka unavailable: {kafka_exc}")
-        
+
         # Initialize ZooKeeper registry client
         from registry.zookeeper_client import ZooKeeperRegistryClient
         global registry_client
@@ -161,21 +153,21 @@ async def startup_event():
                 logger.warning(f"Failed to register service in ZooKeeper: {e}")
         except Exception as e:
             logger.warning(f"ZooKeeper connection failed: {e}")
-        
+
         # Initialize health monitor service
         try:
             from services.health_monitor_service import HealthMonitorService
             from repositories.service_registry_repository import ServiceRegistryRepository
-            
+
             repo = ServiceRegistryRepository(db_session)
-            
+
             # Configuration from environment variables
             health_check_timeout = float(app_env.health_check_timeout)
             health_check_max_retries = app_env.health_check_max_retries
             health_check_initial_retry_delay = app_env.health_check_initial_retry_delay
             health_check_max_retry_delay = app_env.health_check_max_retry_delay
             health_check_retry_backoff = app_env.health_check_retry_backoff
-            
+
             health_monitor_service = HealthMonitorService(
                 repository=repo,
                 redis_client=redis_client,
@@ -186,7 +178,7 @@ async def startup_event():
                 retry_backoff_multiplier=health_check_retry_backoff,
             )
             logger.info("Health monitor service initialized")
-            
+
             # Start periodic health check task if enabled
             health_check_enabled = app_env.service_health_check_enabled
             if health_check_enabled:
@@ -194,11 +186,11 @@ async def startup_event():
                 logger.info("Periodic health check task started")
             else:
                 logger.info("Periodic health check disabled")
-                
+
         except Exception as e:
             logger.warning(f"Failed to initialize health monitor service: {e}")
             health_monitor_service = None
-        
+
     except Exception as e:
         logger.error(f"Failed to initialize essential connections: {e}")
         raise
@@ -221,15 +213,15 @@ async def shutdown_event():
     if health_monitor_service:
         await health_monitor_service.close()
         logger.info("Health monitor service closed")
-    
+
     if redis_client:
         await redis_client.close()
         logger.info("Redis connection closed")
-    
+
     if db_engine:
         await db_engine.dispose()
         logger.info("PostgreSQL connection closed")
-    
+
     if kafka_producer:
         await kafka_producer.stop()
         logger.info("Kafka producer closed")
