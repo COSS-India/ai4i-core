@@ -1,178 +1,119 @@
 """
-Main Logger Module
+Logger configuration.
 
-Provides get_logger function and logging configuration.
+Call configure_logging() once at service startup. After that, use standard
+Python logging everywhere — no special imports needed in route handlers or
+service code:
+
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("something happened")
+
+All loggers propagate to the root logger, which has the JSONFormatter
+attached, so every log line across the whole process comes out as structured
+JSON — your code, FastAPI internals, SQLAlchemy, httpx, all of it.
 """
 
 import logging
 import sys
-from typing import Optional
+from typing import Dict, Optional
 
 from .config import get_default_config
 from .formatters import JSONFormatter
-from .handlers import KafkaHandler
+from ai4icore_core.context import get_trace_id, get_tenant_id
+
+# Default third-party log levels applied when the caller does not supply their own.
+# Services that pass third_party_log_levels replace this list entirely — they own
+# the full set of overrides and must repeat any defaults they want to keep.
+_DEFAULT_THIRD_PARTY_LEVELS: Dict[str, str] = {
+    "httpx": "WARNING",
+    "httpcore": "WARNING",
+    "urllib3": "WARNING",
+    "sqlalchemy.engine": "WARNING",
+}
 
 
-def get_logger(
-    name: str,
-    service_name: Optional[str] = None,
-    level: Optional[int] = None,
-    use_kafka: bool = True,
-    kafka_topic: str = "logs",
-    fallback_to_stdout: bool = True,
-) -> logging.Logger:
+class ContextFilter(logging.Filter):
     """
-    Get a configured logger instance with JSON formatting.
+    Injects request context into every log record before formatting.
 
-    Args:
-        name: Logger name (usually __name__ or service name)
-        service_name: Service name for logs (defaults to env SERVICE_NAME)
-        level: Log level (defaults to env LOG_LEVEL or INFO)
-        use_kafka: Whether to send logs to Kafka
-        kafka_topic: Kafka topic name
-        fallback_to_stdout: Fallback to stdout if Kafka unavailable
+    Attached to the root handler so it runs for every log line in the process —
+    service code, FastAPI internals, SQLAlchemy, httpx, all of it — without
+    any library needing to know about contextvars.
 
-    Returns:
-        Configured logger instance
-
-    Example:
-        logger = get_logger("my-service")
-        logger.info("Processing request", extra={"user_id": "user_123"})
+    The formatter then reads record.trace_id / record.tenant_id instead of
+    calling the context functions itself.
     """
-    logger = logging.getLogger(name)
 
-    # Get service name - check root logger's formatter first, then env var
-    # This ensures all loggers use the same service_name as configured in configure_logging()
-    root_logger = logging.getLogger()
-    root_service_name = None
-    if root_logger.handlers:
-        for handler in root_logger.handlers:
-            if hasattr(handler, 'formatter') and isinstance(handler.formatter, JSONFormatter):
-                root_service_name = handler.formatter.service_name
-                break
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.trace_id = get_trace_id()
+        record.tenant_id = get_tenant_id()
+        return True
 
-    # Priority: provided service_name > root logger's service_name > LoggingConfig > "unknown"
-    service_name = service_name or root_service_name or get_default_config().service_name or "unknown"
 
-    # Avoid duplicate handlers
-    if logger.handlers:
-        # Update existing handlers' formatters to use correct service_name
-        for handler in logger.handlers:
-            if hasattr(handler, 'formatter') and isinstance(handler.formatter, JSONFormatter):
-                handler.formatter.service_name = service_name
-        return logger
-
-    # Set log level (LoggingConfig already resolves LOG_LEVEL → int)
-    if level is None:
-        level = get_default_config().log_level
-
-    logger.setLevel(level)
-
-    # Create JSON formatter
-    formatter = JSONFormatter(service_name=service_name)
-
-    # Add handlers
-    if use_kafka:
-        # Kafka handler (with stdout fallback)
-        kafka_handler = KafkaHandler(
-            topic=kafka_topic,
-            fallback_to_stdout=fallback_to_stdout,
-        )
-        kafka_handler.setFormatter(formatter)
-        logger.addHandler(kafka_handler)
-    else:
-        # Stdout handler only
-        stdout_handler = logging.StreamHandler(sys.stdout)
-        stdout_handler.setFormatter(formatter)
-        logger.addHandler(stdout_handler)
-
-    # Prevent propagation to root logger
-    logger.propagate = False
-
-    return logger
+def get_logger(name: str) -> logging.Logger:
+    """Return a standard logger. configure_logging() handles the formatting."""
+    return logging.getLogger(name)
 
 
 def configure_logging(
     service_name: Optional[str] = None,
-    level: Optional[int] = None,
-    use_kafka: bool = True,
-    kafka_topic: str = "logs",
-    root_level: Optional[int] = None,
+    log_level: Optional[str] = None,
+    third_party_log_levels: Optional[Dict[str, str]] = None,
 ) -> None:
     """
-    Configure root logging for the application.
+    Configure the root logger with JSONFormatter writing to stdout.
+
+    Must be called once at service startup before the first request.
 
     Args:
-        service_name: Service name for logs
-        level: Log level for service loggers
-        use_kafka: Whether to use Kafka handler
-        kafka_topic: Kafka topic name
-        root_level: Log level for root logger (defaults to WARNING)
+        service_name: Identifies the service in every log line. Falls back to
+            the SERVICE_NAME env var, then "unknown".
+        log_level: Root log level (DEBUG/INFO/WARNING/ERROR). Falls back to the
+            LOG_LEVEL env var, then INFO.
+        third_party_log_levels: Logger-name → level mapping for third-party
+            libraries. When provided, replaces the built-in defaults entirely —
+            the service owns the full list. When omitted, the built-in defaults
+            are used:
+                {
+                    "httpx": "WARNING",
+                    "httpcore": "WARNING",
+                    "urllib3": "WARNING",
+                    "sqlalchemy.engine": "WARNING",
+                }
+            Example — keep defaults but also silence boto3 and enable SQLAlchemy
+            query logging:
+                configure_logging(
+                    service_name="my-service",
+                    third_party_log_levels={
+                        "httpx": "WARNING",
+                        "httpcore": "WARNING",
+                        "urllib3": "WARNING",
+                        "sqlalchemy.engine": "INFO",  # want query logs
+                        "boto3": "WARNING",
+                        "botocore": "WARNING",
+                    },
+                )
     """
-    # Configure root logger
-    if root_level is None:
-        root_level = logging.WARNING
+    cfg = get_default_config()
+    name = service_name or cfg.service_name or "unknown"
+    level = getattr(logging, (log_level or cfg.log_level_raw or "INFO").upper(), logging.INFO)
 
-    root_logger = logging.getLogger()
-    root_logger.setLevel(root_level)
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JSONFormatter(service_name=name))
+    handler.addFilter(ContextFilter())
 
-    # Remove existing handlers
-    root_logger.handlers.clear()
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.setLevel(level)
+    root.addHandler(handler)
 
-    # Create formatter
-    service_name = service_name or get_default_config().service_name or "unknown"
-    formatter = JSONFormatter(service_name=service_name)
+    levels = third_party_log_levels if third_party_log_levels is not None else _DEFAULT_THIRD_PARTY_LEVELS
+    for logger_name, lvl in levels.items():
+        logging.getLogger(logger_name).setLevel(getattr(logging, lvl.upper(), logging.WARNING))
 
-    # Add stdout handler for root logger
-    stdout_handler = logging.StreamHandler(sys.stdout)
-    stdout_handler.setFormatter(formatter)
-    root_logger.addHandler(stdout_handler)
-
-    # Update all existing loggers' formatters to use the correct service_name
-    # This ensures loggers created before configure_logging() get the correct service_name
-    for logger_name in logging.Logger.manager.loggerDict:
-        logger_obj = logging.getLogger(logger_name)
-        if logger_obj.handlers:
-            for handler in logger_obj.handlers:
-                if hasattr(handler, 'formatter'):
-                    if isinstance(handler.formatter, JSONFormatter):
-                        # Update existing JSONFormatter with correct service_name
-                        handler.formatter.service_name = service_name
-                    else:
-                        # Replace non-JSON formatter with JSONFormatter
-                        # This catches loggers created before configure_logging()
-                        handler.setFormatter(JSONFormatter(service_name=service_name))
-
-    # Also configure third-party library loggers (httpx, uvicorn, etc.) to use our formatter
-    # This ensures all logs have trace_id and correct service_name
-    third_party_loggers = ['httpx', 'httpcore', 'urllib3']
-    for lib_name in third_party_loggers:
-        lib_logger = logging.getLogger(lib_name)
-        # Set level to WARNING to reduce noise from third-party libs
-        lib_logger.setLevel(logging.WARNING)
-        if lib_logger.handlers:
-            for handler in lib_logger.handlers:
-                if not isinstance(handler.formatter, JSONFormatter):
-                    handler.setFormatter(JSONFormatter(service_name=service_name))
-        else:
-            # Add handler if logger exists but has no handlers
-            stdout_handler = logging.StreamHandler(sys.stdout)
-            stdout_handler.setFormatter(JSONFormatter(service_name=service_name))
-            lib_logger.addHandler(stdout_handler)
-        lib_logger.propagate = False
-
-    # Disable uvicorn access logger completely (we use RequestLoggingMiddleware instead)
-    uvicorn_access = logging.getLogger("uvicorn.access")
-    uvicorn_access.handlers.clear()
-    uvicorn_access.propagate = False
-    uvicorn_access.disabled = True
-
-    # Configure other uvicorn loggers to use our formatter
-    for uvicorn_logger_name in ["uvicorn", "uvicorn.error", "uvicorn.asgi"]:
-        uvicorn_logger = logging.getLogger(uvicorn_logger_name)
-        if uvicorn_logger.handlers:
-            for handler in uvicorn_logger.handlers:
-                if not isinstance(handler.formatter, JSONFormatter):
-                    handler.setFormatter(JSONFormatter(service_name=service_name))
-        # Let them propagate to root logger which has our formatter
-        uvicorn_logger.propagate = True
+    # Suppress uvicorn's built-in access log — RequestMiddleware handles request logging.
+    uv_access = logging.getLogger("uvicorn.access")
+    uv_access.handlers.clear()
+    uv_access.propagate = False
+    uv_access.disabled = True

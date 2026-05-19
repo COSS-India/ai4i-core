@@ -1,4 +1,4 @@
-// Tenant Management tab — backed by auth-service /api/v1/tenants/*.
+// Tenant Management tab — backed by auth-service tenant endpoints.
 
 import React, { useEffect, useMemo } from "react";
 import {

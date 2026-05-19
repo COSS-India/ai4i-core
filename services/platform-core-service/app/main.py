@@ -1,22 +1,10 @@
 """
-Core Service — FastAPI application factory.
-
-Startup sequence:
-  1. PostgreSQL connection (async SQLAlchemy)
-  2. Redis connection (async)
-
-Middleware stack: RequestLoggingMiddleware.
-
-Authentication and CORS are handled at the gateway layer.
+Platform Core Service — FastAPI application factory.
+No tracing or observability — logging only.
 """
 
 import logging
 from contextlib import asynccontextmanager
-
-_uvicorn_access = logging.getLogger("uvicorn.access")
-_uvicorn_access.handlers.clear()
-_uvicorn_access.propagate = False
-_uvicorn_access.disabled = True
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
@@ -24,26 +12,17 @@ from app.core.config import settings
 from app.core.database import close_database, init_database
 from app.core.exceptions import register_exception_handlers
 from app.core.redis import close_redis, init_redis
-from app.middleware.request_logging import RequestLoggingMiddleware
 from app.routes import api_router, versioning
+
+from ai4icore_core.logging import configure_logging, RequestMiddleware
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application startup / shutdown lifecycle."""
-    # Re-silence uvicorn.access per worker process (uvicorn re-initialises
-    # loggers when spawning workers, so the module-level suppression above is
-    # not enough when running with --workers > 1).
-    _uv = logging.getLogger("uvicorn.access")
-    _uv.handlers.clear()
-    _uv.propagate = False
-    _uv.disabled = True
-
     logger.info("Starting %s v%s", settings.service_name, settings.service_version)
 
-    # ── Infrastructure startup ──
     await init_database(
         db_url=settings.get_database_url(),
         pool_size=settings.db_pool_size,
@@ -55,49 +34,28 @@ async def lifespan(app: FastAPI):
         socket_timeout=settings.redis_timeout,
     )
 
-    # ── Telemetry (optional) ──
-    try:
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-
-        FastAPIInstrumentor.instrument_app(
-            app, excluded_urls="health,ready,docs,redoc,openapi.json"
-        )
-        logger.info("OpenTelemetry FastAPI instrumentation enabled.")
-    except ImportError:
-        logger.debug("OpenTelemetry not available — skipping instrumentation.")
-
-    logger.info("Platform-core-service started successfully.")
     yield
 
-    # ── Shutdown ──
     await close_redis()
     await close_database()
-    logger.info("Platform-core-service shutdown complete.")
+    logger.info("Shutdown complete.")
 
 
 def create_app() -> FastAPI:
-    """Build and return the configured FastAPI application."""
     app = FastAPI(
         title="Platform Core Service",
         version=settings.service_version,
-        description=(
-            "Platform core service."
-        ),
+        description="Platform core service.",
         lifespan=lifespan,
     )
 
-    # ── Exception handlers ──
+    configure_logging(service_name=settings.service_name)
     register_exception_handlers(app)
 
-    # CORS is handled at the nginx gateway, not here.
+    # CORS is handled at the nginx gateway.
+    app.add_middleware(RequestMiddleware)
 
-    # ── Middleware ──
-    app.add_middleware(RequestLoggingMiddleware)
-
-    # ── API versioning headers ──
     versioning.register(app)
-
-    # ── Routes ──
     app.include_router(api_router)
 
     # OpenAPI security: Bearer JWT lock on all endpoints except health/root.

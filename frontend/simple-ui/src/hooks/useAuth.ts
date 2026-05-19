@@ -9,7 +9,10 @@ import { useTokenRefresh } from './useTokenRefresh';
 // Broadcast auth state changes so other hook instances (e.g., Header) can react immediately
 const AUTH_UPDATED_EVENT = 'auth:updated';
 
-/** Written when the app ends the session locally so other tabs on the same origin clear auth too */
+/**
+ * Cross-tab logout signal. Kept in localStorage (not sessionStorage) because only
+ * `storage` events for localStorage fire across tabs.
+ */
 const AUTH_SESSION_REVOKED_STORAGE_KEY = 'ai4i:auth:session-revoked';
 
 // Shared init promise: only one getCurrentUser() + listApiKeys() run for all useAuth() instances.
@@ -50,7 +53,7 @@ export function resetAuthInitPromise(): void {
 
 /**
  * End the session in this browser only: clear tokens and stored user, do not call the auth logout API.
- * Other tabs receive a storage event and sign out as well.
+ * Other tabs receive a localStorage `storage` event and sign out as well.
  */
 export function forceFrontendSessionEnd(): void {
   if (typeof window === 'undefined') return;
