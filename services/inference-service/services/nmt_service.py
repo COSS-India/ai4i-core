@@ -14,31 +14,9 @@ from models.schemas.nmt import (
     NMTConfig,
 )
 from inference.inference_server_resolver import InferenceServerResolver
+from inference_models.nmt_inference_model import NMTInferenceModel  # type: ignore[import]
 
 logger = logging.getLogger(__name__)
-
-# Lazy import to avoid circular imports
-_NMTInferenceModel = None
-
-def get_nmt_inference_model():
-    """Lazy load NMTInferenceModel."""
-    global _NMTInferenceModel
-    if _NMTInferenceModel is None:
-        import sys, os, types
-        _models_dir = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "inference-models")
-        )
-        # The folder is named 'inference-models' (dash) but code imports it as 'inference_models'.
-        # Register a package stub so Python resolves submodule imports correctly.
-        if "inference_models" not in sys.modules:
-            pkg = types.ModuleType("inference_models")
-            pkg.__path__ = [_models_dir]
-            pkg.__package__ = "inference_models"
-            sys.modules["inference_models"] = pkg
-        from inference_models.nmt_inference_model import NMTInferenceModel
-        _NMTInferenceModel = NMTInferenceModel
-    return _NMTInferenceModel
-    return _NMTInferenceModel
 
 
 class NMTTaskService(BaseTaskService):
@@ -228,7 +206,6 @@ class NMTTaskService(BaseTaskService):
             # adapter_config tells the mapper which tensors this model expects.
             # Different service_ids bring different adapter_configs — no code change needed per model.
             self.logger.debug(f"Converting payload to Triton format for model {model_name}")
-            NMTInferenceModel = get_nmt_inference_model()
             inference_model = NMTInferenceModel(adapter_config=adapter_config)
 
             # request.input is already List[Dict] here — BaseTaskService.process()
@@ -283,7 +260,6 @@ class NMTTaskService(BaseTaskService):
                 fallback_id, model_name, triton_endpoint, api_key, fallback_adapter_config = (
                     fallback_service
                 )
-                NMTInferenceModel = get_nmt_inference_model()
                 inference_model = NMTInferenceModel(adapter_config=fallback_adapter_config)
                 triton_inputs, output_names = await inference_model.convert_payload_to_triton_format(
                     nmt_request.input, nmt_request.config.dict()
