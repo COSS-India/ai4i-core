@@ -1,8 +1,9 @@
 """
-OpenTelemetry Tracing Setup for Jaeger
+OpenTelemetry Tracing Setup with Console Output
 
-This module provides setup for distributed tracing using OpenTelemetry
-and exports traces to Jaeger.
+This module provides simple distributed tracing setup using OpenTelemetry.
+Spans are exported to console for Phase 1 (local development).
+In Phase 2, Kafka exporter will be added for production ingestion.
 """
 
 import logging
@@ -15,26 +16,12 @@ logger = logging.getLogger(__name__)
 try:
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider, SpanProcessor
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.trace import Span
-
-    # Try OTLP exporter first (recommended)
-    try:
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-        OTLP_AVAILABLE = True
-    except ImportError:
-        OTLP_AVAILABLE = False
-        logger.warning("OTLP exporter not available, falling back to Jaeger Thrift")
-
-    # Fallback to Jaeger Thrift exporter
-    if not OTLP_AVAILABLE:
-        try:
-            from opentelemetry.exporter.jaeger.thrift import JaegerExporter
-            JAEGER_THRIFT_AVAILABLE = True
-        except ImportError:
-            JAEGER_THRIFT_AVAILABLE = False
-            logger.warning("Jaeger Thrift exporter not available")
+    from opentelemetry.propagate import set_global_textmap
+    from opentelemetry.propagators.composite import CompositePropagator
+    from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
     TRACING_AVAILABLE = True
 except ImportError:
@@ -44,27 +31,26 @@ except ImportError:
 
 def setup_tracing(service_name: str, jaeger_endpoint: Optional[str] = None) -> Optional[object]:
     """
-    Setup OpenTelemetry tracing with Jaeger exporter.
+    Setup OpenTelemetry tracing with console output.
 
     Args:
         service_name: Name of the service (e.g., "ocr-service")
-        jaeger_endpoint: Optional Jaeger endpoint (defaults to env var or http://jaeger:4317)
+        jaeger_endpoint: Ignored (kept for backward compatibility with existing code)
+                        In Phase 1, spans go to console. Phase 2 will use Kafka.
 
     Returns:
         Tracer instance or None if tracing is not available
+
+    Note: Spans are exported to console. In Phase 2, Kafka exporter will be added.
     """
     if not TRACING_AVAILABLE:
         logger.warning("OpenTelemetry not available, skipping tracing setup")
         return None
 
     try:
-        # Get Jaeger endpoint from parameter or TelemetryConfig
         cfg = get_default_config()
-        if not jaeger_endpoint:
-            jaeger_endpoint = cfg.jaeger_endpoint or "http://jaeger:4317"
 
         # Create resource with service name
-        # Avoid hardcoded defaults for service.version — only emit it when configured.
         resource_attrs = {"service.name": service_name}
         if cfg.service_version:
             resource_attrs["service.version"] = cfg.service_version
@@ -74,44 +60,30 @@ def setup_tracing(service_name: str, jaeger_endpoint: Optional[str] = None) -> O
         tracer_provider = TracerProvider(resource=resource)
         trace.set_tracer_provider(tracer_provider)
 
-        # Create exporter based on availability
-        base_exporter = None
-        if OTLP_AVAILABLE:
-            # Use OTLP exporter (recommended, works with Jaeger all-in-one)
-            # Remove http:// prefix if present, OTLP expects host:port format
-            endpoint = jaeger_endpoint.replace("http://", "").replace("https://", "")
-            base_exporter = OTLPSpanExporter(
-                endpoint=endpoint,
-                insecure=True  # For local development
-            )
-            logger.info(f"✅ Using OTLP exporter for Jaeger at {endpoint}")
-        elif JAEGER_THRIFT_AVAILABLE:
-            # Fallback to Jaeger Thrift exporter
-            base_exporter = JaegerExporter(
-                agent_host_name="jaeger",
-                agent_port=6831,
-            )
-            logger.info("✅ Using Jaeger Thrift exporter")
-        else:
-            logger.error("❌ No tracing exporter available")
-            return None
+        # Add tenant_id processor to add tenant_id attribute to all spans
+        tenant_processor = TenantSpanProcessor()
+        tracer_provider.add_span_processor(tenant_processor)
 
-        # Wrap exporter with filtering to reduce noise (filter out http receive/send spans)
-        # Always include send/receive spans for API gateway for detailed breakdown
-        exporter = FilteringSpanExporter(base_exporter, service_name=service_name)
+        # Add console exporter for Phase 1 (local debugging)
+        # In Phase 2, this will be replaced with Kafka exporter
+        console_exporter = ConsoleSpanExporter()
 
-        # Add span processors
-        # First add organization processor to add org attribute to all spans
-        organization_processor = OrganizationSpanProcessor()
-        tracer_provider.add_span_processor(organization_processor)
+        # Register composite propagator: W3C first (respects upstream traceparent),
+        # then CorrelationPropagator (maps our correlation ID to the OTel trace ID).
+        from .propagator import CorrelationPropagator
 
-        # Then add batch processor for exporting (with filtering exporter)
-        span_processor = BatchSpanProcessor(exporter)
-        tracer_provider.add_span_processor(span_processor)
+        set_global_textmap(CompositePropagator([
+            TraceContextTextMapPropagator(),
+            CorrelationPropagator(),
+        ]))
+
+        console_processor = SimpleSpanProcessor(console_exporter)
+        tracer_provider.add_span_processor(console_processor)
 
         # Get tracer
         tracer = trace.get_tracer(service_name)
         logger.info(f"✅ Tracing initialized for service: {service_name}")
+        logger.info("📤 Spans will be exported to console (Phase 1 - local development)")
 
         return tracer
 
@@ -121,48 +93,40 @@ def setup_tracing(service_name: str, jaeger_endpoint: Optional[str] = None) -> O
 
 
 if TRACING_AVAILABLE:
-    class OrganizationSpanProcessor(SpanProcessor):
+    class TenantSpanProcessor(SpanProcessor):
         """
-        Span processor that adds organization and tenant_id attributes to all spans.
+        Span processor that adds tenant_id attribute to all spans.
 
-        Reads organization and tenant_id from logging context and adds them as span attributes.
+        Reads tenant_id from logging context and adds to every span.
+        Used for multi-tenant RBAC filtering in Phase 2 (OpenSearch trace queries).
+
+        ✅ SIMPLIFIED: Only tracks tenant_id (not organization)
+        - tenant_id is required for RBAC filtering in OpenSearch
+        - organization is not needed (tenant_id is the filtering criteria)
         """
 
         def on_start(self, span: Span, parent_context=None) -> None:
-            """Called when a span is started."""
+            """Add tenant_id to span on start."""
             try:
-                # Try to import context functions
-                from ai4icore_core.logging.context import get_organization, get_tenant_id
-                organization = get_organization()
+                from ai4icore_core.logging.context import get_tenant_id
                 tenant_id = get_tenant_id()
-
-                # Add organization attribute (for backward compatibility)
-                if organization:
-                    span.set_attribute("organization", organization)
-
-                # Add tenant_id attribute (primary filter for multi-tenant RBAC)
-                # OTel attributes cannot be null; emit a stable string so traces are filterable.
-                # Keep "unknown" for backward compatibility with existing trace filters.
                 span.set_attribute("tenant_id", str(tenant_id) if tenant_id else "unknown")
             except Exception:
-                # Silently fail if context is not available
                 pass
 
         def on_end(self, span: Span) -> None:
             """Called when a span is ended."""
-            # No action needed
             pass
 
         def shutdown(self) -> None:
             """Called when the processor is shut down."""
-            # No cleanup needed
             pass
 
         def force_flush(self, timeout_millis: int = 30000) -> bool:
             """Force flush any pending spans."""
             return True
 else:
-    class OrganizationSpanProcessor:  # type: ignore
+    class TenantSpanProcessor:  # type: ignore
         """No-op fallback when OpenTelemetry is unavailable."""
 
         def on_start(self, span, parent_context=None) -> None:
@@ -175,143 +139,6 @@ else:
             return None
 
         def force_flush(self, timeout_millis: int = 30000) -> bool:
-            return True
-
-
-if TRACING_AVAILABLE:
-    class FilteringSpanExporter(SpanExporter):
-        """
-        Span exporter wrapper that filters out noisy spans like http receive/send.
-
-        These spans are created by FastAPI instrumentation for ASGI operations
-        and can clutter traces. This exporter filters them out before exporting.
-
-        Exception: Always includes send/receive spans for api-gateway-service
-        to provide detailed request/response breakdown.
-        """
-
-        # Spans to filter out (by name pattern)
-        # These are created by ASGI instrumentation and create noise in traces
-        FILTERED_SPAN_NAMES = [
-            "http receive",
-            "http send",
-            " http receive",  # With leading space (common in ASGI spans)
-            " http send",     # With leading space
-        ]
-
-        def __init__(self, base_exporter: SpanExporter, service_name: str = None):
-            """Initialize the filtering exporter with a base exporter."""
-            self.base_exporter = base_exporter
-            self.service_name = service_name
-            # Always include send/receive spans for API gateway
-            self.include_send_receive = service_name == "api-gateway-service"
-
-        def export(self, spans):
-            """Export spans, filtering out noisy ones."""
-            if not spans:
-                return SpanExportResult.SUCCESS
-
-            # Filter out spans matching filtered patterns
-            filtered_spans = []
-            filtered_count = 0
-            # For API gateway, de‑duplicate http send/receive spans with the same name
-            seen_http_span_names = set()
-            for span in spans:
-                span_name = span.name.lower() if span.name else ""
-                should_filter = False
-
-                # Always include send/receive spans for API gateway
-                if self.include_send_receive:
-                    # For API gateway, enhance send/receive spans with more details,
-                    # but only keep a single http send/receive span per unique span name
-                    if any(filtered_name.strip() in span_name for filtered_name in self.FILTERED_SPAN_NAMES):
-                        original_name = span.name or span_name
-                        if original_name in seen_http_span_names:
-                            # Skip duplicate http send/receive span for the same operation
-                            continue
-                        seen_http_span_names.add(original_name)
-                        self._enhance_api_gateway_span(span)
-                    filtered_spans.append(span)
-                    continue
-
-                # For other services, filter out send/receive spans
-                # Check if span name ends with or contains any of the filtered patterns
-                # ASGI spans typically have format: "service-name METHOD /path http receive/send"
-                for filtered_name in self.FILTERED_SPAN_NAMES:
-                    filtered_lower = filtered_name.lower().strip()
-                    # Check if span name ends with the pattern or contains it
-                    if span_name.endswith(filtered_lower) or filtered_lower in span_name:
-                        should_filter = True
-                        filtered_count += 1
-                        break
-
-                if not should_filter:
-                    filtered_spans.append(span)
-
-            # Log filtering stats (only if we filtered something and debug is enabled)
-            if filtered_count > 0:
-                logger.debug(f"Filtered out {filtered_count} noisy spans (http receive/send)")
-            elif self.include_send_receive:
-                logger.debug(f"Including all spans for {self.service_name} (including send/receive)")
-
-            # Export filtered spans
-            if filtered_spans:
-                return self.base_exporter.export(filtered_spans)
-            else:
-                return SpanExportResult.SUCCESS
-
-        def _enhance_api_gateway_span(self, span):
-            """Add detailed attributes to API gateway send/receive spans for better breakdown."""
-            try:
-                # Extract operation details from span name
-                span_name = span.name or ""
-
-                # Add span type attribute
-                if "http receive" in span_name.lower():
-                    span.set_attribute("span.type", "http.receive")
-                    span.set_attribute("span.phase", "request")
-                elif "http send" in span_name.lower():
-                    span.set_attribute("span.type", "http.send")
-                    span.set_attribute("span.phase", "response")
-
-                # Try to extract HTTP method and path from span name
-                # Format: "api-gateway-service METHOD /path http receive/send"
-                parts = span_name.split()
-                if len(parts) >= 3:
-                    method = parts[1] if parts[1] in ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"] else None
-                    if method:
-                        span.set_attribute("http.method_extracted", method)
-                    if len(parts) >= 3:
-                        path = parts[2] if parts[2].startswith("/") else None
-                        if path:
-                            span.set_attribute("http.path_extracted", path)
-            except Exception as e:
-                # Silently fail if enhancement fails
-                logger.debug(f"Failed to enhance API gateway span: {e}")
-
-        def shutdown(self):
-            """Shutdown the base exporter."""
-            return self.base_exporter.shutdown()
-
-        def force_flush(self, timeout_millis: int = 30000):
-            """Force flush the base exporter."""
-            return self.base_exporter.force_flush(timeout_millis)
-
-else:
-    class FilteringSpanExporter:  # type: ignore[no-redef]
-        """No-op exporter when OpenTelemetry SDK components failed to import."""
-
-        def __init__(self, base_exporter=None, service_name: Optional[str] = None):
-            self.base_exporter = base_exporter
-            self.service_name = service_name
-
-        def export(self, spans):  # noqa: ANN001
-            return True
-
-        def shutdown(self):
-            return None
-
-        def force_flush(self, timeout_millis: int = 30000):
             return True
 
 

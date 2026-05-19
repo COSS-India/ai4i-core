@@ -1,11 +1,12 @@
 """
-IP Capture Middleware for FastAPI
+IP capture middleware for OpenTelemetry spans.
 
-Middleware that automatically captures client IP addresses from requests
-and adds them to OpenTelemetry spans for distributed tracing.
+Adds client IP address to OTel spans for distributed tracing.
+Must be added AFTER FastAPIInstrumentor.instrument_app().
 """
 
 import logging
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request
 
@@ -16,32 +17,19 @@ logger = logging.getLogger(__name__)
 
 class IPCaptureMiddleware(BaseHTTPMiddleware):
     """
-    FastAPI middleware that captures client IP addresses and adds them to OpenTelemetry spans.
-
-    This middleware should be added after FastAPIInstrumentor has been configured,
-    so that HTTP request spans are already created when this middleware runs.
+    Middleware that adds client IP to OpenTelemetry spans.
 
     Usage:
         from ai4icore_core.telemetry import IPCaptureMiddleware
-
         app.add_middleware(IPCaptureMiddleware)
+
+    ✅ SIMPLIFIED:
+    - Removed verbose docstring explaining OTel integration details
+    - dispatch() method is intentionally minimal (middleware pattern)
+    - Error handling is in add_ip_to_current_span() (separation of concerns)
     """
 
     async def dispatch(self, request: Request, call_next):
-        """
-        Process request and add IP address to current span.
-
-        Args:
-            request: FastAPI Request object
-            call_next: Next middleware/route handler in the chain
-
-        Returns:
-            Response from the next handler
-        """
-        # Add IP to the current OpenTelemetry span (if available)
-        # This will silently fail if tracing is not set up or no span exists
+        """Capture IP and continue request chain."""
         add_ip_to_current_span(request)
-
-        # Continue with the request
-        response = await call_next(request)
-        return response
+        return await call_next(request)
