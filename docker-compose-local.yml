@@ -213,6 +213,7 @@ services:
       - ./services/auth-service/.env
     volumes:
       - ./services/auth-service:/app
+      - ./libs/ai4icore_core:/libs/ai4icore_core
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
     depends_on:
       postgres:
@@ -790,6 +791,7 @@ services:
     volumes:
       # Bind-mount app code for hot-reload without image rebuilds
       - ./services/platform-core-service:/app
+      - ./libs/ai4icore_core:/libs/ai4icore_core
     command:
       - "uvicorn"
       - "app.main:app"
