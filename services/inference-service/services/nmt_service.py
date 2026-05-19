@@ -23,17 +23,20 @@ def get_nmt_inference_model():
     """Lazy load NMTInferenceModel."""
     global _NMTInferenceModel
     if _NMTInferenceModel is None:
-        try:
-            from inference_models.nmt_inference_model import NMTInferenceModel
-            _NMTInferenceModel = NMTInferenceModel
-        except ImportError:
-            # For testing, create a stub
-            class NMTInferenceModel:
-                def convert_payload_to_triton_format(self, request):
-                    return {}, []
-                def convert_triton_output_to_task_format(self, output):
-                    return {'output': output.get('outputs', [])}
-            _NMTInferenceModel = NMTInferenceModel
+        import sys, os, types
+        _models_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "inference-models")
+        )
+        # The folder is named 'inference-models' (dash) but code imports it as 'inference_models'.
+        # Register a package stub so Python resolves submodule imports correctly.
+        if "inference_models" not in sys.modules:
+            pkg = types.ModuleType("inference_models")
+            pkg.__path__ = [_models_dir]
+            pkg.__package__ = "inference_models"
+            sys.modules["inference_models"] = pkg
+        from inference_models.nmt_inference_model import NMTInferenceModel
+        _NMTInferenceModel = NMTInferenceModel
+    return _NMTInferenceModel
     return _NMTInferenceModel
 
 
@@ -215,25 +218,30 @@ class NMTTaskService(BaseTaskService):
                 f"Resolving NMT service for {config.language.source_language} -> "
                 f"{config.language.target_language}"
             )
-            service_id, model_name, triton_endpoint, api_key = await self._resolve_service_and_model(
-                config
+            # adapter_config is the tensor mapping for the resolved model
+            service_id, model_name, triton_endpoint, api_key, adapter_config = (
+                await self._resolve_service_and_model(config)
             )
 
-            # 2. Convert payload to Triton format
+            # 2. Build the inference model with the resolved adapter_config.
+            # adapter_config tells the mapper which tensors this model expects.
+            # Different service_ids bring different adapter_configs — no code change needed per model.
             self.logger.debug(f"Converting payload to Triton format for model {model_name}")
             NMTInferenceModel = get_nmt_inference_model()
-            inference_model = NMTInferenceModel()
-            triton_inputs, output_names = inference_model.convert_payload_to_triton_format(
-                nmt_request
+            inference_model = NMTInferenceModel(adapter_config=adapter_config)
+
+            # request.input is already List[Dict] here — BaseTaskService.process()
+            # runs preprocess_input() before calling run_inference(), which converts
+            # TextInput objects to dicts and normalises whitespace.
+            # config.dict() gives snake_case keys matching value_path declarations in adapter_config.
+            triton_inputs, output_names = await inference_model.convert_payload_to_triton_format(
+                nmt_request.input, nmt_request.config.dict()
             )
 
             # 3. Call Triton inference server
             self.logger.info(f"Calling Triton inference server: {triton_endpoint}")
             raw_triton_output = await self._call_triton_inference(
-                # TODO: Use actual endpoint and model name from resolver instead of hardcoded values
-                # Use Postman mock server for local testing if needed
                 triton_endpoint=triton_endpoint,
-                # triton_endpoint= "https://58e8eac8-a3e0-41ed-bd29-cb1d899c7b36.mock.pstmn.io",
                 model_name=model_name,
                 triton_inputs=triton_inputs,
                 triton_outputs=output_names,
@@ -242,7 +250,9 @@ class NMTTaskService(BaseTaskService):
 
             # 4. Convert Triton output to task format
             self.logger.debug("Converting Triton output to NMT response format")
-            response_data = inference_model.convert_triton_output_to_task_format(raw_triton_output)
+            response_data = await inference_model.convert_triton_output_to_task_format(
+                raw_triton_output
+            )
 
             # 5. Post-process output and pair with source inputs
             postprocessed = await self.postprocess_output(response_data, source_texts)
@@ -268,97 +278,86 @@ class NMTTaskService(BaseTaskService):
             )
             if fallback_service:
                 self.logger.info("Attempting fallback NMT service")
-                # Retry with fallback (same logic, different service)
-                fallback_id, model_name, triton_endpoint, api_key = fallback_service
+                # Same pattern as primary — fallback model also gets its own adapter_config
+                fallback_id, model_name, triton_endpoint, api_key, fallback_adapter_config = (
+                    fallback_service
+                )
                 NMTInferenceModel = get_nmt_inference_model()
-                inference_model = NMTInferenceModel()
-                triton_inputs, output_names = inference_model.convert_payload_to_triton_format(
-                    nmt_request
+                inference_model = NMTInferenceModel(adapter_config=fallback_adapter_config)
+                triton_inputs, output_names = await inference_model.convert_payload_to_triton_format(
+                    nmt_request.input, nmt_request.config.dict()
                 )
                 raw_triton_output = await self._call_triton_inference(
                     triton_endpoint, model_name, triton_inputs, output_names, api_key
                 )
-                response_data = inference_model.convert_triton_output_to_task_format(
+                response_data = await inference_model.convert_triton_output_to_task_format(
                     raw_triton_output
                 )
                 postprocessed = await self.postprocess_output(response_data, source_texts)
-                return NMTInferenceResponse(output=postprocessed['output'], smr_response=None)
+                return NMTInferenceResponse(output=postprocessed["output"], smr_response=None)
 
             # If no fallback, re-raise error
             raise
 
     async def postprocess_output(
-        self, raw_triton_output: Dict[str, Any], source_texts: Optional[List[str]] = None
+        self, response_items: List[Dict[str, Any]], source_texts: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
-        Post-process raw Triton output for NMT.
-        Decodes translations, formats output, and pairs with source texts.
+        Pair mapped output items with their source texts to build the final response.
 
         Args:
-            raw_triton_output: Raw output from Triton server
-            source_texts: Optional list of source texts to pair with translations
+            response_items: List[Dict] from convert_triton_output_to_task_format().
+                Each dict has keys matching 'maps_to' in adapter_config outputs
+                (e.g. {"target": "translated text"}).
+            source_texts: Original input texts in the same order, used to populate
+                TranslationOutput.source.
 
         Returns:
-            Formatted output dictionary with TranslationOutput objects
+            Dict with 'output' key containing List[TranslationOutput].
         """
-        # Call base post-processing
-        postprocessed = await super().postprocess_output(raw_triton_output)
+        # Base class call is intentionally skipped here.
+        # It only validates non-empty and returns input unchanged — not needed for typed output building.
+        # postprocessed = await super().postprocess_output(response_items)
 
-        # Extract translations from Triton output
-        translations = []
-        if 'translations' in postprocessed:
-            translations = postprocessed['translations']
-        elif 'output' in postprocessed:
-            output_val = postprocessed['output']
-            if isinstance(output_val, list) and output_val:
-                if isinstance(output_val[0], dict):
-                    translations = output_val[0].get('data', [])
-                else:
-                    translations = output_val
-
-        # Ensure translations are strings
+        # response_items is already the mapper output — each dict has 'target' key
+        # because adapter_config declares maps_to: "target" for the OUTPUT_TEXT tensor.
         output_list = []
-        for idx, translation in enumerate(translations):
-            if isinstance(translation, bytes):
-                target_text = translation.decode('utf-8')
-            elif isinstance(translation, str):
-                target_text = translation
-            else:
-                target_text = str(translation)
-
-            # Create TranslationOutput with source and target
+        for idx, item in enumerate(response_items):
+            target_text = item.get("target", "")
+            if isinstance(target_text, bytes):
+                # Triton BYTES tensors can arrive as raw bytes — decode to string
+                target_text = target_text.decode("utf-8")
             source_text = source_texts[idx] if source_texts and idx < len(source_texts) else ""
             from models.schemas.nmt import TranslationOutput
             output_list.append(TranslationOutput(source=source_text, target=target_text))
 
         self.logger.debug(f"NMT post-processed {len(output_list)} translations")
-        return {'output': output_list}
+        return {"output": output_list}
 
     async def _resolve_service_and_model(
         self, config: NMTConfig
-    ) -> Tuple[str, str, str, Optional[str]]:
+    ) -> Tuple[str, str, str, Optional[str], Optional[Any]]:
         """
-        Resolve inference service and model information.
-        Uses provided service_id or queries SMR for routing.
+        Resolve the model service details for the given NMT config.
 
         Args:
-            config: NMT config with optional service_id
+            config: NMT config — service_id identifies which model to use.
 
         Returns:
-            Tuple of (service_id, model_name, triton_endpoint, triton_api_key)
+            Tuple of (service_id, model_name, triton_endpoint, api_key, adapter_config).
+            adapter_config holds the tensor I/O mapping for the specific model at this endpoint.
+            Different service_ids can return different adapter_configs — no code change needed
+            to support a new model, only a new service registration with its own adapter_config.
 
         Raises:
-            RuntimeError: If service resolution fails
+            RuntimeError: If service resolution fails.
         """
         service_id = config.service_id
 
-        # If service_id not provided, could use SMR (Smart Model Router)
-        # For now, default to configured service
         if not service_id:
-            service_id = "indictrans-v2-all"  # Default fallback
+            service_id = "indictrans-v2-all"
             self.logger.warning(f"No service_id provided, using default: {service_id}")
 
-        # Resolve service using InferenceServerResolver
         self.logger.debug(f"Resolving service: {service_id}")
         try:
             service_info = await self.inference_server_resolver.resolve_service(service_id)
@@ -369,17 +368,18 @@ class NMTTaskService(BaseTaskService):
             )
             raise RuntimeError(f"NMT: Failed to resolve service {service_id}: {str(e)}") from e
 
-        # Extract fields from dict response
-        model_name = service_info.get('name', '')
-        triton_endpoint = service_info.get('endpoint', '')
-        api_key = service_info.get('api_key')
+        model_name = service_info.get("name", "")
+        triton_endpoint = service_info.get("endpoint", "")
+        api_key = service_info.get("api_key")
+        # adapter_config carries the tensor mapping (inputs/outputs) for this specific model
+        adapter_config = service_info.get("adapter_config")
 
         if not model_name or not triton_endpoint:
             raise RuntimeError(
-                f"NMT: Invalid service info from resolver: missing model_name or triton_endpoint"
+                "NMT: Invalid service info from resolver: missing model_name or triton_endpoint"
             )
 
-        return (service_id, model_name, triton_endpoint, api_key)
+        return (service_id, model_name, triton_endpoint, api_key, adapter_config)
 
     async def _call_triton_inference(
         self,
@@ -390,33 +390,40 @@ class NMTTaskService(BaseTaskService):
         api_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Call Triton inference server with prepared inputs.
-        Uses HTTP protocol to query Triton.
+        Send an inference request to the Triton server and return the raw response.
 
         Args:
-            triton_endpoint: Triton server URL (e.g., http://triton:8000)
-            model_name: Model name in Triton
-            triton_inputs: Formatted inputs for Triton (tensor format)
-            triton_outputs: Expected output names
-            api_key: Optional Triton API key for auth
+            triton_endpoint: Triton server base URL (e.g. http://triton:8000).
+            model_name: Model name as registered in Triton.
+            triton_inputs: Dict of {tensor_name: {dtype, shape, data}} from the config mapper.
+            triton_outputs: List of output tensor names to request from Triton.
+            api_key: Optional Bearer token for Triton auth.
 
         Returns:
-            Raw output from Triton
+            Raw Triton response dict containing an 'outputs' list.
 
         Raises:
-            RuntimeError: If Triton call fails
+            RuntimeError: If the Triton call fails or returns a non-200 status.
         """
         try:
-            # Build Triton HTTP request
             infer_url = f"{triton_endpoint}/v2/models/{model_name}/infer"
 
-            # Prepare request payload
+            # Triton HTTP API (KServe v2 protocol) requires inputs as a list.
+            # Field must be 'datatype', not 'dtype' — that is the official Triton spec.
+            # The config mapper uses 'dtype' internally; we rename it only at this boundary.
             payload = {
-                "inputs": triton_inputs,
+                "inputs": [
+                    {
+                        "name": tensor_name,
+                        "datatype": tensor_info["dtype"],
+                        "shape": tensor_info["shape"],
+                        "data": tensor_info["data"],
+                    }
+                    for tensor_name, tensor_info in triton_inputs.items()
+                ],
                 "outputs": [{"name": name} for name in triton_outputs],
             }
 
-            # Add auth header if provided
             headers = {}
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
@@ -448,19 +455,18 @@ class NMTTaskService(BaseTaskService):
         self,
         primary_service_id: Optional[str],
         config: NMTConfig,
-    ) -> Optional[Tuple[str, str, str, Optional[str]]]:
+    ) -> Optional[Tuple[str, str, str, Optional[str], Optional[Any]]]:
         """
-        Handle fallback to alternate service on primary failure.
-        Returns None if no fallback available.
+        Attempt to resolve a fallback service when the primary fails.
 
         Args:
-            primary_service_id: Primary service ID that failed
-            config: NMT config
+            primary_service_id: The service_id that failed.
+            config: NMT config.
 
         Returns:
-            Fallback service info tuple or None if no fallback
+            Tuple of (service_id, model_name, triton_endpoint, api_key, adapter_config),
+            or None if no fallback is available.
         """
-        # Define fallback services for NMT
         fallback_services: Dict[str, List[str]] = {
             "indictrans-v2-all": ["indictrans-v1", "nllb-200"],
         }
@@ -474,18 +480,18 @@ class NMTTaskService(BaseTaskService):
             self.logger.info(f"No fallback available for {primary_service_id}")
             return None
 
-        # Try first fallback
         fallback_service_id = fallback_list[0]
         self.logger.info(f"Using fallback service: {fallback_service_id}")
 
         try:
             service_info = await self.inference_server_resolver.resolve_service(fallback_service_id)
-            # Extract fields from dict response
-            model_name = service_info.get('model_name', '')
-            triton_endpoint = service_info.get('triton_endpoint', '')
-            api_key = service_info.get('api_key')
+            # Use the same response keys as the primary path — 'name' and 'endpoint'
+            model_name = service_info.get("name", "")
+            triton_endpoint = service_info.get("endpoint", "")
+            api_key = service_info.get("api_key")
+            adapter_config = service_info.get("adapter_config")
 
-            return (fallback_service_id, model_name, triton_endpoint, api_key)
+            return (fallback_service_id, model_name, triton_endpoint, api_key, adapter_config)
         except Exception as e:
             self.logger.error(f"Fallback service resolution failed: {str(e)}")
             return None

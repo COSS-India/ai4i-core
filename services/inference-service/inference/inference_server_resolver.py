@@ -152,29 +152,28 @@ class InferenceServerResolver:
         service_id: str,
     ) -> Dict[str, Any]:
         """
-        Query model management service for service information.
-        Calls the MODEL_MANAGEMENT_SERVICE_URL endpoint to fetch service details.
+        Fetch service details from the model management service.
 
         Args:
-            service_id: Service ID to query
+            service_id: Unique identifier for the registered model service.
 
         Returns:
-            Service info dict with model_name, triton_endpoint, etc.
+            Service info dict containing name, endpoint, api_key, and adapter_config.
 
         Raises:
-            ServiceNotFoundError: If service not found or API call fails
+            ServiceNotFoundError: If the service is not found or the call fails.
         """
         model_management_url = os.getenv("MODEL_MANAGEMENT_SERVICE_URL")
         if not model_management_url:
             logger.error("MODEL_MANAGEMENT_SERVICE_URL not configured")
             raise ServiceNotFoundError(f"Service {service_id} not found: Model management service not configured")
-        
+
         try:
-            # Use HTTP client utility for external service call
             http_client = HTTPServiceClient(timeout=30)
             url = f"{model_management_url}/api/v1/model-management/services/{service_id}"
-            service_info = await http_client.post_json(url, {})
-            
+            # GET — this is a read-only service lookup, not a write operation
+            service_info = await http_client.get_json(url)
+
             logger.debug(f"Resolved service {service_id}: {service_info}")
             return service_info
                 
