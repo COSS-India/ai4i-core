@@ -452,7 +452,7 @@ const LogsPage: React.FC = () => {
         // Show other errors as toast
         let errorMessage = 'Failed to load logs';
         if (error?.response?.data?.detail) {
-          const detail = error.response.data.detail;
+          const detail = error?.response?.data?.detail;
           if (typeof detail === 'string') {
             errorMessage = detail;
           } else if (typeof detail === 'object') {
@@ -893,7 +893,7 @@ const LogsPage: React.FC = () => {
                 {(() => {
                   let errorMsg = 'Unknown error';
                   if (error?.response?.data?.detail) {
-                    const detail = error.response.data.detail;
+                    const detail = error?.response?.data?.detail;
                     if (typeof detail === 'string') {
                       errorMsg = detail;
                     } else if (typeof detail === 'object') {
@@ -924,7 +924,7 @@ const LogsPage: React.FC = () => {
               <AlertDescription>
                 Failed to load aggregations: {(() => {
                   if (error?.response?.data?.detail) {
-                    const detail = error.response.data.detail;
+                    const detail = error?.response?.data?.detail;
                     if (typeof detail === 'string') return detail;
                     if (typeof detail === 'object') return detail.message || detail.detail || JSON.stringify(detail);
                     return String(detail);
@@ -1220,7 +1220,7 @@ const LogsPage: React.FC = () => {
                     {(() => {
                       const error = logsError as any;
                       if (error?.response?.data?.detail) {
-                        const detail = error.response.data.detail;
+                        const detail = error?.response?.data?.detail;
                         if (typeof detail === 'string') return detail;
                         if (typeof detail === 'object') return detail.message || detail.detail || JSON.stringify(detail);
                         return String(detail);

@@ -1,6 +1,7 @@
 // Language Detection service API client
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
+import { languageDetectionInferenceResponseSchema } from './dto/schemas/inference';
 import { listServices } from './modelManagementService';
 
 export interface LanguageDetectionServiceDetailsResponse {
@@ -113,9 +114,10 @@ export const performLanguageDetectionInference = async (
       },
     };
 
-    const response = await apiClient.post<LanguageDetectionInferenceResponse>(
+    const response = await apiService.post(
       apiEndpoints['language-detection'].inference,
-      payload
+      payload,
+      { responseSchema: languageDetectionInferenceResponseSchema }
     );
 
     const responseTime = parseInt(response.headers['request-duration'] || '0');

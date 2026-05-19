@@ -1,6 +1,11 @@
 // LLM service API client with typed methods
 
-import { llmApiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
+import {
+  llmHealthResponseSchema,
+  llmInferenceResponseSchema,
+  llmModelsListSchema,
+} from './dto/schemas/inference';
 import { 
   LLMInferenceRequest, 
   LLMInferenceResponse, 
@@ -47,11 +52,7 @@ export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> =>
         });
       }
       
-      // Extract endpoint and clean it
-      let endpoint = service.endpoint || '';
-      if (endpoint) {
-        endpoint = endpoint.replace('http://', '').replace('https://', '');
-      }
+      const endpoint = service.endpoint || '';
       
       return {
         service_id: service.serviceId || service.service_id,
@@ -99,10 +100,9 @@ export const performLLMInference = async (
       },
     };
 
-    const response = await llmApiClient.post<LLMInferenceResponse>(
-      apiEndpoints.llm.inference,
-      payload
-    );
+    const response = await apiService.post(apiEndpoints.llm.inference, payload, {
+      responseSchema: llmInferenceResponseSchema,
+    });
 
     // Extract response time from headers
     const responseTime = parseInt(response.headers['request-duration'] || '0');
@@ -123,9 +123,9 @@ export const performLLMInference = async (
  */
 export const listLLMModels = async (): Promise<LLMModel[]> => {
   try {
-    const response = await llmApiClient.get<{ models: LLMModel[]; total_models: number }>(
-      apiEndpoints.llm.models
-    );
+    const response = await apiService.get(apiEndpoints.llm.models, {
+      responseSchema: llmModelsListSchema,
+    });
 
     return response.data.models;
   } catch (error) {
@@ -140,9 +140,9 @@ export const listLLMModels = async (): Promise<LLMModel[]> => {
  */
 export const checkLLMHealth = async (): Promise<LLMHealthResponse> => {
   try {
-    const response = await llmApiClient.get<LLMHealthResponse>(
-      apiEndpoints.llm.health
-    );
+    const response = await apiService.get(apiEndpoints.llm.health, {
+      responseSchema: llmHealthResponseSchema,
+    });
 
     return response.data;
   } catch (error) {

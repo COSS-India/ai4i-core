@@ -1070,7 +1070,7 @@ function PolicyFormModal({
         setTenantIds(tids);
         setTenantInput(tids.join(", "));
         setLangs(p.supported_languages?.length ? p.supported_languages : ["en"]);
-        setSelectedPii((p.pii_types || []).map((x) => x.pii_type_id));
+        setSelectedPii((p.pii_types || []).map((x: { pii_type_id: string }) => x.pii_type_id));
       } catch (e: unknown) {
         if (!cancelled) onError(getPolicyApiErrorMessage(e, "Failed to load policy"));
       } finally {

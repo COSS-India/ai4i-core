@@ -152,8 +152,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       
       // Check if error has response data
       if (error?.response) {
-        const status = error.response.status;
-        const errorData = error.response.data || error.response;
+        const status = error?.response?.status;
+        const errorData = error?.response?.data ?? error?.response;
         
         // Extract error message from different possible formats
         if (typeof errorData === 'string') {
