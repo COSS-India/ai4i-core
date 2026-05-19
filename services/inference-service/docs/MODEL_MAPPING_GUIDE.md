@@ -6,6 +6,15 @@ This guide explains how model-specific tensor mappings work in the new inference
 
 `service_id -> resolve endpoint + adapter_config -> NMT/ASR inference model -> config_mapper resolves value_path/value -> Triton input tensors (dtype/shape/data) -> Triton infer -> tensor outputs -> maps_to semantic keys -> task response`
 
+## Verified Working (as of 2026-05-19)
+
+End-to-end NMT flow tested locally with Postman mock server:
+- Request: `POST /api/v1/inference` with `task_type: NMT`, `service_id: indictrans-v2-all`
+- Mock MMS returns `adapter_config` with 3 input tensors and 1 output tensor
+- Config mapper resolves `value_path` dot-paths and builds Triton payload
+- Mock Triton returns `OUTPUT_TEXT: "नमस्ते दुनिया"`
+- Response: `{"source": "Hello world", "target": "नमस्ते दुनिया"}`
+
 ## Mapping Structure
 
 Model mapping is driven by adapter config declarations:
@@ -75,3 +84,15 @@ Example:
 - Triton tensor: `OUTPUT_TEXT`
 - Semantic key: `translated_text`
 - Final mapped field: `"translated_text": <decoded value>`
+
+## Does the Config Mapper Accept String Arrays?
+
+**Yes — for NMT.** The `value_path` resolves a single string per input item (e.g. `input.source`).
+When you send a batch of items, each item's string is collected into a list and materialized as a
+`BYTES` tensor with shape `[batch_size, 1]`. So a batch of 3 sentences becomes `data: ["text1", "text2", "text3"]`.
+
+**For ASR — different.** ASR input is not a string array. It is audio data: raw PCM samples
+(a float/int array) or a base64-encoded audio payload. The `ASRInferenceModel` adds extra context
+(`audio.samples`, `audio.num_samples`, `audio.sample_rate`) via `_build_audio_context` before
+the mapper runs. The `value_path` for ASR tensors will point to `audio.samples` or similar —
+not a plain string. The mapper handles both cases because `_cast_dtype` recurses into lists.
