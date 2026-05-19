@@ -8,7 +8,36 @@ import CryptoJS from 'crypto-js';
 
 const ACCESS_TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
+const REMEMBER_ME_KEY = 'remember_me';
 const ENCRYPTED_PREFIX = 'enc:';
+
+/** Keys that must never hold auth/session data in localStorage (legacy cleanup). */
+const LEGACY_LOCAL_AUTH_KEYS = [
+  ACCESS_TOKEN_KEY,
+  REFRESH_TOKEN_KEY,
+  REMEMBER_ME_KEY,
+  'login_timestamp',
+  'user',
+] as const;
+
+function purgeLegacyAuthLocalStorage(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    for (const k of LEGACY_LOCAL_AUTH_KEYS) {
+      localStorage.removeItem(k);
+    }
+  } catch {
+    // private mode / blocked storage
+  }
+}
+
+/**
+ * Whether "remember me" was chosen for this browser session (sessionStorage only).
+ */
+export function getRememberMeFromStorage(): boolean {
+  if (typeof window === 'undefined') return false;
+  return sessionStorage.getItem(REMEMBER_ME_KEY) === 'true';
+}
 
 function getEncryptionKey(): string {
   const key = typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_TOKEN_ENCRYPTION_KEY;
@@ -47,9 +76,7 @@ function decrypt(value: string): string | null {
 
 function getRawFromStorage(key: string): string | null {
   if (typeof window === 'undefined') return null;
-  const fromLocal = localStorage.getItem(key);
-  const fromSession = sessionStorage.getItem(key);
-  return fromLocal || fromSession;
+  return sessionStorage.getItem(key);
 }
 
 /**
@@ -77,15 +104,11 @@ export function getStoredRefreshToken(): string | null {
  */
 export function setStoredAccessToken(token: string, rememberMe: boolean): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem('remember_me', rememberMe ? 'true' : 'false');
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
+  purgeLegacyAuthLocalStorage();
+  sessionStorage.setItem(REMEMBER_ME_KEY, rememberMe ? 'true' : 'false');
   sessionStorage.removeItem(ACCESS_TOKEN_KEY);
   const encrypted = encrypt(token);
-  if (rememberMe) {
-    localStorage.setItem(ACCESS_TOKEN_KEY, encrypted);
-  } else {
-    sessionStorage.setItem(ACCESS_TOKEN_KEY, encrypted);
-  }
+  sessionStorage.setItem(ACCESS_TOKEN_KEY, encrypted);
 }
 
 /**
@@ -93,27 +116,22 @@ export function setStoredAccessToken(token: string, rememberMe: boolean): void {
  */
 export function setStoredRefreshToken(token: string, rememberMe: boolean): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem('remember_me', rememberMe ? 'true' : 'false');
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  purgeLegacyAuthLocalStorage();
+  sessionStorage.setItem(REMEMBER_ME_KEY, rememberMe ? 'true' : 'false');
   sessionStorage.removeItem(REFRESH_TOKEN_KEY);
   const encrypted = encrypt(token);
-  if (rememberMe) {
-    localStorage.setItem(REFRESH_TOKEN_KEY, encrypted);
-  } else {
-    sessionStorage.setItem(REFRESH_TOKEN_KEY, encrypted);
-  }
+  sessionStorage.setItem(REFRESH_TOKEN_KEY, encrypted);
 }
 
 /**
- * Remove token keys from both storages.
+ * Remove auth keys from sessionStorage and strip any legacy localStorage copies.
  */
 export function clearTokenStorage(): void {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  purgeLegacyAuthLocalStorage();
   sessionStorage.removeItem(ACCESS_TOKEN_KEY);
   sessionStorage.removeItem(REFRESH_TOKEN_KEY);
-  localStorage.removeItem('remember_me');
-  localStorage.removeItem('login_timestamp');
+  sessionStorage.removeItem(REMEMBER_ME_KEY);
   sessionStorage.removeItem('login_timestamp');
+  sessionStorage.removeItem('user');
 }

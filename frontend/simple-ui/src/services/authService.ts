@@ -26,37 +26,67 @@ import {
   OAuth2Provider,
   Permission,
 } from '../types/auth';
-import { API_BASE_URL } from './api';
+import type { ZodTypeAny } from 'zod';
+import { z } from 'zod';
+import { API_BASE_URL, apiService } from './api';
+import { ApiValidationError } from './dto/apiValidationError';
+import { authUnwrappedSchema } from './dto/authUnwrappedSchema';
+import {
+  adminApiKeyWithUserSchema,
+  apiKeyListUnionSchema,
+  apiKeyResponseSchema,
+  guestServicesListSchema,
+  loginResponseSchema,
+  logoutResponseSchema,
+  messageResponseSchema,
+  oauth2ProviderSchema,
+  permissionSchema,
+  registerResponseSchema,
+  resetPasswordResponseSchema,
+  setPasswordStatusResponseSchema,
+  tokenRefreshResponseSchema,
+  tokenValidationResponseSchema,
+  userSchema,
+} from './dto/schemas/auth';
+import { apiEndpoints } from './apiEndpoints';
 import {
   getStoredAccessToken,
   getStoredRefreshToken,
+  getRememberMeFromStorage,
   setStoredAccessToken,
   setStoredRefreshToken,
   clearTokenStorage,
 } from '../utils/tokenStorage';
 import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
 
+const authPath = apiEndpoints.auth.paths;
+
 class AuthService {
   private baseUrl: string;
 
   constructor() {
-    this.baseUrl = `${API_BASE_URL}/api/v1/auth`;
+    this.baseUrl = `${API_BASE_URL}${apiEndpoints.auth.base}`;
   }
 
-  private async request<T>(
+  private async validatedRequest<S extends ZodTypeAny>(
     endpoint: string,
-    options: RequestInit = {}
-  ): Promise<T> {
+    schema: S,
+    options: RequestInit = {},
+    requestOpts: { withAuth?: boolean; timeoutMs?: number } = {}
+  ): Promise<z.infer<S>> {
     const url = `${this.baseUrl}${endpoint}`;
+    const withAuth = requestOpts.withAuth !== false;
+    const timeoutMs = requestOpts.timeoutMs ?? 10000;
 
     const defaultHeaders: HeadersInit = {
       'Content-Type': 'application/json',
     };
 
-    // Add authorization header if token exists
-    const token = this.getAccessToken();
-    if (token) {
-      defaultHeaders.Authorization = `Bearer ${token}`;
+    if (withAuth) {
+      const token = this.getAccessToken();
+      if (token) {
+        defaultHeaders.Authorization = `Bearer ${token}`;
+      }
     }
 
     const config: RequestInit = {
@@ -67,104 +97,98 @@ class AuthService {
       },
     };
 
-    // Add timeout to prevent hanging (10 seconds)
-    const timeoutMs = 10000;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
     try {
-      const response = await fetch(url, {
-        ...config,
-        signal: controller.signal,
-      });
+      const response = await apiService.request(
+        (config.method || 'GET') as any,
+        url,
+        config.body,
+        {
+          headers: config.headers as Record<string, string>,
+          timeout: timeoutMs,
+          responseSchema: schema,
+        }
+      );
+      return response.data as z.infer<S>;
+    } catch (error: unknown) {
+      if (error instanceof ApiValidationError) {
+        throw error;
+      }
+      const err = error as any;
+      if (err?.code === 'ECONNABORTED') {
+        console.error('Auth service request timed out:', url);
+        throw new Error(`Request timeout: Auth service is not responding (timeout: ${timeoutMs}ms)`);
+      }
 
-      clearTimeout(timeoutId);
+      const status = err?.response?.status;
+      const errorData = err?.response?.data ?? {};
 
-      if (!response.ok) {
-        let errorData: any = {};
+      if (
+        withAuth &&
+        typeof window !== 'undefined' &&
+        typeof status === 'number' &&
+        responseIndicatesTenantSuspendedOrInactive(status, errorData)
+      ) {
         try {
-          const text = await response.text();
-          if (text) {
-            errorData = JSON.parse(text);
-          }
-        } catch (e) {
-          // If JSON parsing fails, use empty object
-          errorData = {};
+          const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
+          forceFrontendSessionEnd();
+        } catch {
+          this.clearAuthTokens();
+          this.clearStoredUser();
+          window.location.assign('/auth');
         }
+        throw new Error('Your organization account is no longer active. Please sign in again.');
+      }
 
-        if (
-          typeof window !== 'undefined' &&
-          responseIndicatesTenantSuspendedOrInactive(response.status, errorData)
-        ) {
-          try {
-            const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
-            forceFrontendSessionEnd();
-          } catch {
-            this.clearAuthTokens();
-            this.clearStoredUser();
-            window.location.assign('/auth');
-          }
-          throw new Error('Your organization account is no longer active. Please sign in again.');
+      let errorMessage = status ? `HTTP error! status: ${status}` : 'Request failed';
+      if (errorData?.detail) {
+        const d = errorData.detail;
+        if (typeof d === 'string') {
+          errorMessage = d;
+        } else if (typeof d === 'object' && d !== null && typeof (d as any).message === 'string') {
+          errorMessage = (d as any).message;
+        } else if (typeof d === 'object' && d !== null) {
+          errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
+        } else {
+          errorMessage = String(d);
         }
+      } else if (errorData?.message) {
+        errorMessage = String(errorData.message);
+      } else if (typeof errorData === 'string') {
+        errorMessage = errorData;
+      } else if (Array.isArray(errorData) && errorData.length > 0) {
+        errorMessage = errorData
+          .map((e: any) => e.detail?.message ?? e.detail ?? e.message ?? String(e))
+          .join(', ');
+      }
 
-        // Extract error message from various possible formats (avoid [object Object] when detail is an object)
-        let errorMessage = `HTTP error! status: ${response.status}`;
-        if (errorData?.detail) {
-          const d = errorData.detail;
-          if (typeof d === 'string') {
-            errorMessage = d;
-          } else if (typeof d === 'object' && d !== null && typeof (d as any).message === 'string') {
-            errorMessage = (d as any).message;
-          } else if (typeof d === 'object' && d !== null) {
-            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
-          } else {
-            errorMessage = String(d);
-          }
-        } else if (errorData?.message) {
-          errorMessage = String(errorData.message);
-        } else if (typeof errorData === 'string') {
-          errorMessage = errorData;
-        } else if (Array.isArray(errorData) && errorData.length > 0) {
-          errorMessage = errorData.map((err: any) => err.detail?.message ?? err.detail ?? err.message ?? String(err)).join(', ');
-        }
-
-        // Check if error is "Invalid authentication credentials" (session expiry)
+      if (withAuth) {
         const errorMessageLower = errorMessage.toLowerCase();
-        const isInvalidAuth = errorMessageLower.includes('invalid authentication credentials') ||
-                            (response.status === 401 && errorMessageLower.includes('invalid'));
+        const isInvalidAuth =
+          errorMessageLower.includes('invalid authentication credentials') ||
+          (status === 401 && errorMessageLower.includes('invalid'));
 
         if (isInvalidAuth && typeof window !== 'undefined') {
-          // Clear tokens and redirect to login
           this.clearAuthTokens();
           this.clearStoredUser();
           window.location.href = '/';
           throw new Error('Session expired. Please sign in again.');
         }
-
-        // Add status code to error message for debugging
-        const error = new Error(errorMessage);
-        (error as any).status = response.status;
-        throw error;
+      } else if (!withAuth) {
+        if (typeof errorData === 'object' && Object.keys(errorData).length > 0) {
+          const d = errorData.detail ?? errorData.message ?? errorData.error;
+          errorMessage =
+            typeof d === 'object' && d !== null && (d as any).message != null
+              ? String((d as any).message)
+              : d != null
+                ? String(d)
+                : JSON.stringify(errorData);
+        }
       }
 
-      const json = await response.json();
-      // Unwrap v2 response envelope: { success: true, data: {...} }
-      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
-        return json.data as T;
-      }
-      return json as T;
-    } catch (error: any) {
-      clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
-        console.error('Auth service request timed out:', url);
-        throw new Error('Request timeout: Auth service is not responding');
-      }
       console.error('Auth service request failed:', error);
-      // Preserve the original error message and status if available
-      if (error.status) {
-        (error as any).status = error.status;
-      }
-      throw error;
+      const normalizedError = new Error(errorMessage);
+      (normalizedError as any).status = status ?? err?.status;
+      throw normalizedError;
     }
   }
 
@@ -198,19 +222,27 @@ class AuthService {
 
   // Authentication methods
   async register(data: RegisterRequest): Promise<{ id: number; email: string; username: string; message: string }> {
-    // Register endpoint doesn't require authentication
-    return this.requestWithoutAuth<{ id: number; email: string; username: string; message: string }>('/register', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return this.validatedRequest(
+      authPath.register,
+      authUnwrappedSchema(registerResponseSchema),
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      },
+      { withAuth: false }
+    );
   }
 
   async login(data: LoginRequest): Promise<LoginResponse> {
-    // Login endpoint doesn't require authentication
-    const response = await this.requestWithoutAuth<LoginResponse>('/login', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    const response = await this.validatedRequest(
+      authPath.login,
+      authUnwrappedSchema(loginResponseSchema),
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      },
+      { withAuth: false }
+    );
 
     // Store tokens with remember_me preference
     const rememberMe = data.remember_me ?? true; // Default to true for backward compatibility
@@ -221,9 +253,12 @@ class AuthService {
   }
 
   async guestLogin(): Promise<LoginResponse> {
-    const response = await this.requestWithoutAuth<LoginResponse>('/guest/login', {
-      method: 'POST',
-    });
+    const response = await this.validatedRequest(
+      authPath.guestLogin,
+      authUnwrappedSchema(loginResponseSchema),
+      { method: 'POST' },
+      { withAuth: false }
+    );
 
     // Guest sessions should stay in session storage by default.
     this.setAccessToken(response.access_token, false);
@@ -233,112 +268,12 @@ class AuthService {
   }
 
   async getGuestEnabledServices(): Promise<any> {
-    return this.request<any>('/roles/list/guest/services');
-  }
-
-  // Request method without authentication header (for login/register)
-  private async requestWithoutAuth<T>(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`;
-
-    const defaultHeaders: HeadersInit = {
-      'Content-Type': 'application/json',
-    };
-
-    const config: RequestInit = {
-      ...options,
-      headers: {
-        ...defaultHeaders,
-        ...options.headers,
-      },
-    };
-
-    try {
-      const response = await fetch(url, config);
-
-      if (!response.ok) {
-        let errorData: any = {};
-        try {
-          const text = await response.text();
-          if (text) {
-            try {
-              errorData = JSON.parse(text);
-            } catch (e) {
-              // If JSON parsing fails, use text as error message
-              errorData = { detail: text };
-            }
-          }
-        } catch (textError) {
-          console.error('Failed to parse error response:', textError);
-          errorData = {};
-        }
-
-        // Handle different error response formats (avoid [object Object] when detail is an object)
-        let errorMessage = `HTTP error! status: ${response.status}`;
-        if (typeof errorData === 'string') {
-          errorMessage = errorData;
-        } else if (errorData?.detail) {
-          const d = errorData.detail;
-          if (typeof d === 'string') {
-            errorMessage = d;
-          } else if (typeof d === 'object' && d !== null && typeof d.message === 'string') {
-            errorMessage = d.message;
-          } else if (typeof d === 'object' && d !== null) {
-            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
-          } else {
-            errorMessage = String(d);
-          }
-        } else if (errorData?.message) {
-          errorMessage = String(errorData.message);
-        } else if (Array.isArray(errorData)) {
-          // Handle array of errors
-          errorMessage = errorData.map((err: any) =>
-            err.detail?.message ?? err.detail ?? err.message ?? String(err)
-          ).join(', ');
-        } else if (typeof errorData === 'object' && Object.keys(errorData).length > 0) {
-          const d = errorData.detail ?? errorData.message ?? errorData.error;
-          errorMessage = typeof d === 'object' && d !== null && (d as any).message != null
-            ? String((d as any).message)
-            : d != null ? String(d) : JSON.stringify(errorData);
-        }
-
-        // Add status code to error for better debugging
-        const error = new Error(errorMessage);
-        (error as any).status = response.status;
-        throw error;
-      }
-
-      const json = await response.json();
-      // Unwrap v2 response envelope: { success: true, data: {...} }
-      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
-        return json.data as T;
-      }
-      return json as T;
-    } catch (error) {
-      console.error('Auth service request failed:', error);
-      // Re-throw as Error if it's not already one, with proper message
-      if (error instanceof Error) {
-        // If error message is "[object Object]", try to extract meaningful info
-        if (error.message === '[object Object]' || error.message.includes('[object Object]')) {
-          // Try to get more info from the error object
-          const errorInfo = (error as any).response?.data || (error as any).data || error;
-          if (typeof errorInfo === 'object' && errorInfo !== null) {
-            const extractedMsg = errorInfo.detail || errorInfo.message || errorInfo.error || JSON.stringify(errorInfo);
-            throw new Error(typeof extractedMsg === 'string' ? extractedMsg : JSON.stringify(extractedMsg));
-          }
-        }
-        throw error;
-      } else {
-        // If it's not an Error instance, try to extract meaningful message
-        if (typeof error === 'object' && error !== null) {
-          const extractedMsg = (error as any).detail || (error as any).message || (error as any).error || JSON.stringify(error);
-          throw new Error(typeof extractedMsg === 'string' ? extractedMsg : JSON.stringify(extractedMsg));
-        }
-        throw new Error(String(error));
-      }
-    }
+    return this.validatedRequest(
+      authPath.rolesListGuestServices,
+      authUnwrappedSchema(guestServicesListSchema),
+      { method: 'GET' },
+      { withAuth: false }
+    );
   }
 
   async logout(data: LogoutRequest = {}): Promise<LogoutResponse> {
@@ -358,12 +293,16 @@ class AuthService {
     }
 
     try {
-      const response = await this.request<LogoutResponse>('/logout', {
-        method: 'POST',
-        body: JSON.stringify({
-          refresh_token: data.refresh_token || refreshToken,
-        }),
-      });
+      const response = await this.validatedRequest(
+        authPath.logout,
+        authUnwrappedSchema(logoutResponseSchema),
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            refresh_token: data.refresh_token || refreshToken,
+          }),
+        }
+      );
 
       // Clear tokens after successful logout
       clearLocalState();
@@ -392,12 +331,17 @@ class AuthService {
 
     this.refreshPromise = (async () => {
       try {
-        const response = await this.requestWithoutAuth<TokenRefreshResponse>('/refresh', {
-          method: 'POST',
-          body: JSON.stringify({ refresh_token: refreshToken }),
-        });
+        const response = await this.validatedRequest(
+          authPath.refresh,
+          authUnwrappedSchema(tokenRefreshResponseSchema),
+          {
+            method: 'POST',
+            body: JSON.stringify({ refresh_token: refreshToken }),
+          },
+          { withAuth: false }
+        );
 
-        const rememberMe = typeof window !== 'undefined' && localStorage.getItem('remember_me') === 'true';
+        const rememberMe = getRememberMeFromStorage();
         this.setAccessToken(response.access_token, rememberMe);
 
         return response;
@@ -410,134 +354,56 @@ class AuthService {
   }
 
   async validateToken(): Promise<TokenValidationResponse> {
-    return this.request<TokenValidationResponse>('/validate');
+    return this.validatedRequest(authPath.validate, authUnwrappedSchema(tokenValidationResponseSchema), {
+      method: 'GET',
+    });
   }
 
   async getCurrentUser(): Promise<User> {
-    // Use a longer timeout for /me endpoint as it's critical for auth validation
-    return this.requestWithTimeout<User>('/me', {}, 20000);
-  }
-
-  // Request method with custom timeout
-  private async requestWithTimeout<T>(
-    endpoint: string,
-    options: RequestInit = {},
-    timeoutMs: number = 10000
-  ): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`;
-
-    const defaultHeaders: HeadersInit = {
-      'Content-Type': 'application/json',
-    };
-
-    // Add authorization header if token exists
-    const token = this.getAccessToken();
-    if (token) {
-      defaultHeaders.Authorization = `Bearer ${token}`;
-    }
-
-    const config: RequestInit = {
-      ...options,
-      headers: {
-        ...defaultHeaders,
-        ...options.headers,
-      },
-    };
-
-    // Use custom timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const response = await fetch(url, {
-        ...config,
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        let errorData: any = {};
-        try {
-          const text = await response.text();
-          if (text) {
-            errorData = JSON.parse(text);
-          }
-        } catch (e) {
-          // If JSON parsing fails, use empty object
-          errorData = {};
-        }
-
-        // Extract error message from various possible formats
-        let errorMessage = `HTTP error! status: ${response.status}`;
-        if (errorData?.detail) {
-          errorMessage = String(errorData.detail);
-        } else if (errorData?.message) {
-          errorMessage = String(errorData.message);
-        } else if (typeof errorData === 'string') {
-          errorMessage = errorData;
-        } else if (Array.isArray(errorData) && errorData.length > 0) {
-          errorMessage = errorData.map((err: any) => err.detail || err.message || String(err)).join(', ');
-        }
-
-        // Add status code to error for better debugging
-        const error = new Error(errorMessage);
-        (error as any).status = response.status;
-        throw error;
-      }
-
-      const json = await response.json();
-      // Unwrap v2 response envelope: { success: true, data: {...} }
-      if (json && typeof json === 'object' && 'success' in json && 'data' in json) {
-        return json.data as T;
-      }
-      return json as T;
-    } catch (error: any) {
-      clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
-        console.error('Auth service request timed out:', url);
-        throw new Error(`Request timeout: Auth service is not responding (timeout: ${timeoutMs}ms)`);
-      }
-      console.error('Auth service request failed:', error);
-      // Preserve the original error message and status if available
-      if (error.status) {
-        (error as any).status = error.status;
-      }
-      throw error;
-    }
+    return this.validatedRequest(
+      authPath.me,
+      authUnwrappedSchema(userSchema),
+      { method: 'GET' },
+      { timeoutMs: 20000 }
+    );
   }
 
   async updateCurrentUser(data: Partial<User>): Promise<User> {
-    return this.request<User>('/me', {
+    return this.validatedRequest(authPath.me, authUnwrappedSchema(userSchema), {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
   async changePassword(data: PasswordChangeRequest): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/change-password', {
+    return this.validatedRequest(authPath.changePassword, authUnwrappedSchema(messageResponseSchema), {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   async requestPasswordReset(data: PasswordResetRequest): Promise<{ message: string }> {
-    // Public endpoint — no auth header. Always returns 200 with generic message
-    // (anti-enumeration). Backend rate-limits to 3 per email per hour; on 429
-    // the user sees a "try again later" error.
-    return this.requestWithoutAuth<{ message: string }>('/forgot-password', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return this.validatedRequest(
+      authPath.forgotPassword,
+      authUnwrappedSchema(messageResponseSchema),
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      },
+      { withAuth: false }
+    );
   }
 
   async resetPassword(data: PasswordResetConfirm): Promise<{ message: string; sign_out_other_sessions?: boolean }> {
-    // Public endpoint — token in body authenticates the request. Single-use,
-    // 30-minute expiry. Other sessions are revoked server-side.
-    return this.requestWithoutAuth<{ message: string; sign_out_other_sessions?: boolean }>('/reset-password', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return this.validatedRequest(
+      authPath.resetPassword,
+      authUnwrappedSchema(resetPasswordResponseSchema),
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      },
+      { withAuth: false }
+    );
   }
 
   // ── Email-activation set-password (one-time setup token) ──
@@ -546,41 +412,74 @@ class AuthService {
     // Bypasses the requestWithoutAuth helper on purpose: this endpoint does NOT
     // return the v2 {success, data} envelope (route uses response_model=
     // SetPasswordStatusResponse), so the helper's auto-unwrap would mangle it.
-    const url = `${this.baseUrl}/set-password/status?token=${encodeURIComponent(token)}`;
-    const res = await fetch(url, { method: 'GET' });
-    if (!res.ok) {
-      // Backend always returns 200 for valid/expired/used; HTTP error == network/CORS.
-      return { valid: false, status: 'invalid', message: `HTTP ${res.status}` };
+    const url = `${this.baseUrl}${authPath.setPasswordStatus(token)}`;
+    try {
+      const res = await apiService.request('GET', url, undefined, {
+        responseSchema: setPasswordStatusResponseSchema,
+      });
+      return res.data;
+    } catch (error: any) {
+      if (error instanceof ApiValidationError) {
+        throw error;
+      }
+      const status = error?.response?.status;
+      return { valid: false, status: 'invalid', message: status ? `HTTP ${status}` : 'Network error' };
     }
-    return res.json();
   }
 
   async setPasswordWithToken(data: SetPasswordRequest): Promise<{ message: string }> {
-    return this.requestWithoutAuth<{ message: string }>('/set-password', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return this.validatedRequest(
+      authPath.setPassword,
+      authUnwrappedSchema(messageResponseSchema),
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      },
+      { withAuth: false }
+    );
   }
 
   // ── Email verification (one-time token from /auth/register's verify email) ──
 
   async verifyEmail(data: VerifyEmailRequest): Promise<{ message: string }> {
-    return this.requestWithoutAuth<{ message: string }>('/verify-email', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return this.validatedRequest(
+      authPath.verifyEmail,
+      authUnwrappedSchema(messageResponseSchema),
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      },
+      { withAuth: false }
+    );
   }
 
   async resendVerification(data: ResendVerificationRequest): Promise<{ message: string }> {
-    return this.requestWithoutAuth<{ message: string }>('/resend-verification', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return this.validatedRequest(
+      authPath.resendVerification,
+      authUnwrappedSchema(messageResponseSchema),
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      },
+      { withAuth: false }
+    );
+  }
+
+  async resendSetupLink(data: { email: string }): Promise<{ message: string }> {
+    return this.validatedRequest(
+      authPath.resendSetupLink,
+      authUnwrappedSchema(messageResponseSchema),
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      },
+      { withAuth: false }
+    );
   }
 
   // API Key management
   async createApiKey(data: APIKeyCreate): Promise<APIKeyResponse> {
-    return this.request<APIKeyResponse>('/api-keys', {
+    return this.validatedRequest(authPath.apiKeys, authUnwrappedSchema(apiKeyResponseSchema), {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -593,14 +492,18 @@ class AuthService {
       expires_days: data.expires_days,
       user_id: data.user_id,
     };
-    return this.request<APIKeyResponse>('/api-keys', {
+    return this.validatedRequest(authPath.apiKeys, authUnwrappedSchema(apiKeyResponseSchema), {
       method: 'POST',
       body: JSON.stringify(payload),
     });
   }
 
   async listApiKeys(): Promise<APIKeyListResponse> {
-    const data = await this.request<APIKeyListResponse | APIKeyResponse[]>('/api-keys');
+    const data = await this.validatedRequest(
+      authPath.apiKeys,
+      authUnwrappedSchema(apiKeyListUnionSchema),
+      { method: 'GET' }
+    );
     if (Array.isArray(data)) {
       return { api_keys: data };
     }
@@ -608,51 +511,86 @@ class AuthService {
   }
 
   async listAllApiKeys(): Promise<AdminAPIKeyWithUserResponse[]> {
-    return this.request<AdminAPIKeyWithUserResponse[]>('/api-keys/all');
+    return this.validatedRequest(
+      authPath.apiKeysAll,
+      authUnwrappedSchema(z.array(adminApiKeyWithUserSchema)),
+      { method: 'GET' }
+    );
   }
 
   async revokeApiKey(apiKeyValue: string): Promise<{ message: string }> {
-    return this.request<{ message: string }>(`/api-keys/${apiKeyValue}`, {
-      method: 'DELETE',
-    });
+    return this.validatedRequest(
+      `/api-keys/${apiKeyValue}`,
+      authUnwrappedSchema(messageResponseSchema),
+      { method: 'DELETE' }
+    );
   }
 
   async updateApiKey(apiKeyValue: string, updateData: APIKeyUpdate): Promise<APIKeyResponse> {
-    return this.request<APIKeyResponse>(`/api-keys/${apiKeyValue}`, {
-      method: 'PATCH',
-      body: JSON.stringify(updateData),
-    });
+    return this.validatedRequest(
+      `/api-keys/${apiKeyValue}`,
+      authUnwrappedSchema(apiKeyResponseSchema),
+      {
+        method: 'PATCH',
+        body: JSON.stringify(updateData),
+      }
+    );
   }
 
   // OAuth2
   async getOAuth2Providers(): Promise<OAuth2Provider[]> {
-    return this.request<OAuth2Provider[]>('/oauth2/providers');
+    return this.validatedRequest(
+      authPath.oauth2Providers,
+      authUnwrappedSchema(z.array(oauth2ProviderSchema)),
+      { method: 'GET' }
+    );
   }
 
   async exchangeOAuthCode(code: string): Promise<LoginResponse> {
-    return this.requestWithoutAuth<LoginResponse>('/oauth2/exchange', {
-      method: 'POST',
-      body: JSON.stringify({ code }),
-    });
+    return this.validatedRequest(
+      authPath.oauth2Exchange,
+      authUnwrappedSchema(loginResponseSchema),
+      {
+        method: 'POST',
+        body: JSON.stringify({ code }),
+      },
+      { withAuth: false }
+    );
   }
 
   // User management (Admin / Mod / Tenant Admin)
   async getAllUsers(): Promise<User[]> {
-    return this.request<User[]>('/users?limit=500&offset=0');
+    return this.validatedRequest(
+      authPath.usersInitial,
+      authUnwrappedSchema(z.array(userSchema)),
+      { method: 'GET' }
+    );
   }
 
   /** Paginated user list (same endpoint as getAllUsers; for infinite-scroll pickers). */
   async listUsersPage(offset: number, limit: number = 100): Promise<User[]> {
-    return this.request<User[]>(`/users?limit=${limit}&offset=${offset}`);
+    return this.validatedRequest(
+      authPath.usersPage(offset, limit),
+      authUnwrappedSchema(z.array(userSchema)),
+      { method: 'GET' }
+    );
   }
 
   async getUserById(userId: string): Promise<User> {
-    return this.request<User>(`/users/${userId}`);
+    return this.validatedRequest(
+      authPath.userById(userId),
+      authUnwrappedSchema(userSchema),
+      { method: 'GET' }
+    );
   }
 
   // Permissions management (inference-only)
   async getAllPermissions(): Promise<Permission[]> {
-    return this.request<Permission[]>('/inference/permissions');
+    return this.validatedRequest(
+      authPath.inferencePermissions,
+      authUnwrappedSchema(z.array(permissionSchema)),
+      { method: 'GET' }
+    );
   }
 
   // Utility methods
@@ -662,23 +600,15 @@ class AuthService {
 
   getStoredUser(): User | null {
     if (typeof window === 'undefined') return null;
-    // Check both storages (for backward compatibility)
-    const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
+    const userStr = sessionStorage.getItem('user');
     return userStr ? JSON.parse(userStr) : null;
   }
 
   setStoredUser(user: User): void {
     if (typeof window === 'undefined') return;
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
-    // Clear from both storages first
     localStorage.removeItem('user');
     sessionStorage.removeItem('user');
-    // Store in appropriate storage
-    if (rememberMe) {
-      localStorage.setItem('user', JSON.stringify(user));
-    } else {
-      sessionStorage.setItem('user', JSON.stringify(user));
-    }
+    sessionStorage.setItem('user', JSON.stringify(user));
   }
 
   clearStoredUser(): void {
@@ -822,16 +752,9 @@ class AuthService {
   private setLoginTimestamp(): void {
     if (typeof window === 'undefined') return;
     const timestamp = Date.now().toString();
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
-    // Clear from both storages first
     localStorage.removeItem('login_timestamp');
     sessionStorage.removeItem('login_timestamp');
-    // Store in appropriate storage
-    if (rememberMe) {
-      localStorage.setItem('login_timestamp', timestamp);
-    } else {
-      sessionStorage.setItem('login_timestamp', timestamp);
-    }
+    sessionStorage.setItem('login_timestamp', timestamp);
   }
 
   /**
@@ -839,7 +762,7 @@ class AuthService {
    */
   public getLoginTimestamp(): number | null {
     if (typeof window === 'undefined') return null;
-    const timestampStr = localStorage.getItem('login_timestamp') || sessionStorage.getItem('login_timestamp');
+    const timestampStr = sessionStorage.getItem('login_timestamp');
     return timestampStr ? parseInt(timestampStr, 10) : null;
   }
 
@@ -855,7 +778,7 @@ class AuthService {
       return true;
     }
     const now = Date.now();
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
+    const rememberMe = getRememberMeFromStorage();
     const sessionDurationMs = rememberMe
       ? 7 * 24 * 60 * 60 * 1000  // 7 days
       : 24 * 60 * 60 * 1000;      // 24 hours
@@ -873,7 +796,7 @@ class AuthService {
       return null;
     }
     const now = Date.now();
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
+    const rememberMe = getRememberMeFromStorage();
     const sessionDurationMs = rememberMe
       ? 7 * 24 * 60 * 60 * 1000  // 7 days
       : 24 * 60 * 60 * 1000;      // 24 hours

@@ -26,7 +26,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
 
   // Check for API error response structure
   if (error?.response?.data) {
-    const data = error.response.data;
+    const data = error?.response?.data;
     
     // Prefer backend message as default when we have one (for unknown error codes)
     const backendMessage = data.detail?.message || data.message;
@@ -529,7 +529,8 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
     }
   }
   // Check for ASR-specific error messages in detail string or message
-  const detailStr = typeof error?.response?.data?.detail === 'string' ? error.response.data.detail : '';
+  const detailStr =
+    typeof error?.response?.data?.detail === 'string' ? error?.response?.data?.detail : '';
   const detailObj = error?.response?.data?.detail;
   const detailMessage = typeof detailObj === 'object' && detailObj !== null && detailObj.message ? String(detailObj.message) : '';
   if (

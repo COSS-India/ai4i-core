@@ -1,7 +1,16 @@
 // Tenant admin API client.
-// Backed by auth-service /api/v1/tenants/*.
+// Backed by auth-service tenant endpoints.
 
-import { apiClient } from './api';
+import { z } from 'zod';
+import { apiService } from './api';
+import { apiEndpoints } from './apiEndpoints';
+import {
+  tenantDeleteUserDataSchema,
+  tenantSuccessEnvelopeSchema,
+  tenantUserViewSchema,
+  tenantViewSchema,
+  userRegisterResponseSchema,
+} from './dto/schemas/tenant';
 import type {
   ListTenantsResponse,
   ListUsersResponse,
@@ -21,104 +30,104 @@ import type {
   UserRegisterResponse,
 } from '../types/tenant';
 
-const BASE = '/api/v1/tenants';
-
-interface Envelope<T> {
-  success: boolean;
-  data: T;
-  meta?: Record<string, unknown>;
-}
+const BASE = apiEndpoints.tenants.base;
 
 export async function listTenants(params?: {
   status?: 'activated' | 'deactivated' | 'suspended';
   offset?: number;
   limit?: number;
 }): Promise<ListTenantsResponse> {
-  const { data } = await apiClient.get<Envelope<TenantView[]>>(BASE, { params });
-  const tenants = data.data ?? [];
+  const response = await apiService.get(BASE, {
+    params,
+    responseSchema: tenantSuccessEnvelopeSchema(z.array(tenantViewSchema)),
+  });
+  const tenants = response.data.data ?? [];
   return { count: tenants.length, tenants };
 }
 
 export async function getViewTenant(tenant_id: string): Promise<TenantView> {
-  const { data } = await apiClient.get<Envelope<TenantView>>(`${BASE}/${tenant_id}`);
-  return data.data;
+  const response = await apiService.get(`${BASE}/${tenant_id}`, {
+    responseSchema: tenantSuccessEnvelopeSchema(tenantViewSchema),
+  });
+  return response.data.data;
 }
 
 export async function registerTenant(
   payload: TenantRegisterRequest
 ): Promise<TenantRegisterResponse> {
-  const { data } = await apiClient.post<Envelope<TenantView>>(BASE, payload);
-  return data.data;
+  const response = await apiService.post(BASE, payload, {
+    responseSchema: tenantSuccessEnvelopeSchema(tenantViewSchema),
+  });
+  return response.data.data;
 }
 
 export async function updateTenant(
   payload: TenantUpdateRequest & { tenant_id: string }
 ): Promise<TenantUpdateResponse> {
   const { tenant_id, ...body } = payload;
-  const { data } = await apiClient.patch<Envelope<TenantView>>(
-    `${BASE}/${tenant_id}`,
-    body
-  );
-  return data.data;
+  const response = await apiService.patch(`${BASE}/${tenant_id}`, body, {
+    responseSchema: tenantSuccessEnvelopeSchema(tenantViewSchema),
+  });
+  return response.data.data;
 }
 
 export async function updateTenantStatus(
   payload: TenantStatusUpdateRequest & { tenant_id: string }
 ): Promise<TenantStatusUpdateResponse> {
   const { tenant_id, status } = payload;
-  const { data } = await apiClient.patch<Envelope<TenantView>>(
-    `${BASE}/${tenant_id}/status`,
-    { status }
-  );
-  return data.data;
+  const response = await apiService.patch(`${BASE}/${tenant_id}/status`, { status }, {
+    responseSchema: tenantSuccessEnvelopeSchema(tenantViewSchema),
+  });
+  return response.data.data;
 }
 
 export async function listUsers(tenant_id: string): Promise<ListUsersResponse> {
-  const { data } = await apiClient.get<Envelope<TenantUserView[]>>(
-    `${BASE}/${tenant_id}/users`
-  );
-  const users = data.data ?? [];
+  const response = await apiService.get(`${BASE}/${tenant_id}/users`, {
+    responseSchema: tenantSuccessEnvelopeSchema(z.array(tenantUserViewSchema)),
+  });
+  const users = response.data.data ?? [];
   return { count: users.length, users };
 }
 
 export async function getViewUser(user_id: string): Promise<TenantUserView> {
-  const { data } = await apiClient.get<Envelope<TenantUserView>>(
-    `/api/v1/auth/users/${user_id}`
-  );
-  return data.data;
+  const response = await apiService.get(apiEndpoints.auth.user(user_id), {
+    responseSchema: tenantSuccessEnvelopeSchema(tenantUserViewSchema),
+  });
+  return response.data.data;
 }
 
 export async function registerUser(
   payload: UserRegisterRequest & { tenant_id: string }
 ): Promise<UserRegisterResponse> {
   const { tenant_id, ...body } = payload;
-  const { data } = await apiClient.post<Envelope<UserRegisterResponse>>(
-    `${BASE}/${tenant_id}/users`,
-    body
-  );
-  return data.data;
+  const response = await apiService.post(`${BASE}/${tenant_id}/users`, body, {
+    responseSchema: tenantSuccessEnvelopeSchema(userRegisterResponseSchema),
+  });
+  return response.data.data;
 }
 
 export async function updateUserStatus(
   payload: TenantUserStatusUpdateRequest & { tenant_id: string; user_id: string }
 ): Promise<TenantUserStatusUpdateResponse> {
   const { tenant_id, user_id, ...body } = payload;
-  const { data } = await apiClient.patch<Envelope<TenantUserView>>(
+  const response = await apiService.patch(
     `${BASE}/${tenant_id}/users/${user_id}/status`,
-    body
+    body,
+    {
+      responseSchema: tenantSuccessEnvelopeSchema(tenantUserViewSchema),
+    }
   );
-  return data.data;
+  return response.data.data;
 }
 
 export async function updateUser(
   payload: TenantUserUpdateRequest & { tenant_id: string; user_id: string }
 ): Promise<TenantUserUpdateResponse> {
   const { tenant_id, user_id, ...body } = payload;
-  const { data } = await apiClient.patch<Envelope<TenantUserView>>(
-    `${BASE}/${tenant_id}/users/${user_id}`,
-    body
-  );
-  return data.data;
+  const response = await apiService.patch(`${BASE}/${tenant_id}/users/${user_id}`, body, {
+    responseSchema: tenantSuccessEnvelopeSchema(tenantUserViewSchema),
+  });
+  return response.data.data;
 }
 
 export async function deleteUser(payload: {
@@ -126,8 +135,8 @@ export async function deleteUser(payload: {
   user_id: string;
 }): Promise<{ user_id: string; deleted: boolean }> {
   const { tenant_id, user_id } = payload;
-  const { data } = await apiClient.delete<
-    Envelope<{ user_id: string; deleted: boolean }>
-  >(`${BASE}/${tenant_id}/users/${user_id}`);
-  return data.data;
+  const response = await apiService.delete(`${BASE}/${tenant_id}/users/${user_id}`, {
+    responseSchema: tenantSuccessEnvelopeSchema(tenantDeleteUserDataSchema),
+  });
+  return response.data.data;
 }
