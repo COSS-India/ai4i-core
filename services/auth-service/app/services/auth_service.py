@@ -45,6 +45,7 @@ from app.core.security import password_manager
 from app.services.email_helpers import enqueue_email, issue_session, persist_token_verification, resolve_tenant_id, setup_token_expires_at
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
+from app.utils.username import allocate_unique_username, derive_username_from_email
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +156,6 @@ class AuthService:
     async def register(
         self,
         email: str,
-        username: str,
         password: str,
         confirm_password: str,
         full_name: Optional[str] = None,
@@ -179,8 +179,11 @@ class AuthService:
 
         if await self._users.get_by_email(email):
             raise DuplicateEntityError("User", "email")
-        if await self._users.get_by_username(username):
-            raise DuplicateEntityError("User", "username")
+
+        username = await allocate_unique_username(
+            self._users.list_usernames_in_collision_family,
+            derive_username_from_email(email),
+        )
 
         parsed_tenant_id = await resolve_tenant_id(tenant_id, self._tenants)
 

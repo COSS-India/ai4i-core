@@ -41,6 +41,7 @@ from app.services.auth_email_templates import render_setup_link, render_verify_e
 from app.services.email_helpers import enqueue_email, persist_token_verification, resolve_tenant_id, setup_token_expires_at
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
+from app.utils.username import allocate_unique_username, derive_username_from_email
 
 logger = logging.getLogger(__name__)
 
@@ -89,16 +90,9 @@ class TenantService:
 
     async def _allocate_unique_username(self, base: str) -> str:
         """Return ``base`` or ``base_2``, ``base_3`` if the username is taken."""
-        for i in range(3):
-            if i == 0:
-                candidate = base[:USERNAME_MAX_LENGTH]
-            else:
-                suffix = f"_{i + 1}"
-                trimmed = base[: USERNAME_MAX_LENGTH - len(suffix)]
-                candidate = f"{trimmed}{suffix}"
-            if not await self._users.get_by_username(candidate):
-                return candidate
-        raise DuplicateEntityError("User", "username")
+        return await allocate_unique_username(
+            self._users.list_usernames_in_collision_family, base
+        )
 
     async def is_system_admin(self, user: User) -> bool:
         roles = await self._roles.get_user_roles(user.id)
@@ -333,9 +327,14 @@ class TenantService:
         await self.enforce_scope(current_user, tenant_id)
         if not await self._tenants.get_by_id(tenant_id):
             raise EntityNotFoundError(f"Tenant {tenant_id}")
+        email = body.email.lower().strip()
+        username = await allocate_unique_username(
+            self._users.list_usernames_in_collision_family,
+            derive_username_from_email(email),
+        )
         return await self.provision_user(
-            email=body.email,
-            username=body.username,
+            email=email,
+            username=username,
             full_name=body.full_name,
             phone_number=body.phone_number,
             tenant_id=str(tenant_id),
