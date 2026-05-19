@@ -1,28 +1,21 @@
 """
-AI4ICore Observability Plugin
+ai4icore_core.observability — Request-level Prometheus metrics for FastAPI services.
 
-This package provides enterprise-grade observability features for the AI4ICore Platform,
-including comprehensive metrics, monitoring, and business analytics.
+Usage::
 
-Universal Framework Support:
-- FastAPI: ObservabilityPlugin (built-in)
-- Flask: FlaskObservabilityAdapter
-- Django: DjangoObservabilityAdapter
-- Generic: GenericObservabilityAdapter
-- Manual: ManualObservabilityAdapter
+    from ai4icore_core.observability import setup_observability, PluginConfig
+
+    collector = setup_observability(app)
+    # collector.track_* for manual metric emission from route handlers
 """
 
-__version__ = "1.0.9"
-__author__ = "AI4X Team"
-__email__ = "team@ai4x.com"
-
-from .plugin import ObservabilityPlugin
-from .metrics import MetricsCollector
 from .config import PluginConfig
+from .metrics import MetricsCollector
 from .middleware import ObservabilityMiddleware
+from .plugin import setup_observability
 
 __all__ = [
-    "ObservabilityPlugin",
+    "setup_observability",
     "MetricsCollector",
     "PluginConfig",
     "ObservabilityMiddleware",
