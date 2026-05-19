@@ -592,7 +592,7 @@ export default function ApiKeyManagementTab({
                       onChange={(values) =>
                         mgmt.setUpdateFormData({
                           ...mgmt.updateFormData,
-                          permissions: values.map(v => parseInt(v, 10)),
+                          permissions: values.map((v) => parseInt(String(v), 10)),
                         })
                       }
                     >
