@@ -6,7 +6,7 @@ services:
     image: postgres:15-alpine
     container_name: ai4v-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER} 
+      POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
@@ -233,7 +233,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-    restart: unless-stopped 
+    restart: unless-stopped
 
   kong-manager:
     image: pantsel/konga:latest
@@ -561,6 +561,36 @@ services:
       # start_period: 30s
     restart: unless-stopped
 
+  inference-service:
+    build:
+      context: .
+      dockerfile: ./services/inference-service/Dockerfile
+    container_name: ai4v-inference-service
+    ports:
+      - "8107:8090"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/inference-service/.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      microservices-network:
+        aliases:
+          - inference-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
   ocr-service:
     build:
       context: .
@@ -763,7 +793,7 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  
+
   multi-tenant-service:
     build:
       context: ./services/multi-tenant-feature
@@ -1306,7 +1336,7 @@ volumes:
   postgres-data:
     driver: local
     # Use Docker-managed volume by default (portable across environments).
-      
+
   postgres-konga-data:
     driver: local
   redis-data:

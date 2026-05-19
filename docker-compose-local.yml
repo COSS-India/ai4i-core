@@ -582,6 +582,36 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  inference-service:
+    build:
+      context: .
+      dockerfile: ./services/inference-service/Dockerfile
+    container_name: ai4v-inference-service
+    ports:
+      - "8107:8090"
+    environment:
+      - PYTHONPATH=/app:/home/app/.local/lib/python3.11/site-packages
+    env_file:
+      - ./services/inference-service/.env
+    volumes:
+      - ./services/inference-service:/app
+    depends_on:
+      nginx:
+        condition: service_started
+      platform-core-service:
+        condition: service_healthy
+    networks:
+      microservices-network:
+        aliases:
+          - inference-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
   ocr-service:
     build:
       context: .
