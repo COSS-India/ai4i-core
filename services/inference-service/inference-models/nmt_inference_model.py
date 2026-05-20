@@ -26,11 +26,10 @@ class NMTInferenceModel(InferenceModel):
         self,
         input_data: List[Dict[str, Any]],
         config: Dict[str, Any],
-    ) -> Tuple[Dict[str, Any], List[str]]:
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
         if not self.mapper:
             raise InferenceModelError("NMT adapter_config is not configured")
-        # NMT uses only standard request/input paths; no extra context hook needed.
-        return self.mapper.render_inputs(input_data=input_data, config=config)
+        return self.mapper.compose_triton_kserve_v2_payload(input_data=input_data, config=config)
 
     async def convert_triton_output_to_task_format(
         self,

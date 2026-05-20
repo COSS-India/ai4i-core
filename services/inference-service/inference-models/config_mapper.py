@@ -127,6 +127,26 @@ class GenericTritonMapper:
         output_names = [output.tensor for output in self.adapter_config.outputs]
         return triton_inputs, output_names
 
+    def compose_triton_kserve_v2_payload(
+        self,
+        input_data: List[Dict[str, Any]],
+        config: Dict[str, Any],
+        context_builder: Optional[ContextBuilder] = None,
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """
+        Render inputs and return a KServe v2 ready inputs list paired with output names.
+
+        Returns:
+            Tuple of (inputs_list, output_names) where inputs_list entries use
+            'datatype' (KServe v2 wire field) instead of the internal 'dtype'.
+        """
+        triton_inputs, output_names = self.render_inputs(input_data, config, context_builder)
+        inputs_list = [
+            {"name": name, "datatype": t["dtype"], "shape": t["shape"], "data": t["data"]}
+            for name, t in triton_inputs.items()
+        ]
+        return inputs_list, output_names
+
     def map_outputs(self, triton_output: Dict[str, Any]) -> Dict[str, Any]:
         """
         Map Triton outputs to semantic keys based on adapter declarations.
