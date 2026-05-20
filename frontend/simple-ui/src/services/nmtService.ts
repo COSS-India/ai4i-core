@@ -1,6 +1,12 @@
 // NMT service API client with typed methods
 
-import { apiClient, apiEndpoints } from './api';
+import { apiService, apiEndpoints } from './api';
+import {
+  inferenceConfigJsonSchema,
+  nmtHealthResponseSchema,
+  nmtInferenceResponseSchema,
+  nmtModelsListSchema,
+} from './dto/schemas/inference';
 import { listServices } from './modelManagementService';
 import {
   NMTInferenceRequest,
@@ -54,10 +60,9 @@ export const performNMTInference = async (
       },
     };
 
-    const response = await apiClient.post<NMTInferenceResponse>(
-      apiEndpoints.nmt.inference,
-      payload
-    );
+    const response = await apiService.post(apiEndpoints.nmt.inference, payload, {
+      responseSchema: nmtInferenceResponseSchema,
+    });
 
     // Extract response time from headers
     const responseTime = parseInt(response.headers['request-duration'] || '0');
@@ -78,9 +83,9 @@ export const performNMTInference = async (
  */
 export const listNMTModels = async (): Promise<NMTModelDetailsResponse[]> => {
   try {
-    const response = await apiClient.get<{ models: NMTModelDetailsResponse[]; total_models: number }>(
-      apiEndpoints.nmt.models
-    );
+    const response = await apiService.get(apiEndpoints.nmt.models, {
+      responseSchema: nmtModelsListSchema,
+    });
 
     return response.data.models;
   } catch (error) {
@@ -394,9 +399,9 @@ export const getNMTLanguagesForService = async (
  */
 export const checkNMTHealth = async (): Promise<NMTHealthResponse> => {
   try {
-    const response = await apiClient.get<NMTHealthResponse>(
-      apiEndpoints.nmt.health
-    );
+    const response = await apiService.get(apiEndpoints.nmt.health, {
+      responseSchema: nmtHealthResponseSchema,
+    });
 
     return response.data;
   } catch (error) {
@@ -411,7 +416,9 @@ export const checkNMTHealth = async (): Promise<NMTHealthResponse> => {
  */
 export const getNMTConfig = async () => {
   try {
-    const response = await apiClient.get('/api/v1/nmt/config');
+    const response = await apiService.get(apiEndpoints.nmt.config, {
+      responseSchema: inferenceConfigJsonSchema,
+    });
     return response.data;
   } catch (error) {
     console.error('Failed to fetch NMT config:', error);

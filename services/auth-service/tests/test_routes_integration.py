@@ -48,14 +48,14 @@ class TestAuthSchemas:
         import pydantic
         with pytest.raises(pydantic.ValidationError):
             RegisterRequest(
-                email="a@b.com", username="abc",
+                email="a@b.com",
                 password="short", confirm_password="short",
             )
 
     def test_register_request_valid(self):
         from app.schemas.auth import RegisterRequest
         req = RegisterRequest(
-            email="test@example.com", username="testuser",
+            email="test@example.com",
             password="StrongP@ss1", confirm_password="StrongP@ss1",
         )
         assert req.email == "test@example.com"

@@ -46,7 +46,6 @@ class TenantResponse(BaseSchema):
 
 class TenantUserCreate(BaseSchema):
     email: EmailStr
-    username: str = Field(..., min_length=3, max_length=100)
     full_name: Optional[str] = Field(None, max_length=255)
     phone_number: Optional[str] = Field(None, max_length=20)
 

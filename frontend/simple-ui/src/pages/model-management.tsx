@@ -169,7 +169,7 @@ const ModelManagementPage: React.FC = () => {
 
   const { checkSessionExpiry } = useSessionExpiry();
   const router = useRouter();
-  
+
   // Check if user is GUEST or USER and redirect if so
   useEffect(() => {
     if (user?.roles?.includes('GUEST') || user?.roles?.includes('USER')) {
@@ -415,44 +415,48 @@ const ModelManagementPage: React.FC = () => {
 
   const validateModelData = (data: any): string[] => {
     const errors: string[] = [];
-    
+
     // Required fields
     if (!data.modelId || typeof data.modelId !== 'string' || data.modelId.trim() === '') {
       errors.push('modelId is required and must be a non-empty string');
     }
-    
+
     if (!data.name || typeof data.name !== 'string' || data.name.trim() === '') {
       errors.push('name is required and must be a non-empty string');
     }
-    
+
+    if (!data.version || typeof data.version !== 'string' || data.version.trim() === '') {
+      errors.push('version is required and must be a non-empty string');
+    }
+
     if (!data.description || typeof data.description !== 'string' || data.description.trim() === '') {
       errors.push('description is required and must be a non-empty string');
     }
-    
+
     if (!data.task || typeof data.task !== 'object' || !data.task.type) {
       errors.push('task is required and must be an object with a type field');
     }
-    
+
     if (!data.languages || !Array.isArray(data.languages) || data.languages.length === 0) {
       errors.push('languages is required and must be a non-empty array');
     }
-    
+
     if (!data.license || typeof data.license !== 'string' || data.license.trim() === '') {
       errors.push('license is required and must be a non-empty string');
     }
-    
+
     if (!data.domain || !Array.isArray(data.domain) || data.domain.length === 0) {
       errors.push('domain is required and must be a non-empty array');
     }
-    
+
     if (!data.inferenceEndPoint || typeof data.inferenceEndPoint !== 'object') {
       errors.push('inferenceEndPoint is required and must be an object');
     }
-    
+
     if (!data.submitter || typeof data.submitter !== 'object' || !data.submitter.name) {
       errors.push('submitter is required and must be an object with a name field');
     }
-    
+
     // Validate model name format (alphanumeric, hyphens, forward slashes only)
     if (data.name) {
       const namePattern = /^[a-zA-Z0-9/-]+$/;
@@ -460,19 +464,19 @@ const ModelManagementPage: React.FC = () => {
         errors.push('name must contain only alphanumeric characters, hyphens (-), and forward slashes (/). Example: "example-model" or "org/model-name"');
       }
     }
-    
+
     return errors;
   };
 
   const handleCreateModel = async () => {
     if (!parsedModelData) return;
-    
+
     // Check session expiry before creating
     if (!checkSessionExpiry()) return;
-    
+
     setIsUploading(true);
     setUploadError(null);
-    
+
     try {
       // Prepare model data with timestamps if not present
       const currentTimestamp = Math.floor(Date.now() / 1000);
@@ -480,7 +484,6 @@ const ModelManagementPage: React.FC = () => {
         ...parsedModelData,
         submittedOn: parsedModelData.submittedOn || currentTimestamp,
         updatedOn: parsedModelData.updatedOn || currentTimestamp,
-        version: parsedModelData.version || "1.0",
       };
 
       // Create model via API
@@ -508,9 +511,9 @@ const ModelManagementPage: React.FC = () => {
     } catch (error: any) {
       // Use centralized error handler for consistent error messages
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-      
+
       setUploadError(errorMessage);
-      
+
       toast({
         title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
@@ -589,10 +592,10 @@ const ModelManagementPage: React.FC = () => {
     } catch (error: any) {
       // Use centralized error handler for consistent error messages
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
-      
+
       setUploadError(errorMessage);
       setValidationErrors([]);
-      
+
       toast({
         title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
@@ -608,7 +611,7 @@ const ModelManagementPage: React.FC = () => {
   const handleViewModel = async (modelId: string) => {
     // Check session expiry before viewing model
     if (!checkSessionExpiry()) return;
-    
+
     try {
       const model = await getModelById(modelId);
       setSelectedModel(model as unknown as Model);
@@ -634,7 +637,7 @@ const ModelManagementPage: React.FC = () => {
   const handleUpdateModel = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedModel) return;
-    
+
     // Check session expiry before updating
     if (!checkSessionExpiry()) return;
 
@@ -683,7 +686,7 @@ const ModelManagementPage: React.FC = () => {
   const handleDeprecateModel = async (model: Model) => {
     // Check session expiry before deprecating
     if (!checkSessionExpiry()) return;
-    
+
     if (!model.modelId || !model.version) {
       toast({
         title: "Deprecate Failed",
@@ -711,7 +714,7 @@ const ModelManagementPage: React.FC = () => {
         duration: 5000,
         isClosable: true,
       });
-      
+
       // Refresh models list and selected model
       await fetchModels();
       if (selectedModel && selectedModel.modelId === model.modelId) {
@@ -736,7 +739,7 @@ const ModelManagementPage: React.FC = () => {
   const handleActivateModel = async (model: Model) => {
     // Check session expiry before activating
     if (!checkSessionExpiry()) return;
-    
+
     if (!model.modelId || !model.version) {
       toast({
         title: "Activate Failed",
@@ -823,16 +826,16 @@ const ModelManagementPage: React.FC = () => {
                     title="Model Management"
                     description="Manage and configure AI models"
                   />
-        
+
                   <Grid
                     gap={8}
                     w="full"
                     mx="auto"
                   >
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px">
-            <Tabs 
-              colorScheme="blue" 
-              variant="enclosed" 
+            <Tabs
+              colorScheme="blue"
+              variant="enclosed"
               index={activeTab}
               onChange={(index) => {
                 setActiveTab(index);
@@ -1019,8 +1022,8 @@ const ModelManagementPage: React.FC = () => {
                             </Thead>
                             <Tbody>
                               {paginatedModels.map((model) => (
-                              <Tr 
-                                key={model.modelId} 
+                              <Tr
+                                key={model.modelId}
                                 _hover={{ bg: tableRowHoverBg, cursor: "pointer" }}
                                 onClick={() => handleViewModel(model.modelId)}
                               >
@@ -1173,7 +1176,7 @@ const ModelManagementPage: React.FC = () => {
                                 Required Fields:
                               </Text>
                               <Text fontSize="xs" color="blue.600">
-                                modelId, name, description, task (with type), languages, license, domain, inferenceEndPoint, submitter. Optional: version (defaults to &quot;1.0&quot;), refUrl, benchmarks. Timestamps (submittedOn, updatedOn) will be auto-added if not present.
+                                modelId, name, version, description, task (with type), languages, license, domain, inferenceEndPoint, submitter. Optional: refUrl, benchmarks. Timestamps (submittedOn, updatedOn) will be auto-added if not present.
                               </Text>
                             </Box>
                             </FormControl>
@@ -1536,4 +1539,3 @@ const ModelManagementPage: React.FC = () => {
 };
 
 export default ModelManagementPage;
-

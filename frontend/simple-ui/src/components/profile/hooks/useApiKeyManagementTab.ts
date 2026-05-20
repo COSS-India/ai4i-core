@@ -225,7 +225,7 @@ export function useApiKeyManagementTab({
 
   const allUniquePermissions = useMemo(() => {
     const perms = new Set<string>();
-    allApiKeys.forEach((key) => key.permissions.forEach((p) => perms.add(p)));
+    allApiKeys.forEach((key) => key.permissions.forEach((p) => perms.add(String(p))));
     return Array.from(perms).sort();
   }, [allApiKeys]);
 

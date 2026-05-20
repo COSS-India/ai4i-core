@@ -12,7 +12,6 @@ from app.core.constants import (
     PASSWORD_MIN_LENGTH,
     PHONE_NUMBER_MAX_LENGTH,
     TIMEZONE_MAX_LENGTH,
-    USERNAME_MAX_LENGTH,
 )
 from app.schemas.base import BaseSchema
 
@@ -23,7 +22,6 @@ _PASSWORD_FIELD = Field(..., min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD
 
 class RegisterRequest(BaseSchema):
     email: EmailStr
-    username: str = Field(..., min_length=3, max_length=USERNAME_MAX_LENGTH)
     password: str = _PASSWORD_FIELD
     confirm_password: str = _PASSWORD_FIELD
     full_name: Optional[str] = Field(None, max_length=FULL_NAME_MAX_LENGTH)

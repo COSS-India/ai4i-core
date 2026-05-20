@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 _BODY_METRIC_SERVICES = frozenset({
     "tts", "translation", "asr", "ocr", "transliteration",
     "language_detection", "audio_lang_detection", "speaker_verification",
-    "speaker_diarization", "language_diarization", "ner",
+    "speaker_diarization", "language_diarization", "ner", "llm",
 })
 
 
@@ -224,21 +224,22 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             speaker_verification_length = 0.0
             speaker_diarization_length = 0.0
             language_diarization_length = 0.0
+            llm_tokens = 0
 
             if body_bytes and service_type in _BODY_METRIC_SERVICES:
                 if service_type == "tts":
-                    tts_characters = self._extract_tts_characters_from_body(body_bytes)
+                    tts_characters = self._extract_input_characters(body_bytes)
                 elif service_type == "translation":
-                    translation_characters = self._extract_translation_characters_from_body(body_bytes)
+                    translation_characters = self._extract_input_characters(body_bytes)
                 elif service_type == "asr":
                     asr_audio_length = self._extract_asr_audio_length_from_body(body_bytes)
                 elif service_type == "ocr":
                     ocr_characters = self._extract_ocr_characters_from_body(body_bytes)
                     ocr_image_size_kb = self._extract_ocr_image_size_kb_from_body(body_bytes)
                 elif service_type == "transliteration":
-                    transliteration_characters = self._extract_transliteration_characters_from_body(body_bytes)
+                    transliteration_characters = self._extract_input_characters(body_bytes)
                 elif service_type == "language_detection":
-                    language_detection_characters = self._extract_language_detection_characters_from_body(body_bytes)
+                    language_detection_characters = self._extract_input_characters(body_bytes)
                 elif service_type == "audio_lang_detection":
                     audio_lang_detection_length = self._extract_asr_audio_length_from_body(body_bytes)
                 elif service_type == "speaker_verification":
@@ -249,6 +250,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     language_diarization_length = self._extract_asr_audio_length_from_body(body_bytes)
                 elif service_type == "ner":
                     ner_tokens = self._extract_ner_tokens_from_body(body_bytes)
+                elif service_type == "llm":
+                    llm_tokens = self._extract_llm_tokens_from_body(body_bytes)
 
             if self.config.debug:
                 logger.debug(f"Tracking metrics for endpoint: {path}, service_type: {service_type}")
@@ -269,7 +272,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 ocr_characters, ocr_image_size_kb, transliteration_characters,
                 language_detection_characters, audio_lang_detection_length,
                 ner_tokens, speaker_verification_length, speaker_diarization_length,
-                language_diarization_length, service_id=service_id,
+                language_diarization_length, llm_tokens=llm_tokens, service_id=service_id,
             )
         except Exception:
             if self.config.debug:
@@ -375,6 +378,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         speaker_verification_length: float = 0,
         speaker_diarization_length: float = 0,
         language_diarization_length: float = 0,
+        llm_tokens: int = 0,
         service_id: str = "",
     ):
         """Track additional metrics based on service type."""
@@ -388,13 +392,12 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
             # Track data processing based on service type
             if service_type == "llm":
-                # Mock LLM token processing
-                tokens = self._estimate_llm_tokens(path)
-                self.metrics_collector.track_llm_tokens(
-                    model="gpt-3.5-turbo",  # Mock model
-                    tokens=tokens,
-                    tenant=tenant,
-                )
+                if llm_tokens > 0:
+                    self.metrics_collector.track_llm_tokens(
+                        model=service_id or "unknown",
+                        tokens=llm_tokens,
+                        tenant=tenant,
+                    )
             elif service_type == "tts":
                 if tts_characters > 0:
                     self.metrics_collector.track_tts_characters(
@@ -485,55 +488,36 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         service_id=service_id,
                     )
 
-            # Update SLA compliance (mock calculation)
-            compliance = self._calculate_sla_compliance(service_type, duration)
-            self.metrics_collector.update_sla_compliance(
-                sla_type=f"{service_type}_availability",
-                compliance_percent=compliance,
-                tenant=tenant,
-            )
-
         except Exception as e:
             if self.config.debug:
                 logger.debug(f"Additional metrics tracking failed: {e}", exc_info=True)
 
-    def _estimate_llm_tokens(self, path: str) -> int:
-        """Estimate LLM tokens based on path."""
-        # Mock estimation - in real implementation, this would analyze request content
-        return 100  # Mock value
+    def _extract_input_characters(self, body_bytes: bytes) -> int:
+        """Sum lengths of every ``source`` string in a request body.
 
-    def _extract_tts_characters_from_body(self, body_bytes: bytes) -> int:
-        """Extract real character count from TTS request body."""
+        Supports both shapes:
+        - direct: ``{"input": [{"source": "..."}, ...]}`` (TTS, translation, LLM)
+        - pipeline-wrapped: ``{"inputData": {"input": [...]}}`` (transliteration, language_detection)
+        """
         try:
             if not body_bytes:
                 return 0
-            request_data = json.loads(body_bytes.decode('utf-8'))
-            total_characters = 0
-            if 'input' in request_data:
-                for input_item in request_data['input']:
-                    if 'source' in input_item:
-                        total_characters += len(input_item['source'])
-            return total_characters
-        except Exception:
-            if self.config.debug:
-                logger.debug("Failed to extract TTS characters", exc_info=True)
-            return 0
-
-    def _extract_translation_characters_from_body(self, body_bytes: bytes) -> int:
-        """Extract real character count from translation request body."""
-        try:
-            if not body_bytes:
+            data = json.loads(body_bytes.decode('utf-8'))
+            items = data.get('input')
+            if items is None:
+                input_data = data.get('inputData')
+                if isinstance(input_data, dict):
+                    items = input_data.get('input')
+            if not items:
                 return 0
-            request_data = json.loads(body_bytes.decode('utf-8'))
-            total_characters = 0
-            if 'input' in request_data:
-                for input_item in request_data['input']:
-                    if 'source' in input_item:
-                        total_characters += len(input_item['source'])
-            return total_characters
+            return sum(
+                len(item['source'])
+                for item in items
+                if isinstance(item, dict) and isinstance(item.get('source'), str)
+            )
         except Exception:
             if self.config.debug:
-                logger.debug("Failed to extract translation characters", exc_info=True)
+                logger.debug("Failed to extract input characters from body", exc_info=True)
             return 0
 
     def _extract_ocr_characters_from_body(self, body_bytes: bytes) -> int:
@@ -569,49 +553,14 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 logger.debug("Failed to extract OCR characters", exc_info=True)
             return 0
 
-    def _extract_transliteration_characters_from_body(self, body_bytes: bytes) -> int:
-        """Extract real character count from transliteration request body."""
-        try:
-            if not body_bytes:
-                return 0
-            request_data = json.loads(body_bytes.decode('utf-8'))
-            total_characters = 0
-            # Support both direct `input` and pipeline `inputData.input` formats
-            if 'input' in request_data:
-                for input_item in request_data['input']:
-                    if 'source' in input_item and isinstance(input_item['source'], str):
-                        total_characters += len(input_item['source'])
-            elif 'inputData' in request_data and 'input' in request_data['inputData']:
-                for input_item in request_data['inputData']['input']:
-                    if 'source' in input_item and isinstance(input_item['source'], str):
-                        total_characters += len(input_item['source'])
-            return total_characters
-        except Exception:
-            if self.config.debug:
-                logger.debug("Failed to extract transliteration characters", exc_info=True)
-            return 0
+    def _extract_llm_tokens_from_body(self, body_bytes: bytes) -> int:
+        """Approximate LLM input token count from request body.
 
-    def _extract_language_detection_characters_from_body(self, body_bytes: bytes) -> int:
-        """Extract real character count from language detection request body."""
-        try:
-            if not body_bytes:
-                return 0
-            request_data = json.loads(body_bytes.decode('utf-8'))
-            total_characters = 0
-            # Support both direct `input` and pipeline `inputData.input` formats
-            if 'input' in request_data:
-                for input_item in request_data['input']:
-                    if 'source' in input_item and isinstance(input_item['source'], str):
-                        total_characters += len(input_item['source'])
-            elif 'inputData' in request_data and 'input' in request_data['inputData']:
-                for input_item in request_data['inputData']['input']:
-                    if 'source' in input_item and isinstance(input_item['source'], str):
-                        total_characters += len(input_item['source'])
-            return total_characters
-        except Exception:
-            if self.config.debug:
-                logger.debug("Failed to extract language detection characters", exc_info=True)
-            return 0
+        Uses OpenAI's chars/4 rule of thumb. For exact tokenizer-aligned
+        counts (billing-grade), the llm-service should emit the metric
+        itself post-inference with the real tokenizer output.
+        """
+        return (self._extract_input_characters(body_bytes) + 3) // 4
 
     def _extract_ner_tokens_from_body(self, body_bytes: bytes) -> int:
         """Extract real token (word) count from NER request body."""
@@ -706,33 +655,3 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if self.config.debug:
                 logger.debug("Failed to extract OCR image size", exc_info=True)
             return 0.0
-
-    def _calculate_sla_compliance(self, service_type: str, duration: float) -> float:
-        """Calculate SLA compliance based on service type and duration."""
-        # Mock SLA compliance calculation
-        if service_type == "llm":
-            return 99.5 if duration < 2.0 else 95.0
-        elif service_type == "tts":
-            return 99.8 if duration < 1.0 else 97.0
-        elif service_type == "translation":
-            return 99.9 if duration < 0.5 else 98.0
-        elif service_type == "asr":
-            return 99.7 if duration < 1.5 else 96.0
-        elif service_type == "ocr":
-            return 99.8 if duration < 1.0 else 97.0
-        elif service_type == "transliteration":
-            return 99.9 if duration < 0.5 else 98.0
-        elif service_type == "language_detection":
-            return 99.9 if duration < 0.3 else 98.5
-        elif service_type == "audio_lang_detection":
-            return 99.7 if duration < 1.5 else 96.0
-        elif service_type == "ner":
-            return 99.8 if duration < 0.8 else 97.5
-        elif service_type == "speaker_verification":
-            return 99.6 if duration < 2.0 else 95.5
-        elif service_type == "speaker_diarization":
-            return 99.5 if duration < 3.0 else 95.0
-        elif service_type == "language_diarization":
-            return 99.6 if duration < 2.5 else 95.5
-        else:
-            return 99.0

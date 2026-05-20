@@ -1,68 +1,19 @@
 // Observability service API client for logs and traces
 
-import axios, { AxiosInstance } from 'axios';
-import { getJwtToken } from './api';
-import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
+import { apiService } from './api';
+import { apiEndpoints } from './apiEndpoints';
+import {
+  logAggregationResponseSchema,
+  logSearchResponseSchema,
+  telemetryServicesNamesSchema,
+  traceSchema,
+  traceSearchResponseSchema,
+} from './dto/schemas/observability';
 
 // Telemetry service runs on port 8084 (different from API gateway on 8080)
 const TELEMETRY_SERVICE_URL = process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL ;
 
-// Create dedicated axios instance for observability endpoints
-const observabilityClient: AxiosInstance = axios.create({
-  baseURL: TELEMETRY_SERVICE_URL,
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
-
-// Add request interceptor to inject JWT token
-observabilityClient.interceptors.request.use(
-  (config: any) => {
-    const jwtToken = getJwtToken();
-    if (jwtToken) {
-      config.headers['Authorization'] = `Bearer ${jwtToken}`;
-    }
-    return config;
-  },
-  (error: any) => {
-    return Promise.reject(error);
-  }
-);
-
-// Add response interceptor for error logging
-observabilityClient.interceptors.response.use(
-  (response: any) => response,
-  async (error: any) => {
-    console.error('Observability API error:', {
-      url: error.config?.url,
-      status: error.response?.status,
-      statusText: error.response?.statusText,
-      data: error.response?.data,
-      message: error.message,
-    });
-    const status = error.response?.status;
-    const data = error.response?.data;
-    const tenantLifecycle =
-      typeof status === 'number' &&
-      responseIndicatesTenantSuspendedOrInactive(status, data);
-    if (
-      typeof window !== 'undefined' &&
-      (tenantLifecycle || status === 401 || status === 403)
-    ) {
-      try {
-        const { forceFrontendSessionEnd } = await import('../hooks/useAuth');
-        forceFrontendSessionEnd();
-      } catch {
-        const { default: authService } = await import('./authService');
-        authService.clearAuthTokens();
-        authService.clearStoredUser();
-        window.location.assign('/auth');
-      }
-    }
-    return Promise.reject(error);
-  }
-);
+const telemetryUrl = (path: string): string => `${TELEMETRY_SERVICE_URL}${path}`;
 
 // Types
 export interface LogEntry {
@@ -140,12 +91,6 @@ export const searchLogs = async (
   }
 ): Promise<LogSearchResponse> => {
   try {
-    // Debug: Check token before making request
-    const token = getJwtToken();
-    if (!token) {
-      throw new Error('Authentication required. Please log in.');
-    }
-
     const queryParams = new URLSearchParams();
     if (params.service) queryParams.append('service', params.service);
     if (params.level) queryParams.append('level', params.level);
@@ -156,8 +101,9 @@ export const searchLogs = async (
     queryParams.append('page', String(params.page || 1));
     queryParams.append('size', String(params.size || 50));
 
-    const response = await observabilityClient.get<LogSearchResponse>(
-      `/api/v1/telemetry/logs/search?${queryParams.toString()}`
+    const response = await apiService.get(
+      telemetryUrl(`${apiEndpoints.telemetry.logsSearch}?${queryParams.toString()}`),
+      { timeout: 30000, responseSchema: logSearchResponseSchema }
     );
 
     console.log('searchLogs: Response received:', {
@@ -186,8 +132,8 @@ export const searchLogs = async (
     });
     // Extract error message from detail object
     let errorMessage = 'Failed to search logs';
-    if (error?.response?.data?.detail) {
-      const detail = error.response.data.detail;
+    const detail = error?.response?.data?.detail;
+    if (detail) {
       if (typeof detail === 'string') {
         errorMessage = detail;
       } else if (typeof detail === 'object' && detail.message) {
@@ -216,16 +162,19 @@ export const getLogAggregations = async (
     if (params?.start_time) queryParams.append('start_time', params.start_time);
     if (params?.end_time) queryParams.append('end_time', params.end_time);
 
-    const url = `/api/v1/telemetry/logs/aggregate${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
-    const response = await observabilityClient.get<LogAggregationResponse>(url);
+    const url = `${apiEndpoints.telemetry.logsAggregate}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+    const response = await apiService.get(telemetryUrl(url), {
+      timeout: 30000,
+      responseSchema: logAggregationResponseSchema,
+    });
 
     return response.data;
   } catch (error: any) {
     console.error('Failed to get log aggregations:', error);
     // Extract error message from detail object
     let errorMessage = 'Failed to get log aggregations';
-    if (error?.response?.data?.detail) {
-      const detail = error.response.data.detail;
+    const detail = error?.response?.data?.detail;
+    if (detail) {
       if (typeof detail === 'string') {
         errorMessage = detail;
       } else if (typeof detail === 'object' && detail.message) {
@@ -245,29 +194,16 @@ export const getLogAggregations = async (
  */
 export const getServicesWithLogs = async (): Promise<string[]> => {
   try {
-    const response = await observabilityClient.get<{services: string[]} | string[]>(
-      '/api/v1/telemetry/logs/services'
-    );
-
-    console.log('getServicesWithLogs: Response received:', {
-      dataType: typeof response.data,
-      isArray: Array.isArray(response.data),
-      hasServices: response.data && typeof response.data === 'object' && 'services' in response.data,
-      rawData: response.data,
+    const response = await apiService.get(telemetryUrl(apiEndpoints.telemetry.logsServices), {
+      timeout: 30000,
+      responseSchema: telemetryServicesNamesSchema,
     });
 
-    // Handle both response formats: {"services": [...]} or [...]
-    const data = response.data;
-    if (Array.isArray(data)) {
-      console.log('getServicesWithLogs: Returning array directly, count:', data.length);
-      return data;
-    } else if (data && typeof data === 'object' && 'services' in data && Array.isArray(data.services)) {
-      console.log('getServicesWithLogs: Extracting services from object, count:', data.services.length);
-      return data.services;
-    } else {
-      console.warn('getServicesWithLogs: Unexpected services response format:', data);
-      return [];
-    }
+    console.log('getServicesWithLogs: Response received:', {
+      count: response.data?.length ?? 0,
+    });
+
+    return response.data;
   } catch (error: any) {
     console.error('Failed to get services with logs:', {
       message: error?.message,
@@ -277,8 +213,8 @@ export const getServicesWithLogs = async (): Promise<string[]> => {
     });
     // Extract error message from detail object
     let errorMessage = 'Failed to get services with logs';
-    if (error?.response?.data?.detail) {
-      const detail = error.response.data.detail;
+    const detail = error?.response?.data?.detail;
+    if (detail) {
       if (typeof detail === 'string') {
         errorMessage = detail;
       } else if (typeof detail === 'object' && detail.message) {
@@ -319,8 +255,9 @@ export const searchTraces = async (
       });
     }
 
-    const response = await observabilityClient.get<TraceSearchResponse>(
-      `/api/v1/telemetry/traces/search?${queryParams.toString()}`
+    const response = await apiService.get(
+      telemetryUrl(`${apiEndpoints.telemetry.tracesSearch}?${queryParams.toString()}`),
+      { timeout: 30000, responseSchema: traceSearchResponseSchema }
     );
 
     return response.data;
@@ -328,8 +265,8 @@ export const searchTraces = async (
     console.error('Failed to search traces:', error);
     // Extract error message from detail object
     let errorMessage = 'Failed to search traces';
-    if (error?.response?.data?.detail) {
-      const detail = error.response.data.detail;
+    const detail = error?.response?.data?.detail;
+    if (detail) {
       if (typeof detail === 'string') {
         errorMessage = detail;
       } else if (typeof detail === 'object' && detail.message) {
@@ -349,17 +286,18 @@ export const searchTraces = async (
  */
 export const getTraceById = async (traceId: string): Promise<Trace> => {
   try {
-    const response = await observabilityClient.get<Trace>(
-      `/api/v1/telemetry/traces/${traceId}`
-    );
+    const response = await apiService.get(telemetryUrl(apiEndpoints.telemetry.traceById(traceId)), {
+      timeout: 30000,
+      responseSchema: traceSchema,
+    });
 
     return response.data;
   } catch (error: any) {
     console.error('Failed to get trace:', error);
     // Extract error message from detail object
     let errorMessage = 'Failed to get trace';
-    if (error?.response?.data?.detail) {
-      const detail = error.response.data.detail;
+    const detail = error?.response?.data?.detail;
+    if (detail) {
       if (typeof detail === 'string') {
         errorMessage = detail;
       } else if (typeof detail === 'object' && detail.message) {
@@ -379,26 +317,18 @@ export const getTraceById = async (traceId: string): Promise<Trace> => {
  */
 export const getServicesWithTraces = async (): Promise<string[]> => {
   try {
-    const response = await observabilityClient.get<{services: string[]} | string[]>(
-      '/api/v1/telemetry/traces/services'
-    );
+    const response = await apiService.get(telemetryUrl(apiEndpoints.telemetry.tracesServices), {
+      timeout: 30000,
+      responseSchema: telemetryServicesNamesSchema,
+    });
 
-    // Handle both response formats: {"services": [...]} or [...]
-    const data = response.data;
-    if (Array.isArray(data)) {
-      return data;
-    } else if (data && typeof data === 'object' && 'services' in data && Array.isArray(data.services)) {
-      return data.services;
-    } else {
-      console.warn('Unexpected services response format:', data);
-      return [];
-    }
+    return response.data;
   } catch (error: any) {
     console.error('Failed to get services with traces:', error);
     // Extract error message from detail object
     let errorMessage = 'Failed to get services with traces';
-    if (error?.response?.data?.detail) {
-      const detail = error.response.data.detail;
+    const detail = error?.response?.data?.detail;
+    if (detail) {
       if (typeof detail === 'string') {
         errorMessage = detail;
       } else if (typeof detail === 'object' && detail.message) {
@@ -418,8 +348,9 @@ export const getServicesWithTraces = async (): Promise<string[]> => {
  */
 export const getOperationsForService = async (serviceName: string): Promise<string[]> => {
   try {
-    const response = await observabilityClient.get<string[]>(
-      `/api/v1/telemetry/traces/services/${serviceName}/operations`
+    const response = await apiService.get(
+      telemetryUrl(apiEndpoints.telemetry.traceServiceOperations(serviceName)),
+      { timeout: 30000, responseSchema: telemetryServicesNamesSchema }
     );
 
     return response.data;
@@ -427,8 +358,8 @@ export const getOperationsForService = async (serviceName: string): Promise<stri
     console.error('Failed to get operations:', error);
     // Extract error message from detail object
     let errorMessage = 'Failed to get operations';
-    if (error?.response?.data?.detail) {
-      const detail = error.response.data.detail;
+    const detail = error?.response?.data?.detail;
+    if (detail) {
       if (typeof detail === 'string') {
         errorMessage = detail;
       } else if (typeof detail === 'object' && detail.message) {

@@ -54,22 +54,15 @@ const ResendSetupLinkForm: React.FC = () => {
     if (!email) return;
     setPhase({ kind: "submitting" });
     try {
-      const url = `${(authService as any).baseUrl}/resend-setup-link`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        const msg = json?.detail?.message || json?.detail || `HTTP ${res.status}`;
-        setPhase({ kind: "failed", message: typeof msg === "string" ? msg : "Could not resend." });
-      } else {
-        const msg = json?.data?.message || "If the account exists and isn't activated yet, a new setup link has been sent.";
-        setPhase({ kind: "sent", message: msg });
-      }
+      const res = await authService.resendSetupLink({ email });
+      const msg =
+        res?.message ||
+        "If the account exists and isn't activated yet, a new setup link has been sent.";
+      setPhase({ kind: "sent", message: msg });
     } catch (err: any) {
-      setPhase({ kind: "failed", message: err?.message || "Could not resend." });
+      const data = err?.response?.data;
+      const msg = data?.detail?.message || data?.detail || err?.message || "Could not resend.";
+      setPhase({ kind: "failed", message: msg });
     }
   };
 

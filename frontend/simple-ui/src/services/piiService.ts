@@ -1,14 +1,25 @@
-import api from "./api";
+import { z } from "zod";
+import { apiService } from "./api";
+import { apiEndpoints } from "./apiEndpoints";
+import {
+  piiAuditRowSchema,
+  piiDomainRowSchema,
+  piiPolicySchema,
+  piiRedactResponseSchema,
+  piiTenantDomainMappingSchema,
+  stringArraySchema,
+} from "./dto/schemas/pii";
 
-const BASE_URL = "/api/v1/pii";
+const admin = apiEndpoints.pii.admin;
 
 export const piiService = {
-  getDomains: () => api.get<string[]>(`${BASE_URL}/domains`),
+  getDomains: () =>
+    apiService.get(apiEndpoints.pii.domains, { responseSchema: stringArraySchema }),
 
   getPolicy: (domainId: string) =>
-    api.get<{ meta?: unknown; rules?: unknown[] }>(
-      `${BASE_URL}/policy/${encodeURIComponent(domainId)}`
-    ),
+    apiService.get(apiEndpoints.pii.policyByDomain(domainId), {
+      responseSchema: piiPolicySchema,
+    }),
 
   redact: (
     payload: { text: string; domain?: string | null },
@@ -16,66 +27,74 @@ export const piiService = {
     lang: string,
     tenantId?: string | null
   ) =>
-    api.post(`${BASE_URL}/redact`, payload, {
+    apiService.post(apiEndpoints.pii.redact, payload, {
       headers: {
         "X-Target": target,
         "X-Language": lang,
         ...(tenantId ? { "X-Tenant-Id": tenantId } : {}),
       },
+      responseSchema: piiRedactResponseSchema,
     }),
 
   getAllDomains: () =>
-    api.get<
-      { domain_id: string; is_active: boolean; description?: string | null }[]
-    >(`${BASE_URL}/admin/all-domains`),
+    apiService.get(admin.allDomains, { responseSchema: z.array(piiDomainRowSchema) }),
 
   activateDomains: (domainIds: string[]) =>
-    api.post(`${BASE_URL}/admin/activate-domains`, {
-      domain_ids: domainIds,
-    }),
+    apiService.post(
+      admin.activateDomains,
+      {
+        domain_ids: domainIds,
+      },
+      { responseSchema: z.unknown() }
+    ),
 
   createDomain: (domainId: string, description?: string) =>
-    api.post(`${BASE_URL}/admin/domain`, {
-      domain_id: domainId,
-      description: description?.trim() || `Policy scope: ${domainId}`,
-    }),
+    apiService.post(
+      admin.domain,
+      {
+        domain_id: domainId,
+        description: description?.trim() || `Policy scope: ${domainId}`,
+      },
+      { responseSchema: z.unknown() }
+    ),
 
   deployRules: (domainId: string, rules: unknown[]) =>
-    api.post(`${BASE_URL}/admin/deploy`, { domain_id: domainId, rules }),
+    apiService.post(admin.deploy, { domain_id: domainId, rules }, { responseSchema: z.unknown() }),
 
   generateRegex: (exampleText: string) =>
-    api.post(`${BASE_URL}/admin/generate-regex`, {
-      example_text: exampleText,
-    }),
+    apiService.post(
+      admin.generateRegex,
+      {
+        example_text: exampleText,
+      },
+      { responseSchema: z.unknown() }
+    ),
 
   listTenantDomainMappings: () =>
-    api.get<
-      { tenant_id: string; domain_id: string; updated_at?: string }[]
-    >(`${BASE_URL}/admin/tenant-domains`),
+    apiService.get(admin.tenantDomains, { responseSchema: z.array(piiTenantDomainMappingSchema) }),
 
   upsertTenantDomainMapping: (tenantId: string, domainId: string) =>
-    api.post(`${BASE_URL}/admin/tenant-domain`, {
-      tenant_id: tenantId,
-      domain_id: domainId,
-    }),
+    apiService.post(
+      admin.tenantDomain,
+      {
+        tenant_id: tenantId,
+        domain_id: domainId,
+      },
+      { responseSchema: z.unknown() }
+    ),
 
   deleteTenantDomainMapping: (tenantId: string) =>
-    api.post(`${BASE_URL}/admin/tenant-domain/delete`, {
-      tenant_id: tenantId,
-    }),
+    apiService.post(
+      admin.tenantDomainDelete,
+      {
+        tenant_id: tenantId,
+      },
+      { responseSchema: z.unknown() }
+    ),
 
   getAuditLogs: (limit = 50) =>
-    api.get<
-      {
-        id: number;
-        trace_id: string;
-        tenant_id: string;
-        domain_id: string;
-        target_context: string;
-        pii_count: number;
-        processing_ms: number;
-        trace_json: unknown;
-        created_at: string;
-      }[]
-    >(`${BASE_URL}/admin/audit-logs`, { params: { limit } }),
+    apiService.get(admin.auditLogs, {
+      params: { limit },
+      responseSchema: z.array(piiAuditRowSchema),
+    }),
 };
