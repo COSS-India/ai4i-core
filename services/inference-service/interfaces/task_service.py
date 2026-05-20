@@ -91,8 +91,14 @@ class BaseTaskService(ITaskService):
     """
 
     def __init__(self):
-        """Initialize base task service."""
+        """
+        Initialize base task service.
+        Automatically creates InferenceServerResolver instance for all subclasses.
+        """
+        from inference.inference_server_resolver import InferenceServerResolver
+        
         self.task_name = self.__class__.__name__
+        self.inference_server_resolver = InferenceServerResolver()
 
     async def process(
         self,

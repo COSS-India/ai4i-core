@@ -11,7 +11,6 @@ from models.schemas.nmt import (
     NMTInferenceResponse,
     NMTConfig,
 )
-from inference.inference_server_resolver import InferenceServerResolver
 from inference_models.nmt_inference_model import NMTInferenceModel  # type: ignore[import]
 from utils.http_client import HTTPServiceClient
 
@@ -24,13 +23,12 @@ class NMTTaskService(BaseTaskService):
     Handles translation requests between language pairs.
     """
 
-    def __init__(
-        self,
-        inference_server_resolver: InferenceServerResolver,
-        **dependencies: Any
-    ):
+    def __init__(self, **dependencies: Any):
+        """
+        Initialize NMT task service.
+        Inherits InferenceServerResolver from BaseTaskService.
+        """
         super().__init__()
-        self.inference_server_resolver = inference_server_resolver
         self.triton_client = None  # Initialized on first use
         self.logger = logger
 

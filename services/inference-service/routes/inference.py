@@ -130,12 +130,6 @@ async def list_available_tasks(
     """
     return {"tasks": ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "TRANSLITERATION", "AUDIO_LANG_DETECTION", "SMR"]}
 
-
-@router.get(
-    "/inference/tasks/{task_type}",
-    summary="Get Task Information",
-    description="Get detailed information about specific task type",
-)
 async def get_task_info(
     task_type: str,
 ) -> Dict[str, Any]:
