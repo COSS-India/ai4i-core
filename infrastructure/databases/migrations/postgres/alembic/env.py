@@ -165,11 +165,100 @@ def render_item(type_, obj, autogen_context):
     return False
 
 
+def _skip_tenants_status_enum_compare(inspected_column) -> bool:
+    """Skip tenants.status comparison during enum migration."""
+    if not inspected_column:
+        return False
+    return (
+        getattr(inspected_column, "name", None) == "status"
+        and getattr(getattr(inspected_column, "table", None), "name", None) == "tenants"
+    )
+
+
+def _tenants_status_autogenerate_compare_result(inspected_column):
+    """Return True to suppress diff, None to defer to Alembic defaults."""
+    if is_autogenerate and _skip_tenants_status_enum_compare(inspected_column):
+        return True
+    return None
+
+
+# Temporary autogenerate overrides for ai4iplatform_auth.tenants.status (remove after
+# revision c4e8f1a2b3d0 is applied on every environment).
+#
+# Why: During the tenant_status_enum migration, reflected DB metadata (legacy enum
+# labels and/or PostgreSQL default syntax) often disagrees with SQLAlchemy models
+# even when the live schema is correct. Returning True tells Alembic "treat as equal"
+# so autogenerate does not emit duplicate ALTERs; the hand-written revision
+# c4e8f1a2b3d0 owns the enum transition.
+#
+# Removal: Delete compare_type / compare_server_default below (and their entries in
+# get_context_config_kwargs) once all DBs are on the new enum and `alembic revision
+# --autogenerate -x db=ai4iplatform_auth` no longer proposes tenants.status changes.
+# Do not keep these permanently—they would hide real drift on tenants.status later.
+
+
+def compare_server_default(
+    context,
+    inspected_column,
+    metadata_column,
+    rendered_inspected_default,
+    metadata_server_default,
+    rendered_metadata_default,
+):
+    """Alembic autogenerate hook: suppress false diffs on tenants.status server default.
+
+    Purpose:
+        During the tenant_status_enum migration, PostgreSQL often reflects the column
+        default differently from the SQLAlchemy model (e.g. ``'PENDING'`` vs
+        ``'PENDING'::tenant_status_enum``). Autogenerate would otherwise emit a
+        redundant ``ALTER COLUMN ... SET DEFAULT`` even though the effective default
+        is already correct. The real default change is applied in revision
+        c4e8f1a2b3d0.
+
+    Function:
+        Called by Alembic for each column when comparing reflected DB schema to
+        ``target_metadata`` during ``alembic revision --autogenerate``. Only active
+        when ``is_autogenerate`` is true and the column is ``tenants.status``.
+
+        Returns:
+            ``True``  — treat inspected and metadata defaults as equal (skip diff).
+            ``None``  — defer to Alembic's built-in default comparison.
+
+    Temporary: remove once c4e8f1a2b3d0 is applied everywhere (see block comment above).
+    """
+    return _tenants_status_autogenerate_compare_result(inspected_column)
+
+
+def compare_type(context, inspected_column, metadata_column, inspected_type, metadata_type):
+    """Alembic autogenerate hook: suppress false diffs on tenants.status column type.
+
+    Purpose:
+        While the database still uses legacy enum labels (``activated``,
+        ``deactivated``, ``suspended``) or during the transition to
+        ``PENDING``/``ACTIVE``/``SUSPENDED``/``DEACTIVATED``, reflected types will
+        not match the auth-service model. Autogenerate would emit duplicate
+        ``ALTER COLUMN ... TYPE`` operations. Enum relabeling is owned by the
+        hand-written revision c4e8f1a2b3d0, not autogenerate.
+
+    Function:
+        Called by Alembic for each column when comparing reflected column types to
+        model types during ``alembic revision --autogenerate``. Only active when
+        ``is_autogenerate`` is true and the column is ``tenants.status``.
+
+        Returns:
+            ``True``  — treat inspected and metadata types as equal (skip diff).
+            ``None``  — defer to Alembic's built-in type comparison.
+
+    Temporary: remove once c4e8f1a2b3d0 is applied everywhere (see block comment above).
+    """
+    return _tenants_status_autogenerate_compare_result(inspected_column)
+
+
 def get_context_config_kwargs() -> dict:
     kwargs = {
         "target_metadata": target_metadata,
-        "compare_type": True,
-        "compare_server_default": True,
+        "compare_type": compare_type,
+        "compare_server_default": compare_server_default,
         "include_object": include_object,
         "render_item": render_item,
         "process_revision_directives": process_revision_directives,

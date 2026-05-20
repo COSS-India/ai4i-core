@@ -259,7 +259,5 @@ async def validate_endpoint(
             )
         )
 
-    is_valid = all(
-        d.status in (ValidationStatus.PASSED, ValidationStatus.SKIPPED) for d in details
-    )
+    is_valid = all(d.status == ValidationStatus.PASSED for d in details)
     return EndpointValidationResult(is_valid=is_valid, endpoint=endpoint, details=details)

@@ -41,7 +41,6 @@ async def register(
 ):
     user = await svc.register(
         email=body.email,
-        username=body.username,
         password=body.password,
         confirm_password=body.confirm_password,
         full_name=body.full_name,

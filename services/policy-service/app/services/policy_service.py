@@ -156,7 +156,7 @@ class PolicyService:
                     "message": "auth_service_url is not configured",
                 },
             )
-        url = f"{base}/api/v1/tenants?status=activated"
+        url = f"{base}/api/v1/tenants?status=ACTIVE"
         headers = {}
         if auth_header:
             headers["Authorization"] = auth_header
@@ -206,7 +206,7 @@ class PolicyService:
             for t in tenants
             if isinstance(t, dict)
             and t.get("tenant_id")
-            and str(t.get("status", "")).lower() == "activated"
+            and str(t.get("status", "")).upper() == "ACTIVE"
         ]
 
     @staticmethod
@@ -217,6 +217,6 @@ class PolicyService:
                 detail={
                     "code": "VALIDATION_ERROR",
                     "message": "Invalid or inactive tenant_id",
-                    "details": [{"field": "tenant_id", "issue": "Tenant must be activated in auth-service"}],
+                    "details": [{"field": "tenant_id", "issue": "Tenant must be ACTIVE in auth-service"}],
                 },
             )

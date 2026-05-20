@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai4icore-core"
-version = "1.1.0"
-description = "AI4ICore Core - consolidated utility libraries (constants, env, exceptions, logging, telemetry, observability, model_management, service_base, bootstrap, email) for AI4ICore microservices"
+version = "1.1.2"
+description = "AI4ICore Core - consolidated utility libraries (exceptions, logging, telemetry, observability, bootstrap, email) for AI4ICore microservices"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -18,13 +18,9 @@ keywords = [
     "logging",
     "telemetry",
     "observability",
-    "model-management",
-    "service-base",
     "bootstrap",
     "email",
-    "constants",
-    "exceptions",
-    "env",
+    "exceptions"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

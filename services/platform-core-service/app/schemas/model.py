@@ -44,6 +44,15 @@ class ModelCreateRequest(BaseSchema):
     benchmarks: List[Benchmark] = Field(default_factory=list)
     submitter: Submitter
 
+    @field_validator("version", mode="before")
+    @classmethod
+    def _validate_version(cls, v: Any) -> str:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            raise ValueError("Version is required and must be a non-empty string")
+        if isinstance(v, str):
+            return v.strip()
+        return str(v)
+
     @field_validator("name")
     @classmethod
     def _validate_name(cls, v: str) -> str:

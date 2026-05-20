@@ -2,13 +2,15 @@
 User table queries.
 """
 
+import re
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select, func
+from sqlalchemy import or_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import USERNAME_MAX_LENGTH
 from app.models.user import User
 from app.repositories.base import BaseRepository
 
@@ -45,6 +47,22 @@ class UserRepository(BaseRepository):
             select(User).where(User.username == username, User.is_delete.isnot(True))
         )
         return result.scalar_one_or_none()
+
+    async def list_usernames_in_collision_family(self, base: str) -> list[str]:
+        """Usernames equal to ``base`` or ``base_<digits>`` (one query, not per-suffix)."""
+        base = base[:USERNAME_MAX_LENGTH]
+        family_re = re.compile(rf"^{re.escape(base)}(_\d+)?$")
+        escaped_like = base.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        result = await self._db.execute(
+            select(User.username).where(
+                User.is_delete.isnot(True),
+                or_(
+                    User.username == base,
+                    User.username.like(f"{escaped_like}\\_%", escape="\\"),
+                ),
+            )
+        )
+        return [name for name in result.scalars().all() if family_re.match(name)]
 
     async def list_all(self, offset: int = 0, limit: int = 100) -> list[User]:
         result = await self._db.execute(

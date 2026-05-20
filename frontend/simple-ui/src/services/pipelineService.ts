@@ -1,16 +1,14 @@
 // Pipeline Service API client
 
-import apiClient from './api';
+import { apiService } from './api';
+import { apiEndpoints } from './apiEndpoints';
+import { pipelineInferenceResponseSchema, pipelineInfoOrHealthSchema } from './dto/schemas/pipeline';
 import { 
   PipelineInferenceRequest, 
   PipelineInferenceResponse 
 } from '../types/pipeline';
 
-const PIPELINE_ENDPOINTS = {
-  inference: '/api/v1/pipeline/inference',
-  info: '/api/v1/pipeline/info',
-  health: '/api/v1/pipeline/health',
-} as const;
+const PIPELINE_ENDPOINTS = apiEndpoints.pipeline;
 
 /**
  * Execute a pipeline inference request
@@ -19,9 +17,10 @@ export const runPipelineInference = async (
   request: PipelineInferenceRequest
 ): Promise<PipelineInferenceResponse> => {
   try {
-    const response = await apiClient.post(
+    const response = await apiService.post(
       PIPELINE_ENDPOINTS.inference,
-      request
+      request,
+      { responseSchema: pipelineInferenceResponseSchema }
     );
     return response.data;
   } catch (error) {
@@ -34,7 +33,9 @@ export const runPipelineInference = async (
  * Get pipeline service information
  */
 export const getPipelineInfo = async (): Promise<any> => {
-  const response = await apiClient.get(PIPELINE_ENDPOINTS.info);
+  const response = await apiService.get(PIPELINE_ENDPOINTS.info, {
+    responseSchema: pipelineInfoOrHealthSchema,
+  });
   return response.data;
 };
 
@@ -42,7 +43,9 @@ export const getPipelineInfo = async (): Promise<any> => {
  * Check pipeline service health
  */
 export const checkPipelineHealth = async (): Promise<any> => {
-  const response = await apiClient.get(PIPELINE_ENDPOINTS.health);
+  const response = await apiService.get(PIPELINE_ENDPOINTS.health, {
+    responseSchema: pipelineInfoOrHealthSchema,
+  });
   return response.data;
 };
 

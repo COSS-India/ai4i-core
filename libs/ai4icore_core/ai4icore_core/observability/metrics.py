@@ -1,18 +1,15 @@
 """
-Metrics collection system for AI4ICore Observability Plugin
+Metrics collection for AI4ICore Observability Plugin.
 
-Handles Prometheus metrics collection, system monitoring, and business analytics.
-
-Labels are scoped to ``tenant`` plus technical attributes (method, endpoint,
-language, etc.). No organization/customer/app dimensions are tracked.
+Per-request Prometheus metrics labeled by tenant, service_id, and technical
+attributes (method, endpoint, language, etc.). System-level metrics
+(CPU, memory, host stats) are intentionally NOT collected here — that is
+node_exporter's responsibility.
 """
 
-import psutil
-from typing import Dict, Any, Optional
 from prometheus_client import (
     Counter,
     Histogram,
-    Gauge,
     CollectorRegistry,
     generate_latest,
 )
@@ -21,9 +18,7 @@ from prometheus_client import (
 class MetricsCollector:
     """Metrics collector for AI4ICore Observability."""
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """Initialize metrics collector."""
-        self.config = config or {}
+    def __init__(self):
         self.registry = CollectorRegistry()
         self._init_metrics()
 
@@ -44,39 +39,11 @@ class MetricsCollector:
             registry=self.registry,
         )
 
-        # Service metrics
+        # Service-type request counter
         self.enterprise_service_requests = Counter(
             "telemetry_obsv_service_requests_total",
             "Service requests by type",
             ["service_type", "tenant", "service_id"],
-            registry=self.registry,
-        )
-
-        # System metrics
-        self.enterprise_system_cpu = Gauge(
-            "telemetry_obsv_system_cpu_percent",
-            "System CPU usage",
-            registry=self.registry,
-        )
-
-        self.enterprise_system_memory = Gauge(
-            "telemetry_obsv_system_memory_percent",
-            "System memory usage",
-            registry=self.registry,
-        )
-
-        # SLA metrics
-        self.enterprise_sla_availability = Gauge(
-            "telemetry_obsv_sla_availability_percent",
-            "Service availability percentage",
-            ["tenant"],
-            registry=self.registry,
-        )
-
-        self.enterprise_sla_response_time = Gauge(
-            "telemetry_obsv_sla_response_time_seconds",
-            "Average response time",
-            ["tenant"],
             registry=self.registry,
         )
 
@@ -96,10 +63,12 @@ class MetricsCollector:
             registry=self.registry,
         )
 
-        # LLM token tracking
+        # LLM input-token tracking (approximated from input characters: chars/4,
+        # OpenAI's English-prompt rule of thumb; for multilingual workloads
+        # this is a rough lower bound, not exact tokenizer output).
         self.enterprise_llm_tokens_processed = Counter(
             "telemetry_obsv_llm_tokens_processed_total",
-            "Total LLM tokens processed",
+            "Total LLM input tokens processed (approximated from input characters)",
             ["model", "tenant"],
             registry=self.registry,
         )
@@ -148,7 +117,7 @@ class MetricsCollector:
             registry=self.registry,
         )
 
-        # Transliteration character tracking (Histogram for percentile calculations)
+        # Transliteration character tracking
         self.enterprise_transliteration_characters_processed = Histogram(
             "telemetry_obsv_transliteration_characters_processed",
             "Transliteration characters processed per request",
@@ -157,7 +126,7 @@ class MetricsCollector:
             registry=self.registry,
         )
 
-        # Language detection character tracking (Histogram for percentile calculations)
+        # Language detection character tracking
         self.enterprise_language_detection_characters_processed = Histogram(
             "telemetry_obsv_language_detection_characters_processed",
             "Language detection characters processed per request",
@@ -166,7 +135,7 @@ class MetricsCollector:
             registry=self.registry,
         )
 
-        # Audio language detection audio length tracking (Histogram for percentile calculations)
+        # Audio language detection audio length tracking
         self.enterprise_audio_lang_detection_seconds_processed = Histogram(
             "telemetry_obsv_audio_lang_detection_seconds_processed",
             "Audio language detection audio seconds processed per request",
@@ -175,7 +144,7 @@ class MetricsCollector:
             registry=self.registry,
         )
 
-        # NER token (word) tracking (Histogram for percentile calculations)
+        # NER token (word) tracking
         self.enterprise_ner_tokens_processed = Histogram(
             "telemetry_obsv_ner_tokens_processed",
             "NER tokens (words) processed per request",
@@ -184,7 +153,7 @@ class MetricsCollector:
             registry=self.registry,
         )
 
-        # Speaker diarization audio length tracking (Histogram for percentile calculations)
+        # Speaker diarization audio length tracking
         self.enterprise_speaker_diarization_seconds_processed = Histogram(
             "telemetry_obsv_speaker_diarization_seconds_processed",
             "Speaker diarization audio seconds processed per request",
@@ -193,7 +162,7 @@ class MetricsCollector:
             registry=self.registry,
         )
 
-        # Language diarization audio length tracking (Histogram for percentile calculations)
+        # Language diarization audio length tracking
         self.enterprise_language_diarization_seconds_processed = Histogram(
             "telemetry_obsv_language_diarization_seconds_processed",
             "Language diarization audio seconds processed per request",
@@ -202,20 +171,12 @@ class MetricsCollector:
             registry=self.registry,
         )
 
-        # Speaker verification audio length tracking (Histogram for percentile calculations)
+        # Speaker verification audio length tracking
         self.enterprise_speaker_verification_seconds_processed = Histogram(
             "telemetry_obsv_speaker_verification_seconds_processed",
             "Speaker verification audio seconds processed per request",
             ["tenant", "service_id"],
             buckets=(1, 5, 10, 30, 50, 60, 120, 300, 600, 1800, 3600, float("inf")),
-            registry=self.registry,
-        )
-
-        # SLA compliance tracking
-        self.enterprise_sla_compliance = Gauge(
-            "telemetry_obsv_sla_compliance_percent",
-            "SLA compliance percentage",
-            ["sla_type", "tenant"],
             registry=self.registry,
         )
 
@@ -226,31 +187,6 @@ class MetricsCollector:
             ["component", "tenant"],
             registry=self.registry,
         )
-
-        # System metrics
-        self.enterprise_system_peak_throughput = Gauge(
-            "telemetry_obsv_system_peak_throughput_rpm",
-            "Peak throughput requests per minute",
-            registry=self.registry,
-        )
-
-        self.enterprise_system_service_count = Gauge(
-            "telemetry_obsv_system_service_count",
-            "Total number of services",
-            registry=self.registry,
-        )
-
-    def update_system_metrics(self):
-        """Update system metrics."""
-        try:
-            cpu_percent = psutil.cpu_percent(interval=1)
-            self.enterprise_system_cpu.set(cpu_percent)
-
-            memory = psutil.virtual_memory()
-            self.enterprise_system_memory.set(memory.percent)
-        except Exception as e:
-            if self.config.get("debug", False):
-                print(f"Error updating system metrics: {e}")
 
     def track_request(
         self,
@@ -298,7 +234,12 @@ class MetricsCollector:
         ).inc(amount)
 
     def track_llm_tokens(self, model: str, tokens: int, tenant: str = "unknown"):
-        """Track LLM token processing."""
+        """Track LLM input token processing.
+
+        ``tokens`` should be a real measurement from the request input
+        (e.g. char-based approximation in middleware, or exact tokenizer
+        output if the llm-service emits it post-inference).
+        """
         self.enterprise_llm_tokens_processed.labels(
             model=model, tenant=tenant
         ).inc(tokens)
@@ -436,23 +377,6 @@ class MetricsCollector:
             component=component, tenant=tenant
         ).observe(duration)
 
-    def update_sla_compliance(
-        self, sla_type: str, compliance_percent: float, tenant: str = "unknown"
-    ):
-        """Update SLA compliance."""
-        self.enterprise_sla_compliance.labels(
-            sla_type=sla_type, tenant=tenant
-        ).set(compliance_percent)
-
-    def update_system_metrics_advanced(self):
-        """Update advanced system metrics."""
-        try:
-            self.enterprise_system_peak_throughput.set(1000)  # Mock value
-            self.enterprise_system_service_count.set(5)  # Mock value
-        except Exception as e:
-            if self.config.get("debug", False):
-                print(f"Error updating advanced system metrics: {e}")
-
     def _get_error_type(self, status_code: int) -> str:
         """Get error type from status code."""
         if 400 <= status_code < 500:
@@ -462,27 +386,6 @@ class MetricsCollector:
         else:
             return "unknown_error"
 
-    def get_metrics_text(self) -> str:
-        """Get metrics in Prometheus text format."""
-        try:
-            self.update_system_metrics()
-            self.update_system_metrics_advanced()
-        except Exception as e:
-            debug_enabled = self.config.get("debug", False) if isinstance(self.config, dict) else getattr(self.config, "debug", False)
-            if debug_enabled:
-                print(f"[DEBUG] Error in get_metrics_text: {e}")
-                import traceback
-                traceback.print_exc()
+    def render(self) -> str:
+        """Render the registry to Prometheus text-exposition format."""
         return generate_latest(self.registry).decode("utf-8")
-
-
-# Global metrics collector instance
-_global_collector = None
-
-
-def get_global_collector() -> MetricsCollector:
-    """Get the global metrics collector instance."""
-    global _global_collector
-    if _global_collector is None:
-        _global_collector = MetricsCollector()
-    return _global_collector
