@@ -170,19 +170,66 @@ class InferenceServerResolver:
 
         try:
             http_client = HTTPServiceClient(timeout=30)
-            url = f"{model_management_url}/api/v1/model-management/services/{service_id}"
-            # GET — this is a read-only service lookup, not a write operation
-            service_info = await http_client.get_json(url)
-
+            url = f"{model_management_url.rstrip('/')}/{service_id}"
+            raw = await http_client.get_json(url)
+            service_info = self._normalize_mms_response(raw, service_id)
             logger.debug(f"Resolved service {service_id}: {service_info}")
             return service_info
-                
+
         except HTTPServiceNotFoundError as e:
             logger.error(f"Service {service_id} not found: {str(e)}")
             raise ServiceNotFoundError(f"Service {service_id} not found") from e
+        except ServiceNotFoundError:
+            raise
         except Exception as e:
             logger.error(f"Failed to query model management service: {str(e)}")
             raise ServiceNotFoundError(f"Service {service_id} not found: {str(e)}") from e
+
+    def _normalize_mms_response(self, raw: Dict[str, Any], service_id: str) -> Dict[str, Any]:
+        """
+        Normalize MMS response to internal service info format.
+        Handles both Postman mock shape and real MMS shape.
+
+        Postman mock returns a flat dict with snake_case keys and adapter_config inline.
+        Real MMS returns {"success": true, "data": {...camelCase...}} with base endpoint
+        and inference path split across data.endpoint and data.model.inferenceEndPoint.schema.endpoint.
+
+        Args:
+            raw: Raw JSON response from MMS
+            service_id: Service ID (for error messages)
+
+        Returns:
+            Normalized dict with keys: name, endpoint, api_key, adapter_config
+
+        Raises:
+            ServiceNotFoundError: If adapter_config is missing from the response
+        """
+        # Real MMS shape: {"success": true, "data": {...}}
+        if "success" in raw and "data" in raw:
+            data = raw["data"]
+            base_endpoint = data.get("endpoint", "").rstrip("/")
+            infer_path = (
+                data.get("model", {})
+                .get("inferenceEndPoint", {})
+                .get("schema", {})
+                .get("endpoint", "")
+            )
+            endpoint = f"{base_endpoint}{infer_path}"
+            adapter_config = data.get("adapterConfig") or data.get("adapter_config")
+            if not adapter_config:
+                raise ServiceNotFoundError(
+                    f"Service {service_id}: adapter_config missing from MMS response. "
+                    "Register adapter_config for this service in the model management service."
+                )
+            return {
+                "name": data.get("serviceName") or data.get("name"),
+                "endpoint": endpoint,
+                "api_key": data.get("apiKey") or data.get("api_key"),
+                "adapter_config": adapter_config,
+            }
+
+        # Mock/Postman shape: flat dict, pass through as-is
+        return raw
 
     async def _cache_service_info(
         self,
