@@ -1,6 +1,6 @@
 # Database Migrations Guide
 
-This project uses **Alembic** for database migrations with a custom Laravel-inspired CLI for ease of use.
+This project uses **Alembic** for database migrations with a thin CLI wrapper for convenience.
 
 ---
 
@@ -9,8 +9,9 @@ This project uses **Alembic** for database migrations with a custom Laravel-insp
 - **Tool:** Alembic (standard Python database migration framework)
 - **Location:** `infrastructure/databases/migrations/postgres/alembic/`
 - **Per-database:** Each PostgreSQL database has its own migration folder
-- **CLI:** Custom wrapper (`infrastructure/databases/cli.py`) for common operations
+- **CLI:** Thin wrapper (`infrastructure/databases/cli.py`) around Alembic commands
 - **Format:** Standard Alembic (upgrade/downgrade functions)
+- **Version Tracking:** Alembic's native `alembic_version` table (no custom tracking)
 
 ---
 
@@ -42,14 +43,14 @@ ai4iplatform_auth/
 
 ### 1. Generate Migration File
 
-For **auth-service** (ai4iplatform_auth is default):
+For **auth-service** (default database):
 ```bash
-python infrastructure/databases/cli.py make:migration add_email_verified_column --database postgres
+python infrastructure/databases/cli.py make:migration add_email_verified_column --postgres-db ai4iplatform_auth
 ```
 
 For **other databases**:
 ```bash
-python infrastructure/databases/cli.py make:migration create_audit_table --database postgres --postgres-db config_db
+python infrastructure/databases/cli.py make:migration create_audit_table --postgres-db config_db
 ```
 
 ### 2. Edit the Generated File
@@ -187,7 +188,7 @@ def downgrade() -> None:
 
 For auth-service (default):
 ```bash
-python infrastructure/databases/cli.py migrate
+python infrastructure/databases/cli.py migrate --postgres-db ai4iplatform_auth
 ```
 
 For specific database:
@@ -197,37 +198,45 @@ python infrastructure/databases/cli.py migrate --postgres-db config_db
 
 ### Run Specific Number of Migrations
 ```bash
-python infrastructure/databases/cli.py migrate --steps 3
+python infrastructure/databases/cli.py migrate --postgres-db ai4iplatform_core --steps 3
 ```
 
 ### Check Migration Status
 ```bash
-python infrastructure/databases/cli.py migrate:status
+python infrastructure/databases/cli.py migrate:status --postgres-db ai4iplatform_auth
 ```
 
-Output:
+Shows all applied migrations and their details:
 ```
-Database: ai4iplatform_auth
- ID      | Datetime             | Description
-─────────┼──────────────────────┼──────────────────────────────
- a55cc68 | 2026-05-20 10:00:00 | add_email_verified_column ✓
- 2362774 | 2026-05-20 09:00:00 | seed_default_data ✓
- b66dd69 | (pending)            | set_is_active_default_false
+Current revision(s) for postgresql+psycopg2://...
+Rev: d3e850228f7e (head)
+Parent: 908da7983d98
+  seed_default_data
+
+Rev: 908da7983d98
+Parent: b8a6e529935f
+  auto_20260427_113132
+...
 ```
 
 ### Rollback Last Migration
 ```bash
-python infrastructure/databases/cli.py rollback
+python infrastructure/databases/cli.py rollback --postgres-db ai4iplatform_auth
 ```
 
-### Rollback Multiple Batches
+### Rollback Multiple Migrations
 ```bash
-python infrastructure/databases/cli.py rollback --steps 2
+python infrastructure/databases/cli.py rollback --postgres-db ai4iplatform_auth --steps 2
 ```
 
 ### Fresh Migration (Drop All + Re-run)
 ```bash
-python infrastructure/databases/cli.py migrate:fresh --database postgres
+python infrastructure/databases/cli.py migrate:fresh --postgres-db ai4iplatform_auth --force
+```
+
+### Migrate All Databases at Once
+```bash
+python infrastructure/databases/cli.py migrate:all
 ```
 
 ---
@@ -249,26 +258,39 @@ python infrastructure/databases/cli.py migrate:fresh --database postgres
 
 1. **Create** migration file
    ```bash
-   python infrastructure/databases/cli.py make:migration add_user_roles --database postgres
+   python infrastructure/databases/cli.py make:migration add_user_roles --postgres-db ai4iplatform_auth
    ```
 
 2. **Edit** the generated file with upgrade/downgrade logic
 
 3. **Test upgrade** — run migrations locally
    ```bash
-   python infrastructure/databases/cli.py migrate
+   python infrastructure/databases/cli.py migrate --postgres-db ai4iplatform_auth
    ```
 
 4. **Test downgrade** — rollback and verify
    ```bash
-   python infrastructure/databases/cli.py rollback
+   python infrastructure/databases/cli.py rollback --postgres-db ai4iplatform_auth
    ```
 
-5. **Commit** the migration file to git
+5. **Verify status**
+   ```bash
+   python infrastructure/databases/cli.py migrate:status --postgres-db ai4iplatform_auth
+   ```
 
-6. **Merge** to main
+6. **Re-apply** for final test
+   ```bash
+   python infrastructure/databases/cli.py migrate --postgres-db ai4iplatform_auth
+   ```
 
-7. **Deploy** — run migrations in target environment
+7. **Commit** the migration file to git
+
+8. **Merge** to main
+
+9. **Deploy** — run migrations in target environment
+   ```bash
+   python infrastructure/databases/cli.py migrate --postgres-db ai4iplatform_auth
+   ```
 
 ---
 
@@ -302,17 +324,20 @@ For local dev with Docker containers:
 docker-compose -f docker-compose-local.yml up postgres redis -d
 
 # Create and test migration
-python infrastructure/databases/cli.py make:migration my_change --database postgres
+python infrastructure/databases/cli.py make:migration my_change --postgres-db ai4iplatform_auth
 # Edit the file...
 
 # Run migration
-python infrastructure/databases/cli.py migrate
+python infrastructure/databases/cli.py migrate --postgres-db ai4iplatform_auth
 
 # Test rollback
-python infrastructure/databases/cli.py rollback
+python infrastructure/databases/cli.py rollback --postgres-db ai4iplatform_auth
 
 # Verify it's rolled back
-python infrastructure/databases/cli.py migrate:status
+python infrastructure/databases/cli.py migrate:status --postgres-db ai4iplatform_auth
+
+# Re-apply for final test
+python infrastructure/databases/cli.py migrate --postgres-db ai4iplatform_auth
 ```
 
 ---
@@ -523,12 +548,12 @@ Migrations are validated automatically on every PR.
 
 | Step | Command | Why |
 |------|---------|-----|
-| 1. Create | `python cli.py make:migration add_x_column --database postgres` | CLI generates correct IDs + location |
+| 1. Create | `python cli.py make:migration add_x_column --postgres-db <db>` | Alembic generates correct IDs + location |
 | 2. Edit | Add logic to `upgrade()` and `downgrade()` | Make reversible |
 | 3. Verify Chain | `python scripts/validate-migrations.py` | Catch chain breaks early |
-| 4. Test Upgrade | `python cli.py migrate` | Ensure it applies |
-| 5. Test Rollback | `python cli.py rollback` | Ensure downgrade works |
-| 6. Test Re-apply | `python cli.py migrate` | Final confidence check |
+| 4. Test Upgrade | `python cli.py migrate --postgres-db <db>` | Ensure it applies |
+| 5. Test Rollback | `python cli.py rollback --postgres-db <db>` | Ensure downgrade works |
+| 6. Test Re-apply | `python cli.py migrate --postgres-db <db>` | Final confidence check |
 | 7. Commit & Push | `git add . && git commit ...` | Pre-commit hook validates |
 | 8. PR Review | Check checklist above | Human review |
 | 9. Merge | Deploy runs `cli.py migrate` | Applied in production |
@@ -538,6 +563,7 @@ Migrations are validated automatically on every PR.
 ## See Also
 
 - [Alembic Documentation](https://alembic.sqlalchemy.org/)
-- `infrastructure/databases/cli.py` — Migration CLI implementation
-- `infrastructure/databases/core/migration_manager.py` — Migration logic
-- `scripts/validate-migrations.py` — Validation tool
+- `infrastructure/databases/cli.py` — CLI wrapper around Alembic
+- `infrastructure/databases/migrations/postgres/alembic/` — All migration files
+- `infrastructure/databases/migrations/postgres/alembic/env.py` — Alembic configuration
+- `scripts/validate-migrations.py` — Migration validation tool
