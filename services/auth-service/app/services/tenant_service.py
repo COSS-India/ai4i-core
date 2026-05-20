@@ -24,7 +24,7 @@ from app.core.exceptions import (
 )
 from app.models.role_name import RoleName
 from app.models.tenant import Tenant, TenantStatus
-from app.models.user import User, CreationType
+from app.models.user import User, CreationType, UserSuspensionTag
 from app.models.verification import TokenVerification
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
@@ -44,6 +44,60 @@ from app.services.token_service import TokenService
 from app.utils.username import allocate_unique_username, derive_username_from_email
 
 logger = logging.getLogger(__name__)
+
+# PATCH /tenants/{id}/status and onboarding (PENDING → ACTIVE on set-password).
+ALLOWED_TENANT_STATUS_TRANSITIONS: dict[TenantStatus, frozenset[TenantStatus]] = {
+    TenantStatus.PENDING: frozenset({TenantStatus.ACTIVE}),
+    TenantStatus.ACTIVE: frozenset({TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED}),
+    TenantStatus.SUSPENDED: frozenset({TenantStatus.ACTIVE, TenantStatus.DEACTIVATED}),
+    TenantStatus.DEACTIVATED: frozenset({TenantStatus.ACTIVE}),
+}
+
+
+def assert_valid_tenant_status_transition(
+    current: TenantStatus,
+    target: TenantStatus,
+) -> None:
+    """Raise ValidationError when ``target`` is not allowed from ``current``."""
+    if current == target:
+        raise ValidationError(
+            message=f"Tenant status is already {current.value}.",
+            code="TENANT_STATUS_UNCHANGED",
+        )
+    allowed = ALLOWED_TENANT_STATUS_TRANSITIONS.get(current, frozenset())
+    if target in allowed:
+        return
+    allowed_labels = ", ".join(sorted(s.value for s in allowed)) or "none"
+    raise ValidationError(
+        message=(
+            f"Cannot change tenant status from {current.value} to {target.value}. "
+            f"Allowed targets: {allowed_labels}."
+        ),
+        code="INVALID_TENANT_STATUS_TRANSITION",
+    )
+
+
+def _payload_suspends_user(payload: dict) -> bool:
+    return payload.get("is_active") is False or payload.get("is_tenant_active") is False
+
+
+def _payload_activates_user(payload: dict) -> bool:
+    return payload.get("is_active") is True or payload.get("is_tenant_active") is True
+
+
+async def sync_tenant_users_for_status(
+    user_repo: UserRepository,
+    tenant_id: int,
+    status: TenantStatus,
+    updated_by: Optional[UUID] = None,
+) -> None:
+    """Apply tenant status side-effects to all users in the tenant."""
+    if status == TenantStatus.ACTIVE:
+        await user_repo.restore_admin_suspended_in_tenant(
+            tenant_id, updated_by=updated_by
+        )
+    elif status in (TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED):
+        await user_repo.apply_admin_suspend_to_tenant(tenant_id, updated_by=updated_by)
 
 
 class TenantService:
@@ -301,7 +355,12 @@ class TenantService:
         tenant_id: int,
         body: TenantStatusUpdate,
     ) -> Tenant:
+        await self.enforce_scope(current_user, tenant_id)
         tenant = await self._load_tenant_or_404(tenant_id)
+        assert_valid_tenant_status_transition(tenant.status, body.status)
+        await sync_tenant_users_for_status(
+            self._users, tenant_id, body.status, updated_by=current_user.id
+        )
         await self._tenants.update(
             tenant, {"status": body.status, "updated_by": current_user.id}
         )
@@ -325,8 +384,12 @@ class TenantService:
     ) -> tuple[str, str]:
         """Provision an inactive user for the tenant. Returns (user_id, setup_token)."""
         await self.enforce_scope(current_user, tenant_id)
-        if not await self._tenants.get_by_id(tenant_id):
-            raise EntityNotFoundError(f"Tenant {tenant_id}")
+        tenant = await self._load_tenant_or_404(tenant_id)
+        if tenant.status != TenantStatus.ACTIVE:
+            raise ValidationError(
+                message="Tenant users can only be added when the tenant is active.",
+                code="TENANT_NOT_ACTIVE",
+            )
         email = body.email.lower().strip()
         username = await allocate_unique_username(
             self._users.list_usernames_in_collision_family,
@@ -365,9 +428,21 @@ class TenantService:
         body: TenantUserStatusUpdate,
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
+        tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
         payload["updated_by"] = current_user.id
+
+        if _payload_suspends_user(payload):
+            if tenant.status != TenantStatus.ACTIVE:
+                raise ValidationError(
+                    message="Tenant users can only be suspended while the tenant is active.",
+                    code="TENANT_NOT_ACTIVE",
+                )
+            payload["suspension_tag"] = UserSuspensionTag.TENANT_SUSPENDED
+        elif _payload_activates_user(payload):
+            payload["suspension_tag"] = None
+
         await self._users.update(target, payload)
         await self._users.save_and_refresh(target)
         return target
@@ -383,6 +458,7 @@ class TenantService:
                 "is_delete": True,
                 "is_active": False,
                 "is_tenant_active": False,
+                "suspension_tag": None,
                 "updated_by": current_user.id,
             },
         )

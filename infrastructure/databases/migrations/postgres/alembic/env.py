@@ -167,7 +167,7 @@ def render_item(type_, obj, autogen_context):
 
 def _skip_tenants_status_enum_compare(inspected_column) -> bool:
     """Skip tenants.status comparison during enum migration."""
-    if not inspected_column:
+    if inspected_column is None:
         return False
     return (
         getattr(inspected_column, "name", None) == "status"

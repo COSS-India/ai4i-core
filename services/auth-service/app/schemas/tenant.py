@@ -3,10 +3,10 @@ Tenant request/response schemas.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Union
 from uuid import UUID
 
-from pydantic import EmailStr, Field, model_validator
+from pydantic import EmailStr, Field, field_serializer, model_validator
 
 from app.schemas.base import BaseSchema
 from app.models.tenant import TenantStatus
@@ -38,6 +38,13 @@ class TenantResponse(BaseSchema):
     email: str
     phone_number: Optional[str] = None
     status: TenantStatus
+
+    @field_serializer("status")
+    def _status_as_api_value(self, value: Union[TenantStatus, str]) -> str:
+        if isinstance(value, TenantStatus):
+            return value.value
+        return str(value).strip().upper()
+
     created_at: datetime
     created_by: Optional[UUID] = None
     updated_at: Optional[datetime] = None

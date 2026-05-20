@@ -14,10 +14,17 @@ from app.models import Base
 
 
 class CreationType(str, enum.Enum):
-    """Persisted labels: `creation_type_enum` allows only ``default`` and ``google``."""
+    """Python-only enum; persisted as VARCHAR (``native_enum=False``)."""
 
     DEFAULT = "default"
     GOOGLE = "google"
+
+
+class UserSuspensionTag(str, enum.Enum):
+    """Why a user is suspended — used to restore selectively on tenant reactivation."""
+
+    TENANT_SUSPENDED = "TENANT_SUSPENDED"
+    ADMIN_SUSPENDED = "ADMIN_SUSPENDED"
 
 
 class User(Base):
@@ -40,8 +47,22 @@ class User(Base):
     timezone = Column(String(50), server_default="UTC")
     is_delete = Column(Boolean, default=False, nullable=True)
     is_tenant_active = Column(Boolean, default=True, nullable=True)
+    suspension_tag = Column(
+        Enum(
+            UserSuspensionTag,
+            values_callable=lambda x: [e.value for e in x],
+            native_enum=False,
+            length=32,
+        ),
+        nullable=True,
+    )
     creation_type = Column(
-        Enum(CreationType, name="creation_type_enum", values_callable=lambda x: [e.value for e in x]),
+        Enum(
+            CreationType,
+            values_callable=lambda x: [e.value for e in x],
+            native_enum=False,
+            length=32,
+        ),
         nullable=True,
         server_default=CreationType.DEFAULT.value,
     )

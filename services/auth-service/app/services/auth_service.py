@@ -26,6 +26,10 @@ from app.core.exceptions import (
 )
 from app.models.credentials import UserCredentials
 from app.models.tenant import Tenant, TenantStatus
+from app.services.tenant_service import (
+    assert_valid_tenant_status_transition,
+    sync_tenant_users_for_status,
+)
 from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
 from app.repositories.credentials_repository import CredentialsRepository
@@ -380,7 +384,11 @@ class AuthService:
             return
         tenant = await self._tenants.get_by_id(user.tenant_id)
         assert tenant is not None
+        assert_valid_tenant_status_transition(tenant.status, TenantStatus.ACTIVE)
         await self._tenants.update(tenant, {"status": TenantStatus.ACTIVE})
+        await sync_tenant_users_for_status(
+            self._users, tenant.id, TenantStatus.ACTIVE, updated_by=user.id
+        )
         logger.info(
             "Tenant %s activated after contact admin set password (user id=%s)",
             tenant.id,
