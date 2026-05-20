@@ -32,36 +32,6 @@ async def get_orchestrator() -> Orchestrator:
     return Orchestrator()
 
 
-async def get_task_factory() -> TaskFactory:
-    """
-    Dependency for TaskFactory instance.
-    Can be overridden in tests.
-    """
-    return TaskFactory()
-
-
-async def extract_user_context(request: Request) -> Dict[str, Any]:
-    """
-    Extract user context from request (auth, API key, etc.).
-
-    Args:
-        request: HTTP request
-
-    Returns:
-        Dict with user_id, api_key_id, session_id
-    """
-    # Extract from headers or auth context
-    user_id = request.headers.get("X-User-ID")
-    api_key_id = request.headers.get("X-API-Key-ID")
-    session_id = request.headers.get("X-Session-ID")
-    
-    return {
-        "user_id": user_id,
-        "api_key_id": api_key_id,
-        "session_id": session_id or "default-session"
-    }
-
-
 @router.post(
     "/inference",
     response_model=GenericInferenceResponse,
@@ -70,9 +40,7 @@ async def extract_user_context(request: Request) -> Dict[str, Any]:
 )
 async def run_inference(
     payload: Dict[str, Any],
-    request: Request,
     orchestrator: Orchestrator = Depends(get_orchestrator),
-    task_factory: TaskFactory = Depends(get_task_factory),
 ) -> Dict[str, Any]:
     """
     Unified inference endpoint accepting requests for all task types.
@@ -95,9 +63,7 @@ async def run_inference(
 
     Args:
         payload: Raw request payload dictionary
-        request: HTTP request context
         orchestrator: Orchestrator instance (dependency-injected)
-        task_factory: TaskFactory instance (dependency-injected)
 
     Returns:
         GenericInferenceResponse with task-specific output
@@ -151,7 +117,6 @@ async def health_check() -> Dict[str, str]:
     description="Get list of supported inference task types",
 )
 async def list_available_tasks(
-    task_factory: TaskFactory = Depends(get_task_factory),
 ) -> Dict[str, list]:
     """
     List all available inference task types.
@@ -173,7 +138,6 @@ async def list_available_tasks(
 )
 async def get_task_info(
     task_type: str,
-    task_factory: TaskFactory = Depends(get_task_factory),
 ) -> Dict[str, Any]:
     """
     Get detailed information about a specific task type.
