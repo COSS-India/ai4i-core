@@ -3,13 +3,22 @@ Tenant request/response schemas.
 """
 
 from datetime import datetime
+from enum import Enum
 from typing import Optional, Union
 from uuid import UUID
 
-from pydantic import EmailStr, Field, field_serializer, model_validator
+from pydantic import AliasChoices, EmailStr, Field, field_serializer, model_validator
 
+from app.models.user import CreationType
 from app.schemas.base import BaseSchema
 from app.models.tenant import TenantStatus
+
+
+class TenantUserRole(str, Enum):
+    """Roles assignable to users provisioned under a tenant."""
+
+    USER = "USER"
+    TENANT_ADMIN = "TENANT ADMIN"
 
 
 class TenantCreate(BaseSchema):
@@ -55,6 +64,7 @@ class TenantUserCreate(BaseSchema):
     email: EmailStr
     full_name: Optional[str] = Field(None, max_length=255)
     phone_number: Optional[str] = Field(None, max_length=20)
+    role: TenantUserRole = TenantUserRole.USER
 
 
 class TenantUserCreateResponse(BaseSchema):
@@ -79,9 +89,24 @@ class TenantUserUpdate(BaseSchema):
     full_name: Optional[str] = Field(None, max_length=255)
     phone_number: Optional[str] = Field(None, max_length=20)
     username: Optional[str] = Field(None, min_length=3, max_length=100)
+    role: Optional[TenantUserRole] = None
 
     @model_validator(mode='after')
     def at_least_one_field(self) -> 'TenantUserUpdate':
-        if not any([self.email, self.full_name, self.phone_number, self.username]):
+        if not any([self.email, self.full_name, self.phone_number, self.username, self.role is not None]):
             raise ValueError("Provide at least one field to update.")
         return self
+
+
+class TenantUserResponse(BaseSchema):
+    """Tenant-scoped user list/detail item including assignable role."""
+
+    user_id: UUID = Field(validation_alias=AliasChoices("user_id", "id"))
+    username: str
+    email: EmailStr
+    phone_number: Optional[str] = None
+    full_name: Optional[str] = None
+    is_active: bool
+    is_tenant_active: Optional[bool] = None
+    creation_type: Optional[CreationType] = None
+    role: TenantUserRole

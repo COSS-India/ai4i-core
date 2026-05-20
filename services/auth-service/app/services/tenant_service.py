@@ -22,21 +22,25 @@ from app.core.exceptions import (
     EntityNotFoundError,
     ValidationError,
 )
-from app.models.role_name import RoleName
+from app.models.role_name import RoleName, role_name_to_str
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, CreationType, UserSuspensionTag
 from app.models.verification import TokenVerification
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
+from app.core.responses import to_response
 from app.schemas.tenant import (
     TenantCreate,
     TenantStatusUpdate,
     TenantUpdate,
     TenantUserCreate,
+    TenantUserResponse,
+    TenantUserRole,
     TenantUserStatusUpdate,
     TenantUserUpdate,
 )
+from app.schemas.user import UserListResponse
 from app.services.api_key_service import APIKeyService
 from app.services.auth_email_templates import render_setup_link, render_verify_email
 from app.services.email_helpers import enqueue_email, persist_token_verification, resolve_tenant_id, setup_token_expires_at
@@ -45,6 +49,8 @@ from app.services.token_service import TokenService
 from app.utils.username import allocate_unique_username, derive_username_from_email
 
 logger = logging.getLogger(__name__)
+
+_TENANT_ASSIGNABLE_ROLES: tuple[RoleName, ...] = (RoleName.USER, RoleName.TENANT_ADMIN)
 
 # PATCH /tenants/{id}/status and onboarding (PENDING → ACTIVE on set-password).
 ALLOWED_TENANT_STATUS_TRANSITIONS: dict[TenantStatus, frozenset[TenantStatus]] = {
@@ -154,6 +160,28 @@ class TenantService:
     async def is_system_admin(self, user: User) -> bool:
         roles = await self._roles.get_user_roles(user.id)
         return RoleName.ADMIN.value in roles or RoleName.MODERATOR.value in roles
+
+    @staticmethod
+    def resolve_tenant_user_role(roles: list[str]) -> TenantUserRole:
+        if RoleName.TENANT_ADMIN.value in roles:
+            return TenantUserRole.TENANT_ADMIN
+        return TenantUserRole.USER
+
+    async def _set_tenant_user_role(self, user_id: UUID, role: TenantUserRole | RoleName | str) -> None:
+        """Ensure the user has exactly one tenant-assignable role (USER or TENANT ADMIN)."""
+        target = role.value if isinstance(role, TenantUserRole) else role_name_to_str(role)
+        current = await self._roles.get_user_roles(user_id)
+        for assignable in _TENANT_ASSIGNABLE_ROLES:
+            key = role_name_to_str(assignable)
+            if key in current and key != target:
+                await self._roles.remove_role(user_id, assignable)
+        await self._roles.assign_role(user_id, target)
+
+    async def build_tenant_user_response(self, user: User) -> dict:
+        roles = await self._roles.get_user_roles(user.id)
+        role = self.resolve_tenant_user_role(roles)
+        base = to_response(user, UserListResponse)
+        return TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
 
     async def provision_user(
         self,
@@ -407,6 +435,7 @@ class TenantService:
             phone_number=body.phone_number,
             tenant_id=str(tenant_id),
             creation_type="tenant",
+            role_name=body.role.value,
             background_tasks=background_tasks,
         )
 
@@ -421,6 +450,9 @@ class TenantService:
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
+        role_update = payload.pop("role", None)
+        if role_update is not None:
+            await self._set_tenant_user_role(target.id, role_update)
         payload["updated_by"] = current_user.id
         await self._users.update(target, payload)
         await self._users.save_and_refresh(target)
