@@ -34,35 +34,14 @@ except Exception:  # pragma: no cover - logging context is optional
 logger = logging.getLogger(__name__)
 
 
-# Service types whose request bodies carry payload-size metrics worth
-# extracting. Membership check is O(1).
+# Task types (taken directly from the inference payload's `task_type` field,
+# lowercased) whose request bodies carry payload-size metrics worth extracting.
+# Membership check is O(1).
 _BODY_METRIC_SERVICES = frozenset({
-    "tts", "translation", "asr", "ocr", "transliteration",
+    "tts", "nmt", "asr", "ocr", "transliteration",
     "language_detection", "audio_lang_detection", "speaker_verification",
     "speaker_diarization", "language_diarization", "ner", "llm",
 })
-
-# Maps inference-service ``task_type`` payload values (case-insensitive)
-# to the lowercase ``service_type`` identifier used internally by this
-# middleware. The unified ``POST /api/v1/inference`` endpoint receives
-# the model selector in the body, not the URL, so we refine the
-# service_type post-call_next once the body is parsed.
-_INFERENCE_TASK_TO_SERVICE_TYPE = {
-    "nmt": "translation",
-    "asr": "asr",
-    "ocr": "ocr",
-    "ner": "ner",
-    "llm": "llm",
-    "tts": "tts",
-    "transliteration": "transliteration",
-    "language_detection": "language_detection",
-    "audio_lang_detection": "audio_lang_detection",
-    "speaker_diarization": "speaker_diarization",
-    "speaker_verification": "speaker_verification",
-    "language_diarization": "language_diarization",
-    "pii": "pii",
-    "smr": "smr",
-}
 
 
 class ObservabilityMiddleware(BaseHTTPMiddleware):
@@ -124,17 +103,12 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 if self.config.debug:
                     logger.debug("Failed to set tenant in logging context", exc_info=True)
 
-        # Unified inference-service endpoint: single POST /api/v1/inference where
-        # the model selector lives in the body (`task_type`), not the URL.
-        # service_type stays "unknown" until refined from the body post-call_next.
-        # Request count/duration metrics still populate for every request;
-        # only payload-size extraction depends on a real service_type.
+        # service_type is taken directly from the request body's `task_type`
+        # field post-call_next. Until then, default to "unknown" — request
+        # count/duration metrics still populate; only payload-size extraction
+        # depends on a real service_type.
         service_type = "unknown"
-        is_unified_inference = (
-            method == "POST"
-            and path.rstrip("/").lower() == "/api/v1/inference"
-        )
-        needs_body = is_unified_inference
+        needs_body = method == "POST"
 
         # Read (but do NOT parse) the body so it's available to the
         # background task. Starlette caches this on the request, so the
@@ -170,7 +144,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             body_bytes=body_bytes,
             path=path,
             method=method,
-            is_unified_inference=is_unified_inference,
             service_type=service_type,
             tenant=tenant_label,
             service_id=service_id,
@@ -190,7 +163,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         body_bytes: Optional[bytes],
         path: str,
         method: str,
-        is_unified_inference: bool,
         service_type: str,
         tenant: str,
         service_id: str,
@@ -199,29 +171,27 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     ) -> None:
         """Parse request body and emit Prometheus metrics out-of-band."""
         try:
-            # Unified inference endpoint refinement: the model selector lives
-            # in the body, not the URL. Parse `task_type` (to map service_type
-            # and refine the path label) and `config.service_id` (so the
-            # service_id Prometheus label populates without needing a separate
-            # middleware to copy it onto request.state).
-            if is_unified_inference and body_bytes:
+            # Take `task_type` directly as service_type and pull `service_id`
+            # from `config.service_id` (or `config.serviceId`). POST requests
+            # whose body has neither (e.g. health/docs probes, malformed
+            # payloads) just stay as service_type="unknown" — request count
+            # / duration metrics still fire.
+            if body_bytes:
                 try:
                     request_data = json.loads(body_bytes.decode('utf-8'))
                     raw_task = str(request_data.get('task_type') or '').strip().lower()
-                    mapped = _INFERENCE_TASK_TO_SERVICE_TYPE.get(raw_task)
-                    if mapped:
-                        service_type = mapped
+                    if raw_task:
+                        service_type = raw_task
                         path = f"{path.rstrip('/')}/{raw_task}"
                         if self.config.debug:
                             logger.debug(
-                                f"Unified inference: task_type={raw_task}, "
-                                f"service_type={service_type}, refined path={path}"
+                                f"Inference: task_type={raw_task}, refined path={path}"
                             )
 
-                    # Pull service_id from `config.service_id` or `config.serviceId`
-                    # — both spellings appear in inference-service docs/tests.
-                    # Only override the existing service_id (from request.state)
-                    # if the payload provides a non-empty value.
+                    # Both `service_id` (snake_case) and `serviceId` (camelCase)
+                    # appear in inference-service docs/tests. Only override the
+                    # existing service_id (from request.state) if the payload
+                    # provides a non-empty value.
                     config_obj = request_data.get('config')
                     if isinstance(config_obj, dict):
                         payload_service_id = str(
@@ -233,11 +203,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                             service_id = payload_service_id
                             if self.config.debug:
                                 logger.debug(
-                                    f"Unified inference: service_id={service_id} from payload"
+                                    f"Inference: service_id={service_id} from payload"
                                 )
                 except Exception:
                     if self.config.debug:
-                        logger.debug("Failed to parse unified inference body", exc_info=True)
+                        logger.debug("Failed to parse inference body", exc_info=True)
 
             # Per-service payload metrics. Defaults of 0 mean unset values
             # contribute nothing if extraction is skipped or fails.
@@ -258,7 +228,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if body_bytes and service_type in _BODY_METRIC_SERVICES:
                 if service_type == "tts":
                     tts_characters = self._extract_input_characters(body_bytes)
-                elif service_type == "translation":
+                elif service_type == "nmt":
                     translation_characters = self._extract_input_characters(body_bytes)
                 elif service_type == "asr":
                     asr_audio_length = self._extract_asr_audio_length_from_body(body_bytes)
@@ -371,7 +341,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         tenant=tenant,
                         service_id=service_id,
                     )
-            elif service_type == "translation":
+            elif service_type == "nmt":
                 if translation_characters > 0:
                     self.metrics_collector.track_nmt_characters(
                         source_lang="en",
