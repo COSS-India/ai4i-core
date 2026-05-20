@@ -67,33 +67,66 @@ export const setPasswordStatusResponseSchema = z.object({
   message: z.string(),
 });
 
+/** POST /api-keys — raw key shown once; no list metadata. */
+export const createApiKeyResponseSchema = z
+  .object({
+    api_key: z.string(),
+    key_name: z.string(),
+    permissions: z.array(z.coerce.number()),
+    expires_at: z.string().nullable().optional(),
+  })
+  .passthrough()
+  .transform((d) => ({
+    ...d,
+    expires_at: d.expires_at ?? undefined,
+  }));
+
 const apiKeyResponseRawSchema = z
   .object({
     id: z.coerce.number().optional(),
     key_id: z.coerce.number().optional(),
     key_name: z.string(),
     api_key: z.string().optional(),
-    permissions: z.array(z.coerce.number()),
-    is_active: z.boolean(),
-    is_revoked: z.boolean(),
-    created_at: z.string(),
-    expires_at: z.string().optional(),
-    last_used: z.string().optional(),
+    user_id: z.string().optional(),
+    permissions: z.preprocess(
+      (value) => (value == null ? [] : value),
+      z.array(z.coerce.number()),
+    ),
+    is_active: z.boolean().optional(),
+    is_revoked: z.boolean().optional(),
+    created_at: z.string().nullable().optional(),
+    expires_at: z.string().nullable().optional(),
+    last_used: z.string().nullable().optional(),
+    updated_at: z.string().nullable().optional(),
   })
   .passthrough();
 
-export const apiKeyResponseSchema = apiKeyResponseRawSchema
-  .refine((d) => d.id != null || d.key_id != null, {
-    message: 'API key response must include id or key_id',
-  })
-  .transform((d) => ({
+function normalizeApiKeyResponse<T extends z.infer<typeof apiKeyResponseRawSchema>>(d: T) {
+  const isActive = d.is_active ?? true;
+  return {
     ...d,
-    id: (d.id ?? d.key_id) as number,
-  }));
+    ...(d.id != null || d.key_id != null ? { id: (d.id ?? d.key_id) as number } : {}),
+    is_active: isActive,
+    is_revoked: d.is_revoked ?? !isActive,
+    created_at: d.created_at ?? undefined,
+    expires_at: d.expires_at ?? undefined,
+    last_used: d.last_used ?? undefined,
+    updated_at: d.updated_at ?? undefined,
+  };
+}
 
+export const apiKeyResponseSchema = apiKeyResponseRawSchema.transform(normalizeApiKeyResponse);
+
+export const apiKeyListResponseSchema = z
+  .object({
+    api_keys: z.array(apiKeyResponseSchema),
+  })
+  .passthrough();
+
+/** @deprecated Prefer apiKeyListResponseSchema — kept for legacy array-only payloads. */
 export const apiKeyListUnionSchema = z.union([
   z.array(apiKeyResponseSchema),
-  z.object({ api_keys: z.array(apiKeyResponseSchema) }),
+  apiKeyListResponseSchema,
 ]);
 
 export const adminApiKeyWithUserSchema = apiKeyResponseRawSchema
@@ -102,13 +135,7 @@ export const adminApiKeyWithUserSchema = apiKeyResponseRawSchema
     user_email: z.string(),
     username: z.string(),
   })
-  .refine((d) => d.id != null || d.key_id != null, {
-    message: 'API key response must include id or key_id',
-  })
-  .transform((d) => ({
-    ...d,
-    id: (d.id ?? d.key_id) as number,
-  }));
+  .transform(normalizeApiKeyResponse);
 
 export const oauth2ProviderSchema = z.object({
   provider: z.string(),
@@ -126,5 +153,7 @@ export const permissionSchema = z
     created_at: z.string(),
   })
   .passthrough();
+
+export const permissionListSchema = z.array(permissionSchema);
 
 export const guestServicesListSchema = z.array(z.record(z.unknown()));

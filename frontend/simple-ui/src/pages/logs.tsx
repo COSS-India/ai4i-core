@@ -65,7 +65,7 @@ const convertToISOFormat = (datetimeLocal: string): string => {
   if (!datetimeLocal || datetimeLocal.trim() === "") {
     return "";
   }
-  
+
   // Parse the datetime-local string (YYYY-MM-DDTHH:mm)
   // Treat it as local time and convert to ISO format
   try {
@@ -74,21 +74,21 @@ const convertToISOFormat = (datetimeLocal: string): string => {
     if (!normalized.includes(":")) {
       return ""; // Invalid format
     }
-    
+
     // Count colons to determine format
     const colonCount = (normalized.match(/:/g) || []).length;
     if (colonCount === 1) {
       // Format: YYYY-MM-DDTHH:mm - add seconds
       normalized = normalized + ":00";
     }
-    
+
     // Parse as local time and convert to ISO (UTC)
     const date = new Date(normalized);
     if (isNaN(date.getTime())) {
       console.warn(`Invalid datetime format: ${datetimeLocal}`);
       return "";
     }
-    
+
     // Return ISO format string
     return date.toISOString();
   } catch (error) {
@@ -104,7 +104,7 @@ const LogsPage: React.FC = () => {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(10);
   const [clientPage, setClientPage] = useState(1); // Client-side pagination for filtered logs
-  
+
   // Filter input values (what user types/selects - not applied until Search is clicked)
   const [service, setService] = useState<string>("");
   const [level, setLevel] = useState<string>("");
@@ -112,7 +112,7 @@ const LogsPage: React.FC = () => {
   const [startTime, setStartTime] = useState<string>("");
   const [endTime, setEndTime] = useState<string>("");
   const [selectedTenantId, setSelectedTenantId] = useState<string>(""); // Admin-only tenant filter
-  
+
   // Applied filter values (what's actually used in the query)
   const [appliedService, setAppliedService] = useState<string>("");
   const [appliedLevel, setAppliedLevel] = useState<string>("");
@@ -137,7 +137,7 @@ const LogsPage: React.FC = () => {
   const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
   // Kept for reference (e.g. display purposes); no longer drives access logic
   const tenantIdFromToken = getTenantIdFromToken();
-  
+
   const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor } = useAdminTableSurface();
 
   // Redirect to login if not authenticated
@@ -239,14 +239,14 @@ const LogsPage: React.FC = () => {
   });
 
   // Fetch the current tenant's detail (subscriptions) for TENANT ADMIN role
-  // Filter tenants to only show activated tenants
+  // Filter tenants to only show active tenants
   const activeTenants = useMemo(() => {
     if (!tenantsData?.tenants || !Array.isArray(tenantsData.tenants)) {
       return [];
     }
     return tenantsData.tenants.filter((tenant: any) => {
-      const status = String(tenant?.status || '').trim().toLowerCase();
-      return status === 'activated';
+      const status = String(tenant?.status || '').trim().toUpperCase();
+      return status === 'ACTIVE';
     });
   }, [tenantsData]);
 
@@ -325,11 +325,11 @@ const LogsPage: React.FC = () => {
       // API has a maximum limit of 100 for size parameter
       // Fetch multiple pages to get all available logs, then filter and paginate client-side
       const fetchSize = 100; // API maximum limit
-      
+
       // Prepare API parameters (using applied values)
       const apiService = appliedService && appliedService.trim() !== "" ? appliedService : undefined;
       const apiLevel = appliedLevel && appliedLevel.trim() !== "" ? appliedLevel : undefined;
-      
+
       console.log('Fetching logs with filters:', {
         service: apiService || 'All Services',
         level: apiLevel || 'All Levels',
@@ -337,18 +337,18 @@ const LogsPage: React.FC = () => {
         startTime: appliedStartTime || 'not set',
         endTime: appliedEndTime || 'not set',
       });
-      
+
       // Convert datetime-local format to ISO format for API
       const apiStartTime = appliedStartTime && appliedStartTime.trim() !== "" ? convertToISOFormat(appliedStartTime) : undefined;
       const apiEndTime = appliedEndTime && appliedEndTime.trim() !== "" ? convertToISOFormat(appliedEndTime) : undefined;
-      
+
       console.log('Time conversion:', {
         startTime_local: appliedStartTime,
         startTime_iso: apiStartTime,
         endTime_local: appliedEndTime,
         endTime_iso: apiEndTime,
       });
-      
+
       // First, fetch page 1 to get total count
       // Only ADMIN role (not TENANT ADMIN) can send the tenant_id filter param;
       // TENANT ADMIN is automatically scoped by the backend via their JWT.
@@ -362,32 +362,32 @@ const LogsPage: React.FC = () => {
         end_time: apiEndTime,
         tenant_id: isAdmin && !isTenantAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
       });
-      
+
       // Ensure logs is always an array
       if (firstPage && !Array.isArray(firstPage.logs)) {
         console.warn('API returned non-array logs, converting:', firstPage);
         firstPage.logs = [];
       }
-      
+
       const allLogs = firstPage.logs || [];
       const totalPages = firstPage.total_pages || 1;
-      
+
       console.log('First page fetched:', {
         total: firstPage.total,
         logsCount: allLogs.length,
         totalPages,
       });
-      
+
       // Fetch all remaining pages to get all available logs
       if (totalPages > 1) {
         console.log(`Fetching all ${totalPages} pages to get all available logs...`);
-        
+
         // Fetch pages in parallel batches to speed up loading
         const batchSize = 5; // Fetch 5 pages at a time to avoid overwhelming the API
         for (let batchStart = 2; batchStart <= totalPages; batchStart += batchSize) {
           const batchEnd = Math.min(batchStart + batchSize - 1, totalPages);
           const batchPromises = [];
-          
+
           for (let page = batchStart; page <= batchEnd; page++) {
               batchPromises.push(
                 searchLogs({
@@ -405,20 +405,20 @@ const LogsPage: React.FC = () => {
               })
             );
           }
-          
+
           const batchResults = await Promise.all(batchPromises);
           batchResults.forEach((pageResult) => {
             if (pageResult && Array.isArray(pageResult.logs)) {
               allLogs.push(...pageResult.logs);
             }
           });
-          
+
           console.log(`Fetched pages ${batchStart}-${batchEnd}: ${allLogs.length} total logs so far (${Math.round((batchEnd / totalPages) * 100)}% complete)`);
         }
-        
+
         console.log(`Completed fetching: ${allLogs.length} total logs from ${totalPages} pages`);
       }
-      
+
       // Return combined result
       return {
         ...firstPage,
@@ -444,7 +444,7 @@ const LogsPage: React.FC = () => {
         message: error?.message,
         url: error?.config?.url,
       });
-      
+
       if (error?.response?.status === 401 || error?.response?.status === 403) {
         forceFrontendSessionEnd();
         return;
@@ -603,11 +603,11 @@ const LogsPage: React.FC = () => {
         const startDate = new Date(currentStartTime);
         const endDate = new Date(currentEndTime);
         const timeRangeMs = endDate.getTime() - startDate.getTime();
-        
+
         // Set new endTime to now, and startTime to maintain the same range
         const newEndTime = formatDateTime(now);
         const newStartTime = formatDateTime(new Date(now.getTime() - timeRangeMs));
-        
+
         setEndTime(newEndTime);
         setStartTime(newStartTime);
         // Also update applied values to trigger immediate refresh
@@ -631,7 +631,7 @@ const LogsPage: React.FC = () => {
       setAppliedEndTime(formattedNow);
       setAppliedStartTime(formattedOneHourAgo);
     }
-    
+
     // Reset to first page
     // Note: React Query will automatically refetch when applied values change
     setPage(1);
@@ -697,7 +697,7 @@ const LogsPage: React.FC = () => {
   // Filter out irrelevant health check, metrics endpoint, infrastructure errors, and Jaeger trace URLs
   const shouldFilterLog = (log: LogEntry): boolean => {
     const message = (log.message || '').toLowerCase();
-    
+
     // Filter patterns for health/metrics endpoints
     const healthMetricsPatterns = [
       // Patterns for /enterprise/metrics and /metrics endpoints
@@ -714,13 +714,13 @@ const LogsPage: React.FC = () => {
       /\b(get|post|put|delete|patch)\s+.*\/metrics\s+-\s+\d+/i,
       /\b(get|post|put|delete|patch)\s+.*\/health\s+-\s+\d+/i, // Matches any path ending in /health
     ];
-    
+
     // Filter patterns for Jaeger trace URLs
     const jaegerPatterns = [
       /\/jaeger\/api\/traces\//i, // Matches /jaeger/api/traces/...
       /jaeger.*trace/i, // Matches any mention of jaeger trace
     ];
-    
+
     // Filter patterns for infrastructure/health check errors
     const infrastructureErrorPatterns = [
       /failed to check server readiness/i,
@@ -732,14 +732,14 @@ const LogsPage: React.FC = () => {
       /connection.*closed/i,
       /network.*unreachable/i,
     ];
-    
+
     // Filter patterns for feature-flags endpoint
     const featureFlagsPatterns = [
       /\/api\/v1\/feature-flags\/evaluate/i,
       /feature-flags\/evaluate/i,
       /\b(get|post|put|delete|patch)\s+.*\/feature-flags\/evaluate/i,
     ];
-    
+
     // Check if message matches any filter pattern
     return healthMetricsPatterns.some(pattern => pattern.test(message)) ||
            jaegerPatterns.some(pattern => pattern.test(message)) ||
@@ -754,15 +754,15 @@ const LogsPage: React.FC = () => {
       console.log('No logs data available for filtering');
       return [];
     }
-    
+
     console.log('Filtering logs:', {
       totalFromAPI: logsData.logs.length,
       service: appliedService || 'All Services',
       level: appliedLevel || 'All Levels',
     });
-    
+
     const filtered = logsData.logs.filter((log: LogEntry) => !shouldFilterLog(log));
-    
+
     // Debug logging
     if (logsData.logs.length > 0) {
       const filteredCount = logsData.logs.length - filtered.length;
@@ -773,14 +773,14 @@ const LogsPage: React.FC = () => {
         service: appliedService || 'All Services',
         level: appliedLevel || 'All Levels',
       });
-      
+
       if (filtered.length === 0 && logsData.logs.length > 0) {
-        console.warn('All logs were filtered out as noise! Sample log messages:', 
+        console.warn('All logs were filtered out as noise! Sample log messages:',
           logsData.logs.slice(0, 3).map((log: LogEntry) => log.message?.substring(0, 100))
         );
       }
     }
-    
+
     return filtered;
   }, [logsData, appliedService, appliedLevel]);
 
@@ -792,14 +792,14 @@ const LogsPage: React.FC = () => {
       warn: 0,
       info: 0,
     };
-    
+
     allFilteredLogs.forEach((log: LogEntry) => {
       const logLevel = (log.level || '').toUpperCase();
       if (logLevel === 'ERROR') stats.error++;
       else if (logLevel === 'WARN' || logLevel === 'WARNING') stats.warn++;
       else if (logLevel === 'INFO') stats.info++;
     });
-    
+
     return stats;
   }, [allFilteredLogs]);
 
@@ -808,7 +808,7 @@ const LogsPage: React.FC = () => {
   const totalFilteredPages = Math.max(1, Math.ceil(totalFilteredLogs / size));
   const filteredStartRow = totalFilteredLogs === 0 ? 0 : (clientPage - 1) * size + 1;
   const filteredEndRow = Math.min(clientPage * size, totalFilteredLogs);
-  
+
   // Step 2: Get the current page of filtered logs (client-side pagination)
   const filteredLogs = useMemo(() => {
     const startIndex = (clientPage - 1) * size;
@@ -939,9 +939,9 @@ const LogsPage: React.FC = () => {
           {/* Aggregations */}
           {aggregations && (
             <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
-              <Card 
-                bg={cardBg} 
-                border="1px" 
+              <Card
+                bg={cardBg}
+                border="1px"
                 borderColor={borderColor}
                 boxShadow="sm"
                 _hover={{ boxShadow: "md", transform: "translateY(-2px)" }}
@@ -956,9 +956,9 @@ const LogsPage: React.FC = () => {
                   </Stat>
                 </CardBody>
               </Card>
-              <Card 
-                bg={cardBg} 
-                border="1px" 
+              <Card
+                bg={cardBg}
+                border="1px"
                 borderColor="red.200"
                 boxShadow="sm"
                 _hover={{ boxShadow: "md", transform: "translateY(-2px)", borderColor: "red.300" }}
@@ -973,9 +973,9 @@ const LogsPage: React.FC = () => {
                   </Stat>
                 </CardBody>
               </Card>
-              <Card 
-                bg={cardBg} 
-                border="1px" 
+              <Card
+                bg={cardBg}
+                border="1px"
                 borderColor="orange.200"
                 boxShadow="sm"
                 _hover={{ boxShadow: "md", transform: "translateY(-2px)", borderColor: "orange.300" }}
@@ -990,9 +990,9 @@ const LogsPage: React.FC = () => {
                   </Stat>
                 </CardBody>
               </Card>
-              <Card 
-                bg={cardBg} 
-                border="1px" 
+              <Card
+                bg={cardBg}
+                border="1px"
                 borderColor="blue.200"
                 boxShadow="sm"
                 _hover={{ boxShadow: "md", transform: "translateY(-2px)", borderColor: "blue.300" }}
@@ -1011,9 +1011,9 @@ const LogsPage: React.FC = () => {
           )}
 
           {/* Filters */}
-          <Card 
-            bg={cardBg} 
-            border="1px" 
+          <Card
+            bg={cardBg}
+            border="1px"
             borderColor={borderColor}
             boxShadow="sm"
             w="full"
@@ -1243,7 +1243,7 @@ const LogsPage: React.FC = () => {
                     <Alert status="info" borderRadius="md" mb={4}>
                       <AlertIcon />
                       <AlertDescription fontSize="sm">
-                        Showing {filteredLogs.length} logs on page {clientPage} of {totalFilteredPages} ({totalFilteredLogs.toLocaleString()} total filtered logs). 
+                        Showing {filteredLogs.length} logs on page {clientPage} of {totalFilteredPages} ({totalFilteredLogs.toLocaleString()} total filtered logs).
                         Health check, metrics endpoint, feature-flags, infrastructure errors, and Jaeger trace URL logs are hidden.
                       </AlertDescription>
                     </Alert>
@@ -1290,9 +1290,9 @@ const LogsPage: React.FC = () => {
                             const jaegerBaseUrl = process.env.NEXT_PUBLIC_JAEGER_URL || 'http://localhost:16686';
                             jaegerUrl = `${jaegerBaseUrl}/trace/${traceId}`;
                           }
-                          
+
                               return (
-                                <Tr 
+                                <Tr
                                   key={index}
                                   _hover={{ bg: tableRowHoverBg }}
                                   transition="background 0.2s"
@@ -1301,7 +1301,7 @@ const LogsPage: React.FC = () => {
                                     {formatTimestamp(timestamp)}
                                   </Td>
                                   <Td>
-                                    <Badge 
+                                    <Badge
                                       colorScheme={getLevelColor(level)}
                                       fontSize="xs"
                                       px={2}
@@ -1318,8 +1318,8 @@ const LogsPage: React.FC = () => {
                                     </Text>
                                   </Td>
                                   <Td>
-                                    <Text 
-                                      noOfLines={2} 
+                                    <Text
+                                      noOfLines={2}
                                       maxW="500px"
                                       fontSize="sm"
                                       color="gray.700"
@@ -1385,7 +1385,7 @@ const LogsPage: React.FC = () => {
                       All logs were filtered out (health checks and metrics endpoints are hidden).
                     </Text>
                     <Text fontSize="sm" color="gray.400">
-                      {logsData.logs.length} logs were fetched, but all were filtered. 
+                      {logsData.logs.length} logs were fetched, but all were filtered.
                       Try adjusting your filters or time range.
                     </Text>
                     <HStack spacing={2} justify="center" mt={2}>

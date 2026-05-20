@@ -272,7 +272,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     setIsLoadingTenants(true);
     try {
       const res = await tenantService.listTenants();
-      setTenants((res.tenants || []).filter((t) => t.status === "activated"));
+      setTenants((res.tenants || []).filter((t) => t.status === "ACTIVE"));
     } catch {
       // ignore
     } finally {
@@ -2295,7 +2295,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       <Select value="global" isDisabled bg="gray.50">
                         <option value="global">Global</option>
                       </Select>
-                     
+
                     </>
                   ) : (
                     <Select
@@ -2708,7 +2708,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       <Select value="global" isDisabled bg="gray.50">
                         <option value="global">Global</option>
                       </Select>
-                      
+
                     </>
                   ) : (
                     <Select

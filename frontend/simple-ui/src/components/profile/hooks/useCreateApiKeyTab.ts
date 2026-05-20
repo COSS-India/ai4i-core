@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import authService from "../../../services/authService";
 import type { Permission } from "../../../types/auth";
+import { cacheCreatedApiKeyHex } from "../../../utils/apiKeyUtils";
 
 export interface UseCreateApiKeyTabOptions {
   onApiKeyCreated?: () => void;
@@ -93,6 +94,11 @@ export function useCreateApiKeyTab({ onApiKeyCreated }: UseCreateApiKeyTabOption
       onApiKeyCreated?.();
       if (createdKey.api_key) {
         setCreatedApiKeyToken(createdKey.api_key);
+        cacheCreatedApiKeyHex(
+          createdKey.key_name,
+          createdKey.api_key,
+          createdKey.id ?? createdKey.key_id,
+        );
       }
       toast({
         title: "API Key Created",

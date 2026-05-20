@@ -9,6 +9,8 @@ import {
   FormLabel,
   Heading,
   Input,
+  InputGroup,
+  InputLeftElement,
   HStack,
   Text,
   VStack,
@@ -40,7 +42,7 @@ import {
 } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
 import { useApiKeyManagementTab } from "./hooks/useApiKeyManagementTab";
-import { ViewIcon, EditIcon, DeleteIcon } from "@chakra-ui/icons";
+import { ViewIcon, EditIcon, DeleteIcon, SearchIcon } from "@chakra-ui/icons";
 import {
   TableFilterToolbar,
   TablePaginationBar,
@@ -81,8 +83,8 @@ export default function ApiKeyManagementTab({
       const nameCmp = aName.localeCompare(bName, undefined, { sensitivity: "base" });
       if (nameCmp !== 0) return keyNameSortDirection === "asc" ? nameCmp : -nameCmp;
 
-      const timeA = new Date(a.created_at).getTime();
-      const timeB = new Date(b.created_at).getTime();
+      const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
       return timeB - timeA;
     });
   }, [mgmt.filteredApiKeys, keyNameSortDirection]);
@@ -135,12 +137,11 @@ export default function ApiKeyManagementTab({
 
               {(() => {
                 const hasActiveFilters =
-                  mgmt.filterPermission !== "all" || mgmt.filterActive !== "all";
+                  mgmt.filterPermission !== "all" ||
+                  mgmt.filterActive !== "all" ||
+                  mgmt.keyNameSearch.trim() !== "";
 
-                const permissionOptions =
-                  mgmt.allUniquePermissions.length > 0
-                    ? mgmt.allUniquePermissions
-                    : mgmt.permissions.map((p) => p.name);
+                const permissionOptions = mgmt.permissionFilterOptions;
 
                 return (
                   <TableFilterToolbar
@@ -151,6 +152,26 @@ export default function ApiKeyManagementTab({
                     }}
                     align="flex-end"
                   >
+                    <FormControl w={{ base: "full", md: "320px" }}>
+                      <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
+                        Key Name
+                      </FormLabel>
+                      <InputGroup size="sm">
+                        <InputLeftElement pointerEvents="none">
+                          <SearchIcon color="gray.400" />
+                        </InputLeftElement>
+                        <Input
+                          value={mgmt.keyNameSearch}
+                          onChange={(e) => {
+                            mgmt.setKeyNameSearch(e.target.value);
+                            setListPage(1);
+                          }}
+                          placeholder="Search by key name"
+                          bg={cardBg}
+                        />
+                      </InputGroup>
+                    </FormControl>
+
                     <FormControl w={{ base: "full", md: "320px" }}>
                       <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
                         Permission
@@ -260,7 +281,9 @@ export default function ApiKeyManagementTab({
                           </Badge>
                         </Td>
                         <Td fontSize="sm">
-                          {new Date(key.created_at).toLocaleDateString()}
+                          {key.created_at
+                            ? new Date(key.created_at).toLocaleDateString()
+                            : "—"}
                         </Td>
                         <Td fontSize="sm">
                           {key.expires_at
@@ -386,6 +409,19 @@ export default function ApiKeyManagementTab({
                   </Text>
                   <Text fontSize="md">{mgmt.selectedKeyForView.key_name}</Text>
                 </Box>
+                <Box>
+                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                    Key ID
+                  </Text>
+                  <Text
+                    fontSize="sm"
+                    fontFamily="mono"
+                    color="gray.700"
+                    wordBreak="break-all"
+                  >
+                    {mgmt.formatKeyId(mgmt.selectedKeyForView)}
+                  </Text>
+                </Box>
                 <Box gridColumn={{ base: "span 1", md: "span 2" }}>
                   <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={2}>
                     Permissions
@@ -421,7 +457,9 @@ export default function ApiKeyManagementTab({
                     Created At
                   </Text>
                   <Text fontSize="sm">
-                    {new Date(mgmt.selectedKeyForView.created_at).toLocaleString()}
+                    {mgmt.selectedKeyForView.created_at
+                      ? new Date(mgmt.selectedKeyForView.created_at).toLocaleString()
+                      : "—"}
                   </Text>
                 </Box>
                 {mgmt.selectedKeyForView.expires_at && (
@@ -444,18 +482,6 @@ export default function ApiKeyManagementTab({
                     </Text>
                   </Box>
                 )}
-                <Box>
-                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                    Key (public id)
-                  </Text>
-                  <Text fontSize="sm" fontFamily="mono" color="gray.700" wordBreak="break-all">
-                    {mgmt.selectedKeyForView.api_key
-                      ? `${mgmt.selectedKeyForView.api_key.slice(0, 8)}…${mgmt.selectedKeyForView.api_key.slice(-4)}`
-                      : mgmt.selectedKeyForView.id != null
-                        ? String(mgmt.selectedKeyForView.id)
-                        : "—"}
-                  </Text>
-                </Box>
               </SimpleGrid>
             )}
       </StandardModal>
@@ -522,7 +548,7 @@ export default function ApiKeyManagementTab({
                       onChange={(values) =>
                         mgmt.setUpdateFormData({
                           ...mgmt.updateFormData,
-                          permissions: values.map((v) => parseInt(String(v), 10)),
+                          permissions: values as string[],
                         })
                       }
                     >

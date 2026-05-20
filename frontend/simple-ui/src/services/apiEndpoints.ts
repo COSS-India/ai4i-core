@@ -40,6 +40,7 @@ export const apiEndpoints = {
         `/users?limit=${limit}&offset=${offset}`,
       userById: (userId: string) => `/users/${userId}`,
       inferencePermissions: '/inference/permissions',
+      permissions: '/permissions/',
     },
     /** Relative to `rolesBase`. */
     rolePaths: {

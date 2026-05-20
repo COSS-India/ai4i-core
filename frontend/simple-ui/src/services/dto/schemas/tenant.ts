@@ -1,19 +1,19 @@
 import { z } from 'zod';
 
-export const tenantStatusSchema = z.enum(['activated', 'deactivated', 'suspended']);
+export const tenantStatusSchema = z.enum(['PENDING', 'ACTIVE', 'SUSPENDED', 'DEACTIVATED']);
 
 export const tenantViewSchema = z
   .object({
-    tenant_id: z.string(),
+    tenant_id: z.coerce.string(),
     contact_name: z.string(),
     organisation: z.string(),
     email: z.string(),
     phone_number: z.string().nullable().optional(),
     status: tenantStatusSchema,
     created_at: z.string(),
-    created_by: z.string().nullable().optional(),
+    created_by: z.coerce.string().nullable().optional(),
     updated_at: z.string().nullable().optional(),
-    updated_by: z.string().nullable().optional(),
+    updated_by: z.coerce.string().nullable().optional(),
   })
   .passthrough();
 

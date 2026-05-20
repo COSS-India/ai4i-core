@@ -132,9 +132,9 @@ export interface APIKeyResponse {
   /** 32-char hex public identifier; required for PATCH/DELETE on current auth API. */
   api_key?: string;
   permissions: (string | number)[];
-  is_active: boolean;
+  is_active?: boolean;
   is_revoked?: boolean;
-  created_at: string;
+  created_at?: string;
   expires_at?: string;
   last_used?: string;
   updated_at?: string;

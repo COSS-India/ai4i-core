@@ -16,6 +16,7 @@ import type {
   ListUsersResponse,
   TenantRegisterRequest,
   TenantRegisterResponse,
+  TenantStatus,
   TenantStatusUpdateRequest,
   TenantStatusUpdateResponse,
   TenantUpdateRequest,
@@ -33,7 +34,7 @@ import type {
 const BASE = apiEndpoints.tenants.base;
 
 export async function listTenants(params?: {
-  status?: 'activated' | 'deactivated' | 'suspended';
+  status?: TenantStatus;
   offset?: number;
   limit?: number;
 }): Promise<ListTenantsResponse> {

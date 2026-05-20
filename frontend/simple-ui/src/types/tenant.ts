@@ -1,6 +1,7 @@
 // Tenant + tenant-user types — calls auth-service /api/v1/tenants endpoints.
 
-export type TenantStatus = 'activated' | 'deactivated' | 'suspended';
+export type TenantStatus = 'PENDING' | 'ACTIVE' | 'SUSPENDED' | 'DEACTIVATED';
+export type TenantUserStatus = 'ACTIVE' | 'INACTIVE';
 export type CreationType = 'direct' | 'google' | 'tenant';
 
 export interface TenantView {

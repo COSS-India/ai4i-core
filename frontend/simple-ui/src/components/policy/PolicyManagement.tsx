@@ -1024,7 +1024,7 @@ function PolicyFormModal({
     void listTenants()
       .then((res) => {
         if (cancelled) return;
-        const list = (res.tenants ?? []).filter((tenant) => tenant.status === "activated");
+        const list = (res.tenants ?? []).filter((tenant) => tenant.status === "ACTIVE");
         setTenants(
           [...list].sort((a, b) =>
             (a.organisation ?? "").localeCompare(b.organisation ?? "", undefined, {
