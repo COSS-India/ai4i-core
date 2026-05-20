@@ -155,7 +155,7 @@ async def test_inference(
             truncate_for_log(body_for_log, max_len=500),
         )
 
-        if response.status_code < fail_threshold:
+        if 200 <= response.status_code < 300:
             return ValidationDetail(
                 level=ValidationLevel.INFERENCE,
                 status=ValidationStatus.PASSED,
