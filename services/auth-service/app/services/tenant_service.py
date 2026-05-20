@@ -37,6 +37,7 @@ from app.schemas.tenant import (
     TenantUserStatusUpdate,
     TenantUserUpdate,
 )
+from app.services.api_key_service import APIKeyService
 from app.services.auth_email_templates import render_setup_link, render_verify_email
 from app.services.email_helpers import enqueue_email, persist_token_verification, resolve_tenant_id, setup_token_expires_at
 from app.services.role_service import RoleService
@@ -111,6 +112,7 @@ class TenantService:
         verification_repo: VerificationRepository,
         token_service: TokenService,
         email_client: EmailClient,
+        api_key_service: Optional[APIKeyService] = None,
     ) -> None:
         self._tenants = tenant_repo
         self._users = user_repo
@@ -118,6 +120,7 @@ class TenantService:
         self._verifications = verification_repo
         self._tokens = token_service
         self._email = email_client
+        self._api_keys = api_key_service
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -365,6 +368,8 @@ class TenantService:
             tenant, {"status": body.status, "updated_by": current_user.id}
         )
         await self._tenants.save_and_refresh(tenant)
+        if self._api_keys is not None:
+            await self._api_keys.sync_keys_for_tenant(tenant_id)
         return tenant
 
     # ── Tenant-user CRUD ─────────────────────────────────────────────────
@@ -413,11 +418,16 @@ class TenantService:
         body: TenantUserUpdate,
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
+        tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
         payload["updated_by"] = current_user.id
         await self._users.update(target, payload)
         await self._users.save_and_refresh(target)
+        if self._api_keys is not None and (
+            _payload_suspends_user(payload) or _payload_activates_user(payload)
+        ):
+            await self._api_keys.sync_keys_for_user(target, tenant)
         return target
 
     async def update_tenant_user_status(
@@ -445,12 +455,15 @@ class TenantService:
 
         await self._users.update(target, payload)
         await self._users.save_and_refresh(target)
+        if self._api_keys is not None:
+            await self._api_keys.sync_keys_for_user(target, tenant)
         return target
 
     async def delete_tenant_user(
         self, current_user: User, tenant_id: int, user_id: UUID
     ) -> None:
         await self.enforce_scope(current_user, tenant_id)
+        tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         await self._users.update(
             target,
@@ -463,3 +476,5 @@ class TenantService:
             },
         )
         await self._users.commit()
+        if self._api_keys is not None:
+            await self._api_keys.sync_keys_for_user(target, tenant)

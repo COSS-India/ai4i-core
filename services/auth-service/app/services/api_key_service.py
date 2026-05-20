@@ -17,7 +17,11 @@ from uuid import UUID
 from app.core.config import settings
 from app.core.exceptions import AuthorizationError, EntityNotFoundError, InvalidAPIKeyError, ValidationError
 from app.models.api_key import APIKey
+from app.models.tenant import Tenant, TenantStatus
+from app.models.user import User
 from app.repositories.api_key_repository import APIKeyRepository
+from app.repositories.tenant_repository import TenantRepository
+from app.repositories.user_repository import UserRepository
 from app.services.cache_service import CacheService
 
 logger = logging.getLogger(__name__)
@@ -30,9 +34,37 @@ class APIKeyService:
         self,
         api_key_repo: Optional[APIKeyRepository],
         cache_service: CacheService,
+        user_repo: Optional[UserRepository] = None,
+        tenant_repo: Optional[TenantRepository] = None,
     ) -> None:
         self._repo = api_key_repo
         self._cache = cache_service
+        self._users = user_repo
+        self._tenants = tenant_repo
+
+    @staticmethod
+    def user_may_use_api_keys(user: User, tenant: Optional[Tenant]) -> bool:
+        """True when the user and tenant allow API key authentication."""
+        if user.is_delete:
+            return False
+        if not user.is_active:
+            return False
+        if user.is_tenant_active is False:
+            return False
+        if tenant is None:
+            return True
+        return tenant.status == TenantStatus.ACTIVE
+
+    @staticmethod
+    def effective_is_active(
+        api_key: APIKey, user: User, tenant: Optional[Tenant]
+    ) -> bool:
+        """Runtime validity: owner-enabled, not expired, user/tenant allow access."""
+        return bool(
+            api_key.is_active
+            and not api_key.is_expired()
+            and APIKeyService.user_may_use_api_keys(user, tenant)
+        )
 
     @staticmethod
     def generate_api_key() -> str:
@@ -52,6 +84,73 @@ class APIKeyService:
                 code="INVALID_PERMISSION_IDS",
                 errors=[f"Unknown permission_id={pid}" for pid in missing_ids],
             )
+
+    async def _refresh_redis_cache(
+        self, db_key: APIKey, tenant_id: Optional[str]
+    ) -> None:
+        expires_at = db_key.expires_at
+        if expires_at:
+            ttl = max(0, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
+        else:
+            ttl = int(timedelta(days=settings.api_key_expire_days).total_seconds())
+        if ttl <= 0:
+            return
+        await self._cache.set_api_key_cache(
+            db_key.api_key,
+            ttl,
+            {
+                "api_key": db_key.api_key,
+                "permissions": db_key.permissions or [],
+                "user_id": str(db_key.user_id),
+                "tenant_id": tenant_id,
+            },
+        )
+
+    async def _apply_effective_state(
+        self,
+        db_key: APIKey,
+        *,
+        should_be_active: bool,
+        tenant_id: Optional[str],
+    ) -> None:
+        if should_be_active:
+            if not db_key.is_active:
+                await self._repo.update(db_key, {"is_active": True})
+            await self._refresh_redis_cache(db_key, tenant_id)
+        else:
+            if db_key.is_active:
+                await self._repo.update(db_key, {"is_active": False})
+            await self._cache.delete_api_key_cache(db_key.api_key)
+
+    async def sync_keys_for_user(
+        self, user: User, tenant: Optional[Tenant] = None
+    ) -> None:
+        """Align API keys with the user's (and tenant's) access state."""
+        if self._repo is None:
+            return
+        if tenant is None and user.tenant_id is not None and self._tenants is not None:
+            tenant = await self._tenants.get_by_id(user.tenant_id)
+        eligible = self.user_may_use_api_keys(user, tenant)
+        tenant_id_str = str(user.tenant_id) if user.tenant_id else None
+        keys = await self._repo.list_by_user(user.id)
+        for key in keys:
+            await self._apply_effective_state(
+                key,
+                should_be_active=eligible and not key.is_expired(),
+                tenant_id=tenant_id_str,
+            )
+        await self._repo.commit()
+
+    async def sync_keys_for_tenant(self, tenant_id: int) -> None:
+        """Sync API keys for every user in the tenant."""
+        if self._repo is None or self._users is None or self._tenants is None:
+            return
+        tenant = await self._tenants.get_by_id(tenant_id)
+        if not tenant:
+            return
+        users = await self._users.list_by_tenant(tenant_id, offset=0, limit=10_000)
+        for user in users:
+            await self.sync_keys_for_user(user, tenant)
 
     async def create_api_key(
         self,
@@ -84,29 +183,39 @@ class APIKeyService:
         expires_at = datetime.now(timezone.utc) + timedelta(days=days)
         ttl = int(timedelta(days=days).total_seconds())
 
+        owner_active = True
+        if self._users is not None:
+            owner = await self._users.get_by_id(user_id)
+            tenant = None
+            if owner and owner.tenant_id is not None and self._tenants is not None:
+                tenant = await self._tenants.get_by_id(owner.tenant_id)
+            if owner:
+                owner_active = self.user_may_use_api_keys(owner, tenant)
+
         api_key = APIKey(
             api_key=raw_key,
             user_id=user_id,
             key_name=key_name,
             permissions=permission_ids,
             expires_at=expires_at,
+            is_active=owner_active,
             created_by=str(user_id),
             updated_by=str(user_id),
         )
         await self._repo.create(api_key)
         await self._repo.commit()
 
-        # Cache in Redis AFTER DB commit to ensure atomicity
-        await self._cache.set_api_key_cache(
-            raw_key,
-            ttl,
-            {
-                "api_key": raw_key,
-                "permissions": permission_ids,
-                "user_id": str(user_id),
-                "tenant_id": tenant_id,
-            },
-        )
+        if owner_active:
+            await self._cache.set_api_key_cache(
+                raw_key,
+                ttl,
+                {
+                    "api_key": raw_key,
+                    "permissions": permission_ids,
+                    "user_id": str(user_id),
+                    "tenant_id": tenant_id,
+                },
+            )
 
         logger.info("API key created: name=%s user=%s permissions=%s", key_name, user_id, permission_ids)
         return raw_key, api_key
@@ -155,6 +264,10 @@ class APIKeyService:
             )
 
         await self._repo.revoke(db_key)
+        await self._repo.update(
+            db_key,
+            {"expires_at": datetime.now(timezone.utc)},
+        )
         await self._repo.commit()
 
         # Evict from Redis AFTER DB commit to ensure atomicity
@@ -209,29 +322,25 @@ class APIKeyService:
         await self._repo.update(db_key, data)
         await self._repo.refresh(db_key)
 
-        # If key is being revoked (is_active set to False), evict from Redis
-        if data.get("is_active") is False:
-            await self._cache.delete_api_key_cache(api_key_value)
-        else:
-            # Otherwise refresh Redis with updated data
-            updated_permissions = data.get("permissions") or db_key.permissions or []
-            expires_at = db_key.expires_at
-            if expires_at:
-                ttl = max(0, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
-            else:
-                ttl = int(timedelta(days=settings.api_key_expire_days).total_seconds())
-            if ttl > 0:
-                await self._cache.set_api_key_cache(
-                    api_key_value,
-                    ttl,
-                    {
-                        "api_key": api_key_value,
-                        "permissions": updated_permissions,
-                        "user_id": str(db_key.user_id),
-                    },
-                )
-
         await self._repo.commit()
+
+        tenant_id_str: Optional[str] = None
+        if self._users is not None:
+            owner = await self._users.get_by_id(db_key.user_id)
+            tenant = None
+            if owner and owner.tenant_id is not None and self._tenants is not None:
+                tenant = await self._tenants.get_by_id(owner.tenant_id)
+                tenant_id_str = str(owner.tenant_id)
+            if owner:
+                should_cache = self.effective_is_active(db_key, owner, tenant)
+                if should_cache:
+                    await self._refresh_redis_cache(db_key, tenant_id_str)
+                else:
+                    await self._cache.delete_api_key_cache(api_key_value)
+            else:
+                await self._cache.delete_api_key_cache(api_key_value)
+        elif data.get("is_active") is False:
+            await self._cache.delete_api_key_cache(api_key_value)
         logger.info("API key updated: api_key=%s user=%s", api_key_value, db_key.user_id)
         return db_key
 
