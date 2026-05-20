@@ -1,0 +1,28 @@
+{
+  "preprocess": {
+    "start": [
+      {"attr": "input_len", "expr": "len(text)"},
+      {"attr": "word_count", "expr": "len(text.split())"},
+      {"attr": "raw_input", "expr": "text"}
+    ],
+    "end": [
+      {"attr": "preprocessed_text", "expr": "preprocessed_texts"}
+    ]
+  },
+  "resolve_model": {
+    "start": [],
+    "end": []
+  },
+  "triton_inference": {
+    "start": [],
+    "end": []
+  },
+  "postprocess": {
+    "start": [],
+    "end": []
+  },
+  "persist": {
+    "start": [],
+    "end": []
+  }
+}
