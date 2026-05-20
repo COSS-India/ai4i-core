@@ -156,17 +156,24 @@ def create_app() -> FastAPI:
             routes=app.routes,
         )
         components = schema.setdefault("components", {})
-        components.setdefault("securitySchemes", {})["bearerAuth"] = {
+        security_schemes = components.setdefault("securitySchemes", {})
+        security_schemes["bearerAuth"] = {
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "JWT",
+        }
+        security_schemes["XUserID"] = {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-User-ID",
+            "description": "User UUID injected by the gateway. Required for protected endpoints when calling the service directly (bypassing the gateway).",
         }
         for path, methods in (schema.get("paths") or {}).items():
             if path in _PUBLIC_PATHS:
                 continue
             for _method, op in (methods or {}).items():
                 if isinstance(op, dict) and _PUBLIC_TAG not in (op.get("tags") or []):
-                    op.setdefault("security", [{"bearerAuth": []}])
+                    op.setdefault("security", [{"bearerAuth": []}, {"XUserID": []}])
         app.openapi_schema = schema
         return app.openapi_schema
 
