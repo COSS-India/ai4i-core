@@ -8,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, Any
 import logging
 
+from ai4icore_core.observability import setup_observability
+
 from routes import router
 from config import settings
 
@@ -62,7 +64,7 @@ class InferenceServiceFactory:
             app: FastAPI application instance
         """
         logger.info("Setting up middleware...")
-        
+
         # CORS middleware
         app.add_middleware(
             CORSMiddleware,
@@ -71,7 +73,14 @@ class InferenceServiceFactory:
             allow_methods=["*"],
             allow_headers=["*"],
         )
-        
+
+        # Observability — Prometheus /metrics + per-request middleware.
+        # Reads OBSERVE_UTIL_* env vars (enabled, debug, metrics_path).
+        # Returns a MetricsCollector if you ever want to emit custom
+        # metrics from inside route handlers (e.g. tokenizer-accurate
+        # LLM token counts post-inference).
+        setup_observability(app)
+
         logger.info("✓ Middleware setup complete")
 
     @staticmethod
@@ -83,15 +92,15 @@ class InferenceServiceFactory:
             app: FastAPI application instance
         """
         logger.info("Setting up routes...")
-        
+
         # Include inference router
         app.include_router(router, prefix="/api/v1")
-        
+
         # Health check endpoint
         @app.get("/health")
         async def health_check():
             return {"status": "healthy"}
-        
+
         logger.info("✓ Routes setup complete")
 
     @staticmethod
@@ -104,16 +113,16 @@ class InferenceServiceFactory:
         """
         from fastapi.responses import JSONResponse
         from fastapi.exceptions import RequestValidationError
-        
+
         logger.info("Setting up exception handlers...")
-        
+
         @app.exception_handler(RequestValidationError)
         async def validation_exception_handler(request, exc):
             return JSONResponse(
                 status_code=400,
                 content={"detail": str(exc)}
             )
-        
+
         @app.exception_handler(Exception)
         async def general_exception_handler(request, exc):
             logger.error(f"Unhandled exception: {exc}")
@@ -121,7 +130,7 @@ class InferenceServiceFactory:
                 status_code=500,
                 content={"detail": "Internal server error"}
             )
-        
+
         logger.info("✓ Exception handlers setup complete")
 
     @staticmethod
@@ -133,15 +142,15 @@ class InferenceServiceFactory:
             app: FastAPI application instance
         """
         logger.info("Setting up lifespan events...")
-        
+
         @app.on_event("startup")
         async def startup():
             logger.info("✓ Inference service started")
-        
+
         @app.on_event("shutdown")
         async def shutdown():
             logger.info("✓ Inference service shutting down")
-        
+
         logger.info("✓ Lifespan events setup complete")
 
 
@@ -154,7 +163,7 @@ async def create_inference_app() -> FastAPI:
         Configured FastAPI application ready to serve inference requests
     """
     factory = InferenceServiceFactory()
-    
+
     # Create FastAPI app with OpenAPI docs
     app = FastAPI(
         title="AI4I Inference Service",
@@ -163,14 +172,14 @@ async def create_inference_app() -> FastAPI:
         docs_url="/api/v1/docs",
         openapi_url="/api/v1/openapi.json"
     )
-    
+
     # Setup all components
     await factory.setup_dependencies(app, settings)
     await factory.setup_middleware(app)
     await factory.setup_routes(app)
     await factory.setup_exception_handlers(app)
     await factory.setup_lifespan_events(app)
-    
+
     logger.info("✓ Inference service application created and configured")
     return app
 
