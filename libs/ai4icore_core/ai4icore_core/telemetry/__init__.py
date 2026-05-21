@@ -11,7 +11,7 @@ Core Features:
   - Context propagation: W3C Trace Context support
 
 Quick Start:
-    from ai4icore_core.telemetry import get_trace_manager, trace_stage
+    from ai4icore_core.telemetry import get_trace_manager, trace_stage, async_trace_stage
 
     # Option 1: Manual span management
     manager = get_trace_manager()
@@ -23,15 +23,21 @@ Quick Start:
         span.span.end()
         raise
 
-    # Option 2: Decorator-based (recommended)
+    # Option 2: Decorator-based (sync)
     @trace_stage("inference")
     def run_inference(self, request):
         return self.model.predict(request)
+
+    # Option 3: Decorator-based (async, recommended for async services)
+    @async_trace_stage("triton_inference")
+    async def run_inference(self, request):
+        return await self.model.predict(request)
 """
 
 from .traceability import TraceManager, OTelSpan, get_trace_manager
-from .trace_wrapper import trace_stage, TraceableService
+from .trace_wrapper import trace_stage, async_trace_stage, TraceableService
 from .registry import get_attribute_value
+from .trace_middleware import TraceIDMiddleware
 from .propagator import (
     extract_trace_context,
     inject_trace_context,
@@ -40,10 +46,12 @@ from .propagator import (
 )
 
 __all__ = [
+    "TraceIDMiddleware",
     "TraceManager",
     "OTelSpan",
     "get_trace_manager",
     "trace_stage",
+    "async_trace_stage",
     "TraceableService",
     "get_attribute_value",
     "extract_trace_context",
