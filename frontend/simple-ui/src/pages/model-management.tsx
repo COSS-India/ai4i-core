@@ -62,6 +62,16 @@ import {
   TableSortHeader,
   useAdminTableSurface,
 } from "../components/common/TableControls";
+import {
+  MODEL_TASK_TYPE_LIST,
+  MODEL_VERSION,
+  MODEL_VERSION_FILTER_LIST,
+  formatModelTaskTypeLabel,
+  formatModelVersionFilterLabel,
+  formatModelVersionStatusLabel,
+  isModelVersionStatusActive,
+  isModelVersionStatusDeprecated,
+} from "../config/constants";
 
 // TypeScript interfaces for model data
 interface OAuthId {
@@ -157,7 +167,7 @@ const ModelManagementPage: React.FC = () => {
   const [modelToConfirm, setModelToConfirm] = useState<Model | null>(null);
   const [confirmAction, setConfirmAction] = useState<"deprecate" | "activate" | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterVersionStatus, setFilterVersionStatus] = useState<string>("");
+  const [filterVersionStatus, setFilterVersionStatus] = useState<string>(MODEL_VERSION.FILTER.ALL);
   const [filterTaskType, setFilterTaskType] = useState<string>("");
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
   const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
@@ -247,15 +257,6 @@ const ModelManagementPage: React.FC = () => {
 
   const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
-  // Unique task types from models (for filter dropdown)
-  const taskTypeOptions = useMemo(() => {
-    const types = new Set<string>();
-    models.forEach((m) => {
-      if (m.task?.type) types.add(m.task.type.toUpperCase());
-    });
-    return Array.from(types).sort();
-  }, [models]);
-
   // Client-side name filter + sort applied to the current server-fetched page.
   const paginatedModels = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -276,7 +277,10 @@ const ModelManagementPage: React.FC = () => {
   const startRow = totalModels === 0 ? 0 : (listPage - 1) * listPageSize + 1;
   const endRow = Math.min(listPage * listPageSize, totalModels);
 
-  const hasActiveFilters = filterVersionStatus !== "" || filterTaskType !== "" || searchQuery.trim() !== "";
+  const hasActiveFilters =
+    filterVersionStatus !== MODEL_VERSION.FILTER.ALL ||
+    filterTaskType !== "" ||
+    searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterVersionStatus("");
@@ -704,7 +708,7 @@ const ModelManagementPage: React.FC = () => {
       await updateModel({
         modelId: model.modelId,
         version: model.version,
-        versionStatus: "DEPRECATED",
+        versionStatus: MODEL_VERSION.STATUS.DEPRECATED,
       });
 
       toast({
@@ -757,7 +761,7 @@ const ModelManagementPage: React.FC = () => {
       await updateModel({
         modelId: model.modelId,
         version: model.version,
-        versionStatus: "ACTIVE",
+        versionStatus: MODEL_VERSION.STATUS.ACTIVE,
       });
 
       toast({
@@ -911,9 +915,12 @@ const ModelManagementPage: React.FC = () => {
                                 }}
                                 bg={cardBg}
                               >
-                                <option value="">All</option>
-                                <option value="active">Active</option>
-                                <option value="deprecated">Deprecated</option>
+                                <option value={MODEL_VERSION.FILTER.ALL}>All</option>
+                                {MODEL_VERSION_FILTER_LIST.map((s) => (
+                                  <option key={s} value={s}>
+                                    {formatModelVersionFilterLabel(s)}
+                                  </option>
+                                ))}
                               </Select>
                             </FormControl>
                             <FormControl w={{ base: "full", sm: "160px" }}>
@@ -930,8 +937,10 @@ const ModelManagementPage: React.FC = () => {
                                 bg={cardBg}
                               >
                                 <option value="">All</option>
-                                {taskTypeOptions.map((t) => (
-                                  <option key={t} value={t}>{t}</option>
+                                {MODEL_TASK_TYPE_LIST.map((t) => (
+                                  <option key={t} value={t}>
+                                    {formatModelTaskTypeLabel(t)}
+                                  </option>
                                 ))}
                               </Select>
                             </FormControl>
@@ -961,7 +970,7 @@ const ModelManagementPage: React.FC = () => {
                                   onClick={() => { setFilterVersionStatus(""); setListPage(1); }}
                                   _hover={{ opacity: 0.8 }}
                                 >
-                                  Status: {filterVersionStatus === "active" ? "Active" : "Deprecated"} ×
+                                  Status: {formatModelVersionFilterLabel(filterVersionStatus)} ×
                                 </Badge>
                               )}
                               {filterTaskType && (
@@ -974,7 +983,7 @@ const ModelManagementPage: React.FC = () => {
                                   onClick={() => { setFilterTaskType(""); setListPage(1); }}
                                   _hover={{ opacity: 0.8 }}
                                 >
-                                  Task: {filterTaskType} ×
+                                  Task: {formatModelTaskTypeLabel(filterTaskType)} ×
                                 </Badge>
                               )}
                             </HStack>
@@ -1039,10 +1048,10 @@ const ModelManagementPage: React.FC = () => {
                                 </Td>
                                 <Td>
                                   <Badge
-                                    colorScheme={model.versionStatus?.toLowerCase() === "active" || !model.versionStatus ? "green" : "gray"}
+                                    colorScheme={isModelVersionStatusActive(model.versionStatus) ? "green" : "gray"}
                                     fontSize="xs"
                                   >
-                                    {model.versionStatus?.toLowerCase() === "active" || !model.versionStatus ? "ACTIVE" : "DEPRECATED"}
+                                    {formatModelVersionStatusLabel(model.versionStatus)}
                                   </Badge>
                                 </Td>
                                 <Td>
@@ -1071,7 +1080,7 @@ const ModelManagementPage: React.FC = () => {
                                         onClick={() => handleViewModel(model.modelId)}
                                       />
                                     </Tooltip>
-                                    {(model.versionStatus?.toLowerCase() === "active" || !model.versionStatus) && !modelIdsWithPublishedService.has(model.modelId) ? (
+                                    {isModelVersionStatusActive(model.versionStatus) && !modelIdsWithPublishedService.has(model.modelId) ? (
                                       <Tooltip label="Deprecate model" placement="top" hasArrow>
                                         <Box as="span" display="inline-flex" alignItems="center">
                                           <Switch
@@ -1084,7 +1093,7 @@ const ModelManagementPage: React.FC = () => {
                                           />
                                         </Box>
                                       </Tooltip>
-                                    ) : (model.versionStatus?.toLowerCase() !== "active" && model.versionStatus) ? (
+                                    ) : isModelVersionStatusDeprecated(model.versionStatus) ? (
                                       <Tooltip label="Activate model" placement="top" hasArrow>
                                         <Box as="span" display="inline-flex" alignItems="center">
                                           <Switch
@@ -1369,7 +1378,7 @@ const ModelManagementPage: React.FC = () => {
                            {selectedModel.name}
                           </Heading>
                           <HStack spacing={2}>
-                            {(selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && (
+                            {isModelVersionStatusActive(selectedModel.versionStatus) && (
                               <Button
                                 size="sm"
                                 colorScheme="blue"
@@ -1380,7 +1389,7 @@ const ModelManagementPage: React.FC = () => {
                                 Create Service
                               </Button>
                             )}
-                            {(selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithPublishedService.has(selectedModel.modelId) ? (
+                            {isModelVersionStatusActive(selectedModel.versionStatus) && !modelIdsWithPublishedService.has(selectedModel.modelId) ? (
                               <Tooltip label="Deprecate model" placement="top" hasArrow>
                                 <Box as="span" display="inline-flex" alignItems="center">
                                   <Switch
@@ -1392,7 +1401,7 @@ const ModelManagementPage: React.FC = () => {
                                   />
                                 </Box>
                               </Tooltip>
-                            ) : (selectedModel.versionStatus?.toLowerCase() !== "active" && selectedModel.versionStatus) ? (
+                            ) : isModelVersionStatusDeprecated(selectedModel.versionStatus) ? (
                               <Tooltip label="Activate model" placement="top" hasArrow>
                                 <Box as="span" display="inline-flex" alignItems="center">
                                   <Switch
@@ -1435,11 +1444,11 @@ const ModelManagementPage: React.FC = () => {
                                   Status
                                 </Text>
                                 <Badge
-                                  colorScheme={selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus ? "green" : "gray"}
+                                  colorScheme={isModelVersionStatusActive(selectedModel.versionStatus) ? "green" : "gray"}
                                   fontSize="sm"
                                   p={2}
                                 >
-                                  {selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus ? "ACTIVE" : "DEPRECATED"}
+                                  {formatModelVersionStatusLabel(selectedModel.versionStatus)}
                                 </Badge>
                               </Box>
                               <Box>

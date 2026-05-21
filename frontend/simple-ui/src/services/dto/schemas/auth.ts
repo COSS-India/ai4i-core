@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SET_PASSWORD_TOKEN } from '../../../config/constants';
 
 export const messageResponseSchema = z.object({
   message: z.string(),
@@ -63,7 +64,15 @@ export const logoutResponseSchema = z.object({
 
 export const setPasswordStatusResponseSchema = z.object({
   valid: z.boolean(),
-  status: z.enum(['valid', 'expired', 'invalid', 'used']),
+  status: z.preprocess(
+    (val) => (typeof val === 'string' ? val.trim().toLowerCase() : val),
+    z.enum([
+      SET_PASSWORD_TOKEN.STATUS.VALID,
+      SET_PASSWORD_TOKEN.STATUS.EXPIRED,
+      SET_PASSWORD_TOKEN.STATUS.INVALID,
+      SET_PASSWORD_TOKEN.STATUS.USED,
+    ])
+  ),
   message: z.string(),
 });
 

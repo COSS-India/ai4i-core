@@ -26,6 +26,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
+import { SET_PASSWORD_TOKEN, isSetPasswordTokenStatus } from "../../config/constants";
 import { authService } from "../../services/authService";
 import { SetPasswordStatusResponse } from "../../types/auth";
 import PasswordRequirements, { passwordPasses } from "../../components/auth/password/PasswordRequirements";
@@ -125,7 +126,7 @@ const SetPasswordPage: React.FC = () => {
     if (!t) {
       setPhase({
         kind: "invalid",
-        status: "invalid",
+        status: SET_PASSWORD_TOKEN.STATUS.INVALID,
         message: "Setup link is missing a token.",
       });
       return;
@@ -143,7 +144,7 @@ const SetPasswordPage: React.FC = () => {
       .catch((err) => {
         setPhase({
           kind: "invalid",
-          status: "invalid",
+          status: SET_PASSWORD_TOKEN.STATUS.INVALID,
           message: err?.message || "Could not validate the setup link.",
         });
       });
@@ -204,7 +205,14 @@ const SetPasswordPage: React.FC = () => {
 
                 {phase.kind === "invalid" && (
                   <VStack align="stretch" spacing={4}>
-                    <Alert status={phase.status === "expired" ? "warning" : "error"} rounded="md">
+                    <Alert
+                      status={
+                        isSetPasswordTokenStatus(phase.status, SET_PASSWORD_TOKEN.STATUS.EXPIRED)
+                          ? "warning"
+                          : "error"
+                      }
+                      rounded="md"
+                    >
                       <AlertIcon />
                       {phase.message}
                     </Alert>

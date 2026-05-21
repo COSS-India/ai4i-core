@@ -66,6 +66,7 @@ import {
   type PiiTypeOut,
   type PolicyOut,
 } from "../../services/policyService";
+import { isTenantStatus, TENANT } from "../../config/constants";
 import { listTenants } from "../../services/tenantService";
 import type { TenantView } from "../../types/tenant";
 
@@ -1024,7 +1025,9 @@ function PolicyFormModal({
     void listTenants()
       .then((res) => {
         if (cancelled) return;
-        const list = (res.tenants ?? []).filter((tenant) => tenant.status === "ACTIVE");
+        const list = (res.tenants ?? []).filter((tenant) =>
+          isTenantStatus(tenant.status, TENANT.STATUS.ACTIVE)
+        );
         setTenants(
           [...list].sort((a, b) =>
             (a.organisation ?? "").localeCompare(b.organisation ?? "", undefined, {
