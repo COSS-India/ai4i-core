@@ -1,11 +1,14 @@
-"""auto_20260520_122043
+"""users.creation_type: PostgreSQL ENUM → VARCHAR(32)
 
 Revision ID: 53a41e6233f1
 Revises: 96903e145eea
 Create Date: 2026-05-20 06:50:45.606257
 
-"""
-from typing import Sequence, Union
+Stores creation_type as VARCHAR (matches auth-service model native_enum=False).
+Does not change tenants.status — that is c4e8f1a2b3d0 (+ no-op aca4be0874b3 / 5f775ba90435).
+
+Downgrade restores postgresql.ENUM creation_type_enum.
+"""from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
@@ -19,7 +22,6 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # tenants.status: no-op here — default set in c4e8f1a2b3d0 (see aca4be0874b3).
     op.alter_column('users', 'creation_type',
                existing_type=postgresql.ENUM('default', 'google', name='creation_type_enum'),
                type_=sa.Enum('default', 'google', name='creationtype', native_enum=False, length=32),

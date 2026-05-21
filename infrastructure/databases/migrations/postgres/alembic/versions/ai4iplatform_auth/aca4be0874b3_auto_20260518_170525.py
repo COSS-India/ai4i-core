@@ -4,8 +4,9 @@ Revision ID: aca4be0874b3
 Revises: c4e8f1a2b3d0
 Create Date: 2026-05-18 11:35:26.815026
 
-No-op: tenants.status default and enum type are applied in c4e8f1a2b3d0.
-Autogenerate emitted a redundant alter (reflection vs model mismatch).
+No-op: tenants.status default and enum type are applied in c4e8f1a2b3d0 (parent revision).
+Autogenerate emitted a redundant ALTER; kept for DBs that already applied this revision.
+See MIGRATION_CHAIN.md.
 """
 from typing import Sequence, Union
 
