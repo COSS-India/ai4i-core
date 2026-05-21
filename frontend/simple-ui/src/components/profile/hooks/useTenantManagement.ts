@@ -5,7 +5,7 @@ import { forceFrontendSessionEnd } from "../../../hooks/useAuth";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import * as tenantService from "../../../services/tenantService";
 import { extractErrorInfo } from "../../../utils/errorHandler";
-import type { TenantStatus, TenantView, TenantUserView } from "../../../types/tenant";
+import type { TenantStatus, TenantUserStatus, TenantView, TenantUserView } from "../../../types/tenant";
 import type {
   TenantFormState,
   TenantUserFormState,
@@ -16,7 +16,7 @@ import type {
 } from "../types";
 
 /** Tenant lifecycle status — values mirror the auth-service enum. */
-const TENANT_STATUS_VALUES: TenantStatus[] = ["activated", "deactivated", "suspended"];
+const TENANT_STATUS_VALUES: TenantStatus[] = ["ACTIVE", "SUSPENDED", "DEACTIVATED"];
 
 function isValidEmailFormat(email: string): boolean {
   const trimmed = (email || "").trim();
@@ -94,7 +94,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   // Status update confirmation
   const [statusUpdateTarget, setStatusUpdateTarget] = useState<StatusUpdateTargetUnion | null>(null);
-  const [statusUpdateNewStatus, setStatusUpdateNewStatus] = useState<TenantStatus>("activated");
+  const [statusUpdateNewStatus, setStatusUpdateNewStatus] = useState<TenantStatus | TenantUserStatus>("ACTIVE");
   const [isStatusDialogOpen, setIsStatusDialogOpen] = useState(false);
   const [isSubmittingStatus, setIsSubmittingStatus] = useState(false);
 
@@ -133,7 +133,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       tenantUsers.filter((u) => {
         if (userFilterStatus !== "all") {
           const isActive = u.is_active && (u.is_tenant_active ?? true);
-          const matches = userFilterStatus === "active" ? isActive : !isActive;
+          const matches = userFilterStatus === "ACTIVE" ? isActive : !isActive;
           if (!matches) return false;
         }
         const search = userSearch.trim().toLowerCase();
@@ -486,8 +486,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsStatusDialogOpen(true);
   };
 
-  const handleOpenUserStatus = (u: TenantUserView, newStatus: TenantStatus) => {
-    const currentStatus = u.is_active && (u.is_tenant_active ?? true) ? "activated" : "deactivated";
+  const handleOpenUserStatus = (u: TenantUserView, newStatus: TenantUserStatus) => {
+    const currentStatus: TenantUserStatus =
+      u.is_active && (u.is_tenant_active ?? true) ? "ACTIVE" : "INACTIVE";
     setStatusUpdateTarget({
       type: "user",
       tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
@@ -505,12 +506,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       if (statusUpdateTarget.type === "tenant") {
         await tenantService.updateTenantStatus({
           tenant_id: statusUpdateTarget.tenant_id,
-          status: statusUpdateNewStatus,
+          status: statusUpdateNewStatus as TenantStatus,
         });
         toast({ title: "Tenant status updated", status: "success", isClosable: true });
         await refreshTenantAndUserLists(statusUpdateTarget.tenant_id);
       } else {
-        const isActive = statusUpdateNewStatus === "activated";
+        const isActive = statusUpdateNewStatus === "ACTIVE";
         await tenantService.updateUserStatus({
           tenant_id: statusUpdateTarget.tenant_id,
           user_id: statusUpdateTarget.user_id,

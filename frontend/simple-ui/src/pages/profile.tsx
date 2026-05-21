@@ -1,4 +1,4 @@
-// Profile page displaying user information and API key with edit functionality
+// Profile page displaying user information with edit functionality
 // Tabs are implemented as separate hooks + view components under components/profile/
 
 import {
@@ -23,32 +23,23 @@ import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
 import authService from "../services/authService";
 import type { User } from "../types/auth";
-import type { APIKeyResponse } from "../types/auth";
 import UserDetailsTab from "../components/profile/UserDetailsTab";
-import ApiKeyTab from "../components/profile/ApiKeyTab";
 import RolesTab from "../components/profile/RolesTab";
- 
 
 const ProfilePage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
 
-  // State owned by profile: tab index, API keys list, users
   const [activeTabIndex, setActiveTabIndex] = useState(0);
-  const [apiKeys, setApiKeys] = useState<APIKeyResponse[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
-  const [isFetchingApiKey, setIsFetchingApiKey] = useState(false);
-  const [isLoadingApiKeys, setIsLoadingApiKeys] = useState(false);
 
-  // Redirect if not authenticated
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
       router.push("/auth?redirect=" + encodeURIComponent("/profile"));
     }
   }, [isAuthenticated, authLoading, router]);
 
-  // Fetch all users (Admin only)
   useEffect(() => {
     if (!isAuthenticated || authLoading || !user) return;
     const isAdmin = user?.roles?.includes("ADMIN") || user?.roles?.includes("TENANT ADMIN");
@@ -64,47 +55,17 @@ const ProfilePage: React.FC = () => {
       .finally(() => setIsLoadingUsers(false));
   }, [isAuthenticated, authLoading, user]);
 
-  const handleFetchApiKeys = async () => {
-    setIsFetchingApiKey(true);
-    setIsLoadingApiKeys(true);
-    try {
-      const response = await authService.listApiKeys();
-      const keys = Array.isArray(response.api_keys) ? response.api_keys : [];
-      setApiKeys(keys);
-    } catch (error) {
-      console.error("Failed to fetch API keys:", error);
-    } finally {
-      setIsFetchingApiKey(false);
-      setIsLoadingApiKeys(false);
-    }
-  };
-
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN"));
-  // Single source of truth: tab order must match TabPanels 1:1
   const tabConfig = React.useMemo(() => {
     const tabs: { id: string; label: string; show: boolean }[] = [
       { id: "user-details", label: "User Details", show: true },
-      { id: "api-key", label: "API Key", show: true },
       { id: "roles", label: "Roles", show: isAdmin },
     ];
     return tabs.filter((t) => t.show);
   }, [isAdmin]);
-
-  const apiKeyTabIndex = 1;
-  const rolesTabIndex = tabConfig.findIndex((t) => t.id === "roles");
-
-  const handleTabChange = (index: number) => {
-    setActiveTabIndex(index);
-    if (index === apiKeyTabIndex) {
-      handleFetchApiKeys();
-    }
-    if (index === rolesTabIndex && apiKeys.length === 0) {
-      handleFetchApiKeys();
-    }
-  };
 
   if (authLoading) {
     return (
@@ -133,7 +94,7 @@ const ProfilePage: React.FC = () => {
     <>
       <Head>
         <title>Profile - AI4I Platform</title>
-        <meta name="description" content="User profile and API key management" />
+        <meta name="description" content="User profile" />
       </Head>
 
       <ContentLayout>
@@ -163,7 +124,7 @@ const ProfilePage: React.FC = () => {
               colorScheme="blue"
               variant="enclosed"
               index={activeTabIndex}
-              onChange={handleTabChange}
+              onChange={setActiveTabIndex}
             >
               <TabList>
                 {tabConfig.map((t) => (
@@ -177,14 +138,6 @@ const ProfilePage: React.FC = () => {
                 {tabConfig.map((t) => (
                   <TabPanel key={t.id} px={0} pt={6}>
                     {t.id === "user-details" && <UserDetailsTab />}
-                    {t.id === "api-key" && (
-                      <ApiKeyTab
-                        apiKeys={apiKeys}
-                        isFetchingApiKey={isFetchingApiKey}
-                        isLoadingApiKeys={isLoadingApiKeys}
-                        onFetchApiKeys={handleFetchApiKeys}
-                      />
-                    )}
                     {t.id === "roles" && <RolesTab users={users} isLoadingUsers={isLoadingUsers} />}
                   </TabPanel>
                 ))}

@@ -22,7 +22,6 @@ import {
   APIKeyResponse,
   APIKeyListResponse,
   AdminAPIKeyWithUserResponse,
-  APIKeyUpdate,
   OAuth2Provider,
   Permission,
 } from '../types/auth';
@@ -33,14 +32,17 @@ import { ApiValidationError } from './dto/apiValidationError';
 import { authUnwrappedSchema } from './dto/authUnwrappedSchema';
 import {
   adminApiKeyWithUserSchema,
+  apiKeyListResponseSchema,
   apiKeyListUnionSchema,
   apiKeyResponseSchema,
+  createApiKeyResponseSchema,
   guestServicesListSchema,
   loginResponseSchema,
   logoutResponseSchema,
   messageResponseSchema,
   oauth2ProviderSchema,
   permissionSchema,
+  permissionListSchema,
   registerResponseSchema,
   resetPasswordResponseSchema,
   setPasswordStatusResponseSchema,
@@ -58,6 +60,7 @@ import {
   clearTokenStorage,
 } from '../utils/tokenStorage';
 import { responseIndicatesTenantSuspendedOrInactive } from '../utils/tenantInactiveApiErrors';
+import { buildApiKeyRevokePathTokens } from '../utils/apiKeyUtils';
 
 const authPath = apiEndpoints.auth.paths;
 
@@ -479,7 +482,7 @@ class AuthService {
 
   // API Key management
   async createApiKey(data: APIKeyCreate): Promise<APIKeyResponse> {
-    return this.validatedRequest(authPath.apiKeys, authUnwrappedSchema(apiKeyResponseSchema), {
+    return this.validatedRequest(authPath.apiKeys, authUnwrappedSchema(createApiKeyResponseSchema), {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -492,7 +495,7 @@ class AuthService {
       expires_days: data.expires_days,
       user_id: data.user_id,
     };
-    return this.validatedRequest(authPath.apiKeys, authUnwrappedSchema(apiKeyResponseSchema), {
+    return this.validatedRequest(authPath.apiKeys, authUnwrappedSchema(createApiKeyResponseSchema), {
       method: 'POST',
       body: JSON.stringify(payload),
     });
@@ -501,12 +504,9 @@ class AuthService {
   async listApiKeys(): Promise<APIKeyListResponse> {
     const data = await this.validatedRequest(
       authPath.apiKeys,
-      authUnwrappedSchema(apiKeyListUnionSchema),
+      authUnwrappedSchema(apiKeyListResponseSchema),
       { method: 'GET' }
     );
-    if (Array.isArray(data)) {
-      return { api_keys: data };
-    }
     return { api_keys: Array.isArray(data?.api_keys) ? data.api_keys : [] };
   }
 
@@ -518,17 +518,64 @@ class AuthService {
     );
   }
 
-  async revokeApiKey(apiKeyValue: string): Promise<{ message: string }> {
+  /** Revoke by path token (32-char hex `api_key`, or numeric id on older gateways). */
+  async revokeApiKey(apiKeyToken: string): Promise<{ message: string }> {
+    const encoded = encodeURIComponent(apiKeyToken);
     return this.validatedRequest(
-      `/api-keys/${apiKeyValue}`,
+      `${authPath.apiKeys}/${encoded}`,
       authUnwrappedSchema(messageResponseSchema),
       { method: 'DELETE' }
     );
   }
 
-  async updateApiKey(apiKeyValue: string, updateData: APIKeyUpdate): Promise<APIKeyResponse> {
+  /**
+   * Revoke using every identifier available on the row (hex, then numeric id).
+   * Falls back to PATCH `is_active: false` when DELETE returns 404.
+   */
+  async revokeApiKeyRecord(key: APIKeyResponse): Promise<{ message: string }> {
+    const tokens = buildApiKeyRevokePathTokens(key);
+    if (!tokens.length) {
+      throw new Error(
+        'This API key cannot be revoked from the UI. Refresh the list or recreate the key.',
+      );
+    }
+
+    let lastError: unknown;
+    for (const token of tokens) {
+      try {
+        return await this.revokeApiKey(token);
+      } catch (error: unknown) {
+        lastError = error;
+        const status = (error as { status?: number })?.status;
+        if (status === 404) {
+          try {
+            await this.updateApiKey(token, { is_active: false });
+            return { message: 'API key revoked.' };
+          } catch (patchError) {
+            lastError = patchError;
+          }
+        }
+        if (status === 400 || status === 404) continue;
+        throw error;
+      }
+    }
+
+    const message =
+      lastError instanceof Error ? lastError.message : 'Failed to revoke API key';
+    throw new Error(message);
+  }
+
+  /**
+   * PATCH `/api-keys/{api_key}` — hex key in the path (auth-service contract since May 2026).
+   * `permissions` must be permission IDs (numbers), not display names.
+   */
+  async updateApiKey(
+    apiKeyHex: string,
+    updateData: { key_name?: string; permissions?: number[]; expires_days?: number; is_active?: boolean },
+  ): Promise<APIKeyResponse> {
+    const encoded = encodeURIComponent(apiKeyHex);
     return this.validatedRequest(
-      `/api-keys/${apiKeyValue}`,
+      `${authPath.apiKeys}/${encoded}`,
       authUnwrappedSchema(apiKeyResponseSchema),
       {
         method: 'PATCH',
@@ -586,11 +633,26 @@ class AuthService {
 
   // Permissions management (inference-only)
   async getAllPermissions(): Promise<Permission[]> {
-    return this.validatedRequest(
+    const endpoints = [
       authPath.inferencePermissions,
-      authUnwrappedSchema(z.array(permissionSchema)),
-      { method: 'GET' }
-    );
+      authPath.permissions,
+      '/permissions',
+    ];
+    for (const endpoint of endpoints) {
+      try {
+        const rows = await this.validatedRequest(
+          endpoint,
+          authUnwrappedSchema(permissionListSchema),
+          { method: 'GET' },
+        );
+        if (Array.isArray(rows) && rows.length > 0) {
+          return rows;
+        }
+      } catch (err) {
+        console.warn(`getAllPermissions failed for ${endpoint}:`, err);
+      }
+    }
+    return [];
   }
 
   // Utility methods
