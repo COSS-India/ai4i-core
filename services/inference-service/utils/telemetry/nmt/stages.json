@@ -3,14 +3,13 @@
     "start": [],
     "end": []
   },
-  "preprocess": {
+  "preprocess_input": {
     "start": [
-      {"attr": "input_len", "expr": "len(text)"},
-      {"attr": "word_count", "expr": "len(text.split())"},
-      {"attr": "raw_input", "expr": "text"}
+      {"attr": "input_count", "expr": "item_count"},
+      {"attr": "first_source", "func": "compute_first_item_source"}
     ],
     "end": [
-      {"attr": "preprocessed_text", "expr": "preprocessed_texts"}
+      {"attr": "processed_count", "expr": "item_count"}
     ]
   },
   "resolve_model": {

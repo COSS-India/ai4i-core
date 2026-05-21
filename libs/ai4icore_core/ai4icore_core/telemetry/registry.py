@@ -5,6 +5,7 @@ Complex business logic goes here.
 """
 
 import logging
+from typing import Any, Union, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +35,58 @@ def compute_quality_metrics(response):
     return {"count": len(items), "score": 85}
 
 
+def compute_list_count(data: List[Any]) -> int:
+    """Count items in a list."""
+    return len(data) if isinstance(data, list) else 0
+
+
+def compute_first_item_source(data: List[Any]) -> str:
+    """Get source text from first item in list."""
+    if isinstance(data, list) and data:
+        item = data[0]
+        if isinstance(item, dict):
+            return item.get("source", "")
+        return getattr(item, "source", "")
+    return ""
+
+
 REGISTRY = {
     "compute_input_quality": compute_input_quality,
     "compute_sentiment_score": compute_sentiment_score,
     "compute_quality_metrics": compute_quality_metrics,
+    "compute_list_count": compute_list_count,
+    "compute_first_item_source": compute_first_item_source,
 }
 
 
-def safe_eval(expression, context):
+def _build_context(data: Union[Dict[str, Any], List[Any]]) -> Dict[str, Any]:
+    """
+    Build evaluation context from data, handling both dicts and lists.
+
+    For dicts: unpacks as-is
+    For lists: provides list-specific variables like 'items', 'item_count', 'first'
+    """
+    if isinstance(data, list):
+        return {
+            "_": data,  # Direct reference to the list
+            "items": data,
+            "item_count": len(data),
+            "first": data[0] if data else None,
+            "request": data,
+            "response": data,
+        }
+    elif isinstance(data, dict):
+        return {**data, "request": data, "response": data}
+    else:
+        return {"request": data, "response": data}
+
+
+def safe_eval(expression: str, context: Dict[str, Any]) -> Any:
     """
     Safely evaluate JSON expressions with limited built-in functions.
 
     Args:
-        expression: String expression like "len(text)" or "data.get('key', 0)"
+        expression: String expression like "len(items)" or "first.get('source')"
         context: Dictionary with variable names to values
 
     Returns:
@@ -54,6 +94,10 @@ def safe_eval(expression, context):
     """
     safe_builtins = {
         "len": len,
+        "str": str,
+        "int": int,
+        "float": float,
+        "bool": bool,
     }
 
     try:
@@ -65,19 +109,20 @@ def safe_eval(expression, context):
         return None
 
 
-def get_attribute_value(attr_config, data):
+def get_attribute_value(attr_config: Dict[str, str], data: Union[Dict[str, Any], List[Any]]) -> Any:
     """
     Get attribute value from expression or registry function.
+    Handles both dict (request/response) and list (preprocessing) data.
 
     Args:
         attr_config: Dict with "expr" or "func" key
-        data: Request or response object
+        data: Request/response object (dict) or list data
 
     Returns:
         Computed value or None if evaluation fails
     """
     if "expr" in attr_config:
-        context = {**data, "request": data, "response": data}
+        context = _build_context(data)
         return safe_eval(attr_config["expr"], context)
 
     if "func" in attr_config:
