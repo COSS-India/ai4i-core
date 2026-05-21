@@ -34,8 +34,10 @@ export const tenantUserViewSchema = z
     phone_number: z.string().nullable().optional(),
     full_name: z.string().nullable().optional(),
     is_active: z.boolean(),
-    is_tenant_active: z.boolean().optional(),
+    is_tenant_active: z.boolean().nullable().optional(),
     creation_type: z.string().nullable().optional(),
+    role: z.string().nullable().optional(),
+    roles: z.array(z.string()).optional(),
   })
   .passthrough();
 
