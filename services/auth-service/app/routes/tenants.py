@@ -73,10 +73,13 @@ async def update_tenant(
 async def update_tenant_status(
     tenant_id: int,
     body: TenantStatusUpdate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     svc: TenantService = Depends(get_tenant_service),
 ):
-    tenant = await svc.update_tenant_status(current_user, tenant_id, body)
+    tenant = await svc.update_tenant_status(
+        current_user, tenant_id, body, background_tasks
+    )
     return success_response(data=to_response(tenant, TenantResponse))
 
 
@@ -89,7 +92,7 @@ async def list_tenant_users(
     svc: TenantService = Depends(get_tenant_service),
 ):
     users = await svc.list_tenant_users(current_user, tenant_id, offset, limit)
-    data = [await svc.build_tenant_user_response(u) for u in users]
+    data = await svc.build_tenant_user_responses(users)
     return success_response(data=data)
 
 

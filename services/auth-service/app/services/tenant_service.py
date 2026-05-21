@@ -12,10 +12,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Literal, Optional
 from uuid import UUID
 
+import ai4icore_core.bootstrap.database as db_bootstrap
 from ai4icore_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks, HTTPException, status
 
 from app.core.config import settings
+from app.core.redis import get_redis_client
 from app.core.constants import USERNAME_MAX_LENGTH
 from app.core.exceptions import (
     DuplicateEntityError,
@@ -26,6 +28,7 @@ from app.models.role_name import RoleName, role_name_to_str
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, CreationType, UserSuspensionTag
 from app.models.verification import TokenVerification
+from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
@@ -42,6 +45,7 @@ from app.schemas.tenant import (
 )
 from app.schemas.user import UserListResponse
 from app.services.api_key_service import APIKeyService
+from app.services.cache_service import CacheService
 from app.services.auth_email_templates import render_setup_link, render_verify_email
 from app.services.email_helpers import enqueue_email, persist_token_verification, resolve_tenant_id, setup_token_expires_at
 from app.services.role_service import RoleService
@@ -107,6 +111,43 @@ async def sync_tenant_users_for_status(
         await user_repo.apply_admin_suspend_to_tenant(tenant_id, updated_by=updated_by)
 
 
+async def run_sync_keys_for_tenant_background(tenant_id: int) -> None:
+    """Run ``sync_keys_for_tenant`` after the HTTP response (owns its own DB session)."""
+    factory = db_bootstrap._session_factory
+    if factory is None:
+        logger.error(
+            "Cannot sync API keys for tenant %s: database not initialized.",
+            tenant_id,
+        )
+        return
+
+    async with factory() as session:
+        try:
+            svc = APIKeyService(
+                APIKeyRepository(session),
+                CacheService(get_redis_client()),
+                user_repo=UserRepository(session),
+                tenant_repo=TenantRepository(session),
+            )
+            await svc.sync_keys_for_tenant(tenant_id)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            logger.exception(
+                "Background API key sync failed for tenant_id=%s", tenant_id
+            )
+
+
+def enqueue_tenant_api_key_sync(
+    background_tasks: Optional[BackgroundTasks],
+    tenant_id: int,
+) -> None:
+    """Schedule one background job for the whole tenant (not per user)."""
+    if background_tasks is None:
+        return
+    background_tasks.add_task(run_sync_keys_for_tenant_background, tenant_id)
+
+
 class TenantService:
     """All tenant + tenant-user operations. Routes never touch repos directly."""
 
@@ -167,21 +208,37 @@ class TenantService:
             return TenantUserRole.TENANT_ADMIN
         return TenantUserRole.USER
 
-    async def _set_tenant_user_role(self, user_id: UUID, role: TenantUserRole | RoleName | str) -> None:
+    async def _set_tenant_user_role(
+        self, user_id: UUID, role: TenantUserRole | RoleName | str, *, commit: bool = True
+    ) -> None:
         """Ensure the user has exactly one tenant-assignable role (USER or TENANT ADMIN)."""
         target = role.value if isinstance(role, TenantUserRole) else role_name_to_str(role)
         current = await self._roles.get_user_roles(user_id)
         for assignable in _TENANT_ASSIGNABLE_ROLES:
             key = role_name_to_str(assignable)
             if key in current and key != target:
-                await self._roles.remove_role(user_id, assignable)
-        await self._roles.assign_role(user_id, target)
+                await self._roles.remove_role(user_id, assignable, commit=commit)
+        await self._roles.assign_role(user_id, target, commit=commit)
 
     async def build_tenant_user_response(self, user: User) -> dict:
         roles = await self._roles.get_user_roles(user.id)
         role = self.resolve_tenant_user_role(roles)
         base = to_response(user, UserListResponse)
         return TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+
+    async def build_tenant_user_responses(self, users: list[User]) -> list[dict]:
+        """Build list responses with a single batched role lookup."""
+        if not users:
+            return []
+        roles_by_user = await self._roles.get_roles_for_users([u.id for u in users])
+        responses: list[dict] = []
+        for user in users:
+            role = self.resolve_tenant_user_role(roles_by_user.get(user.id, []))
+            base = to_response(user, UserListResponse)
+            responses.append(
+                TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+            )
+        return responses
 
     async def provision_user(
         self,
@@ -385,6 +442,7 @@ class TenantService:
         current_user: User,
         tenant_id: int,
         body: TenantStatusUpdate,
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> Tenant:
         await self.enforce_scope(current_user, tenant_id)
         tenant = await self._load_tenant_or_404(tenant_id)
@@ -397,7 +455,10 @@ class TenantService:
         )
         await self._tenants.save_and_refresh(tenant)
         if self._api_keys is not None:
-            await self._api_keys.sync_keys_for_tenant(tenant_id)
+            if background_tasks is not None:
+                enqueue_tenant_api_key_sync(background_tasks, tenant_id)
+            else:
+                await self._api_keys.sync_keys_for_tenant(tenant_id)
         return tenant
 
     # ── Tenant-user CRUD ─────────────────────────────────────────────────
@@ -451,10 +512,10 @@ class TenantService:
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
         role_update = payload.pop("role", None)
-        if role_update is not None:
-            await self._set_tenant_user_role(target.id, role_update)
         payload["updated_by"] = current_user.id
         await self._users.update(target, payload)
+        if role_update is not None:
+            await self._set_tenant_user_role(target.id, role_update, commit=False)
         await self._users.save_and_refresh(target)
         if self._api_keys is not None and (
             _payload_suspends_user(payload) or _payload_activates_user(payload)

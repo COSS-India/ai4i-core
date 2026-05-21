@@ -116,10 +116,12 @@ class APIKeyService:
         if should_be_active:
             if not db_key.is_active:
                 await self._repo.update(db_key, {"is_active": True})
+                await self._repo.refresh(db_key)
             await self._refresh_redis_cache(db_key, tenant_id)
         else:
             if db_key.is_active:
                 await self._repo.update(db_key, {"is_active": False})
+                await self._repo.refresh(db_key)
             await self._cache.delete_api_key_cache(db_key.api_key)
 
     async def sync_keys_for_user(
@@ -127,6 +129,10 @@ class APIKeyService:
     ) -> None:
         """Align API keys with the user's (and tenant's) access state."""
         if self._repo is None:
+            logger.warning(
+                "sync_keys_for_user skipped: API key repository not configured (user=%s)",
+                user.id,
+            )
             return
         if tenant is None and user.tenant_id is not None and self._tenants is not None:
             tenant = await self._tenants.get_by_id(user.tenant_id)
@@ -141,16 +147,35 @@ class APIKeyService:
             )
         await self._repo.commit()
 
+    _SYNC_USERS_PAGE_SIZE = 500
+
     async def sync_keys_for_tenant(self, tenant_id: int) -> None:
         """Sync API keys for every user in the tenant."""
         if self._repo is None or self._users is None or self._tenants is None:
+            logger.warning(
+                "sync_keys_for_tenant skipped: missing repositories (tenant_id=%s, "
+                "repo=%s, users=%s, tenants=%s)",
+                tenant_id,
+                self._repo is not None,
+                self._users is not None,
+                self._tenants is not None,
+            )
             return
         tenant = await self._tenants.get_by_id(tenant_id)
         if not tenant:
             return
-        users = await self._users.list_by_tenant(tenant_id, offset=0, limit=10_000)
-        for user in users:
-            await self.sync_keys_for_user(user, tenant)
+        offset = 0
+        while True:
+            users = await self._users.list_by_tenant(
+                tenant_id, offset=offset, limit=self._SYNC_USERS_PAGE_SIZE
+            )
+            if not users:
+                break
+            for user in users:
+                await self.sync_keys_for_user(user, tenant)
+            if len(users) < self._SYNC_USERS_PAGE_SIZE:
+                break
+            offset += self._SYNC_USERS_PAGE_SIZE
 
     async def create_api_key(
         self,

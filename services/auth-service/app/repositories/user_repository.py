@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import or_, select, func, update
+from sqlalchemy import case, select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import USERNAME_MAX_LENGTH
@@ -96,26 +96,23 @@ class UserRepository(BaseRepository):
         reactivation does not restore them; only ``ADMIN_SUSPENDED`` users are
         restored when the tenant becomes ACTIVE again.
         """
-        base_where = (User.tenant_id == tenant_id, User.is_delete.isnot(True))
-        flag_values: dict = {"is_active": False, "is_tenant_active": False}
+        values: dict = {
+            "is_active": False,
+            "is_tenant_active": False,
+            "suspension_tag": case(
+                (
+                    User.suspension_tag == UserSuspensionTag.TENANT_SUSPENDED,
+                    User.suspension_tag,
+                ),
+                else_=UserSuspensionTag.ADMIN_SUSPENDED,
+            ),
+        }
         if updated_by is not None:
-            flag_values["updated_by"] = updated_by
-        await self._db.execute(
-            update(User).where(*base_where).values(**flag_values)
-        )
-        tag_values: dict = {"suspension_tag": UserSuspensionTag.ADMIN_SUSPENDED}
-        if updated_by is not None:
-            tag_values["updated_by"] = updated_by
+            values["updated_by"] = updated_by
         await self._db.execute(
             update(User)
-            .where(
-                *base_where,
-                or_(
-                    User.suspension_tag.is_(None),
-                    User.suspension_tag != UserSuspensionTag.TENANT_SUSPENDED,
-                ),
-            )
-            .values(**tag_values)
+            .where(User.tenant_id == tenant_id, User.is_delete.isnot(True))
+            .values(**values)
         )
         await self._db.flush()
 
