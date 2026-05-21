@@ -71,7 +71,7 @@ export default function ApiKeyTab({
                   <VStack spacing={2} align="stretch">
                     {sortedApiKeys.map((key) => (
                       <Card
-                        key={key.id}
+                        key={key.api_key ?? `id-${key.id ?? ""}-${key.key_name}`}
                         bg={inputReadOnlyBg}
                         borderColor={cardBorder}
                         borderWidth="1px"

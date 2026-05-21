@@ -1,0 +1,7 @@
+# Inference Service Configuration
+
+## Basic Python project structure with:
+- main.py - Entry point
+- config.py - Configuration management
+- requirements.txt - Python dependencies
+- README.md - Documentation

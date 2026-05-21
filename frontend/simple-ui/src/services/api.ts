@@ -153,13 +153,13 @@ apiClient.interceptors.request.use(
     );
     // Add request start time for timing calculation
     config.headers['request-startTime'] = new Date().getTime().toString();
-    
+
     // Check endpoint type to determine authentication method (case-insensitive)
     const context = getEndpointContext(config.url || '');
-    
+
     // Services that require JWT tokens (routed via Kong with token-validator)
     const requiresJWT = context.requiresJWT;
-    
+
     // Proactively refresh token if it's expiring soon (skip for refresh and login endpoints)
     if ((requiresJWT || (context.isAuthEndpoint && !context.isAuthRefreshEndpoint)) && !context.isAuthRefreshEndpoint) {
       try {
@@ -172,7 +172,7 @@ apiClient.interceptors.request.use(
         console.debug('Proactive token refresh check failed:', error);
       }
     }
-    
+
     if (requiresJWT && !context.isAuthEndpoint) {
       // All service endpoints use JWT Bearer token for authentication
       const jwtToken = getJwtToken();
@@ -187,7 +187,7 @@ apiClient.interceptors.request.use(
         ));
       }
     }
-    
+
     return config;
   },
   (error: AxiosError) => {
@@ -204,7 +204,7 @@ apiClient.interceptors.response.use(
       const duration = new Date().getTime() - parseInt(startTime);
       response.headers['request-duration'] = duration.toString();
     }
-    
+
     return response;
   },
   async (error: AxiosError) => {
@@ -226,26 +226,34 @@ apiClient.interceptors.response.use(
           new Error('Your organization account is no longer active. Please sign in again.')
         );
       }
-      
+
       switch (status) {
         case 401:
           // Unauthorized - handle based on endpoint type
           if (typeof window !== 'undefined') {
             const url = error?.config?.url || '';
             const context = getEndpointContext(url);
-            
+
+            // A failed /refresh must not trigger another refresh — authService.refreshToken()
+            // is single-flight, so retrying here deadlocks and leaves AuthGuard on the spinner.
+            if (context.isAuthRefreshEndpoint) {
+              console.warn('Refresh token rejected — clearing session');
+              await clearSessionAndRedirect('/auth');
+              return Promise.reject(new Error('Session expired. Please sign in again.'));
+            }
+
             if (context.isServiceEndpoint || context.isModelManagementEndpoint || context.isMultiTenantEndpoint) {
               // For service endpoints and model-management endpoints
               // Check if it's a token expiration issue - if so, redirect to sign-in
-              
+
               // Extract error message from response for better debugging
               const errorMessage = extractErrorMessage(data, 'Authentication failed');
-              
+
               // Check if error indicates token expiration or invalid credentials
               const errorMessageLower = errorMessage.toLowerCase();
               const isInvalidAuthCredentials = errorMessageLower.includes('invalid authentication credentials');
               const isTokenExpired = isTokenExpiredFromMessage(errorMessage) || isInvalidAuthCredentials;
-              
+
               // Log detailed error information
               const jwtToken = getJwtToken();
               const endpointType = context.isModelManagementEndpoint ? 'model-management' : 'service';
@@ -258,29 +266,29 @@ apiClient.interceptors.response.use(
                 jwtLength: jwtToken?.length || 0,
                 responseData: data,
               });
-              
+
               // If invalid authentication credentials, redirect immediately without trying to refresh
               if (isInvalidAuthCredentials) {
                 console.warn(`Invalid authentication credentials for ${endpointType} endpoint - redirecting to sign-in`);
                 await clearSessionAndRedirect('/');
                 return Promise.reject(new Error('Session expired. Please sign in again.'));
               }
-              
+
               // Try to refresh token if it exists and we haven't retried yet
               if (jwtToken && !originalRequest._retry) {
                 originalRequest._retry = true;
-                
+
                 try {
                   const { default: authService } = await import('./authService');
                   const refreshToken = authService.getRefreshToken();
-                  
+
                   if (refreshToken) {
                     // Try to refresh the token
                     const response = await authService.refreshToken();
                     const newAccessToken = response.access_token;
                     const rememberMe = getRememberMeFromStorage();
                     authService.setAccessToken(newAccessToken, rememberMe);
-                    
+
                     // Retry the request with new token
                     originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
                     return apiClient(originalRequest);
@@ -292,7 +300,7 @@ apiClient.interceptors.response.use(
                                                       refreshErrorMsg.includes('invalid') ||
                                                       refreshErrorMsg.includes('401') ||
                                                       refreshErrorMsg.includes('unauthorized');
-                  
+
                   if (refreshFailedDueToExpiration || isTokenExpired) {
                     // Token expired or invalid credentials - redirect to sign-in page
                     console.warn(`Authentication failed for ${endpointType} endpoint - redirecting to sign-in`);
@@ -318,7 +326,7 @@ apiClient.interceptors.response.use(
                 forceFrontendSessionEnd();
                 return Promise.reject(new Error('Session expired. Please sign in again.'));
               }
-              
+
               // For non-expiration errors, don't redirect - let the UI handle the error
               let enhancedErrorMessage = errorMessage;
               if (context.isModelManagementEndpoint) {
@@ -326,7 +334,7 @@ apiClient.interceptors.response.use(
               } else {
                 enhancedErrorMessage = `Authentication failed: ${errorMessage}. Please check your login status.`;
               }
-              
+
               const enhancedError = new Error(enhancedErrorMessage);
               (enhancedError as any).status = 401;
               (enhancedError as any).response = error?.response;
@@ -334,27 +342,27 @@ apiClient.interceptors.response.use(
             } else {
               // For auth endpoints and other non-service endpoints
               // Check if token expired and redirect to sign-in if so
-              
+
               // Extract error message to check for expiration
               const errorMessage = extractErrorMessage(data, '');
-              
+
               const errorMessageLower = errorMessage.toLowerCase();
               const isTokenExpired = isTokenExpiredFromMessage(errorMessage) ||
                                    errorMessageLower.includes('invalid authentication credentials');
-              
+
               if (!originalRequest._retry) {
                 originalRequest._retry = true;
-                
+
                 try {
                   const { default: authService } = await import('./authService');
                   const refreshToken = authService.getRefreshToken();
-                  
+
                   if (refreshToken) {
                     const response = await authService.refreshToken();
                     const newAccessToken = response.access_token;
                     const rememberMe = getRememberMeFromStorage();
                     authService.setAccessToken(newAccessToken, rememberMe);
-                    
+
                     originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
                     return apiClient(originalRequest);
                   }
@@ -365,7 +373,7 @@ apiClient.interceptors.response.use(
                                                       refreshErrorMsg.includes('invalid') ||
                                                       refreshErrorMsg.includes('401') ||
                                                       refreshErrorMsg.includes('unauthorized');
-                  
+
                   if (refreshFailedDueToExpiration || isTokenExpired) {
                     // Token expired - redirect to sign-in
                     console.warn('Token expired for auth endpoint - redirecting to sign-in');
@@ -386,17 +394,17 @@ apiClient.interceptors.response.use(
             }
           }
           break;
-          
+
         case 429:
           // Rate limit exceeded
           console.warn('Rate limit exceeded. Please try again later.');
           break;
-          
+
         case 500:
           // Server error
           console.error('Server error occurred');
           break;
-          
+
         default:
           console.error(`API Error ${status}:`, data);
       }
@@ -407,7 +415,7 @@ apiClient.interceptors.response.use(
       // Other error
       console.error('Request setup error:', error?.message);
     }
-    
+
     return Promise.reject(error);
   }
 );
