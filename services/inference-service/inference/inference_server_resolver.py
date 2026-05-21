@@ -18,13 +18,6 @@ class CacheEntry:
     """In-memory cache entry with TTL."""
 
     def __init__(self, value: Any, ttl_seconds: int):
-        """
-        Initialize cache entry.
-
-        Args:
-            value: Value to cache
-            ttl_seconds: Time-to-live in seconds
-        """
         self.value = value
         self.ttl_seconds = ttl_seconds
         self.created_at = time.time()
@@ -188,11 +181,10 @@ class InferenceServerResolver:
     def _normalize_mms_response(self, raw: Dict[str, Any], service_id: str) -> Dict[str, Any]:
         """
         Normalize MMS response to internal service info format.
-        Handles both Postman mock shape and real MMS shape.
 
-        Postman mock returns a flat dict with snake_case keys and adapter_config inline.
         Real MMS returns {"success": true, "data": {...camelCase...}} with base endpoint
         and inference path split across data.endpoint and data.model.inferenceEndPoint.schema.endpoint.
+        Flat shape (no envelope) is passed through as-is for legacy/fallback.
 
         Args:
             raw: Raw JSON response from MMS
@@ -214,7 +206,7 @@ class InferenceServerResolver:
             model_name = schema.get("model_name", "")
             endpoint = f"{base_endpoint}/v2/models/{model_name}/infer" if model_name else base_endpoint
 
-            # adapter_config can be at data level (real MMS) or inferenceEndPoint level (mock)
+            # adapter_config can be at data level or nested under inferenceEndPoint
             adapter_config = (
                 data.get("adapter_config")
                 or inference_endpoint.get("adapter_config")
