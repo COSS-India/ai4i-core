@@ -2,21 +2,6 @@
 Middleware for AI4ICore Observability Plugin
 
 Handles request tracking, service detection, and metrics collection.
-
-Performance design
-------------------
-The middleware is structured so that the request is held up by observability
-work as little as possible:
-
-  * Pre-``call_next`` we only do work that downstream middleware/handlers
-    *depend* on: a single JWT decode, populating ``request.state``, and
-    seeding the tracing/logging context with tenant.
-  * The request body is still buffered before ``call_next`` (Starlette needs
-    that to replay it to the inner app), but it is NOT parsed there.
-  * All payload-size calculations (token counts, character counts, audio
-    length, image size, etc.) and Prometheus metric emission happen AFTER
-    ``call_next`` in a fire-and-forget ``asyncio`` task, so they run
-    concurrently with response streaming and never delay the response.
 """
 import asyncio
 import base64
@@ -49,10 +34,11 @@ except Exception:  # pragma: no cover - logging context is optional
 logger = logging.getLogger(__name__)
 
 
-# Service types whose request bodies carry payload-size metrics worth
-# extracting. Membership check is O(1).
+# Task types (taken directly from the inference payload's `task_type` field,
+# lowercased) whose request bodies carry payload-size metrics worth extracting.
+# Membership check is O(1).
 _BODY_METRIC_SERVICES = frozenset({
-    "tts", "translation", "asr", "ocr", "transliteration",
+    "tts", "nmt", "asr", "ocr", "transliteration",
     "language_detection", "audio_lang_detection", "speaker_verification",
     "speaker_diarization", "language_diarization", "ner", "llm",
 })
@@ -117,17 +103,12 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 if self.config.debug:
                     logger.debug("Failed to set tenant in logging context", exc_info=True)
 
-        # Detect service type up front (cheap string ops) so we know whether
-        # we need to buffer the body for later metric extraction.
-        service_type = self._detect_service_type(path)
-        is_generic_pipeline = (
-            method == "POST"
-            and (path.endswith("/pipeline") or path == "/services/inference/pipeline")
-            and "/pipeline/" not in path
-        )
-        needs_body = method == "POST" and (
-            is_generic_pipeline or service_type in _BODY_METRIC_SERVICES
-        )
+        # service_type is taken directly from the request body's `task_type`
+        # field post-call_next. Until then, default to "unknown" — request
+        # count/duration metrics still populate; only payload-size extraction
+        # depends on a real service_type.
+        service_type = "unknown"
+        needs_body = method == "POST"
 
         # Read (but do NOT parse) the body so it's available to the
         # background task. Starlette caches this on the request, so the
@@ -163,7 +144,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             body_bytes=body_bytes,
             path=path,
             method=method,
-            is_generic_pipeline=is_generic_pipeline,
             service_type=service_type,
             tenant=tenant_label,
             service_id=service_id,
@@ -183,7 +163,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         body_bytes: Optional[bytes],
         path: str,
         method: str,
-        is_generic_pipeline: bool,
         service_type: str,
         tenant: str,
         service_id: str,
@@ -192,23 +171,43 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     ) -> None:
         """Parse request body and emit Prometheus metrics out-of-band."""
         try:
-            # If the request hit the generic /pipeline endpoint, refine the
-            # metric path label based on the taskType in the body. The route
-            # has already been served — this only affects the metric label.
-            if is_generic_pipeline and body_bytes:
+            # Take `task_type` directly as service_type and pull `service_id`
+            # from `config.service_id` (or `config.serviceId`). POST requests
+            # whose body has neither (e.g. health/docs probes, malformed
+            # payloads) just stay as service_type="unknown" — request count
+            # / duration metrics still fire.
+            if body_bytes:
                 try:
                     request_data = json.loads(body_bytes.decode('utf-8'))
-                    tasks = request_data.get('pipelineTasks') or []
-                    if tasks:
-                        task_type = tasks[0].get('taskType', '')
-                        if task_type == 'txt-lang-detection':
-                            path = path + '/txt-lang-detection'
-                            service_type = 'language_detection'
+                    raw_task = str(request_data.get('task_type') or '').strip().lower()
+                    if raw_task:
+                        service_type = raw_task
+                        path = f"{path.rstrip('/')}/{raw_task}"
+                        if self.config.debug:
+                            logger.debug(
+                                f"Inference: task_type={raw_task}, refined path={path}"
+                            )
+
+                    # Both `service_id` (snake_case) and `serviceId` (camelCase)
+                    # appear in inference-service docs/tests. Only override the
+                    # existing service_id (from request.state) if the payload
+                    # provides a non-empty value.
+                    config_obj = request_data.get('config')
+                    if isinstance(config_obj, dict):
+                        payload_service_id = str(
+                            config_obj.get('service_id')
+                            or config_obj.get('serviceId')
+                            or ''
+                        ).strip()
+                        if payload_service_id:
+                            service_id = payload_service_id
                             if self.config.debug:
-                                logger.debug(f"Detected txt-lang-detection in generic pipeline endpoint, refined path to: {path}")
+                                logger.debug(
+                                    f"Inference: service_id={service_id} from payload"
+                                )
                 except Exception:
                     if self.config.debug:
-                        logger.debug("Failed to parse pipeline body for taskType", exc_info=True)
+                        logger.debug("Failed to parse inference body", exc_info=True)
 
             # Per-service payload metrics. Defaults of 0 mean unset values
             # contribute nothing if extraction is skipped or fails.
@@ -229,7 +228,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if body_bytes and service_type in _BODY_METRIC_SERVICES:
                 if service_type == "tts":
                     tts_characters = self._extract_input_characters(body_bytes)
-                elif service_type == "translation":
+                elif service_type == "nmt":
                     translation_characters = self._extract_input_characters(body_bytes)
                 elif service_type == "asr":
                     asr_audio_length = self._extract_asr_audio_length_from_body(body_bytes)
@@ -296,70 +295,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 logger.debug(f"[TENANT_DEBUG] JWT decoding failed: {type(e).__name__}: {e}", exc_info=True)
             return None
 
-    def _detect_service_type(self, path: str) -> str:
-        """Detect service type from URL path."""
-        path_lower = path.lower()
-
-        # IMPORTANT: Check specific endpoints FIRST before generic patterns
-        # This ensures specific endpoints are matched correctly and the full path is preserved in metrics
-
-        # Dedicated text language detection endpoint (txt-lang-detection) - check FIRST
-        if any(pattern in path_lower for pattern in ["/services/inference/txt-lang-detection", "/inference/txt-lang-detection", "/txt-lang-detection"]):
-            return "language_detection"
-        # Pipeline text language detection endpoint (txt-lang-detection) - check SECOND
-        elif any(pattern in path_lower for pattern in ["/services/inference/pipeline/txt-lang-detection", "/services/inference/pipeline/txt-language-detection", "/pipeline/txt-lang-detection"]):
-            return "language_detection"
-        # Pipeline OCR endpoint
-        elif any(pattern in path_lower for pattern in ["/services/inference/pipeline/ocr", "/pipeline/ocr"]):
-            return "ocr"
-        # Pipeline Transliteration endpoint
-        elif any(pattern in path_lower for pattern in ["/services/inference/pipeline/transliteration", "/services/inference/pipeline/translation/transliteration", "/pipeline/transliteration", "/pipeline/translation/transliteration"]):
-            return "transliteration"
-        # Pipeline audio language detection endpoint
-        elif any(pattern in path_lower for pattern in ["/services/inference/pipeline/audio-lang-detection", "/services/inference/pipeline/audio-language-detection", "/pipeline/audio-lang-detection"]):
-            return "audio_lang_detection"
-        # Pipeline speaker verification endpoint
-        elif any(pattern in path_lower for pattern in ["/services/inference/pipeline/speaker-verification", "/pipeline/speaker-verification"]):
-            return "speaker_verification"
-        # Pipeline speaker diarization endpoint
-        elif any(pattern in path_lower for pattern in ["/services/inference/pipeline/speaker-diarization", "/pipeline/speaker-diarization"]):
-            return "speaker_diarization"
-        # Pipeline language diarization endpoint
-        elif any(pattern in path_lower for pattern in ["/services/inference/pipeline/language-diarization", "/pipeline/language-diarization"]):
-            return "language_diarization"
-
-        # Then check for generic service patterns (non-pipeline endpoints)
-        elif any(pattern in path_lower for pattern in ["/translation", "/nmt", "/translate"]):
-            return "translation"
-        elif any(pattern in path_lower for pattern in ["/asr", "/transcribe", "/speech"]):
-            return "asr"
-        elif any(pattern in path_lower for pattern in ["/tts", "/synthesize"]):
-            return "tts"
-        elif any(pattern in path_lower for pattern in ["/ocr", "/text-recognition"]):
-            return "ocr"
-        elif any(pattern in path_lower for pattern in ["/transliteration", "/xlit", "/transliterate"]):
-            return "transliteration"
-        elif any(pattern in path_lower for pattern in ["/audio-lang-detection", "/audio-language-detection", "/audio-detect"]):
-            return "audio_lang_detection"
-        elif any(pattern in path_lower for pattern in ["/language-detection", "/lang-detect", "/detect-language"]):
-            return "language_detection"
-        elif any(pattern in path_lower for pattern in ["/language-diarization", "/language-diarization-compute-call"]):
-            return "language_diarization"
-        elif any(pattern in path_lower for pattern in ["/speaker-diarization", "/speaker-diarization-compute-call"]):
-            return "speaker_diarization"
-        elif any(pattern in path_lower for pattern in ["/ner", "/entity", "/entities"]):
-            return "ner"
-        elif any(pattern in path_lower for pattern in ["/speaker", "/speaker-enrollment", "/speaker-verification", "/speak"]):
-            return "speaker_verification"
-        elif any(pattern in path_lower for pattern in ["/llm", "/generate", "/chat", "/completion"]):
-            return "llm"
-        elif any(pattern in path_lower for pattern in ["/enterprise", "/health", "/metrics", "/config"]):
-            return "enterprise"
-        elif any(pattern in path_lower for pattern in ["/docs", "/openapi", "/redoc"]):
-            return "documentation"
-        else:
-            return "unknown"
-
     def _track_additional_metrics(
         self,
         tenant: str,
@@ -406,7 +341,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         tenant=tenant,
                         service_id=service_id,
                     )
-            elif service_type == "translation":
+            elif service_type == "nmt":
                 if translation_characters > 0:
                     self.metrics_collector.track_nmt_characters(
                         source_lang="en",
@@ -523,6 +458,10 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     def _extract_ocr_characters_from_body(self, body_bytes: bytes) -> int:
         """Extract estimated character count from OCR request body.
 
+        Supports both shapes:
+        - direct: ``{"image": [{"imageContent": "base64..."}, ...]}`` (inference-service)
+        - pipeline-wrapped: ``{"inputData": {"image": [...]}}`` (legacy pipeline)
+
         Note: ``imageUri`` payloads are intentionally skipped — downloading
         the referenced image to estimate its size blocks the event loop
         (the original implementation used a synchronous ``httpx.get`` with
@@ -534,18 +473,27 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 return 0
 
             request_data = json.loads(body_bytes.decode('utf-8'))
-            total_characters = 0
 
-            # OCR uses pipeline format: {"inputData": {"image": [...]}, ...}
-            if 'inputData' in request_data and 'image' in request_data['inputData']:
-                for image_item in request_data['inputData']['image']:
-                    if 'imageContent' in image_item:
-                        content = image_item['imageContent']
+            # Try root-level `image` (direct) first, then `inputData.image` (pipeline).
+            images = request_data.get('image')
+            if not isinstance(images, list):
+                input_data = request_data.get('inputData')
+                if isinstance(input_data, dict):
+                    images = input_data.get('image')
+            if not isinstance(images, list):
+                return 0
+
+            total_characters = 0
+            for image_item in images:
+                if not isinstance(image_item, dict):
+                    continue
+                if 'imageContent' in image_item:
+                    content = image_item['imageContent']
+                    if isinstance(content, str):
                         # Conservative estimate: ~0.5% of base64 chars become extracted text.
-                        estimated_chars = len(content) // 200
-                        total_characters += estimated_chars
-                    elif 'imageUri' in image_item and self.config.debug:
-                        logger.debug("OCR imageUri detected; skipping download (would block event loop)")
+                        total_characters += len(content) // 200
+                elif 'imageUri' in image_item and self.config.debug:
+                    logger.debug("OCR imageUri detected; skipping download (would block event loop)")
 
             return total_characters
         except Exception:

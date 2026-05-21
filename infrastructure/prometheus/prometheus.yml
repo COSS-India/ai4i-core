@@ -84,6 +84,8 @@ scrape_configs:
           - "speaker-diarization-service:8095"
           - "language-diarization-service:8090"
           - "audio-lang-detection-service:8096"
+          # - "host.docker.internal:8090"
+          - "inference-service:8090"
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
@@ -106,4 +108,3 @@ scrape_configs:
     static_configs:
       - targets:
           - "node-exporter:9100"
-
