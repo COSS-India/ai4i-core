@@ -31,5 +31,6 @@ v1_router.include_router(service_router)
 
 # ── Top-level router ──
 api_router = APIRouter()
-api_router.include_router(health_router, tags=["Health"])   # Unversioned
+api_router.include_router(health_router, prefix="/api/v1/models", tags=["Health"])
+api_router.include_router(health_router, prefix="/api/v1/services", tags=["Health"])
 api_router.include_router(v1_router)
