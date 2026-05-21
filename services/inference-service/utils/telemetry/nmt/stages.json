@@ -1,0 +1,31 @@
+{
+  "validate": {
+    "start": [],
+    "end": []
+  },
+  "preprocess_input": {
+    "start": [
+      {"attr": "input_count", "expr": "item_count"},
+      {"attr": "first_source", "func": "compute_first_item_source"}
+    ],
+    "end": [
+      {"attr": "processed_count", "expr": "item_count"}
+    ]
+  },
+  "resolve_model": {
+    "start": [],
+    "end": []
+  },
+  "triton_inference": {
+    "start": [],
+    "end": []
+  },
+  "postprocess": {
+    "start": [],
+    "end": []
+  },
+  "persist": {
+    "start": [],
+    "end": []
+  }
+}

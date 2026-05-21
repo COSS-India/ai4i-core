@@ -1,0 +1,31 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Inference Service",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/services/inference-service/main.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/services/inference-service:${workspaceFolder}/libs/ai4icore_core"
+            },
+            "cwd": "${workspaceFolder}/services/inference-service"
+        },
+        {
+            "name": "Debug Inference Service (with pytest)",
+            "type": "python",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "services/inference-service/test",
+                "-v",
+                "--tb=short"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

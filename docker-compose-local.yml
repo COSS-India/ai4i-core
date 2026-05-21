@@ -1205,6 +1205,11 @@ services:
     container_name: ai4v-prometheus
     ports:
       - "9090:9090"
+    # Make `host.docker.internal` resolve to the host gateway so Prometheus
+    # can scrape services running natively on the host (e.g. inference-service
+    # during local development). Works on Docker Engine 20.10+ and Docker Desktop.
+    extra_hosts:
+      - "inference-service:host-gateway"
     volumes:
       - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - ./infrastructure/prometheus/rules:/etc/prometheus/rules
