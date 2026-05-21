@@ -5,6 +5,7 @@ Creates and configures the unified inference service with all components.
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from ai4icore_core.telemetry import TraceIDMiddleware
 from typing import Optional, Any
 import logging
 
@@ -62,6 +63,9 @@ class InferenceServiceFactory:
             app: FastAPI application instance
         """
         logger.info("Setting up middleware...")
+        
+        # Trace ID middleware (must be first to capture all requests)
+        app.add_middleware(TraceIDMiddleware)
         
         # CORS middleware
         app.add_middleware(

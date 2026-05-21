@@ -1,4 +1,8 @@
 {
+  "validate": {
+    "start": [],
+    "end": []
+  },
   "preprocess": {
     "start": [
       {"attr": "input_len", "expr": "len(text)"},

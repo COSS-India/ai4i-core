@@ -13,6 +13,7 @@ from models.schemas.nmt import (
 )
 from inference_models.nmt_inference_model import NMTInferenceModel  # type: ignore[import]
 from utils.http_client import HTTPServiceClient
+from ai4icore_core.telemetry import async_trace_stage
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class NMTTaskService(BaseTaskService):
         except Exception as e:
             raise ValueError(f"NMT: Failed to deserialize payload: {str(e)}")
 
+    @async_trace_stage("validate")
     async def validate_request(self, request: BaseModel) -> None:
         await super().validate_request(request)
 
@@ -75,7 +77,7 @@ class NMTTaskService(BaseTaskService):
             f"NMT request validated: {config.language.source_language} -> "
             f"{config.language.target_language} ({len(nmt_request.input)} inputs)"
         )
-
+    @async_trace_stage("preprocess_input")
     async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
         input_list = []
         for item in input_data:
@@ -103,6 +105,7 @@ class NMTTaskService(BaseTaskService):
         self.logger.debug(f"NMT preprocessed {len(cleaned)} inputs")
         return cleaned
 
+    @async_trace_stage("triton_inference")
     async def run_inference(
         self,
         request: BaseModel,
