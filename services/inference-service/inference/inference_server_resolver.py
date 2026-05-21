@@ -207,15 +207,19 @@ class InferenceServerResolver:
         # Real MMS shape: {"success": true, "data": {...}}
         if "success" in raw and "data" in raw:
             data = raw["data"]
+            inference_endpoint = data.get("model", {}).get("inferenceEndPoint", {})
+            schema = inference_endpoint.get("schema", {})
+
             base_endpoint = data.get("endpoint", "").rstrip("/")
-            infer_path = (
-                data.get("model", {})
-                .get("inferenceEndPoint", {})
-                .get("schema", {})
-                .get("endpoint", "")
+            model_name = schema.get("model_name", "")
+            endpoint = f"{base_endpoint}/v2/models/{model_name}/infer" if model_name else base_endpoint
+
+            # adapter_config can be at data level (real MMS) or inferenceEndPoint level (mock)
+            adapter_config = (
+                data.get("adapter_config")
+                or inference_endpoint.get("adapter_config")
+                or inference_endpoint.get("adapterConfig")
             )
-            endpoint = f"{base_endpoint}{infer_path}"
-            adapter_config = data.get("adapterConfig") or data.get("adapter_config")
             if not adapter_config:
                 raise ServiceNotFoundError(
                     f"Service {service_id}: adapter_config missing from MMS response. "
@@ -228,7 +232,7 @@ class InferenceServerResolver:
                 "adapter_config": adapter_config,
             }
 
-        # Mock/Postman shape: flat dict, pass through as-is
+        # Flat shape (legacy/fallback): pass through as-is
         return raw
 
     async def _cache_service_info(

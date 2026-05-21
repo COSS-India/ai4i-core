@@ -1,7 +1,7 @@
 """NMT (Neural Machine Translation) TaskService implementation."""
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, cast
 
 from pydantic import BaseModel
 
@@ -12,7 +12,6 @@ from models.schemas.nmt import (
     NMTConfig,
 )
 from inference_models.nmt_inference_model import NMTInferenceModel  # type: ignore[import]
-from utils.http_client import HTTPServiceClient
 from ai4icore_core.telemetry import async_trace_stage
 
 logger = logging.getLogger(__name__)
@@ -30,7 +29,6 @@ class NMTTaskService(BaseTaskService):
         Inherits InferenceServerResolver from BaseTaskService.
         """
         super().__init__()
-        self.triton_client = None  # Initialized on first use
         self.logger = logger
 
     async def _deserialize_payload(self, payload: Dict[str, Any]) -> NMTInferenceRequest:
@@ -121,20 +119,17 @@ class NMTTaskService(BaseTaskService):
         # Attach request payload to config for use in execute_triton_inference
         config._request_payload = nmt_request
 
-        # Execute Triton inference (handles service resolution, model creation, and inference)
         result = await self.execute_triton_inference(config, NMTInferenceModel)
 
-        response_data = result["response_data"]
-        source_texts = result["source_texts"]
+        postprocessed = await self.postprocess_output(
+            result["response_data"], result["source_texts"]
+        )
 
-        # Post-process output and pair with source inputs
-        postprocessed = await self.postprocess_output(response_data, source_texts)
-
-        # Create and return response
         response = NMTInferenceResponse(
             output=postprocessed['output'],
             smr_response=None,
         )
+
 
         self.logger.info(
             f"NMT inference completed successfully: service_id={result['service_id']}, "
@@ -158,10 +153,6 @@ class NMTTaskService(BaseTaskService):
         Returns:
             Dict with 'output' key containing List[TranslationOutput].
         """
-        # Base class call is intentionally skipped here.
-        # It only validates non-empty and returns input unchanged — not needed for typed output building.
-        # postprocessed = await super().postprocess_output(response_items)
-
         output_list = []
         for idx, item in enumerate(response_items):
             target_text = item.get("target", "")
