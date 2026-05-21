@@ -39,12 +39,21 @@ class RoleService:
 
     # ── Role management ──
 
+    async def ensure_role_exists(self, role_name: str | RoleName) -> None:
+        """Raise EntityNotFoundError when the role name is not in the database."""
+        key = role_name_to_str(role_name)
+        if not await self._roles.get_role_by_name(key):
+            raise EntityNotFoundError(f"Role '{key}'")
+
     async def assign_role(
         self, user_id: UUID, role_name: str | RoleName, *, commit: bool = True
     ) -> None:
         """
         Assign a role to a user. Permissions are additive — existing roles are
         kept. Silently skips if the user already has this role.
+
+        When ``commit=False``, flush only — caller commits the shared session
+        (e.g. tenant user PATCH batches role + profile in one transaction).
         """
         key = role_name_to_str(role_name)
         role = await self._roles.get_role_by_name(key)
@@ -63,6 +72,7 @@ class RoleService:
     async def remove_role(
         self, user_id: UUID, role_name: str | RoleName, *, commit: bool = True
     ) -> None:
+        """When ``commit=False``, defer commit to the caller's session commit."""
         key = role_name_to_str(role_name)
         role = await self._roles.get_role_by_name(key)
         if not role:

@@ -101,7 +101,8 @@ class TenantUserUpdate(BaseSchema):
 class TenantUserResponse(BaseSchema):
     """Tenant-scoped user list/detail item including assignable role."""
 
-    user_id: UUID = Field(validation_alias=AliasChoices("user_id", "id"))
+    # ORM exposes ``id``; API responses use ``user_id`` (field name).
+    user_id: UUID = Field(validation_alias=AliasChoices("id", "user_id"))
     username: str
     email: EmailStr
     phone_number: Optional[str] = None

@@ -6,6 +6,7 @@ then shape the ORM result through a Pydantic schema. All scope enforcement,
 repository access and provisioning lives in this file.
 """
 
+import asyncio
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -111,6 +112,10 @@ async def sync_tenant_users_for_status(
         await user_repo.apply_admin_suspend_to_tenant(tenant_id, updated_by=updated_by)
 
 
+_API_KEY_SYNC_MAX_ATTEMPTS = 3
+_API_KEY_SYNC_RETRY_DELAY_SEC = 0.5
+
+
 async def run_sync_keys_for_tenant_background(tenant_id: int) -> None:
     """Run ``sync_keys_for_tenant`` after the HTTP response (owns its own DB session)."""
     factory = db_bootstrap._session_factory
@@ -121,21 +126,43 @@ async def run_sync_keys_for_tenant_background(tenant_id: int) -> None:
         )
         return
 
-    async with factory() as session:
-        try:
-            svc = APIKeyService(
-                APIKeyRepository(session),
-                CacheService(get_redis_client()),
-                user_repo=UserRepository(session),
-                tenant_repo=TenantRepository(session),
-            )
-            await svc.sync_keys_for_tenant(tenant_id)
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            logger.exception(
-                "Background API key sync failed for tenant_id=%s", tenant_id
-            )
+    last_error: Exception | None = None
+    for attempt in range(1, _API_KEY_SYNC_MAX_ATTEMPTS + 1):
+        async with factory() as session:
+            try:
+                svc = APIKeyService(
+                    APIKeyRepository(session),
+                    CacheService(get_redis_client()),
+                    user_repo=UserRepository(session),
+                    tenant_repo=TenantRepository(session),
+                )
+                await svc.sync_keys_for_tenant(tenant_id)
+                await session.commit()
+                if attempt > 1:
+                    logger.info(
+                        "Background API key sync succeeded for tenant_id=%s on attempt %s",
+                        tenant_id,
+                        attempt,
+                    )
+                return
+            except Exception as exc:
+                last_error = exc
+                await session.rollback()
+                logger.exception(
+                    "Background API key sync failed for tenant_id=%s (attempt %s/%s)",
+                    tenant_id,
+                    attempt,
+                    _API_KEY_SYNC_MAX_ATTEMPTS,
+                )
+                if attempt < _API_KEY_SYNC_MAX_ATTEMPTS:
+                    await asyncio.sleep(_API_KEY_SYNC_RETRY_DELAY_SEC * attempt)
+
+    logger.error(
+        "Background API key sync exhausted retries for tenant_id=%s; "
+        "keys may be out of sync until the next tenant/user update. last_error=%s",
+        tenant_id,
+        last_error,
+    )
 
 
 def enqueue_tenant_api_key_sync(
@@ -211,8 +238,14 @@ class TenantService:
     async def _set_tenant_user_role(
         self, user_id: UUID, role: TenantUserRole | RoleName | str, *, commit: bool = True
     ) -> None:
-        """Ensure the user has exactly one tenant-assignable role (USER or TENANT ADMIN)."""
+        """Ensure the user has exactly one tenant-assignable role (USER or TENANT ADMIN).
+
+        ``commit=False`` leaves role changes in the open transaction so the caller
+        can commit once with other updates (e.g. ``update_tenant_user`` →
+        ``save_and_refresh`` on the user row).
+        """
         target = role.value if isinstance(role, TenantUserRole) else role_name_to_str(role)
+        await self._roles.ensure_role_exists(target)
         current = await self._roles.get_user_roles(user_id)
         for assignable in _TENANT_ASSIGNABLE_ROLES:
             key = role_name_to_str(assignable)
@@ -339,6 +372,21 @@ class TenantService:
             raise EntityNotFoundError(f"Tenant {tenant_id}")
         return tenant
 
+    async def _load_tenant_for_update_or_404(self, tenant_id: int) -> Tenant:
+        """Lock tenant row for the current transaction (see ``_require_tenant_active_for_user_creation``)."""
+        tenant = await self._tenants.get_by_id_for_update(tenant_id)
+        if not tenant:
+            raise EntityNotFoundError(f"Tenant {tenant_id}")
+        return tenant
+
+    @staticmethod
+    def _assert_tenant_active_for_user_creation(tenant: Tenant) -> None:
+        if tenant.status != TenantStatus.ACTIVE:
+            raise ValidationError(
+                message="Tenant users can only be added when the tenant is active.",
+                code="TENANT_NOT_ACTIVE",
+            )
+
     async def _load_tenant_user_or_404(self, tenant_id: int, user_id: UUID) -> User:
         target = await self._users.get_by_id(user_id)
         if not target:
@@ -455,10 +503,16 @@ class TenantService:
         )
         await self._tenants.save_and_refresh(tenant)
         if self._api_keys is not None:
-            if background_tasks is not None:
-                enqueue_tenant_api_key_sync(background_tasks, tenant_id)
-            else:
+            # Suspend/deactivate must sync keys before returning — stale Redis keys
+            # would still authorize inference after tenant lockout.
+            must_sync_inline = body.status in (
+                TenantStatus.SUSPENDED,
+                TenantStatus.DEACTIVATED,
+            )
+            if must_sync_inline or background_tasks is None:
                 await self._api_keys.sync_keys_for_tenant(tenant_id)
+            else:
+                enqueue_tenant_api_key_sync(background_tasks, tenant_id)
         return tenant
 
     # ── Tenant-user CRUD ─────────────────────────────────────────────────
@@ -478,12 +532,10 @@ class TenantService:
     ) -> tuple[str, str]:
         """Provision an inactive user for the tenant. Returns (user_id, setup_token)."""
         await self.enforce_scope(current_user, tenant_id)
-        tenant = await self._load_tenant_or_404(tenant_id)
-        if tenant.status != TenantStatus.ACTIVE:
-            raise ValidationError(
-                message="Tenant users can only be added when the tenant is active.",
-                code="TENANT_NOT_ACTIVE",
-            )
+        # Lock tenant row until provision_user commits — prevents suspend/deactivate
+        # between the ACTIVE check and user insert in the same request.
+        tenant = await self._load_tenant_for_update_or_404(tenant_id)
+        self._assert_tenant_active_for_user_creation(tenant)
         email = body.email.lower().strip()
         username = await allocate_unique_username(
             self._users.list_usernames_in_collision_family,
@@ -515,6 +567,7 @@ class TenantService:
         payload["updated_by"] = current_user.id
         await self._users.update(target, payload)
         if role_update is not None:
+            # Single commit via save_and_refresh — role repo shares this session.
             await self._set_tenant_user_role(target.id, role_update, commit=False)
         await self._users.save_and_refresh(target)
         if self._api_keys is not None and (

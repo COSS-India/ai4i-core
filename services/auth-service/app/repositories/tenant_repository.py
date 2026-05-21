@@ -17,6 +17,13 @@ class TenantRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
+    async def get_by_id_for_update(self, tenant_id: int) -> Optional[Tenant]:
+        """Load tenant with ``SELECT … FOR UPDATE`` (blocks concurrent status changes)."""
+        result = await self._db.execute(
+            select(Tenant).where(Tenant.id == tenant_id).with_for_update()
+        )
+        return result.scalar_one_or_none()
+
     async def get_by_email(self, email: str) -> Optional[Tenant]:
         result = await self._db.execute(
             select(Tenant).where(Tenant.email == email)

@@ -208,14 +208,25 @@ class APIKeyService:
         expires_at = datetime.now(timezone.utc) + timedelta(days=days)
         ttl = int(timedelta(days=days).total_seconds())
 
-        owner_active = True
-        if self._users is not None:
-            owner = await self._users.get_by_id(user_id)
-            tenant = None
-            if owner and owner.tenant_id is not None and self._tenants is not None:
-                tenant = await self._tenants.get_by_id(owner.tenant_id)
-            if owner:
-                owner_active = self.user_may_use_api_keys(owner, tenant)
+        if self._users is None:
+            raise ValidationError(
+                message="API key service is missing user repository; cannot verify owner state.",
+                code="API_KEY_SERVICE_MISCONFIGURED",
+            )
+
+        owner = await self._users.get_by_id(user_id)
+        if not owner:
+            raise EntityNotFoundError("User")
+
+        tenant = None
+        if owner.tenant_id is not None:
+            if self._tenants is None:
+                raise ValidationError(
+                    message="API key service is missing tenant repository; cannot verify tenant state.",
+                    code="API_KEY_SERVICE_MISCONFIGURED",
+                )
+            tenant = await self._tenants.get_by_id(owner.tenant_id)
+        owner_active = self.user_may_use_api_keys(owner, tenant)
 
         api_key = APIKey(
             api_key=raw_key,

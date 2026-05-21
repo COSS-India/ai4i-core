@@ -5,12 +5,13 @@ User ORM model.
 import enum
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.models import Base
+from app.models.enum_columns import assert_enum_values_fit_varchar, varchar_enum_type
 
 
 class CreationType(str, enum.Enum):
@@ -25,6 +26,10 @@ class UserSuspensionTag(str, enum.Enum):
 
     TENANT_SUSPENDED = "TENANT_SUSPENDED"
     ADMIN_SUSPENDED = "ADMIN_SUSPENDED"
+
+
+assert_enum_values_fit_varchar(CreationType)
+assert_enum_values_fit_varchar(UserSuspensionTag)
 
 
 class User(Base):
@@ -47,22 +52,9 @@ class User(Base):
     timezone = Column(String(50), server_default="UTC")
     is_delete = Column(Boolean, default=False, nullable=True)
     is_tenant_active = Column(Boolean, default=True, nullable=True)
-    suspension_tag = Column(
-        Enum(
-            UserSuspensionTag,
-            values_callable=lambda x: [e.value for e in x],
-            native_enum=False,
-            length=32,
-        ),
-        nullable=True,
-    )
+    suspension_tag = Column(varchar_enum_type(UserSuspensionTag), nullable=True)
     creation_type = Column(
-        Enum(
-            CreationType,
-            values_callable=lambda x: [e.value for e in x],
-            native_enum=False,
-            length=32,
-        ),
+        varchar_enum_type(CreationType),
         nullable=True,
         server_default=CreationType.DEFAULT.value,
     )
