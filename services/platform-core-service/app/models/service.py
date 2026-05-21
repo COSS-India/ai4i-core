@@ -54,6 +54,7 @@ class Service(Base):
     health_status = Column(JSONB, nullable=True)
     benchmarks = Column(JSONB, nullable=True)
     policy = Column(JSONB, nullable=True)
+    adapter_config = Column(JSONB, nullable=True)
     is_published = Column(Boolean, nullable=False, default=False, server_default="false")
     published_at = Column(DateTime(timezone=True), nullable=True)
     unpublished_at = Column(DateTime(timezone=True), nullable=True)
