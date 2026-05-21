@@ -350,8 +350,8 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     [permissions],
   );
 
-  const formatPermission = (raw: string | number) =>
-    permissionLabelWithFallback(raw, permissions);
+  const formatPermission = (permissionId: number) =>
+    permissionLabelWithFallback(permissionId, permissions);
 
   const formatKeyId = (key: AdminAPIKeyWithUserResponse) => formatApiKeyDisplayId(key);
 

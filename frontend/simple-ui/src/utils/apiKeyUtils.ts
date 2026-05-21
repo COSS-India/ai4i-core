@@ -1,23 +1,8 @@
 import type { APIKeyResponse } from "../types/auth";
+import { INFERENCE_PERMISSION_LABEL_BY_ID } from "../config/constants";
 
 /** sessionStorage cache: keys created in this browser session (hex shown once at create). */
 export const API_KEY_HEX_CACHE_KEY = "ai4i_api_key_hex_cache";
-
-/** Inference permission IDs → display names when GET permissions is unavailable. */
-export const INFERENCE_PERMISSION_LABEL_BY_ID: Record<number, string> = {
-  60: "NMT.INFERENCE",
-  61: "ASR.INFERENCE",
-  62: "TTS.INFERENCE",
-  63: "LLM.INFERENCE",
-  64: "NER.INFERENCE",
-  65: "OCR.INFERENCE",
-  66: "TRANSLITERATION.INFERENCE",
-  67: "LANGUAGE-DETECTION.INFERENCE",
-  68: "LANGUAGE-DIARIZATION.INFERENCE",
-  69: "SPEAKER-DIARIZATION.INFERENCE",
-  70: "AUDIO-LANG-DETECTION.INFERENCE",
-  71: "PIPELINE.INFERENCE",
-};
 
 type ApiKeyLike = {
   api_key?: string | null;
@@ -53,7 +38,7 @@ export function buildApiKeyRevokePathTokens(key: ApiKeyLike): string[] {
   if (hex) tokens.push(hex);
   const id = key.id ?? key.key_id ?? key.keyId;
   if (id != null && Number.isFinite(Number(id))) tokens.push(String(id));
-  return [...new Set(tokens)];
+  return Array.from(new Set(tokens));
 }
 
 export function formatApiKeyDisplayId(key: ApiKeyLike): string {
@@ -99,8 +84,9 @@ export function mergeApiKeyHexFromCache<T extends APIKeyResponse>(keys: T[]): T[
   });
 }
 
+/** Resolve a permission ID (or legacy string) to a display label. */
 export function permissionLabelWithFallback(
-  raw: string | number,
+  raw: number | string,
   catalog: { id: number; name: string }[],
 ): string {
   const id =

@@ -105,8 +105,6 @@ const apiKeyResponseRawSchema = z
     is_revoked: z.boolean().optional(),
     created_at: z.string().nullable().optional(),
     expires_at: z.string().nullable().optional(),
-    last_used: z.string().nullable().optional(),
-    updated_at: z.string().nullable().optional(),
   })
   .passthrough();
 
@@ -119,8 +117,6 @@ function normalizeApiKeyResponse<T extends z.infer<typeof apiKeyResponseRawSchem
     is_revoked: d.is_revoked ?? !isActive,
     created_at: d.created_at ?? undefined,
     expires_at: d.expires_at ?? undefined,
-    last_used: d.last_used ?? undefined,
-    updated_at: d.updated_at ?? undefined,
   };
 }
 

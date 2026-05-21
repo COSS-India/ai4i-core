@@ -481,16 +481,6 @@ export default function ApiKeyManagementTab({
                     </Text>
                   </Box>
                 )}
-                {mgmt.selectedKeyForView.last_used && (
-                  <Box>
-                    <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                      Last Used
-                    </Text>
-                    <Text fontSize="sm">
-                      {new Date(mgmt.selectedKeyForView.last_used).toLocaleString()}
-                    </Text>
-                  </Box>
-                )}
               </SimpleGrid>
             )}
       </StandardModal>
