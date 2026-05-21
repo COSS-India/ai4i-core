@@ -54,6 +54,7 @@ import {
   LogAggregationResponse,
 } from "../services/observabilityService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { isTenantStatus, TENANT } from "../config/constants";
 import { listTenants, getViewTenant } from "../services/tenantService";
 import { TablePaginationBar, useAdminTableSurface } from "../components/common/TableControls";
 
@@ -244,10 +245,9 @@ const LogsPage: React.FC = () => {
     if (!tenantsData?.tenants || !Array.isArray(tenantsData.tenants)) {
       return [];
     }
-    return tenantsData.tenants.filter((tenant: any) => {
-      const status = String(tenant?.status || '').trim().toUpperCase();
-      return status === 'ACTIVE';
-    });
+    return tenantsData.tenants.filter((tenant: { status?: string }) =>
+      isTenantStatus(tenant?.status, TENANT.STATUS.ACTIVE)
+    );
   }, [tenantsData]);
 
   // Debug: Log admin status, tenant data, and errors

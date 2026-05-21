@@ -8,6 +8,7 @@ import type {
   APIKeyUpdate,
   APIKeyResponse,
 } from "../../../types/auth";
+import { API_KEY, isApiKeyFilterStatus } from "../../../config/constants";
 import {
   formatApiKeyDisplayId,
   mergeApiKeyHexFromCache,
@@ -76,7 +77,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   const [isLoadingAllApiKeys, setIsLoadingAllApiKeys] = useState(false);
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [filterPermission, setFilterPermission] = useState("all");
-  const [filterActive, setFilterActive] = useState("all");
+  const [filterActive, setFilterActive] = useState<string>(API_KEY.FILTER_STATUS.ALL);
   const [keyNameSearch, setKeyNameSearch] = useState("");
   const [selectedKeyForUpdate, setSelectedKeyForUpdate] = useState<AdminAPIKeyWithUserResponse | null>(null);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
@@ -327,47 +328,30 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
             );
             if (!has) return false;
           }
-          if (filterActive === "active" && !key.is_active) return false;
-          if (filterActive === "revoked" && key.is_active) return false;
+          if (isApiKeyFilterStatus(filterActive, API_KEY.FILTER_STATUS.ACTIVE) && !key.is_active) {
+            return false;
+          }
+          if (isApiKeyFilterStatus(filterActive, API_KEY.FILTER_STATUS.REVOKED) && key.is_active) {
+            return false;
+          }
           return true;
         })
         .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()),
     [allApiKeys, filterPermission, filterActive, keyNameSearch, permissions],
   );
 
-  const allUniquePermissions = useMemo(() => {
-    const perms = new Set<string>();
-    allApiKeys.forEach((key) =>
-      (key.permissions ?? []).forEach((p) =>
-        perms.add(permissionLabelWithFallback(p, permissions)),
-      ),
-    );
-    return Array.from(perms).sort((a, b) => a.localeCompare(b));
-  }, [allApiKeys, permissions]);
-
-  /** Human-readable names for the Permission filter (from catalog, not raw IDs). */
-  const permissionFilterOptions = useMemo(() => {
-    const idsOnKeys = new Set<number>();
-    allApiKeys.forEach((key) => {
-      (key.permissions ?? []).forEach((raw) => {
-        const id = permissionIdFromRaw(raw);
-        if (id != null) idsOnKeys.add(id);
-      });
-    });
-
-    if (permissions.length > 0) {
-      const fromCatalog = permissions
-        .filter((p) => idsOnKeys.size === 0 || idsOnKeys.has(p.id))
+  /** Static permission names for the filter dropdown (full catalog, not keyed to loaded keys). */
+  const permissionFilterOptions = useMemo(
+    () =>
+      permissions
         .map((p) => p.name)
-        .sort((a, b) => a.localeCompare(b));
-      if (fromCatalog.length > 0) return fromCatalog;
-    }
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b)),
+    [permissions],
+  );
 
-    return allUniquePermissions.filter((label) => !/^\d+$/.test(label));
-  }, [allApiKeys, allUniquePermissions, permissions]);
-
-  const formatPermission = (raw: string | number) =>
-    permissionLabelWithFallback(raw, permissions);
+  const formatPermission = (permissionId: number) =>
+    permissionLabelWithFallback(permissionId, permissions);
 
   const formatKeyId = (key: AdminAPIKeyWithUserResponse) => formatApiKeyDisplayId(key);
 
@@ -399,7 +383,6 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     isUpdating,
     handleResetFilters,
     filteredApiKeys,
-    allUniquePermissions,
     permissionFilterOptions,
     selectedKeyForView,
     isViewModalOpen,

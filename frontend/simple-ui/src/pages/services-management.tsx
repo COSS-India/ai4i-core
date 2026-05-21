@@ -63,6 +63,17 @@ import {
   TableSortHeader,
   useAdminTableSurface,
 } from "../components/common/TableControls";
+import {
+  MODEL_TASK_TYPE_LIST,
+  isModelVersionStatusActive,
+  SERVICE_PUBLISH,
+  SERVICE_PUBLISH_FILTER_LIST,
+  formatModelTaskTypeLabel,
+  formatServicePublishFilterLabel,
+  formatServicePublishLabel,
+  isModelVersionStatusDeprecated,
+  isServicePublishFilterStatus,
+} from "../config/constants";
 
 type ModelSummary = {
   modelId?: string;
@@ -109,7 +120,7 @@ const ServicesManagementPage: React.FC = () => {
   const [listPage, setListPage] = useState(1);
   const [listPageSize, setListPageSize] = useState(25);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterStatus, setFilterStatus] = useState<string>("");
+  const [filterStatus, setFilterStatus] = useState<string>(SERVICE_PUBLISH.FILTER.ALL);
   const [filterTaskType, setFilterTaskType] = useState<string>("");
   const [sortBy, setSortBy] = useState<"time" | "name">("time");
   const [nameSortDirection, setNameSortDirection] = useState<"asc" | "desc">("asc");
@@ -133,7 +144,7 @@ const ServicesManagementPage: React.FC = () => {
       (service.model as any)?.version_status ??
       (service as any).versionStatus ??
       (service as any).version_status;
-    return typeof modelVersionStatus === "string" && modelVersionStatus.toLowerCase() === "deprecated";
+    return isModelVersionStatusDeprecated(modelVersionStatus);
   };
 
   const formatModelSubmissionDate = (value?: string | number | null): string => {
@@ -182,7 +193,10 @@ const ServicesManagementPage: React.FC = () => {
   const startRow = totalServices === 0 ? 0 : (listPage - 1) * listPageSize + 1;
   const endRow = Math.min(listPage * listPageSize, totalServices);
 
-  const hasActiveFilters = filterStatus !== "" || filterTaskType !== "" || searchQuery.trim() !== "";
+  const hasActiveFilters =
+    filterStatus !== SERVICE_PUBLISH.FILTER.ALL ||
+    filterTaskType !== "" ||
+    searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterStatus("");
@@ -219,10 +233,14 @@ const ServicesManagementPage: React.FC = () => {
   const fetchServices = useCallback(async () => {
     setIsLoading(true);
     try {
-      const isPublishedFilter =
-        filterStatus === "published" ? true :
-        filterStatus === "unpublished" ? false :
-        undefined;
+      const isPublishedFilter = isServicePublishFilterStatus(
+        filterStatus,
+        SERVICE_PUBLISH.FILTER.PUBLISHED
+      )
+        ? true
+        : isServicePublishFilterStatus(filterStatus, SERVICE_PUBLISH.FILTER.UNPUBLISHED)
+          ? false
+          : undefined;
 
       const result = await listServicesPaginated({
         offset: (listPage - 1) * listPageSize,
@@ -258,8 +276,8 @@ const ServicesManagementPage: React.FC = () => {
       try {
         const fetchedModels = await getAllModels();
         // Filter to only show ACTIVE models
-        const activeModels = fetchedModels.filter(
-          (model) => model.versionStatus?.toLowerCase() === "active" || !model.versionStatus
+        const activeModels = fetchedModels.filter((model) =>
+          isModelVersionStatusActive(model.versionStatus)
         );
         setModels(activeModels);
       } catch (error: any) {
@@ -316,7 +334,7 @@ const ServicesManagementPage: React.FC = () => {
       if (!inActiveList) {
         try {
           const modelDetails = await getModelById(modelId);
-          const isDeprecated = modelDetails?.versionStatus?.toLowerCase() === "deprecated";
+          const isDeprecated = isModelVersionStatusDeprecated(modelDetails?.versionStatus);
           if (modelDetails && !isDeprecated) {
             setPreselectedModelFromQuery(modelDetails);
             if (formData.modelId !== modelId) {
@@ -351,7 +369,7 @@ const ServicesManagementPage: React.FC = () => {
   // Dropdown options: active models only (no deprecated). Include preselected from query only if not deprecated and not already in list.
   const preselectedNotDeprecated =
     preselectedModelFromQuery &&
-    preselectedModelFromQuery.versionStatus?.toLowerCase() !== "deprecated";
+    !isModelVersionStatusDeprecated(preselectedModelFromQuery.versionStatus);
   const modelsForDropdown =
     preselectedNotDeprecated &&
     !models.some(
@@ -410,10 +428,10 @@ const ServicesManagementPage: React.FC = () => {
       try {
         setIsLoadingModels(true);
         const modelDetails = await getModelById(modelId);
-        
+
         // Extract task_type from model
         const taskType = modelDetails?.task?.type || modelDetails?.task_type || modelDetails?.taskType || "";
-        
+
         // Extract model version (required field after migration)
         const modelVersion = modelDetails?.version || modelDetails?.modelVersion || "1.0";
 
@@ -421,10 +439,10 @@ const ServicesManagementPage: React.FC = () => {
         const modelSubmissionDate = formatModelSubmissionDate(
           modelDetails?.submittedOn ?? modelDetails?.submitted_on ?? ""
         );
-        
+
         // Get model name for display
         const modelName = modelDetails?.name || modelDetails?.modelId || modelDetails?.model_id || "";
-        
+
         setFormData((prev) => ({
           ...prev,
           modelId: modelId,
@@ -460,17 +478,17 @@ const ServicesManagementPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Check session expiry before submitting
     if (!checkSessionExpiry()) return;
-    
+
     setIsSubmitting(true);
 
     try {
       // Auto-generate serviceId from name and timestamp
       const timestamp = Date.now();
       const serviceId = `${formData.name?.toLowerCase().replace(/\s+/g, '-') || 'service'}-${timestamp}`;
-      
+
       // Prepare service data with auto-generated serviceId.
       // Do not send modelSubmissionDate because backend owns this field.
       const serviceFormData: Partial<Service> = { ...formData };
@@ -566,7 +584,7 @@ const ServicesManagementPage: React.FC = () => {
           const deprecated =
             modelDetails?.versionStatus &&
             typeof modelDetails.versionStatus === "string" &&
-            modelDetails.versionStatus.toLowerCase() === "deprecated";
+            isModelVersionStatusDeprecated(modelDetails.versionStatus);
           setSelectedServiceModelDeprecated(!!deprecated);
         } catch {
           setSelectedServiceModelDeprecated(false);
@@ -589,10 +607,10 @@ const ServicesManagementPage: React.FC = () => {
 
   const handleUpdateService = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Check session expiry before updating
     if (!checkSessionExpiry()) return;
-    
+
     if (!selectedService?.serviceId) {
       toast({
         title: "Update Failed",
@@ -678,7 +696,7 @@ const ServicesManagementPage: React.FC = () => {
         const isDeprecated =
           modelDetails?.versionStatus &&
           typeof modelDetails.versionStatus === "string" &&
-          modelDetails.versionStatus.toLowerCase() === "deprecated";
+          isModelVersionStatusDeprecated(modelDetails.versionStatus);
         if (isDeprecated) {
           toast({
             title: "Publish blocked",
@@ -974,9 +992,12 @@ const ServicesManagementPage: React.FC = () => {
                                   onChange={(e) => { setFilterStatus(e.target.value); setListPage(1); }}
                                   bg={cardBg}
                                 >
-                                  <option value="">All</option>
-                                  <option value="published">Published</option>
-                                  <option value="unpublished">Unpublished</option>
+                                  <option value={SERVICE_PUBLISH.FILTER.ALL}>All</option>
+                                  {SERVICE_PUBLISH_FILTER_LIST.map((s) => (
+                                    <option key={s} value={s}>
+                                      {formatServicePublishFilterLabel(s)}
+                                    </option>
+                                  ))}
                                 </Select>
                               </FormControl>
                               <FormControl w={{ base: "full", sm: "160px" }}>
@@ -988,8 +1009,10 @@ const ServicesManagementPage: React.FC = () => {
                                   bg={cardBg}
                                 >
                                   <option value="">All</option>
-                                  {taskTypeOptions.map((t) => (
-                                    <option key={t} value={t}>{t}</option>
+                                  {MODEL_TASK_TYPE_LIST.map((t) => (
+                                    <option key={t} value={t}>
+                                      {formatModelTaskTypeLabel(t)}
+                                    </option>
                                   ))}
                                 </Select>
                               </FormControl>
@@ -1003,12 +1026,12 @@ const ServicesManagementPage: React.FC = () => {
                                 )}
                                 {filterStatus && (
                                   <Badge colorScheme="gray" fontSize="xs" px={2} py={1} cursor="pointer" onClick={() => { setFilterStatus(""); setListPage(1); }} _hover={{ opacity: 0.8 }}>
-                                    Status: {filterStatus === "published" ? "Published" : "Unpublished"} ×
+                                    Status: {formatServicePublishFilterLabel(filterStatus)} ×
                                   </Badge>
                                 )}
                                 {filterTaskType && (
                                   <Badge colorScheme="gray" fontSize="xs" px={2} py={1} cursor="pointer" onClick={() => { setFilterTaskType(""); setListPage(1); }} _hover={{ opacity: 0.8 }}>
-                                    Model Task Type: {filterTaskType} ×
+                                    Model Task Type: {formatModelTaskTypeLabel(filterTaskType)} ×
                                   </Badge>
                                 )}
                               </HStack>
@@ -1076,7 +1099,7 @@ const ServicesManagementPage: React.FC = () => {
                                         fontSize="sm"
                                         p={1}
                                       >
-                                        {service.isPublished === true ? "Published" : "Unpublished"}
+                                        {formatServicePublishLabel(service.isPublished === true)}
                                       </Badge>
                                     </Td>
                                     <Td>
@@ -1386,7 +1409,7 @@ const ServicesManagementPage: React.FC = () => {
                                       fontSize="sm"
                                       p={2}
                                     >
-                                      {selectedService.isPublished === true ? "Published" : "Unpublished"}
+                                      {formatServicePublishLabel(selectedService.isPublished === true)}
                                     </Badge>
                                     {selectedService.isPublished === true ? (
                                       <Tooltip label="Unpublish" placement="top" hasArrow>
@@ -1459,7 +1482,7 @@ const ServicesManagementPage: React.FC = () => {
                                     Published On
                                   </Text>
                                   <Text fontSize="md">
-                                    {selectedService.publishedOn 
+                                    {selectedService.publishedOn
                                       ? new Date(selectedService.publishedOn * 1000).toLocaleString()
                                       : "N/A"}
                                   </Text>
@@ -1571,5 +1594,3 @@ const ServicesManagementPage: React.FC = () => {
 };
 
 export default ServicesManagementPage;
-
-
