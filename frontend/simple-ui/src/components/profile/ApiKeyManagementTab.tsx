@@ -50,6 +50,12 @@ import {
   useAdminTableSurface,
 } from "../common/TableControls";
 import StandardModal from "../common/StandardModal";
+import {
+  API_KEY,
+  API_KEY_FILTER_STATUS_LIST,
+  formatApiKeyActiveLabel,
+  formatApiKeyFilterStatusLabel,
+} from "../../config/constants";
 
 export interface ApiKeyManagementTabProps {
   /** When true, tab is visible; used to fetch data when user switches to this tab */
@@ -207,9 +213,12 @@ export default function ApiKeyManagementTab({
                         }}
                         bg={cardBg}
                       >
-                        <option value="all">All</option>
-                        <option value="active">Active</option>
-                        <option value="revoked">Revoked</option>
+                        <option value={API_KEY.FILTER_STATUS.ALL}>All</option>
+                        {API_KEY_FILTER_STATUS_LIST.map((s) => (
+                          <option key={s} value={s}>
+                            {formatApiKeyFilterStatusLabel(s)}
+                          </option>
+                        ))}
                       </Select>
                     </FormControl>
                   </TableFilterToolbar>
@@ -277,7 +286,7 @@ export default function ApiKeyManagementTab({
                         </Td>
                         <Td>
                           <Badge colorScheme={key.is_active ? "green" : "red"}>
-                            {key.is_active ? "Active" : "Revoked"}
+                            {formatApiKeyActiveLabel(key.is_active ?? false)}
                           </Badge>
                         </Td>
                         <Td fontSize="sm">
@@ -449,7 +458,7 @@ export default function ApiKeyManagementTab({
                     fontSize="sm"
                     p={2}
                   >
-                    {mgmt.selectedKeyForView.is_active ? "Active" : "Revoked"}
+                    {formatApiKeyActiveLabel(mgmt.selectedKeyForView.is_active ?? false)}
                   </Badge>
                 </Box>
                 <Box>
@@ -469,16 +478,6 @@ export default function ApiKeyManagementTab({
                     </Text>
                     <Text fontSize="sm">
                       {new Date(mgmt.selectedKeyForView.expires_at).toLocaleString()}
-                    </Text>
-                  </Box>
-                )}
-                {mgmt.selectedKeyForView.last_used && (
-                  <Box>
-                    <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
-                      Last Used
-                    </Text>
-                    <Text fontSize="sm">
-                      {new Date(mgmt.selectedKeyForView.last_used).toLocaleString()}
                     </Text>
                   </Box>
                 )}

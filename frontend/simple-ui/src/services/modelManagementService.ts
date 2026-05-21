@@ -1,5 +1,6 @@
 // Model Management service API client
 
+import { MODEL_VERSION } from '../config/constants';
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import {
@@ -185,7 +186,7 @@ export const publishModel = async (modelId: string): Promise<any> => {
     // Platform-core toggles status through the model management PATCH endpoint.
     const response = await apiService.patch(
       apiEndpoints.platform.models.base,
-      { modelId, versionStatus: 'ACTIVE' },
+      { modelId, versionStatus: MODEL_VERSION.STATUS.ACTIVE },
       { responseSchema: unknownPlatformPayloadSchema }
     );
     return response.data;

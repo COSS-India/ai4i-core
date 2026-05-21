@@ -1243,3 +1243,296 @@ export const TABS = {
   audioLanguageDetection: "audio-language-detection",
   ner: "ner",
 } as const;
+
+/** Tenant lifecycle and user statuses (auth-service). Canonical values are UPPERCASE. */
+export const TENANT = {
+  STATUS: {
+    PENDING: "PENDING",
+    ACTIVE: "ACTIVE",
+    SUSPENDED: "SUSPENDED",
+    DEACTIVATED: "DEACTIVATED",
+  },
+  USER_STATUS: {
+    ACTIVE: "ACTIVE",
+    INACTIVE: "INACTIVE",
+  },
+} as const;
+
+export type TenantStatusValue = (typeof TENANT.STATUS)[keyof typeof TENANT.STATUS];
+export type TenantUserStatusValue = (typeof TENANT.USER_STATUS)[keyof typeof TENANT.USER_STATUS];
+
+/** All tenant lifecycle statuses (static; used for filters and labels). */
+export const TENANT_STATUS_LIST: readonly TenantStatusValue[] = [
+  TENANT.STATUS.PENDING,
+  TENANT.STATUS.ACTIVE,
+  TENANT.STATUS.SUSPENDED,
+  TENANT.STATUS.DEACTIVATED,
+];
+
+/** Statuses an admin may set via PATCH (excludes PENDING). */
+export const TENANT_ADMIN_UPDATABLE_STATUSES: readonly TenantStatusValue[] = [
+  TENANT.STATUS.ACTIVE,
+  TENANT.STATUS.SUSPENDED,
+  TENANT.STATUS.DEACTIVATED,
+];
+
+/** Static tenant user statuses for filters and display. */
+export const TENANT_USER_STATUS_LIST: readonly TenantUserStatusValue[] = [
+  TENANT.USER_STATUS.ACTIVE,
+  TENANT.USER_STATUS.INACTIVE,
+];
+
+const TENANT_STATUS_LABELS: Record<TenantStatusValue, string> = {
+  [TENANT.STATUS.PENDING]: "Pending",
+  [TENANT.STATUS.ACTIVE]: "Active",
+  [TENANT.STATUS.SUSPENDED]: "Suspended",
+  [TENANT.STATUS.DEACTIVATED]: "Deactivated",
+};
+
+const TENANT_USER_STATUS_LABELS: Record<TenantUserStatusValue, string> = {
+  [TENANT.USER_STATUS.ACTIVE]: "Active",
+  [TENANT.USER_STATUS.INACTIVE]: "Inactive",
+};
+
+export function normalizeTenantStatus(status: string): TenantStatusValue {
+  return status.trim().toUpperCase() as TenantStatusValue;
+}
+
+/** Title-case label for tenant lifecycle status (UI only). */
+export function formatTenantStatusLabel(status: string | null | undefined): string {
+  if (!status?.trim()) return "—";
+  const normalized = normalizeTenantStatus(status);
+  return TENANT_STATUS_LABELS[normalized] ?? status;
+}
+
+/** Title-case label for tenant user status (UI only). */
+export function formatTenantUserStatusLabel(status: string | null | undefined): string {
+  if (!status?.trim()) return "—";
+  const upper = status.trim().toUpperCase();
+  if (upper in TENANT_USER_STATUS_LABELS) {
+    return TENANT_USER_STATUS_LABELS[upper as TenantUserStatusValue];
+  }
+  return status;
+}
+
+export function isTenantStatus(
+  actual: string | null | undefined,
+  expected: TenantStatusValue
+): boolean {
+  return normalizeTenantStatus(actual ?? "") === expected;
+}
+
+export function isTenantUserStatus(
+  actual: string | null | undefined,
+  expected: TenantUserStatusValue
+): boolean {
+  return (actual ?? "").trim().toUpperCase() === expected;
+}
+
+/** Chakra colorScheme for tenant / tenant-user status badges. */
+export function getTenantStatusColorScheme(status?: string | null): string {
+  if (isTenantStatus(status, TENANT.STATUS.ACTIVE)) return "green";
+  if (isTenantStatus(status, TENANT.STATUS.SUSPENDED)) return "orange";
+  if (isTenantStatus(status, TENANT.STATUS.DEACTIVATED)) return "red";
+  if (isTenantStatus(status, TENANT.STATUS.PENDING)) return "gray";
+  if (isTenantUserStatus(status, TENANT.USER_STATUS.INACTIVE)) return "red";
+  return "gray";
+}
+
+/** Action button label when changing tenant status. */
+export function getTenantStatusActionLabel(status: TenantStatusValue): string {
+  switch (status) {
+    case TENANT.STATUS.ACTIVE:
+      return "Activate";
+    case TENANT.STATUS.SUSPENDED:
+      return "Suspend";
+    case TENANT.STATUS.DEACTIVATED:
+      return "Deactivate";
+    default:
+      return formatTenantStatusLabel(status);
+  }
+}
+
+/** API key list filter + display (boolean is_active maps to active/revoked). */
+export const API_KEY = {
+  FILTER_STATUS: {
+    ALL: "all",
+    ACTIVE: "active",
+    REVOKED: "revoked",
+  },
+} as const;
+
+export type ApiKeyFilterStatusValue =
+  (typeof API_KEY.FILTER_STATUS)[keyof typeof API_KEY.FILTER_STATUS];
+
+export const API_KEY_FILTER_STATUS_LIST: readonly Exclude<
+  ApiKeyFilterStatusValue,
+  typeof API_KEY.FILTER_STATUS.ALL
+>[] = [API_KEY.FILTER_STATUS.ACTIVE, API_KEY.FILTER_STATUS.REVOKED];
+
+const API_KEY_FILTER_STATUS_LABELS: Record<
+  (typeof API_KEY.FILTER_STATUS)["ACTIVE"] | (typeof API_KEY.FILTER_STATUS)["REVOKED"],
+  string
+> = {
+  [API_KEY.FILTER_STATUS.ACTIVE]: "Active",
+  [API_KEY.FILTER_STATUS.REVOKED]: "Revoked",
+};
+
+export function formatApiKeyFilterStatusLabel(status: string): string {
+  const key = status.trim().toLowerCase() as keyof typeof API_KEY_FILTER_STATUS_LABELS;
+  return API_KEY_FILTER_STATUS_LABELS[key] ?? status;
+}
+
+export function formatApiKeyActiveLabel(isActive: boolean): string {
+  return isActive
+    ? API_KEY_FILTER_STATUS_LABELS[API_KEY.FILTER_STATUS.ACTIVE]
+    : API_KEY_FILTER_STATUS_LABELS[API_KEY.FILTER_STATUS.REVOKED];
+}
+
+export function isApiKeyFilterStatus(
+  actual: string,
+  expected: (typeof API_KEY.FILTER_STATUS)["ACTIVE"] | (typeof API_KEY.FILTER_STATUS)["REVOKED"]
+): boolean {
+  return actual.trim().toLowerCase() === expected;
+}
+
+/** Inference permission IDs → display names when GET /permissions is unavailable. */
+export const INFERENCE_PERMISSION_LABEL_BY_ID: Record<number, string> = {
+  60: "NMT.INFERENCE",
+  61: "ASR.INFERENCE",
+  62: "TTS.INFERENCE",
+  63: "LLM.INFERENCE",
+  64: "NER.INFERENCE",
+  65: "OCR.INFERENCE",
+  66: "TRANSLITERATION.INFERENCE",
+  67: "LANGUAGE-DETECTION.INFERENCE",
+  68: "LANGUAGE-DIARIZATION.INFERENCE",
+  69: "SPEAKER-DIARIZATION.INFERENCE",
+  70: "AUDIO-LANG-DETECTION.INFERENCE",
+  71: "PIPELINE.INFERENCE",
+};
+
+/** Model version lifecycle (model-management). */
+export const MODEL_VERSION = {
+  STATUS: {
+    ACTIVE: "ACTIVE",
+    DEPRECATED: "DEPRECATED",
+  },
+  FILTER: {
+    ALL: "",
+    ACTIVE: "active",
+    DEPRECATED: "deprecated",
+  },
+} as const;
+
+export const MODEL_VERSION_FILTER_LIST: readonly (typeof MODEL_VERSION.FILTER)[keyof typeof MODEL_VERSION.FILTER][] =
+  [MODEL_VERSION.FILTER.ACTIVE, MODEL_VERSION.FILTER.DEPRECATED];
+
+export function isModelVersionStatusActive(status?: string | null): boolean {
+  const normalized = (status ?? MODEL_VERSION.STATUS.ACTIVE).trim().toUpperCase();
+  return normalized === MODEL_VERSION.STATUS.ACTIVE || normalized === "";
+}
+
+export function isModelVersionFilterStatus(
+  actual: string,
+  expected: (typeof MODEL_VERSION.FILTER)[keyof typeof MODEL_VERSION.FILTER]
+): boolean {
+  return actual.trim().toLowerCase() === expected;
+}
+
+export function formatModelVersionStatusLabel(status?: string | null): string {
+  return isModelVersionStatusActive(status) ? "Active" : "Deprecated";
+}
+
+export function isModelVersionStatusDeprecated(status?: string | null): boolean {
+  if (!status?.trim()) return false;
+  return status.trim().toUpperCase() === MODEL_VERSION.STATUS.DEPRECATED;
+}
+
+export function formatModelVersionFilterLabel(filter: string): string {
+  if (isModelVersionFilterStatus(filter, MODEL_VERSION.FILTER.ACTIVE)) return "Active";
+  if (isModelVersionFilterStatus(filter, MODEL_VERSION.FILTER.DEPRECATED)) return "Deprecated";
+  return filter;
+}
+
+/**
+ * Inference task types (platform TaskTypeEnum).
+ * Static list for model/service registry task-type filters.
+ */
+export const MODEL_TASK_TYPE_LIST = [
+  "asr",
+  "nmt",
+  "tts",
+  "llm",
+  "transliteration",
+  "language-detection",
+  "speaker-diarization",
+  "audio-lang-detection",
+  "language-diarization",
+  "ocr",
+  "ner",
+] as const;
+
+export type ModelTaskTypeValue = (typeof MODEL_TASK_TYPE_LIST)[number];
+
+/** Display label for task-type filter options (matches table badges). */
+export function formatModelTaskTypeLabel(taskType: string): string {
+  return taskType.trim().toUpperCase();
+}
+
+/** Service publish state (services-management). */
+export const SERVICE_PUBLISH = {
+  FILTER: {
+    ALL: "",
+    PUBLISHED: "published",
+    UNPUBLISHED: "unpublished",
+  },
+  LABEL: {
+    PUBLISHED: "Published",
+    UNPUBLISHED: "Unpublished",
+  },
+} as const;
+
+export const SERVICE_PUBLISH_FILTER_LIST: readonly (typeof SERVICE_PUBLISH.FILTER)["PUBLISHED" | "UNPUBLISHED"][] =
+  [SERVICE_PUBLISH.FILTER.PUBLISHED, SERVICE_PUBLISH.FILTER.UNPUBLISHED];
+
+export function isServicePublishFilterStatus(
+  actual: string,
+  expected: (typeof SERVICE_PUBLISH.FILTER)["PUBLISHED"] | (typeof SERVICE_PUBLISH.FILTER)["UNPUBLISHED"]
+): boolean {
+  return actual.trim().toLowerCase() === expected;
+}
+
+export function formatServicePublishLabel(isPublished: boolean): string {
+  return isPublished ? SERVICE_PUBLISH.LABEL.PUBLISHED : SERVICE_PUBLISH.LABEL.UNPUBLISHED;
+}
+
+export function formatServicePublishFilterLabel(filter: string): string {
+  if (isServicePublishFilterStatus(filter, SERVICE_PUBLISH.FILTER.PUBLISHED)) {
+    return SERVICE_PUBLISH.LABEL.PUBLISHED;
+  }
+  if (isServicePublishFilterStatus(filter, SERVICE_PUBLISH.FILTER.UNPUBLISHED)) {
+    return SERVICE_PUBLISH.LABEL.UNPUBLISHED;
+  }
+  return filter;
+}
+
+/** Set-password token validation statuses (auth-service). */
+export const SET_PASSWORD_TOKEN = {
+  STATUS: {
+    VALID: "valid",
+    EXPIRED: "expired",
+    INVALID: "invalid",
+    USED: "used",
+  },
+} as const;
+
+export type SetPasswordTokenStatusValue =
+  (typeof SET_PASSWORD_TOKEN.STATUS)[keyof typeof SET_PASSWORD_TOKEN.STATUS];
+
+export function isSetPasswordTokenStatus(
+  actual: string,
+  expected: SetPasswordTokenStatusValue
+): boolean {
+  return actual.trim().toLowerCase() === expected;
+}

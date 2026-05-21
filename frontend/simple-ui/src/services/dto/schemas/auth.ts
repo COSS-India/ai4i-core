@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SET_PASSWORD_TOKEN } from '../../../config/constants';
 
 export const messageResponseSchema = z.object({
   message: z.string(),
@@ -63,7 +64,15 @@ export const logoutResponseSchema = z.object({
 
 export const setPasswordStatusResponseSchema = z.object({
   valid: z.boolean(),
-  status: z.enum(['valid', 'expired', 'invalid', 'used']),
+  status: z.preprocess(
+    (val) => (typeof val === 'string' ? val.trim().toLowerCase() : val),
+    z.enum([
+      SET_PASSWORD_TOKEN.STATUS.VALID,
+      SET_PASSWORD_TOKEN.STATUS.EXPIRED,
+      SET_PASSWORD_TOKEN.STATUS.INVALID,
+      SET_PASSWORD_TOKEN.STATUS.USED,
+    ])
+  ),
   message: z.string(),
 });
 
@@ -96,8 +105,6 @@ const apiKeyResponseRawSchema = z
     is_revoked: z.boolean().optional(),
     created_at: z.string().nullable().optional(),
     expires_at: z.string().nullable().optional(),
-    last_used: z.string().nullable().optional(),
-    updated_at: z.string().nullable().optional(),
   })
   .passthrough();
 
@@ -110,8 +117,6 @@ function normalizeApiKeyResponse<T extends z.infer<typeof apiKeyResponseRawSchem
     is_revoked: d.is_revoked ?? !isActive,
     created_at: d.created_at ?? undefined,
     expires_at: d.expires_at ?? undefined,
-    last_used: d.last_used ?? undefined,
-    updated_at: d.updated_at ?? undefined,
   };
 }
 

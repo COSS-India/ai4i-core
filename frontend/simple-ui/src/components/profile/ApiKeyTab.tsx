@@ -17,6 +17,7 @@ import {
   Badge,
 } from "@chakra-ui/react";
 import type { APIKeyResponse } from "../../types/auth";
+import { permissionLabelWithFallback } from "../../utils/apiKeyUtils";
 
 export interface ApiKeyTabProps {
   apiKeys: APIKeyResponse[];
@@ -36,8 +37,8 @@ export default function ApiKeyTab({
   const inputReadOnlyBg = useColorModeValue("gray.50", "gray.700");
 
   const sortedApiKeys = [...apiKeys].sort((a, b) => {
-    const dateA = new Date(a.created_at).getTime();
-    const dateB = new Date(b.created_at).getTime();
+    const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
     return dateB - dateA;
   });
 
@@ -84,9 +85,11 @@ export default function ApiKeyTab({
                                 {key.is_active ? "Active" : "Inactive"}
                               </Badge>
                             </HStack>
-                            <Text fontSize="sm" color="gray.600">
-                              Created: {new Date(key.created_at).toLocaleString()}
-                            </Text>
+                            {key.created_at && (
+                              <Text fontSize="sm" color="gray.600">
+                                Created: {new Date(key.created_at).toLocaleString()}
+                              </Text>
+                            )}
                             {key.expires_at && (
                               <Text fontSize="sm" color="gray.600">
                                 Expires: {new Date(key.expires_at).toLocaleString()}
@@ -95,9 +98,9 @@ export default function ApiKeyTab({
                             {key.permissions.length > 0 && (
                               <HStack flexWrap="wrap" spacing={2}>
                                 <Text fontSize="xs" color="gray.500">Permissions:</Text>
-                                {key.permissions.map((perm) => (
-                                  <Badge key={perm} colorScheme="blue" fontSize="xs">
-                                    {perm}
+                                {key.permissions.map((permId) => (
+                                  <Badge key={permId} colorScheme="blue" fontSize="xs">
+                                    {permissionLabelWithFallback(permId, [])}
                                   </Badge>
                                 ))}
                               </HStack>

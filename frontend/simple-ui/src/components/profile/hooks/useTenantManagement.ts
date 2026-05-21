@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import { forceFrontendSessionEnd } from "../../../hooks/useAuth";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import * as tenantService from "../../../services/tenantService";
+import { TENANT, isTenantStatus, isTenantUserStatus } from "../../../config/constants";
 import { extractErrorInfo } from "../../../utils/errorHandler";
 import type { TenantStatus, TenantUserStatus, TenantView, TenantUserView } from "../../../types/tenant";
 import type {
@@ -14,9 +15,6 @@ import type {
   StatusUpdateTargetUnion,
   DeleteUserTarget,
 } from "../types";
-
-/** Tenant lifecycle status — values mirror the auth-service enum. */
-const TENANT_STATUS_VALUES: TenantStatus[] = ["ACTIVE", "SUSPENDED", "DEACTIVATED"];
 
 function isValidEmailFormat(email: string): boolean {
   const trimmed = (email || "").trim();
@@ -94,7 +92,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   // Status update confirmation
   const [statusUpdateTarget, setStatusUpdateTarget] = useState<StatusUpdateTargetUnion | null>(null);
-  const [statusUpdateNewStatus, setStatusUpdateNewStatus] = useState<TenantStatus | TenantUserStatus>("ACTIVE");
+  const [statusUpdateNewStatus, setStatusUpdateNewStatus] = useState<TenantStatus | TenantUserStatus>(
+    TENANT.STATUS.ACTIVE
+  );
   const [isStatusDialogOpen, setIsStatusDialogOpen] = useState(false);
   const [isSubmittingStatus, setIsSubmittingStatus] = useState(false);
 
@@ -114,7 +114,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const filteredTenants = useMemo(
     () =>
       tenants.filter((t) => {
-        if (tenantFilterStatus !== "all" && t.status !== tenantFilterStatus) return false;
+        if (
+          tenantFilterStatus !== "all" &&
+          !isTenantStatus(t.status, tenantFilterStatus as TenantStatus)
+        ) {
+          return false;
+        }
         const search = tenantSearch.trim().toLowerCase();
         if (
           search &&
@@ -133,7 +138,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       tenantUsers.filter((u) => {
         if (userFilterStatus !== "all") {
           const isActive = u.is_active && (u.is_tenant_active ?? true);
-          const matches = userFilterStatus === "ACTIVE" ? isActive : !isActive;
+          const matches = isTenantUserStatus(userFilterStatus, TENANT.USER_STATUS.ACTIVE)
+            ? isActive
+            : !isActive;
           if (!matches) return false;
         }
         const search = userSearch.trim().toLowerCase();
@@ -488,7 +495,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const handleOpenUserStatus = (u: TenantUserView, newStatus: TenantUserStatus) => {
     const currentStatus: TenantUserStatus =
-      u.is_active && (u.is_tenant_active ?? true) ? "ACTIVE" : "INACTIVE";
+      u.is_active && (u.is_tenant_active ?? true)
+        ? TENANT.USER_STATUS.ACTIVE
+        : TENANT.USER_STATUS.INACTIVE;
     setStatusUpdateTarget({
       type: "user",
       tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
@@ -511,7 +520,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         toast({ title: "Tenant status updated", status: "success", isClosable: true });
         await refreshTenantAndUserLists(statusUpdateTarget.tenant_id);
       } else {
-        const isActive = statusUpdateNewStatus === "ACTIVE";
+        const isActive = isTenantUserStatus(statusUpdateNewStatus, TENANT.USER_STATUS.ACTIVE);
         await tenantService.updateUserStatus({
           tenant_id: statusUpdateTarget.tenant_id,
           user_id: statusUpdateTarget.user_id,
@@ -671,7 +680,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     userSearch,
     setUserSearch,
     handleResetTenantFilters,
-    TENANT_STATUS_VALUES,
     // Create tenant
     isTenantModalOpen,
     tenantForm,

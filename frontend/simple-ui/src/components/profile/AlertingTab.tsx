@@ -81,6 +81,7 @@ import {
   SearchIcon,
   LockIcon,
 } from "@chakra-ui/icons";
+import { isTenantStatus, TENANT } from "../../config/constants";
 import * as tenantService from "../../services/tenantService";
 import type { TenantView } from "../../types/tenant";
 import type { NotificationReceiver } from "../../types/alerting";
@@ -272,7 +273,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     setIsLoadingTenants(true);
     try {
       const res = await tenantService.listTenants();
-      setTenants((res.tenants || []).filter((t) => t.status === "ACTIVE"));
+      setTenants(
+        (res.tenants || []).filter((t) => isTenantStatus(t.status, TENANT.STATUS.ACTIVE))
+      );
     } catch {
       // ignore
     } finally {

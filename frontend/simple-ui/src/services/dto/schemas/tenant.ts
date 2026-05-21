@@ -1,6 +1,15 @@
 import { z } from 'zod';
+import { TENANT } from '../../../config/constants';
 
-export const tenantStatusSchema = z.enum(['PENDING', 'ACTIVE', 'SUSPENDED', 'DEACTIVATED']);
+const tenantStatusValues = Object.values(TENANT.STATUS) as [
+  (typeof TENANT.STATUS)[keyof typeof TENANT.STATUS],
+  ...(typeof TENANT.STATUS)[keyof typeof TENANT.STATUS][],
+];
+
+export const tenantStatusSchema = z.preprocess(
+  (val) => (typeof val === 'string' ? val.trim().toUpperCase() : val),
+  z.enum(tenantStatusValues)
+);
 
 export const tenantViewSchema = z
   .object({
