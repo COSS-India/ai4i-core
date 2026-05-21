@@ -66,11 +66,9 @@ class TaskFactory:
             if task_type == "NMT":
                 try:
                     from services.nmt_service import NMTTaskService
-                    from inference.inference_server_resolver import InferenceServerResolver
                     
-                    # Create resolver instance
-                    resolver = InferenceServerResolver()
-                    service = NMTTaskService(inference_server_resolver=resolver)  # type: ignore
+                    # Resolver is now initialized in BaseTaskService
+                    service = NMTTaskService()  # type: ignore
                     self._service_cache[task_type] = service  # type: ignore
                     return service  # type: ignore
                 except ImportError:

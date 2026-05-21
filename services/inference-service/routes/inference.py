@@ -94,6 +94,57 @@ async def run_inference(
         logger.error(f"✗ Inference failed: {str(e)}, duration_ms={duration_ms:.2f}ms")
         raise HTTPException(status_code=400, detail=str(e))
 
+@router.post(
+    "/nmt/inference",
+    response_model=GenericInferenceResponse,
+    summary="NMT Inference Endpoint",
+    description="Route inference requests to NMT TaskService",
+)
+async def run_nmt_inference(
+    payload: Dict[str, Any],
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+) -> Dict[str, Any]:
+    """
+    Dedicated endpoint for NMT inference requests.
+    Routes to NMT TaskService via Orchestrator.
+
+    Args:
+        payload: Raw request payload dictionary
+        orchestrator: Orchestrator instance (dependency-injected)   
+    Returns:
+        GenericInferenceResponse with NMT output    
+    Raises:
+        HTTPException: If request validation or execution fails
+    """ 
+    import time
+    start_time = time.time()
+    
+    try:
+        task_type = payload.get("task_type", "").upper()
+        if not task_type:            
+            task_type = "NMT"
+            request_payload = payload.copy()
+            request_payload["task_type"] = task_type
+        else:
+            request_payload = payload
+        
+        logger.info(f"Inference request: task_type={task_type}")
+        
+        # Route through orchestrator
+        result = await orchestrator.route_inference(
+            payload=request_payload
+        )
+        
+        duration_ms = (time.time() - start_time) * 1000
+        logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
+        
+        return result
+        
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"✗ Inference failed: {str(e)}, duration_ms={duration_ms:.2f}ms")
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 @router.get(
     "/inference/health",
@@ -130,12 +181,6 @@ async def list_available_tasks(
     """
     return {"tasks": ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "TRANSLITERATION", "AUDIO_LANG_DETECTION", "SMR"]}
 
-
-@router.get(
-    "/inference/tasks/{task_type}",
-    summary="Get Task Information",
-    description="Get detailed information about specific task type",
-)
 async def get_task_info(
     task_type: str,
 ) -> Dict[str, Any]:
