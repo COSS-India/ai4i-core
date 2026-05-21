@@ -9,11 +9,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc libpq-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
-# ── Install local shared library (not on PyPI) ──
-COPY libs/ai4icore_core /libs/ai4icore_core
-RUN pip install --no-cache-dir -e /libs/ai4icore_core
-
-# ── Install service dependencies ──
+# ── Install service dependencies (ai4icore-core pulled from PyPI via requirements.txt) ──
 COPY services/platform-core-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
