@@ -55,25 +55,25 @@ class TestTenantStatusTransitions:
 
 class TestSyncTenantUsersForStatus:
     @pytest.mark.asyncio
-    async def test_active_restores_admin_suspended_only(self) -> None:
+    async def test_active_unlocks_tenant_users(self) -> None:
         user_repo = AsyncMock()
         updated_by = uuid4()
         await sync_tenant_users_for_status(
             user_repo, 1, TenantStatus.ACTIVE, updated_by=updated_by
         )
-        user_repo.restore_admin_suspended_in_tenant.assert_awaited_once_with(
+        user_repo.unlock_tenant_users_for_status.assert_awaited_once_with(
             1, updated_by=updated_by
         )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", [TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED])
-    async def test_suspended_or_deactivated_applies_admin_suspend(
+    async def test_suspended_or_deactivated_locks_tenant_users(
         self, status: TenantStatus
     ) -> None:
         user_repo = AsyncMock()
         updated_by = uuid4()
         await sync_tenant_users_for_status(user_repo, 2, status, updated_by=updated_by)
-        user_repo.apply_admin_suspend_to_tenant.assert_awaited_once_with(
+        user_repo.lock_tenant_users_for_status.assert_awaited_once_with(
             2, updated_by=updated_by
         )
 
@@ -81,5 +81,5 @@ class TestSyncTenantUsersForStatus:
     async def test_pending_does_not_update_users(self) -> None:
         user_repo = AsyncMock()
         await sync_tenant_users_for_status(user_repo, 3, TenantStatus.PENDING)
-        user_repo.restore_admin_suspended_in_tenant.assert_not_awaited()
-        user_repo.apply_admin_suspend_to_tenant.assert_not_awaited()
+        user_repo.unlock_tenant_users_for_status.assert_not_awaited()
+        user_repo.lock_tenant_users_for_status.assert_not_awaited()

@@ -7,11 +7,11 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import USERNAME_MAX_LENGTH
-from app.models.user import User, UserSuspensionTag
+from app.models.user import User
 from app.repositories.base import BaseRepository
 
 
@@ -84,29 +84,14 @@ class UserRepository(BaseRepository):
         )
         return list(result.scalars().all())
 
-    async def apply_admin_suspend_to_tenant(
+    async def lock_tenant_users_for_status(
         self,
         tenant_id: int,
         *,
         updated_by: Optional[UUID] = None,
     ) -> None:
-        """Suspend all tenant users when adopter admin suspends/deactivates the tenant.
-
-        Users already tagged ``TENANT_SUSPENDED`` keep that tag so tenant-level
-        reactivation does not restore them; only ``ADMIN_SUSPENDED`` users are
-        restored when the tenant becomes ACTIVE again.
-        """
-        values: dict = {
-            "is_active": False,
-            "is_tenant_active": False,
-            "suspension_tag": case(
-                (
-                    User.suspension_tag == UserSuspensionTag.TENANT_SUSPENDED,
-                    User.suspension_tag,
-                ),
-                else_=UserSuspensionTag.ADMIN_SUSPENDED,
-            ),
-        }
+        """When tenant is SUSPENDED/DEACTIVATED: clear tenant access only (``is_tenant_active``)."""
+        values: dict = {"is_tenant_active": False}
         if updated_by is not None:
             values["updated_by"] = updated_by
         await self._db.execute(
@@ -116,27 +101,19 @@ class UserRepository(BaseRepository):
         )
         await self._db.flush()
 
-    async def restore_admin_suspended_in_tenant(
+    async def unlock_tenant_users_for_status(
         self,
         tenant_id: int,
         *,
         updated_by: Optional[UUID] = None,
     ) -> None:
-        """Reactivate only users suspended by adopter admin when the tenant is restored."""
-        values: dict = {
-            "is_active": True,
-            "is_tenant_active": True,
-            "suspension_tag": None,
-        }
+        """When tenant becomes ACTIVE: restore tenant access (``is_tenant_active``) for all users."""
+        values: dict = {"is_tenant_active": True}
         if updated_by is not None:
             values["updated_by"] = updated_by
         await self._db.execute(
             update(User)
-            .where(
-                User.tenant_id == tenant_id,
-                User.is_delete.isnot(True),
-                User.suspension_tag == UserSuspensionTag.ADMIN_SUSPENDED,
-            )
+            .where(User.tenant_id == tenant_id, User.is_delete.isnot(True))
             .values(**values)
         )
         await self._db.flush()

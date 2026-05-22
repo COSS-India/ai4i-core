@@ -12,8 +12,7 @@ file list): migrates labels to PENDING/ACTIVE/… and sets DEFAULT 'PENDING'.
 Chain slice:
   … → c4e8f1a2b3d0 (tenant status enum + default)
     → aca4be0874b3 (no-op, same autogenerate noise)
-    → 96903e145eea (users.suspension_tag)
-    → 53a41e6233f1 (users.creation_type → VARCHAR)
+    → 53a41e6233f1 (users.creation_type_enum + tenant label)
     → 5f775ba90435 (this file, no-op)
 
 See MIGRATION_CHAIN.md in this folder for the full ordered list.

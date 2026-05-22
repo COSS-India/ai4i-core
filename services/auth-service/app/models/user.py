@@ -5,32 +5,20 @@ User ORM model.
 import enum
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.models import Base
-from app.models.enum_columns import assert_enum_values_fit_varchar, varchar_enum_type
 
 
 class CreationType(str, enum.Enum):
-    """Python-only enum; persisted as VARCHAR (``native_enum=False``)."""
+    """User account origin; persisted as PostgreSQL ``creation_type_enum``."""
 
     DEFAULT = "default" # for normal users
     GOOGLE = "google" # for google users
     TENANT = "tenant" # for tenant users
-
-
-class UserSuspensionTag(str, enum.Enum):
-    """Why a user is suspended — used to restore selectively on tenant reactivation."""
-
-    TENANT_SUSPENDED = "TENANT_SUSPENDED"
-    ADMIN_SUSPENDED = "ADMIN_SUSPENDED"
-
-
-assert_enum_values_fit_varchar(CreationType)
-assert_enum_values_fit_varchar(UserSuspensionTag)
 
 
 class User(Base):
@@ -53,9 +41,12 @@ class User(Base):
     timezone = Column(String(50), server_default="UTC")
     is_delete = Column(Boolean, default=False, nullable=True)
     is_tenant_active = Column(Boolean, default=True, nullable=True)
-    suspension_tag = Column(varchar_enum_type(UserSuspensionTag), nullable=True)
     creation_type = Column(
-        varchar_enum_type(CreationType),
+        Enum(
+            CreationType,
+            name="creation_type_enum",
+            values_callable=lambda x: [e.value for e in x],
+        ),
         nullable=True,
         server_default=CreationType.DEFAULT.value,
     )

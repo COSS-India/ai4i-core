@@ -27,7 +27,7 @@ from app.core.exceptions import (
 )
 from app.models.role_name import RoleName, role_name_to_str
 from app.models.tenant import Tenant, TenantStatus
-from app.models.user import User, CreationType, UserSuspensionTag
+from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.tenant_repository import TenantRepository
@@ -103,13 +103,13 @@ async def sync_tenant_users_for_status(
     status: TenantStatus,
     updated_by: Optional[UUID] = None,
 ) -> None:
-    """Apply tenant status side-effects to all users in the tenant."""
+    """Sync ``is_tenant_active`` for all tenant users when platform tenant status changes."""
     if status == TenantStatus.ACTIVE:
-        await user_repo.restore_admin_suspended_in_tenant(
+        await user_repo.unlock_tenant_users_for_status(
             tenant_id, updated_by=updated_by
         )
     elif status in (TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED):
-        await user_repo.apply_admin_suspend_to_tenant(tenant_id, updated_by=updated_by)
+        await user_repo.lock_tenant_users_for_status(tenant_id, updated_by=updated_by)
 
 
 _API_KEY_SYNC_MAX_ATTEMPTS = 3
@@ -595,9 +595,9 @@ class TenantService:
                     message="Tenant users can only be suspended while the tenant is active.",
                     code="TENANT_NOT_ACTIVE",
                 )
-            payload["suspension_tag"] = UserSuspensionTag.TENANT_SUSPENDED
+            payload["is_active"] = False
         elif _payload_activates_user(payload):
-            payload["suspension_tag"] = None
+            payload.setdefault("is_active", True)
 
         await self._users.update(target, payload)
         await self._users.save_and_refresh(target)
@@ -617,7 +617,6 @@ class TenantService:
                 "is_delete": True,
                 "is_active": False,
                 "is_tenant_active": False,
-                "suspension_tag": None,
                 "updated_by": current_user.id,
             },
         )
