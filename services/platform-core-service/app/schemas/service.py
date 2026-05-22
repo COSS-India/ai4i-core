@@ -51,6 +51,7 @@ class ServiceCreateRequest(BaseSchema):
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = False
+    adapter_config: Optional[Dict[str, Any]] = None
 
     @field_validator("name")
     @classmethod
@@ -87,6 +88,7 @@ class ServiceUpdateRequest(BaseSchema):
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = None
     policy: Optional[ServicePolicy] = None
+    adapter_config: Optional[Dict[str, Any]] = None
 
     @field_validator("inferenceServerType", mode="before")
     @classmethod
@@ -119,6 +121,7 @@ class ServiceResponse(BaseSchema):
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, Any]] = None
     policy: Optional[Dict[str, Any]] = None
+    adapter_config: Optional[Dict[str, Any]] = None
     isPublished: bool = False
     publishedAt: Optional[str] = None
     unpublishedAt: Optional[str] = None

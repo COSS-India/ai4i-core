@@ -1,5 +1,5 @@
 # ── Shared platform library (consolidated) ──
-ai4icore-core>=1.1.3
+ai4icore-core>=1.1.4
 
 # ── Core ──
 fastapi>=0.104.0

@@ -1,7 +1,7 @@
 """NMT (Neural Machine Translation) TaskService implementation."""
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, cast
 
 from pydantic import BaseModel
 
@@ -12,7 +12,7 @@ from models.schemas.nmt import (
     NMTConfig,
 )
 from inference_models.nmt_inference_model import NMTInferenceModel  # type: ignore[import]
-from utils.http_client import HTTPServiceClient
+from ai4icore_core.telemetry import async_trace_stage
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,7 @@ class NMTTaskService(BaseTaskService):
         except Exception as e:
             raise ValueError(f"NMT: Failed to deserialize payload: {str(e)}")
 
+    @async_trace_stage("validate")
     async def validate_request(self, request: BaseModel) -> None:
         await super().validate_request(request)
 
@@ -84,7 +85,7 @@ class NMTTaskService(BaseTaskService):
             raise ValueError("NMT: sourceLanguage and targetLanguage cannot be the same")
 
         self.logger.info(f"NMT request validated: {source_lang} -> {target_lang} ({len(input_items)} inputs)")
-
+    @async_trace_stage("preprocess_input")
     async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
         input_list = []
 
@@ -103,6 +104,7 @@ class NMTTaskService(BaseTaskService):
         self.logger.debug(f"NMT preprocessed {len(cleaned)} inputs")
         return cleaned
 
+    @async_trace_stage("triton_inference")
     async def run_inference(
         self,
         request: BaseModel,
@@ -117,17 +119,15 @@ class NMTTaskService(BaseTaskService):
         # Execute Triton inference (service already resolved by Orchestrator at construction time)
         result = await self.execute_triton_inference(config, NMTInferenceModel)
 
-        response_data = result["response_data"]
-        source_texts = result["source_texts"]
+        postprocessed = await self.postprocess_output(
+            result["response_data"], result["source_texts"]
+        )
 
-        # Post-process output and pair with source inputs
-        postprocessed = await self.postprocess_output(response_data, source_texts)
-
-        # Create and return response
         response = NMTInferenceResponse(
             output=postprocessed['output'],
             smr_response=None,
         )
+
 
         self.logger.info(
             f"NMT inference completed successfully: service_id={result['service_id']}, "
@@ -151,10 +151,6 @@ class NMTTaskService(BaseTaskService):
         Returns:
             Dict with 'output' key containing List[TranslationOutput].
         """
-        # Base class call is intentionally skipped here.
-        # It only validates non-empty and returns input unchanged — not needed for typed output building.
-        # postprocessed = await super().postprocess_output(response_items)
-
         output_list = []
         for idx, item in enumerate(response_items):
             target_text = item.get("target", "")

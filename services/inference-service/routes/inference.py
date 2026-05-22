@@ -105,40 +105,27 @@ async def run_nmt_inference(
 ) -> Dict[str, Any]:
     """
     Dedicated endpoint for NMT inference requests.
-    Routes to NMT TaskService via Orchestrator.
-
-    Args:
-        payload: Raw request payload dictionary
-        orchestrator: Orchestrator instance (dependency-injected)   
-    Returns:
-        GenericInferenceResponse with NMT output    
-    Raises:
-        HTTPException: If request validation or execution fails
-    """ 
+    Sets task_type to NMT if not provided in payload, then routes via Orchestrator.
+    """
     import time
     start_time = time.time()
-    
+
     try:
-        task_type = payload.get("task_type", "").upper()
-        if not task_type:            
-            task_type = "NMT"
-            request_payload = payload.copy()
-            request_payload["task_type"] = task_type
+        if not payload.get("task_type"):
+            request_payload = {**payload, "task_type": "NMT"}
         else:
             request_payload = payload
-        
+
+        task_type = request_payload["task_type"].upper()
         logger.info(f"Inference request: task_type={task_type}")
-        
-        # Route through orchestrator
-        result = await orchestrator.route_inference(
-            payload=request_payload
-        )
-        
+
+        result = await orchestrator.route_inference(payload=request_payload)
+
         duration_ms = (time.time() - start_time) * 1000
         logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
-        
+
         return result
-        
+
     except Exception as e:
         duration_ms = (time.time() - start_time) * 1000
         logger.error(f"✗ Inference failed: {str(e)}, duration_ms={duration_ms:.2f}ms")
