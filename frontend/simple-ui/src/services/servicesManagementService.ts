@@ -85,6 +85,35 @@ export const listServices = async (): Promise<Service[]> => {
  * List services with server-side pagination, filtering, and search.
  * Reads the X-Total-Count response header for the accurate total count.
  */
+const REGISTRY_FETCH_PAGE_SIZE = 100;
+const MAX_REGISTRY_FETCH_PAGES = 500;
+
+/**
+ * Fetches every service matching list filters by walking paginated API pages.
+ * Used by the registry UI so name search and table pagination stay consistent (frontend-only).
+ */
+export const fetchAllServicesMatchingFilters = async (
+  params: Pick<ServiceListParams, 'taskType' | 'isPublished' | 'createdBy'> = {}
+): Promise<PaginatedServices> => {
+  const items: Service[] = [];
+  let total = 0;
+  let offset = 0;
+
+  for (let page = 0; page < MAX_REGISTRY_FETCH_PAGES; page++) {
+    const result = await listServicesPaginated({
+      ...params,
+      offset,
+      limit: REGISTRY_FETCH_PAGE_SIZE,
+    });
+    total = result.total;
+    items.push(...result.items);
+    if (items.length >= total || result.items.length === 0) break;
+    offset += REGISTRY_FETCH_PAGE_SIZE;
+  }
+
+  return { items, total, offset: 0, limit: null };
+};
+
 export const listServicesPaginated = async (params: ServiceListParams = {}): Promise<PaginatedServices> => {
   try {
     const queryParams: Record<string, any> = {};
@@ -154,7 +183,7 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
       endpoint: serviceData.endpoint || serviceData.endpoint_url,
       api_key: serviceData.api_key || serviceData.apiKey || '',
     };
-    
+
     // Add optional healthStatus if provided
     if (serviceData.healthStatus || serviceData.status) {
       apiPayload.healthStatus = serviceData.healthStatus || {
@@ -162,7 +191,7 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
         lastUpdated: new Date().toISOString(),
       };
     }
-    
+
     // The apiClient interceptor will automatically add:
     // - Content-Type: application/json
     // - Accept: application/json
@@ -192,9 +221,9 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
     // For publish/unpublish, only send serviceId and isPublished
     // For other updates, send all fields
     const isPublishUpdate = serviceData.serviceId && serviceData.hasOwnProperty('isPublished') && Object.keys(serviceData).length <= 2;
-    
+
     let apiPayload: any;
-    
+
     if (isPublishUpdate) {
       // Publish/unpublish: only send serviceId and isPublished
       apiPayload = {
@@ -214,7 +243,7 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
         endpoint: serviceData.endpoint || serviceData.endpoint_url,
         api_key: serviceData.api_key || serviceData.apiKey,
       };
-      
+
       // Add optional healthStatus if provided
       if (serviceData.healthStatus || serviceData.status) {
         apiPayload.healthStatus = serviceData.healthStatus || {
@@ -222,13 +251,13 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
           lastUpdated: new Date().toISOString(),
         };
       }
-      
+
       // Add isPublished if provided
       if (serviceData.hasOwnProperty('isPublished')) {
         apiPayload.isPublished = serviceData.isPublished;
       }
     }
-    
+
     const response = await apiService.patch(
       apiEndpoints.platform.services.base,
       apiPayload,
@@ -260,4 +289,3 @@ export const deleteService = async (serviceId: string): Promise<any> => {
     throw error;
   }
 };
-

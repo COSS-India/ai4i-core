@@ -149,18 +149,5 @@ export interface ModalProps {
   children: React.ReactNode;
 }
 
-// Table Types
-export interface TableColumn<T> {
-  key: keyof T;
-  label: string;
-  sortable?: boolean;
-  render?: (value: any, item: T) => React.ReactNode;
-}
-
-export interface TableProps<T> {
-  data: T[];
-  columns: TableColumn<T>[];
-  loading?: boolean;
-  onSort?: (key: keyof T, direction: 'asc' | 'desc') => void;
-  onRowClick?: (item: T) => void;
-}
+// Table Types — use AdminDataTable + AdminTableColumn from components/common/AdminDataTable.tsx
+export type { AdminTableColumn } from "../components/common/AdminDataTable";

@@ -17,6 +17,7 @@ export const registerResponseSchema = z.object({
   message: z.string(),
 });
 
+/** GET /me and GET /users/{id} — full profile. */
 export const userSchema = z
   .object({
     user_id: z.string(),
@@ -25,6 +26,20 @@ export const userSchema = z
     timezone: z.string(),
     is_active: z.boolean(),
     created_at: z.string(),
+  })
+  .passthrough();
+
+/** GET /users list items — compact shape (no timezone/created_at). */
+export const userListItemSchema = z
+  .object({
+    user_id: z.string(),
+    email: z.string(),
+    username: z.string(),
+    is_active: z.boolean(),
+    full_name: z.string().nullable().optional(),
+    phone_number: z.string().nullable().optional(),
+    is_tenant_active: z.boolean().nullable().optional(),
+    roles: z.array(z.string()).optional(),
   })
   .passthrough();
 
