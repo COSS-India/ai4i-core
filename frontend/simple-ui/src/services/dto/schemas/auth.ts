@@ -10,34 +10,36 @@ export const resetPasswordResponseSchema = z.object({
   sign_out_other_sessions: z.boolean().optional(),
 });
 
+/** POST /auth/register — backend returns `user_id` (UUID string), not numeric `id`. */
 export const registerResponseSchema = z.object({
-  id: z.coerce.number(),
+  user_id: z.coerce.string(),
   email: z.string(),
   username: z.string(),
   message: z.string(),
 });
 
-/** GET /me and GET /users/{id} — full profile. */
+/** Full profile from GET /auth/me (and GET /auth/users/{id}). */
 export const userSchema = z
   .object({
     user_id: z.string(),
     email: z.string(),
     username: z.string(),
-    timezone: z.string(),
+    timezone: z.string().optional(),
     is_active: z.boolean(),
-    created_at: z.string(),
+    created_at: z.string().optional(),
   })
   .passthrough();
 
 /** GET /users list items — compact shape (no timezone/created_at). */
 export const userListItemSchema = z
   .object({
-    user_id: z.string(),
+    user_id: z.coerce.string(),
     email: z.string(),
     username: z.string(),
     is_active: z.boolean(),
     full_name: z.string().nullable().optional(),
     phone_number: z.string().nullable().optional(),
+    creation_type: z.string().nullable().optional(),
     is_tenant_active: z.boolean().nullable().optional(),
     roles: z.array(z.string()).optional(),
   })
@@ -176,4 +178,9 @@ export const permissionSchema = z
 
 export const permissionListSchema = z.array(permissionSchema);
 
-export const guestServicesListSchema = z.array(z.record(z.unknown()));
+export const guestServicesListSchema = z.union([
+  z.array(z.union([z.string(), z.record(z.unknown())])),
+  z.object({
+    services: z.array(z.union([z.string(), z.record(z.unknown())])),
+  }),
+]);

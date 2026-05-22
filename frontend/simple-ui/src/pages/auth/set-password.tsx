@@ -29,7 +29,8 @@ import React, { useEffect, useState } from "react";
 import { SET_PASSWORD_TOKEN, isSetPasswordTokenStatus } from "../../config/constants";
 import { authService } from "../../services/authService";
 import { SetPasswordStatusResponse } from "../../types/auth";
-import PasswordRequirements, { passwordPasses } from "../../components/auth/password/PasswordRequirements";
+import { PASSWORD_POLICY } from "../../config/constants";
+import PasswordRequirements, { getPasswordValidationError, passwordPasses } from "../../components/auth/password/PasswordRequirements";
 
 type Phase =
   | { kind: "loading" }
@@ -152,8 +153,9 @@ const SetPasswordPage: React.FC = () => {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!passwordPasses(newPassword)) {
-      setPhase({ kind: "error", message: "Password does not meet all requirements." });
+    const passwordError = getPasswordValidationError(newPassword);
+    if (passwordError) {
+      setPhase({ kind: "error", message: passwordError });
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -246,8 +248,8 @@ const SetPasswordPage: React.FC = () => {
                             value={newPassword}
                             onChange={(e) => setNewPassword(e.target.value)}
                             autoComplete="new-password"
-                            minLength={8}
-                            maxLength={64}
+                            minLength={PASSWORD_POLICY.MIN_LENGTH}
+                            maxLength={PASSWORD_POLICY.MAX_LENGTH}
                           />
                           <InputRightElement width="auto" pr={2}>
                             <Button
@@ -269,8 +271,8 @@ const SetPasswordPage: React.FC = () => {
                           value={confirmPassword}
                           onChange={(e) => setConfirmPassword(e.target.value)}
                           autoComplete="new-password"
-                          minLength={8}
-                          maxLength={64}
+                          minLength={PASSWORD_POLICY.MIN_LENGTH}
+                          maxLength={PASSWORD_POLICY.MAX_LENGTH}
                         />
                         {confirmPassword.length > 0 && confirmPassword !== newPassword && (
                           <Text color="red.500" fontSize="sm" mt={1}>

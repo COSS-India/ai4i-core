@@ -23,6 +23,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
 import type { User } from "../types/auth";
 import UserDetailsTab from "../components/profile/UserDetailsTab";
+import ChangePasswordTab from "../components/profile/ChangePasswordTab";
 import RolesTab from "../components/profile/RolesTab";
 import { listTenants, listUsers } from "../services/tenantService";
 import { resolveDefaultTenantId, tenantUsersToAuthUsers } from "../utils/defaultTenant";
@@ -82,6 +83,7 @@ const ProfilePage: React.FC = () => {
   const tabConfig = React.useMemo(() => {
     const tabs: { id: string; label: string; show: boolean }[] = [
       { id: "user-details", label: "User Details", show: true },
+      { id: "change-password", label: "Change Password", show: true },
       { id: "roles", label: "Roles", show: isAdmin },
     ];
     return tabs.filter((t) => t.show);
@@ -158,6 +160,7 @@ const ProfilePage: React.FC = () => {
                 {tabConfig.map((t) => (
                   <TabPanel key={t.id} px={0} pt={6}>
                     {t.id === "user-details" && <UserDetailsTab />}
+                    {t.id === "change-password" && <ChangePasswordTab />}
                     {t.id === "roles" && (
                       <RolesTab
                         users={users}

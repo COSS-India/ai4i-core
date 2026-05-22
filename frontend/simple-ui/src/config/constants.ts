@@ -1517,6 +1517,12 @@ export function formatServicePublishFilterLabel(filter: string): string {
   return filter;
 }
 
+/** Password policy — keep in sync with auth-service PASSWORD_MIN/MAX_LENGTH. */
+export const PASSWORD_POLICY = {
+  MIN_LENGTH: 8,
+  MAX_LENGTH: 64,
+} as const;
+
 /** Set-password token validation statuses (auth-service). */
 export const SET_PASSWORD_TOKEN = {
   STATUS: {
