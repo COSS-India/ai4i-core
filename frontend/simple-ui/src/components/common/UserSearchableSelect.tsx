@@ -69,6 +69,8 @@ type FilterVariant = {
 
 type Common = {
   seedUsers?: User[];
+  /** When true, only `seedUsers` are shown (no global /auth/users pagination). */
+  usersFromSeedOnly?: boolean;
   isDisabled?: boolean;
   isLoading?: boolean;
   placeholder?: string;
@@ -81,6 +83,7 @@ export type UserSearchableSelectProps = Common & (PickVariant | FilterVariant);
 export default function UserSearchableSelect(props: UserSearchableSelectProps) {
   const {
     seedUsers = [],
+    usersFromSeedOnly = false,
     isDisabled = false,
     isLoading: isLoadingExternal = false,
     placeholder = "Select a user",
@@ -100,13 +103,23 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
   const initialLoadedRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
-
   const triggerBg = useColorModeValue("white", "gray.900");
   const menuBg = useColorModeValue("white", "gray.800");
   const borderCol = useColorModeValue("gray.200", "gray.600");
   const rowHoverBg = useColorModeValue("gray.50", "gray.700");
 
-  const mergedUsers = useMemo(() => mergeById(seedUsers, fromApi), [seedUsers, fromApi]);
+  const mergedUsers = useMemo(
+    () => (usersFromSeedOnly ? seedUsers : mergeById(seedUsers, fromApi)),
+    [seedUsers, fromApi, usersFromSeedOnly]
+  );
+
+  useEffect(() => {
+    if (!usersFromSeedOnly) return;
+    setFromApi([]);
+    hasMoreRef.current = false;
+    setHasMore(false);
+    initialLoadedRef.current = true;
+  }, [usersFromSeedOnly, seedUsers]);
 
   useEffect(() => {
     const n = seedUsers.length;
@@ -116,6 +129,7 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
   }, [seedUsers.length]);
 
   const fetchAt = useCallback(async (offset: number) => {
+    if (usersFromSeedOnly) return;
     if (fetchingRef.current) return;
     fetchingRef.current = true;
     setLoadingMore(true);
@@ -135,15 +149,19 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
       fetchingRef.current = false;
       setLoadingMore(false);
     }
-  }, []);
+  }, [usersFromSeedOnly]);
 
   const loadMore = useCallback(() => {
+    if (usersFromSeedOnly) return;
     if (!hasMoreRef.current || fetchingRef.current) return;
     return fetchAt(nextOffsetRef.current);
-  }, [fetchAt]);
+  }, [fetchAt, usersFromSeedOnly]);
 
   const handleOpen = () => {
-    if (!initialLoadedRef.current) {
+    if (usersFromSeedOnly) {
+      hasMoreRef.current = false;
+      setHasMore(false);
+    } else if (!initialLoadedRef.current) {
       initialLoadedRef.current = true;
       const start = seedUsers.length;
       nextOffsetRef.current = start;
@@ -160,7 +178,7 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
   };
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || usersFromSeedOnly) return;
     const root = scrollRef.current;
     const target = sentinelRef.current;
     if (!root || !target) return;
@@ -172,7 +190,7 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
     );
     io.observe(target);
     return () => io.disconnect();
-  }, [isOpen, loadMore]);
+  }, [isOpen, loadMore, usersFromSeedOnly]);
 
   const filtered = useMemo(() => {
     const list = mergedUsers.filter((u) => matchesSearch(u, search));
@@ -357,7 +375,7 @@ export default function UserSearchableSelect(props: UserSearchableSelectProps) {
             )}
             <Box ref={sentinelRef} h="1px" w="full" aria-hidden />
           </Box>
-          {!search.trim() && hasMore && !loadingMore && (
+            {!usersFromSeedOnly && !search.trim() && hasMore && !loadingMore && (
             <Text fontSize="xs" color="gray.500" mt={1} px={1}>
               Scroll down to load more
             </Text>

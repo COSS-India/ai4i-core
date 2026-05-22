@@ -124,7 +124,7 @@ export default function UserDetailsTab() {
           <FormControl isInvalid={!!ud.errors.phone_number}>
             <FormLabel fontWeight="semibold">Phone Number</FormLabel>
             <Input
-              value={ud.isEditingUser ? (ud.userFormData.phone_number || "") : maskPhoneForDisplay(user.phone_number)}
+              value={ud.isEditingUser ? (ud.userFormData.phone_number || "") : maskPhoneForDisplay(user.phone_number ?? undefined)}
               isReadOnly={!ud.isEditingUser}
               onChange={(e) => ud.handleInputChange("phone_number", e.target.value)}
               bg={ud.isEditingUser ? "white" : inputReadOnlyBg}

@@ -21,10 +21,11 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
-import authService from "../services/authService";
 import type { User } from "../types/auth";
 import UserDetailsTab from "../components/profile/UserDetailsTab";
 import RolesTab from "../components/profile/RolesTab";
+import { listTenants, listUsers } from "../services/tenantService";
+import { resolveDefaultTenantId, tenantUsersToAuthUsers } from "../utils/defaultTenant";
 
 const ProfilePage: React.FC = () => {
   const router = useRouter();
@@ -33,6 +34,7 @@ const ProfilePage: React.FC = () => {
   const [activeTabIndex, setActiveTabIndex] = useState(0);
   const [users, setUsers] = useState<User[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [defaultTenantId, setDefaultTenantId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -42,17 +44,35 @@ const ProfilePage: React.FC = () => {
 
   useEffect(() => {
     if (!isAuthenticated || authLoading || !user) return;
-    const isAdmin = user?.roles?.includes("ADMIN") || user?.roles?.includes("TENANT ADMIN");
-    if (!isAdmin) return;
+    const isPlatformAdmin = user?.roles?.includes("ADMIN");
+    if (!isPlatformAdmin) return;
 
+    let cancelled = false;
     setIsLoadingUsers(true);
-    authService
-      .getAllUsers()
-      .then((usersList) => setUsers(usersList))
-      .catch((error) => {
-        console.error("Failed to fetch users:", error);
-      })
-      .finally(() => setIsLoadingUsers(false));
+
+    (async () => {
+      try {
+        const { tenants } = await listTenants();
+        const tenantId = resolveDefaultTenantId(tenants);
+        if (cancelled) return;
+        setDefaultTenantId(tenantId);
+        if (!tenantId) {
+          setUsers([]);
+          return;
+        }
+        const { users: tenantUsers } = await listUsers(tenantId);
+        if (!cancelled) setUsers(tenantUsersToAuthUsers(tenantUsers));
+      } catch (error) {
+        console.error("Failed to fetch users for role assignment:", error);
+        if (!cancelled) setUsers([]);
+      } finally {
+        if (!cancelled) setIsLoadingUsers(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [isAuthenticated, authLoading, user]);
 
   const cardBg = useColorModeValue("white", "gray.800");
@@ -138,7 +158,13 @@ const ProfilePage: React.FC = () => {
                 {tabConfig.map((t) => (
                   <TabPanel key={t.id} px={0} pt={6}>
                     {t.id === "user-details" && <UserDetailsTab />}
-                    {t.id === "roles" && <RolesTab users={users} isLoadingUsers={isLoadingUsers} />}
+                    {t.id === "roles" && (
+                      <RolesTab
+                        users={users}
+                        isLoadingUsers={isLoadingUsers}
+                        defaultTenantId={defaultTenantId}
+                      />
+                    )}
                   </TabPanel>
                 ))}
               </TabPanels>

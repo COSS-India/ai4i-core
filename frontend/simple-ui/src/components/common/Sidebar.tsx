@@ -420,7 +420,7 @@ const Sidebar: React.FC = () => {
         if (item.id === TABS.home) return true;
         if (item.id === TABS.traces) return false;
         if (
-          (isGuest || isUser || isTenantAdmin) &&
+          (isGuest || isUser) &&
           (item.id === TABS.modelManagement || item.id === TABS.servicesManagement)
         ) {
           return false;

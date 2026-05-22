@@ -31,8 +31,12 @@ export interface TenantUserView {
   phone_number?: string | null;
   full_name?: string | null;
   is_active: boolean;
-  is_tenant_active?: boolean;
+  is_tenant_active?: boolean | null;
   creation_type?: CreationType | null;
+  /** Primary role from list-users API (upcoming: singular `role`). */
+  role?: string | null;
+  /** Role list when API returns `roles[]` (legacy or profile/detail). */
+  roles?: string[];
 }
 
 export interface ListUsersResponse {

@@ -49,6 +49,7 @@ import {
   tokenRefreshResponseSchema,
   tokenValidationResponseSchema,
   userSchema,
+  userListItemSchema,
 } from './dto/schemas/auth';
 import { apiEndpoints } from './apiEndpoints';
 import {
@@ -609,7 +610,7 @@ class AuthService {
   async getAllUsers(): Promise<User[]> {
     return this.validatedRequest(
       authPath.usersInitial,
-      authUnwrappedSchema(z.array(userSchema)),
+      authUnwrappedSchema(z.array(userListItemSchema)),
       { method: 'GET' }
     );
   }
@@ -618,7 +619,7 @@ class AuthService {
   async listUsersPage(offset: number, limit: number = 100): Promise<User[]> {
     return this.validatedRequest(
       authPath.usersPage(offset, limit),
-      authUnwrappedSchema(z.array(userSchema)),
+      authUnwrappedSchema(z.array(userListItemSchema)),
       { method: 'GET' }
     );
   }

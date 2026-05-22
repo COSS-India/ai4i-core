@@ -4,6 +4,7 @@
 import type { ZodTypeAny } from 'zod';
 import { z } from 'zod';
 import { API_BASE_URL, apiService } from './api';
+import { ApiValidationError } from './dto/apiValidationError';
 import { authUnwrappedSchema } from './dto/authUnwrappedSchema';
 import { roleActionMessageSchema, roleSchema, userRoleSchema } from './dto/schemas/roles';
 import { apiEndpoints } from './apiEndpoints';
@@ -19,9 +20,9 @@ export interface Role {
 
 export interface UserRole {
   user_id: string;
-  username: string;
-  email: string;
   roles: string[];
+  username?: string;
+  email?: string;
 }
 
 class RoleService {
@@ -37,7 +38,7 @@ class RoleService {
     options: RequestInit = {}
   ): Promise<z.infer<S>> {
     const url = `${this.baseUrl}${endpoint}`;
-    
+
     const token = authService.getAccessToken();
     if (!token) {
       throw new Error('Not authenticated');
@@ -63,13 +64,18 @@ class RoleService {
         }
       );
       return response.data as z.infer<S>;
-    } catch (error: any) {
-      const status = error?.response?.status;
-      const errorData = error?.response?.data ?? {};
+    } catch (error: unknown) {
+      if (error instanceof ApiValidationError) {
+        console.error('Role service response validation failed:', error.message, error.issues);
+        throw error;
+      }
+      const err = error as { response?: { status?: number; data?: { detail?: unknown } } };
+      const status = err?.response?.status;
+      const errorData = err?.response?.data ?? {};
       const detail = errorData?.detail;
       const message =
-        typeof detail === 'object' && detail !== null && typeof detail.message === 'string'
-          ? detail.message
+        typeof detail === 'object' && detail !== null && typeof (detail as { message?: string }).message === 'string'
+          ? (detail as { message: string }).message
           : typeof detail === 'string'
             ? detail
             : status
@@ -117,4 +123,3 @@ class RoleService {
 
 const roleService = new RoleService();
 export default roleService;
-
