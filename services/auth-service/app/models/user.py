@@ -17,8 +17,9 @@ from app.models.enum_columns import assert_enum_values_fit_varchar, varchar_enum
 class CreationType(str, enum.Enum):
     """Python-only enum; persisted as VARCHAR (``native_enum=False``)."""
 
-    DEFAULT = "default"
-    GOOGLE = "google"
+    DEFAULT = "default" # for normal users
+    GOOGLE = "google" # for google users
+    TENANT = "tenant" # for tenant users
 
 
 class UserSuspensionTag(str, enum.Enum):
