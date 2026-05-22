@@ -9,7 +9,6 @@ from fastapi import APIRouter, Request, HTTPException, Depends
 import logging
 
 from orchestrator import Orchestrator, OrchestratorError
-from factory import TaskFactory, FactoryError
 from models.common import GenericInferenceRequest, GenericInferenceResponse
 from models.task_types import task_registry
 

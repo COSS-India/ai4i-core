@@ -23,12 +23,17 @@ class NMTTaskService(BaseTaskService):
     Handles translation requests between language pairs.
     """
 
-    def __init__(self, **dependencies: Any):
+    def __init__(self, service_info: Optional[Dict[str, Any]] = None, **dependencies: Any):
         """
         Initialize NMT task service.
-        Inherits InferenceServerResolver from BaseTaskService.
+
+        Args:
+            service_info: Pre-resolved service dict from Orchestrator (endpoint, model
+                          name, adapter_config, api_key).  Forwarded to BaseTaskService
+                          so execute_triton_inference can use it without re-resolving.
         """
-        super().__init__()
+        super().__init__(service_info=service_info)
+        self.triton_client = None  # Initialized on first use
         self.logger = logger
 
     async def _deserialize_payload(self, payload: Dict[str, Any]) -> NMTInferenceRequest:
@@ -83,15 +88,6 @@ class NMTTaskService(BaseTaskService):
     @async_trace_stage("preprocess_input")
     async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
         input_list = []
-        for item in input_data:
-            if isinstance(item, dict):
-                input_list.append(item)
-            elif hasattr(item, 'dict'):
-                input_list.append(item.dict())
-            elif hasattr(item, '__dict__'):
-                input_list.append(item.__dict__)
-            else:
-                input_list.append(item)
 
         preprocessed = await super().preprocess_input(input_list)
 
@@ -116,9 +112,11 @@ class NMTTaskService(BaseTaskService):
         nmt_request = cast(NMTInferenceRequest, request)
         config: NMTConfig = nmt_request.config
 
-        # Attach request payload to config for use in execute_triton_inference
+        # Attach request payload to config so execute_triton_inference can access
+        # input items and config dict for payload conversion
         config._request_payload = nmt_request
 
+        # Execute Triton inference (service already resolved by Orchestrator at construction time)
         result = await self.execute_triton_inference(config, NMTInferenceModel)
 
         postprocessed = await self.postprocess_output(
