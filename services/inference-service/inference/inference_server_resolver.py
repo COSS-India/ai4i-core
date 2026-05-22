@@ -93,7 +93,6 @@ class InferenceServerResolver:
     async def resolve_smr_service(
         self,
         payload: Dict[str, Any],
-        session_id: Optional[str] = None,
     ) -> str:
         """
         Resolve service_id via SmartModelRouter when not explicitly provided.
@@ -163,7 +162,7 @@ class InferenceServerResolver:
 
         try:
             http_client = HTTPServiceClient(timeout=30)
-            url = f"{model_management_url.rstrip('/')}/{service_id}"
+            url = f"{model_management_url.rstrip('/')}/api/v1/model-management/services/{service_id}"
             raw = await http_client.get_json(url)
             service_info = self._normalize_mms_response(raw, service_id)
             logger.debug(f"Resolved service {service_id}: {service_info}")
