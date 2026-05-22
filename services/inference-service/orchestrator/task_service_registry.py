@@ -19,8 +19,8 @@ from services.audio_language_detection_service import AudioLanguageDetectionTask
 from services.language_detection_service import LanguageDetectionTaskService
 from services.language_diarization_service import LanguageDiarizationTaskService
 from services.llm_service import LLMTaskService
+from services.models.text_models import TextDefaultModel
 from services.ner_service import NERTaskService
-from services.nmt_service import NMTTaskService
 from services.ocr_service import OCRTaskService
 from services.pii_service import PIITaskService
 from services.speaker_diarization_service import SpeakerDiarizationTaskService
@@ -32,7 +32,7 @@ TASK_SERVICE_REGISTRY = [
     {
         "task_type":     "NMT",
         "model_name":    ["indictrans-gpu-t4"],
-        "service_class": NMTTaskService,
+        "service_class": TextDefaultModel,
     },
     {
         "task_type":     "ASR",

@@ -3,10 +3,8 @@ Task service interface and base class defining the contract for all inference ta
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
-
-# TODO: import GenericTritonMapper from services.base.config_mapper once circular-import path is resolved
 
 
 class ITaskService(ABC):
@@ -208,17 +206,6 @@ class BaseTaskService(ITaskService):
         return raw_triton_output
 
     
-    async def run_inference(self, payload: Dict[str, Any]) -> BaseModel:
-        """
-        Generic text inference pipeline:
-          1. Call Triton via _run_triton_with_mapper
-          2. Postprocess raw output
-          3. Return result dict (model class wraps in typed response)
-        """
-        result = await self._run_triton_with_mapper(payload, source_field="source")
-        self.logger.info(f"inference completed: service_id={result['service_id']}")
-        return await self.postprocess_output(result)
-
     async def extract_field_from_items(
         self,
         items: List[Any],
@@ -246,8 +233,6 @@ class BaseTaskService(ITaskService):
                 extracted.append('')
         return extracted
 
-    # TODO: execute_triton_inference is the old flow (uses inference_model_class).
-    # Superseded by _run_triton_with_mapper. Remove once all callers are migrated.
     async def execute_triton_inference(
         self,
         config: Any,
@@ -357,55 +342,3 @@ class BaseTaskService(ITaskService):
             raise RuntimeError(f"Triton inference call failed at {triton_endpoint}: {str(e)}") from e
 
 
-    def _get_from_payload(self, payload: Any, key: str, default: Any = None) -> Any:
-        """Extract a field from payload regardless of whether it is a dict or an object."""
-        if isinstance(payload, dict):
-            return payload.get(key, default)
-        return getattr(payload, key, default)
-
-    async def _run_triton_with_mapper(
-        self,
-        payload: Any,
-        source_field: str = "source",
-    ) -> Dict[str, Any]:
-        try:
-            from types import SimpleNamespace
-
-            config_raw = self._get_from_payload(payload, "config", {})
-            input_data = self._get_from_payload(payload, "input", [])
-
-            # _resolve_service_and_model expects attribute access (config.service_id)
-            config = SimpleNamespace(**config_raw) if isinstance(config_raw, dict) else config_raw
-
-            service_id, model_name, triton_endpoint, api_key, adapter_config = (
-                await self._resolve_service_and_model(config)
-            )
-
-            self.logger.debug(f"Building Triton payload for model {model_name}")
-            mapper = GenericTritonMapper(adapter_config)
-
-            source_texts = await self.extract_field_from_items(input_data, source_field)
-
-            triton_inputs, triton_outputs = mapper.compose_triton_kserve_v2_payload(
-                input_data, config
-            )
-
-            self.logger.info(f"Calling Triton inference server: {triton_endpoint}")
-            raw_output = await self._call_triton_inference(
-                triton_endpoint=triton_endpoint,
-                triton_inputs=triton_inputs,
-                triton_outputs=triton_outputs,
-                api_key=api_key,
-            )
-
-            mapped = mapper.map_outputs(raw_output)
-            response_data = mapper.to_output_items(mapped)
-
-            return {
-                "response_data": response_data,
-                "source_texts": source_texts,
-                "service_id": service_id,
-            }
-        except Exception as e:
-            self.logger.error(f"Triton inference failed: {str(e)}", exc_info=True)
-            raise
