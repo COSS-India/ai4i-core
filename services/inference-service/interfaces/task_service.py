@@ -97,16 +97,19 @@ class BaseTaskService(ITaskService):
     Subclasses may override validate_request(), preprocess_input(), postprocess_output() as needed.
     """
 
-    def __init__(self):
+    def __init__(self, service_info: Optional[Dict[str, Any]] = None):
         """
         Initialize base task service.
-        Automatically creates InferenceServerResolver instance for all subclasses.
+
+        Args:
+            service_info: Pre-resolved service dict injected by the Orchestrator/Factory
+                          (contains endpoint, model name, adapter_config, api_key, etc.).
+                          When provided, execute_triton_inference uses it directly
+                          without a redundant resolver call.
         """
         import logging
-        from inference.inference_server_resolver import InferenceServerResolver
-        
         self.task_name = self.__class__.__name__
-        self.inference_server_resolver = InferenceServerResolver()
+        self.service_info: Dict[str, Any] = service_info or {}
         self.logger = logging.getLogger(__name__)
 
     async def _deserialize_payload(self, payload: Dict[str, Any]) -> Any:
@@ -251,10 +254,20 @@ class BaseTaskService(ITaskService):
         inference_model_class: type,
     ) -> Dict[str, Any]:
         try:
-            # 1. Resolve service and model using config
-            service_id, model_name, triton_endpoint, api_key, adapter_config = (
-                await self._resolve_service_and_model(config)
-            )
+            # 1. Use pre-resolved service info injected at construction time
+            #    (resolved by Orchestrator before TaskFactory creates this service)
+            service_id = self.service_info.get('service_id', '')
+            model_name = self.service_info.get('name', '')
+            triton_endpoint = self.service_info.get('endpoint', '')
+            api_key = self.service_info.get('api_key')
+            # adapter_config carries the tensor mapping (inputs/outputs) for this specific model
+            adapter_config = self.service_info.get('adapter_config')
+
+            if not model_name or not triton_endpoint:
+                raise RuntimeError(
+                    f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
+                    "Ensure the Orchestrator resolved the service before creating this task service."
+                )
 
             self.logger.debug(f"Converting payload to Triton format for model {model_name}")
 
@@ -297,48 +310,6 @@ class BaseTaskService(ITaskService):
         except Exception as e:
             self.logger.error(f"Triton inference execution failed: {str(e)}", exc_info=True)
             raise
-
-    async def _resolve_service_and_model(
-        self, config: Any
-    ) -> Tuple[str, str, str, Optional[str], Optional[Any]]:
-        """
-        Resolve the model service details for the given NMT config.
-
-        Returns:
-            Tuple of (service_id, model_name, triton_endpoint, api_key, adapter_config).
-        """
-        service_id = config.service_id
-
-        # If service_id not provided, could use SMR (Smart Model Router)
-        # For now, default to configured service
-        if not service_id:
-            service_id = "indictrans-v2-all"
-            self.logger.warning(f"No service_id provided, using default: {service_id}")
-
-        # Resolve service using InferenceServerResolver
-        self.logger.debug(f"Resolving service: {service_id}")
-        try:
-            service_info = await self.inference_server_resolver.resolve_service(service_id)
-        except Exception as e:
-            self.logger.error(
-                f"Failed to resolve service {service_id}: {type(e).__name__}: {str(e)}",
-                exc_info=True
-            )
-            raise RuntimeError(f"NMT: Failed to resolve service {service_id}: {str(e)}") from e
-
-        # Extract fields from dict response
-        model_name = service_info.get('name', '')
-        triton_endpoint = service_info.get('endpoint', '')
-        api_key = service_info.get('api_key')
-        # adapter_config carries the tensor mapping (inputs/outputs) for this specific model
-        adapter_config = service_info.get('adapter_config')
-
-        if not model_name or not triton_endpoint:
-            raise RuntimeError(
-                "NMT: Invalid service info from resolver: missing model_name or triton_endpoint"
-            )
-
-        return (service_id, model_name, triton_endpoint, api_key, adapter_config)
 
     async def _call_triton_inference(
         self,
