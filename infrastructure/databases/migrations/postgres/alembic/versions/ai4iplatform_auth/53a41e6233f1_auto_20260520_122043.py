@@ -1,14 +1,14 @@
 """Extend creation_type_enum with tenant (native PostgreSQL ENUM)
 
 Revision ID: 53a41e6233f1
-Revises: aca4be0874b3
+Revises: c4e8f1a2b3d0
 Create Date: 2026-05-20 06:50:45.606257
 
 Keeps users.creation_type as native PostgreSQL ENUM (matches auth-service model).
 Adds label ``tenant``. If a prior revision stored the column as VARCHAR, converts
 it back to creation_type_enum.
 
-Does not change tenants.status — that is c4e8f1a2b3d0 (+ no-op aca4be0874b3 / 5f775ba90435).
+Does not change tenants.status — that is c4e8f1a2b3d0 (parent revision).
 """
 from typing import Sequence, Union
 
@@ -18,7 +18,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "53a41e6233f1"
-down_revision: Union[str, None] = "aca4be0874b3"
+down_revision: Union[str, None] = "c4e8f1a2b3d0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
