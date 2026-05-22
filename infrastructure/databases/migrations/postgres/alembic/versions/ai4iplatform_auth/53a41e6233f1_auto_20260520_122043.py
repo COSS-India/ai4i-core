@@ -1,81 +1,22 @@
-"""Extend creation_type_enum with tenant (native PostgreSQL ENUM)
+"""Add tenant label to creation_type_enum
 
 Revision ID: 53a41e6233f1
 Revises: c4e8f1a2b3d0
 Create Date: 2026-05-20 06:50:45.606257
 
-Keeps users.creation_type as native PostgreSQL ENUM (matches auth-service model).
-Adds label ``tenant``. If a prior revision stored the column as VARCHAR, converts
-it back to creation_type_enum.
-
-Does not change tenants.status — that is c4e8f1a2b3d0 (parent revision).
+Adds the tenant label only. Does not change tenants.status (see c4e8f1a2b3d0).
 """
 from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects import postgresql
 
-# revision identifiers, used by Alembic.
 revision: str = "53a41e6233f1"
 down_revision: Union[str, None] = "c4e8f1a2b3d0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-_CREATION_TYPE_LABELS = ("default", "google", "tenant")
-
-
-def _column_udt_name(connection) -> str | None:
-    return connection.execute(
-        sa.text(
-            """
-            SELECT udt_name
-            FROM information_schema.columns
-            WHERE table_schema = current_schema()
-              AND table_name = 'users'
-              AND column_name = 'creation_type'
-            """
-        )
-    ).scalar()
-
 
 def upgrade() -> None:
-    connection = op.get_bind()
-    udt_name = _column_udt_name(connection)
-
-    if udt_name == "varchar":
-        op.execute(
-            """
-            DO $migration$
-            BEGIN
-                IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'creation_type_enum') THEN
-                    CREATE TYPE creation_type_enum AS ENUM ('default', 'google', 'tenant');
-                END IF;
-            END $migration$;
-            """
-        )
-        op.alter_column(
-            "users",
-            "creation_type",
-            existing_type=sa.String(length=32),
-            type_=postgresql.ENUM(
-                *_CREATION_TYPE_LABELS, name="creation_type_enum", create_type=False
-            ),
-            postgresql_using="creation_type::creation_type_enum",
-            existing_nullable=True,
-            existing_server_default=sa.text("'default'"),
-        )
-        op.alter_column(
-            "users",
-            "creation_type",
-            existing_type=postgresql.ENUM(
-                *_CREATION_TYPE_LABELS, name="creation_type_enum", create_type=False
-            ),
-            server_default=sa.text("'default'::creation_type_enum"),
-            existing_nullable=True,
-        )
-        return
-
     op.execute(
         """
         DO $migration$
@@ -95,9 +36,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    connection = op.get_bind()
-    udt_name = _column_udt_name(connection)
-
     op.execute(
         """
         UPDATE users
@@ -105,10 +43,6 @@ def downgrade() -> None:
         WHERE creation_type::text = 'tenant'
         """
     )
-
-    if udt_name == "varchar":
-        return
-
     op.execute(
         """
         DO $migration$
