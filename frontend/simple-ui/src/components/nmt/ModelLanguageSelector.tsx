@@ -46,13 +46,15 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   const [currentServiceId, setCurrentServiceId] = useState<string>(selectedServiceId || '');
   const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
   const [languageDetails, setLanguageDetails] = useState<Array<{code: string; name: string}>>([]);
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
 
   // Fetch available services (key includes auth so we refetch after login and get published list, not cached anonymous IndicTrans)
-  const { data: services, isLoading: servicesLoading } = useQuery({
+  const { data: services, isLoading: servicesLoading, isError: servicesError } = useQuery({
     queryKey: ['nmt-services', isAuthenticated],
     queryFn: listNMTServices,
+    enabled: !authLoading,
     staleTime: 10 * 60 * 1000, // 10 minutes
+    retry: 1,
   });
 
   // Find selected service
@@ -242,8 +244,14 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
               <Select
                 value={currentServiceId}
                 onChange={handleServiceChange}
-                placeholder="Select"
-                disabled={servicesLoading || serviceDropdownDisabled || inferenceInProgress}
+                placeholder={servicesError ? "Unable to load services" : "Select"}
+                disabled={
+                  servicesLoading ||
+                  servicesError ||
+                  serviceDropdownDisabled ||
+                  inferenceInProgress ||
+                  !services?.length
+                }
               >
                 {services?.map((service) => {
                   const version = service.modelVersion || service.model_version;
@@ -256,7 +264,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                 })}
               </Select>
             </FormControl>
-            
+
             {selectedService && (
               <Box
                 mt={2}

@@ -48,8 +48,8 @@ import {
   setPasswordStatusResponseSchema,
   tokenRefreshResponseSchema,
   tokenValidationResponseSchema,
-  userSchema,
   userListItemSchema,
+  userSchema,
 } from './dto/schemas/auth';
 import { apiEndpoints } from './apiEndpoints';
 import {
@@ -192,6 +192,9 @@ class AuthService {
       console.error('Auth service request failed:', error);
       const normalizedError = new Error(errorMessage);
       (normalizedError as any).status = status ?? err?.status;
+      if (err?.response) {
+        (normalizedError as any).response = err.response;
+      }
       throw normalizedError;
     }
   }
@@ -225,7 +228,7 @@ class AuthService {
   }
 
   // Authentication methods
-  async register(data: RegisterRequest): Promise<{ id: number; email: string; username: string; message: string }> {
+  async register(data: RegisterRequest): Promise<{ user_id: string; email: string; username: string; message: string }> {
     return this.validatedRequest(
       authPath.register,
       authUnwrappedSchema(registerResponseSchema),

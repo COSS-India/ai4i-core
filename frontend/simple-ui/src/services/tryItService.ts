@@ -11,6 +11,7 @@ import { getAnonymousSessionId } from '../utils/anonymousSession';
 
 const getTryItHeaders = () => ({
   'X-Anonymous-Session-Id': getAnonymousSessionId(),
+  'X-Try-It': 'true',
 });
 
 /**
@@ -124,22 +125,22 @@ export const performTryItNMTInference = async (
 export const shouldWarnAboutRateLimit = (): boolean => {
   const key = 'tryit_request_count';
   const timestampKey = 'tryit_first_request_time';
-  
+
   if (typeof window === 'undefined') return false;
-  
+
   try {
     const count = parseInt(sessionStorage.getItem(key) || '0');
     const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
-    
+
     // Reset if more than an hour has passed
     if (now - firstRequestTime > oneHour) {
       sessionStorage.setItem(key, '0');
       sessionStorage.removeItem(timestampKey);
       return false;
     }
-    
+
     // Warn if approaching limit (4 or more requests)
     return count >= 4;
   } catch (e) {
@@ -153,15 +154,15 @@ export const shouldWarnAboutRateLimit = (): boolean => {
 export const trackTryItRequest = (): void => {
   const key = 'tryit_request_count';
   const timestampKey = 'tryit_first_request_time';
-  
+
   if (typeof window === 'undefined') return;
-  
+
   try {
     const count = parseInt(sessionStorage.getItem(key) || '0');
     const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
-    
+
     // Reset if more than an hour has passed
     if (now - firstRequestTime > oneHour || !firstRequestTime) {
       sessionStorage.setItem(key, '1');
@@ -182,20 +183,20 @@ export const getRemainingTryItRequests = (): number => {
   const key = 'tryit_request_count';
   const timestampKey = 'tryit_first_request_time';
   const limit = 5;
-  
+
   if (typeof window === 'undefined') return limit;
-  
+
   try {
     const count = parseInt(sessionStorage.getItem(key) || '0');
     const firstRequestTime = parseInt(sessionStorage.getItem(timestampKey) || '0');
     const now = Date.now();
     const oneHour = 60 * 60 * 1000;
-    
+
     // Reset if more than an hour has passed
     if (now - firstRequestTime > oneHour || !firstRequestTime) {
       return limit;
     }
-    
+
     const remaining = Math.max(0, limit - count);
     return remaining;
   } catch (e) {

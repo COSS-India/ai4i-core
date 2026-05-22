@@ -71,7 +71,22 @@ type EndpointContext = {
   isPolicyServiceEndpoint: boolean;
   isPolicyServiceHealthPath: boolean;
   isServiceEndpoint: boolean;
+  /** Anonymous try-it: service list + NMT inference without login */
+  isTryItPublicEndpoint: boolean;
   requiresJWT: boolean;
+};
+
+/** Paths that must work without a JWT (anonymous NMT try-it). */
+const isTryItPublicPath = (pathNoQuery: string): boolean => {
+  const tryItList = apiEndpoints.platform.services.tryItList.toLowerCase();
+  const tryItExecute = apiEndpoints.platform.tryIt.execute.toLowerCase();
+  return (
+    pathNoQuery === tryItList ||
+    pathNoQuery.endsWith('/try-it-service-list') ||
+    pathNoQuery.includes('/model-management/services/try-it-service-list') ||
+    pathNoQuery === tryItExecute ||
+    pathNoQuery.startsWith(`${tryItExecute}/`)
+  );
 };
 
 const SERVICE_BASE_PATHS = [
@@ -131,6 +146,7 @@ const getEndpointContext = (rawUrl: string): EndpointContext => {
     isModelManagementEndpoint ||
     isMultiTenantEndpoint ||
     (isPolicyServiceEndpoint && !isPolicyServiceHealthPath);
+  const isTryItPublicEndpoint = isTryItPublicPath(pathNoQuery);
 
   return {
     isAuthEndpoint,
@@ -140,7 +156,8 @@ const getEndpointContext = (rawUrl: string): EndpointContext => {
     isPolicyServiceEndpoint,
     isPolicyServiceHealthPath,
     isServiceEndpoint,
-    requiresJWT: isServiceEndpoint,
+    isTryItPublicEndpoint,
+    requiresJWT: isServiceEndpoint && !isTryItPublicEndpoint,
   };
 };
 

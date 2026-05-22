@@ -315,7 +315,6 @@ const ModelManagementPage: React.FC = () => {
 
   const handleDownloadSample = () => {
     const sampleModel = {
-      modelId: "example/example-model",
       version: "1.0.0",
       name: "example-model",
       description: "A sample model for demonstration purposes",
@@ -410,10 +409,7 @@ const ModelManagementPage: React.FC = () => {
   const validateModelData = (data: any): string[] => {
     const errors: string[] = [];
 
-    // Required fields
-    if (!data.modelId || typeof data.modelId !== 'string' || data.modelId.trim() === '') {
-      errors.push('modelId is required and must be a non-empty string');
-    }
+    // modelId is server-generated from name + version; not required in upload JSON
 
     if (!data.name || typeof data.name !== 'string' || data.name.trim() === '') {
       errors.push('name is required and must be a non-empty string');
@@ -474,8 +470,9 @@ const ModelManagementPage: React.FC = () => {
     try {
       // Prepare model data with timestamps if not present
       const currentTimestamp = Math.floor(Date.now() / 1000);
+      const { modelId: _ignoredModelId, ...rest } = parsedModelData;
       const modelData: any = {
-        ...parsedModelData,
+        ...rest,
         submittedOn: parsedModelData.submittedOn || currentTimestamp,
         updatedOn: parsedModelData.updatedOn || currentTimestamp,
       };
@@ -1133,7 +1130,7 @@ const ModelManagementPage: React.FC = () => {
                                 Required Fields:
                               </Text>
                               <Text fontSize="xs" color="blue.600">
-                                modelId, name, version, description, task (with type), languages, license, domain, inferenceEndPoint, submitter. Optional: refUrl, benchmarks. Timestamps (submittedOn, updatedOn) will be auto-added if not present.
+                                name, version, description, task (with type), languages, license, domain, inferenceEndPoint, submitter. Optional: refUrl, benchmarks. modelId is auto-generated from name and version. Timestamps (submittedOn, updatedOn) will be auto-added if not present.
                               </Text>
                             </Box>
                             </FormControl>
