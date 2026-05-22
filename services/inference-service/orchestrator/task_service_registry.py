@@ -26,6 +26,7 @@ from services.pii_service import PIITaskService
 from services.speaker_diarization_service import SpeakerDiarizationTaskService
 from services.transliteration_service import TransliterationTaskService
 from services.tts_service import TTSTaskService
+from services.base.image_base import ImageBase
 
 
 TASK_SERVICE_REGISTRY = [
@@ -51,8 +52,8 @@ TASK_SERVICE_REGISTRY = [
     },
     {
         "task_type":     "OCR",
-        "model_name":    ["ai4bharat/triton-ocr"],
-        "service_class": OCRTaskService,
+        "model_name":    ["surya-ocr-gpu", "ai4bharat/triton-ocr"],
+        "service_class": ImageBase,
     },
     {
         "task_type":     "LLM",
