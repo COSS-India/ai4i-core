@@ -65,14 +65,13 @@ class TaskFactory:
             # For NMT service
             if task_type == "NMT":
                 try:
-                    from services.nmt_service import NMTTaskService
-                    
-                    # Resolver is now initialized in BaseTaskService
-                    service = NMTTaskService()  # type: ignore
+                    from services.models.text_default_model import TextDefaultModel
+
+                    service = TextDefaultModel()  # type: ignore
                     self._service_cache[task_type] = service  # type: ignore
                     return service  # type: ignore
                 except ImportError:
-                    logger.warning(f"NMTTaskService not found, using mock")
+                    logger.warning(f"TextDefaultModel not found, using mock")
             
             # For other tasks, create mock
             logger.warning(f"No implementation for {task_type}, returning mock service")
