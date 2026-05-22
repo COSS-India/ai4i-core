@@ -27,7 +27,8 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
 import { authService } from "../../services/authService";
-import PasswordRequirements, { passwordPasses } from "../../components/auth/password/PasswordRequirements";
+import { PASSWORD_POLICY } from "../../config/constants";
+import PasswordRequirements, { getPasswordValidationError, passwordPasses } from "../../components/auth/password/PasswordRequirements";
 
 type Phase =
   | { kind: "ready" }
@@ -62,7 +63,8 @@ const ResetPasswordPage: React.FC = () => {
   }, [router.isReady, router.query.token]);
 
   const validate = (): string | null => {
-    if (!passwordPasses(newPassword)) return "Password does not meet all requirements.";
+    const passwordError = getPasswordValidationError(newPassword);
+    if (passwordError) return passwordError;
     if (newPassword !== confirmPassword) return "Passwords do not match.";
     return null;
   };
@@ -154,8 +156,8 @@ const ResetPasswordPage: React.FC = () => {
                               if (pwErr) setPwErr(null);
                             }}
                             autoComplete="new-password"
-                            minLength={8}
-                            maxLength={64}
+                            minLength={PASSWORD_POLICY.MIN_LENGTH}
+                            maxLength={PASSWORD_POLICY.MAX_LENGTH}
                           />
                           <InputRightElement width="auto" pr={2}>
                             <Button
@@ -181,8 +183,8 @@ const ResetPasswordPage: React.FC = () => {
                             if (pwErr) setPwErr(null);
                           }}
                           autoComplete="new-password"
-                          minLength={8}
-                          maxLength={64}
+                          minLength={PASSWORD_POLICY.MIN_LENGTH}
+                          maxLength={PASSWORD_POLICY.MAX_LENGTH}
                         />
                         {confirmPassword.length > 0 && confirmPassword !== newPassword && (
                           <Text color="red.500" fontSize="sm" mt={1}>
