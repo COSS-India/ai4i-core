@@ -1,5 +1,3 @@
-"""Model-specific service implementations."""
-
 from services.models.text_models import (
     NMTTaskService,
     NERTaskService,
