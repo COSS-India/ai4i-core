@@ -14,6 +14,7 @@ Task-specific helpers (_pair_with_sources, _chunk_inputs, etc.) are available op
 from typing import Any, Dict, List
 
 from interfaces.task_service import BaseTaskService
+from ai4icore_core.telemetry import async_trace_stage
 
 
 class TextBase(BaseTaskService):
@@ -43,6 +44,7 @@ class TextBase(BaseTaskService):
     # Pipeline methods
     # ------------------------------------------------------------------
 
+    @async_trace_stage("validate")
     async def validate_request(self, request: Any) -> None:
         await super().validate_request(request)
 
@@ -51,6 +53,13 @@ class TextBase(BaseTaskService):
         if not getattr(request, "config", None):
             raise ValueError(f"{self.task_name}: payload must contain a 'config' field")
 
+        input_items = getattr(request, "input", [])
+        for idx, item in enumerate(input_items):
+            source = item.get("source") if isinstance(item, dict) else getattr(item, "source", None)
+            if not source or not isinstance(source, str):
+                raise ValueError(f"{self.task_name}: input[{idx}]['source'] must be a non-empty string")
+
+    @async_trace_stage("preprocess_input")
     async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
         await super().preprocess_input(input_data)
 
@@ -76,11 +85,11 @@ class TextBase(BaseTaskService):
     # ------------------------------------------------------------------
 
     def _sanitize_source(self, text: Any) -> str:
-        """Normalize a source string: None/empty → single space, strip newlines."""
+        """Normalize a source string: None/empty → single space, collapse whitespace runs."""
         if not text:
             return " "
         text = str(text).replace("\n", " ").replace("\r", " ")
-        return text.strip() or " "
+        return self._normalize_text(text) or " "
 
     def _chunk_inputs(self, items: List[Any], size: int = 90) -> List[List[Any]]:
         """Split a flat list into consecutive chunks of at most `size` items."""
