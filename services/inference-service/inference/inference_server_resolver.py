@@ -212,9 +212,10 @@ class InferenceServerResolver:
                 or inference_endpoint.get("adapterConfig")
             )
             if not adapter_config:
-                raise ServiceNotFoundError(
-                    f"Service {service_id}: adapter_config missing from MMS response. "
-                    "Register adapter_config for this service in the model management service."
+                logger.warning(
+                    "Service %s: adapter_config missing from MMS response — "
+                    "model class must supply a default or this request will fail.",
+                    service_id,
                 )
             return {
                 "name": data.get("serviceName") or data.get("name"),
