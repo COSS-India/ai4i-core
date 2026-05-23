@@ -72,22 +72,22 @@ async def run_inference(
     """
     import time
     start_time = time.time()
-    
+
     try:
         task_type = payload.get("task_type", "").upper()
-        
+
         logger.info(f"Inference request: task_type={task_type}")
-        
+
         # Route through orchestrator
         result = await orchestrator.route_inference(
             payload=payload
         )
-        
+
         duration_ms = (time.time() - start_time) * 1000
         logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
-        
+
         return result
-        
+
     except Exception as e:
         duration_ms = (time.time() - start_time) * 1000
         logger.error(f"✗ Inference failed: {str(e)}, duration_ms={duration_ms:.2f}ms")
@@ -113,6 +113,123 @@ async def run_nmt_inference(
     try:
         if not payload.get("task_type"):
             request_payload = {**payload, "task_type": "NMT"}
+        else:
+            request_payload = payload
+
+        task_type = request_payload["task_type"].upper()
+        logger.info(f"Inference request: task_type={task_type}")
+
+        result = await orchestrator.route_inference(payload=request_payload)
+
+        duration_ms = (time.time() - start_time) * 1000
+        logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
+
+        return result
+
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"✗ Inference failed: {str(e)}, duration_ms={duration_ms:.2f}ms")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/ner/inference",
+    response_model=GenericInferenceResponse,
+    summary="NER Inference Endpoint",
+    description="Route inference requests to NER TaskService",
+)
+async def run_ner_inference(
+    payload: Dict[str, Any],
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+) -> Dict[str, Any]:
+    """
+    Dedicated endpoint for NER inference requests.
+    Sets task_type to NER if not provided in payload, then routes via Orchestrator.
+    """
+    import time
+    start_time = time.time()
+
+    try:
+        if not payload.get("task_type"):
+            request_payload = {**payload, "task_type": "NER"}
+        else:
+            request_payload = payload
+
+        task_type = request_payload["task_type"].upper()
+        logger.info(f"Inference request: task_type={task_type}")
+
+        result = await orchestrator.route_inference(payload=request_payload)
+
+        duration_ms = (time.time() - start_time) * 1000
+        logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
+
+        return result
+
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"✗ Inference failed: {str(e)}, duration_ms={duration_ms:.2f}ms")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+
+@router.post(
+    "/transliteration/inference",
+    response_model=GenericInferenceResponse,
+    summary="TRANSLITERATION Inference Endpoint",
+    description="Route inference requests to TRANSLITERATION TaskService",
+)
+async def run_ner_inference(
+    payload: Dict[str, Any],
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+) -> Dict[str, Any]:
+    """
+    Dedicated endpoint for NER inference requests.
+    Sets task_type to NER if not provided in payload, then routes via Orchestrator.
+    """
+    import time
+    start_time = time.time()
+
+    try:
+        if not payload.get("task_type"):
+            request_payload = {**payload, "task_type": "TRANSLITERATION"}
+        else:
+            request_payload = payload
+
+        task_type = request_payload["task_type"].upper()
+        logger.info(f"Inference request: task_type={task_type}")
+
+        result = await orchestrator.route_inference(payload=request_payload)
+
+        duration_ms = (time.time() - start_time) * 1000
+        logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
+
+        return result
+
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"✗ Inference failed: {str(e)}, duration_ms={duration_ms:.2f}ms")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post(
+    "/language-detection/inference",
+    response_model=GenericInferenceResponse,
+    summary="LANGUAGE_DETECTION Inference Endpoint",
+    description="Route inference requests to LANGUAGE_DETECTION TaskService",
+)
+async def run_ner_inference(
+    payload: Dict[str, Any],
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+) -> Dict[str, Any]:
+    """
+    Dedicated endpoint for NER inference requests.
+    Sets task_type to NER if not provided in payload, then routes via Orchestrator.
+    """
+    import time
+    start_time = time.time()
+
+    try:
+        if not payload.get("task_type"):
+            request_payload = {**payload, "task_type": "LANGUAGE_DETECTION"}
         else:
             request_payload = payload
 

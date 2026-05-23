@@ -13,14 +13,26 @@ class TextInput(BaseModel):
 class NERLanguageConfig(BaseModel):
     """Language configuration for NER."""
 
-    source_language: str = Field(..., description="Language code (e.g., 'en')")
+    source_language: str = Field(
+        ...,
+        alias="sourceLanguage",
+        description="Language code (e.g., 'hi', 'ta') — IndicNER supports Indian languages",
+    )
+
+    model_config = {"populate_by_name": True}
 
 
 class NERConfig(BaseModel):
     """Configuration for NER inference."""
 
-    service_id: str = Field(..., description="Service ID (required)")
+    service_id: Optional[str] = Field(None, alias="serviceId", description="Service ID")
     language: NERLanguageConfig = Field(..., description="Language configuration")
+
+    model_config = {"populate_by_name": True}
+
+    @property
+    def resolved_service_id(self) -> Optional[str]:
+        return self.service_id
 
 
 class NERInferenceRequest(BaseModel):
