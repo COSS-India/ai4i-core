@@ -33,7 +33,7 @@ class NMTTaskService(BaseTaskService):
                           so execute_triton_inference can use it without re-resolving.
         """
         super().__init__(service_info=service_info)
-        self.triton_client = None
+        self.triton_client = None  # Initialized on first use
         self.logger = logger
 
     async def _deserialize_payload(self, payload: Dict[str, Any]) -> NMTInferenceRequest:
@@ -116,6 +116,7 @@ class NMTTaskService(BaseTaskService):
         # input items and config dict for payload conversion
         config._request_payload = nmt_request
 
+        # Execute Triton inference (service already resolved by Orchestrator at construction time)
         result = await self.execute_triton_inference(config, NMTInferenceModel)
 
         postprocessed = await self.postprocess_output(
