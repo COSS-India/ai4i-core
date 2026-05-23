@@ -1,39 +1,148 @@
 """ASR (Automatic Speech Recognition) TaskService."""
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel
 
-from interfaces.task_service import BaseTaskService
-from services.models.audio_models import ASRDefaultModel
+from services.base.audio_base import AudioBase
+from services.base.config_mapper import GenericTritonMapper
+from models.schemas.asr import (
+    ASRConfig,
+    ASRInferenceRequest,
+    ASRInferenceResponse,
+    AudioInput,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class ASRTaskService(BaseTaskService):
+# ---------------------------------------------------------------------------
+# Fallback adapter config for asr_am_ensemble when MMS does not return one.
+# Tensor contract: asr_preprocessor → asr_am → asr_greedy_decoder
+# ---------------------------------------------------------------------------
+_DEFAULT_ASR_ADAPTER_CONFIG = {
+    "version": "1",
+    "model_version": "1",
+    "inputs": [
+        {
+            "tensor": "AUDIO_SIGNAL",
+            "dtype":  "FP32",
+            "shape":  [-1, -1],
+            "value":  "audio.samples",
+        },
+        {
+            "tensor": "NUM_SAMPLES",
+            "dtype":  "INT32",
+            "shape":  [-1, 1],
+            "value":  "audio.num_samples",
+        },
+        {
+            "tensor": "LANG_ID",
+            "dtype":  "BYTES",
+            "shape":  [-1, 1],
+            "value":  "request.config.language.source_language",
+        },
+    ],
+    "outputs": [
+        {
+            "tensor":  "TRANSCRIPTS",
+            "dtype":   "BYTES",
+            "maps_to": "transcript",
+        },
+    ],
+}
+
+
+class ASRTaskService(AudioBase):
     """
-    Registry entry point for ASR inference.
-    Delegates all work to ASRDefaultModel which owns the full pipeline.
+    TaskService for Automatic Speech Recognition inference.
+
+    Inherits the full audio pipeline from AudioBase:
+      validate_request  → audio items present + source_language set
+      preprocess_input  → bytes → decode → mono → resample → equalize → dequantize
+      execute_triton_inference (AudioBase) → per-item Triton loop using service_info
+      postprocess_output → decode bytes → TranscriptionOutput list
+      _build_response   → ASRInferenceResponse
+
+    service_info is injected by the Orchestrator before construction —
+    no internal resolver calls.
     """
 
-    def __init__(self, **dependencies: Any):
-        super().__init__()
-        self.model = ASRDefaultModel()
+    def __init__(self, service_info: Optional[Dict[str, Any]] = None, **kwargs: Any):
+        super().__init__(service_info=service_info, **kwargs)
         self.logger = logger
 
-    # -- ABC satisfaction: delegate to model ---------------------------------
+    async def _deserialize_payload(self, payload: Dict[str, Any]) -> ASRInferenceRequest:
+        """Parse the raw request dict into a typed ASRInferenceRequest."""
+        try:
+            audio_items = payload.get("audio", [])
+            if isinstance(audio_items, list) and audio_items:
+                if isinstance(audio_items[0], dict):
+                    audio_items = [AudioInput(**item) for item in audio_items]
 
-    async def _deserialize_payload(self, payload: Dict[str, Any]) -> BaseModel:
-        return await self.model._deserialize_payload(payload)
+            config_data = payload.get("config", {})
+            if isinstance(config_data, dict):
+                config_data = ASRConfig(**config_data)
 
-    async def run_inference(self, request: BaseModel, **kwargs: Any) -> BaseModel:
-        return await self.model.run_inference(request)
+            return ASRInferenceRequest(audio=audio_items, config=config_data)
+        except Exception as exc:
+            raise ValueError(f"ASR: failed to deserialize payload: {exc}") from exc
 
-    # -- Override process to use the full AudioBase pipeline -----------------
+    async def validate_request(self, request: BaseModel) -> None:
+        """AudioBase validation + ASR-specific sourceLanguage check."""
+        await super().validate_request(request)
+        await self._validate_source_language(request)
 
-    async def process(self, payload: dict, **kwargs: Any) -> Any:
-        request = await self.model._deserialize_payload(payload)
-        await self.model.validate_request(request)
-        request.audio = await self.model.preprocess_input(request.audio)
-        return await self.model.run_inference(request)
+    def _get_default_adapter_config(self) -> Dict[str, Any]:
+        return _DEFAULT_ASR_ADAPTER_CONFIG
+
+    async def convert_payload_to_triton_format(
+        self,
+        input_data: List[Dict[str, Any]],
+        config: Dict[str, Any],
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """Convert one preprocessed audio item to KServe v2 Triton inputs."""
+        mapper = GenericTritonMapper(self._adapter_config)
+        return mapper.compose_triton_kserve_v2_payload(
+            input_data=input_data,
+            config=config,
+            context_builder=self._build_audio_context,
+        )
+
+    async def convert_triton_output_to_task_format(
+        self,
+        triton_output: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Map raw Triton output to a list of transcript dicts."""
+        mapper = GenericTritonMapper(self._adapter_config)
+        mapped = mapper.map_outputs(triton_output)
+        return mapper.to_output_items(mapped)
+
+    def _build_audio_context(
+        self,
+        item: Dict[str, Any],
+        index: int,
+        config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Build the audio context dict used by value_path declarations in adapter config."""
+        samples = item.get("samples") or []
+        return {
+            "audio": {
+                "samples":     samples,
+                "num_samples": item.get("num_samples", len(samples)),
+                "sample_rate": item.get("sample_rate"),
+            }
+        }
+
+    async def postprocess_output(
+        self, response_items: List[Dict[str, Any]], **kwargs: Any
+    ) -> Dict[str, Any]:
+        """Decode bytes output → wrap in TranscriptionOutput list."""
+        decoded = await self._decode_output_bytes(response_items)
+        return await self._wrap_transcription_output(decoded)
+
+    def _build_response(
+        self, request: ASRInferenceRequest, postprocessed: Dict[str, Any]
+    ) -> ASRInferenceResponse:
+        return ASRInferenceResponse(output=postprocessed["output"], smr_response=None)

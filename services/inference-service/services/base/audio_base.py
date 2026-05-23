@@ -44,11 +44,6 @@ class AudioBase(BaseTaskService):
 
     TARGET_SAMPLE_RATE = 16000  # All audio is resampled to this rate before Triton
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        from inference.inference_server_resolver import InferenceServerResolver
-        self.inference_server_resolver = InferenceServerResolver()
-
     # ------------------------------------------------------------------
     # Pipeline methods
     # ------------------------------------------------------------------
@@ -99,63 +94,109 @@ class AudioBase(BaseTaskService):
 
         return items
 
-    async def run_inference(self, request: BaseModel) -> BaseModel:
+    # ------------------------------------------------------------------
+    # execute_triton_inference — audio-specific override
+    # ------------------------------------------------------------------
+
+    async def execute_triton_inference(
+        self,
+        config: Any,
+        inference_model_class: type,
+    ) -> Dict[str, Any]:
         """
-        Common audio inference loop (Template Method).
+        Audio inference loop — overrides BaseTaskService.execute_triton_inference.
 
-        Steps:
-          1. Resolve service_id → endpoint + adapter_config (from DB)
-          2. For each audio item (already preprocessed):
-               convert_payload_to_triton_format → call Triton → convert_triton_output_to_task_format
-          3. postprocess_output(all_response_data)
-          4. _build_response(request, postprocessed)  ← model-class hook
+        Differences from the text base:
+          - Reads request.audio (not request.input)
+          - Calls Triton once per audio item (one file per call)
+          - Applies _get_default_adapter_config() when MMS returns null
+          - convert_payload_to_triton_format / convert_triton_output_to_task_format
+            are called on self (model methods), not on a separate mapper instance
 
-        Model classes must implement:
-          convert_payload_to_triton_format, convert_triton_output_to_task_format, _build_response.
-        They do NOT need to override run_inference.
+        VAD / chunk-batching is a future enhancement; add it here when ready.
         """
-        config      = getattr(request, "config")
-        audio_items = getattr(request, "audio") or []
+        try:
+            service_id      = self.service_info.get("service_id", "")
+            model_name      = self.service_info.get("name", "")
+            triton_endpoint = self.service_info.get("endpoint", "")
+            api_key         = self.service_info.get("api_key")
+            adapter_config  = self.service_info.get("adapter_config")
 
-        service_id, model_name, triton_endpoint, api_key, adapter_config = (
-            await self._resolve_service_and_model(config)
-        )
-        self.logger.info(
-            "Audio inference resolved: service_id=%s  model=%s  endpoint=%s",
-            service_id, model_name, triton_endpoint,
-        )
+            if not model_name or not triton_endpoint:
+                raise RuntimeError(
+                    f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
+                    "Ensure the Orchestrator resolved the service before creating this task service."
+                )
 
-        # Store adapter_config so conversion methods can access it via self._adapter_config
-        self._adapter_config = adapter_config
-        all_response_data: List[Dict[str, Any]] = []
+            if not adapter_config:
+                self.logger.warning(
+                    "%s: adapter_config missing from service_info — using default",
+                    self.task_name,
+                )
+                adapter_config = self._get_default_adapter_config()
 
-        for idx, audio_item in enumerate(audio_items):
-            item_dict = audio_item if isinstance(audio_item, dict) else audio_item.model_dump(by_alias=False)
+            # Store so convert_payload_to_triton_format can access via self._adapter_config
+            self._adapter_config = adapter_config
 
-            triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
-                [item_dict], config.model_dump()
+            request_payload = getattr(config, "_request_payload", None)
+            if not request_payload:
+                raise ValueError(f"{self.task_name}: config must have _request_payload set")
+
+            audio_items: List[Any] = getattr(request_payload, "audio") or []
+            all_response_data: List[Dict[str, Any]] = []
+
+            for idx, audio_item in enumerate(audio_items):
+                item_dict = (
+                    audio_item if isinstance(audio_item, dict)
+                    else audio_item.model_dump(by_alias=False)
+                )
+
+                triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
+                    [item_dict], config.model_dump()
+                )
+
+                self.logger.debug(
+                    "%s: Triton call %d / %d  endpoint=%s",
+                    self.task_name, idx + 1, len(audio_items), triton_endpoint,
+                )
+                raw_output = await self._call_triton_inference(
+                    triton_endpoint=triton_endpoint,
+                    triton_inputs=triton_inputs,
+                    triton_outputs=triton_outputs,
+                    api_key=api_key,
+                )
+
+                response_data = await self.convert_triton_output_to_task_format(raw_output)
+                all_response_data.extend(response_data)
+
+            return {
+                "response_data": all_response_data,
+                "source_texts": [],
+                "service_id": service_id,
+            }
+        except Exception as e:
+            self.logger.error(
+                "Audio Triton inference failed: %s", str(e), exc_info=True
             )
-
-            self.logger.debug(
-                "Audio inference: calling Triton for item %d / %d",
-                idx + 1, len(audio_items),
-            )
-            raw_output = await self._call_triton_inference(
-                triton_endpoint=triton_endpoint,
-                triton_inputs=triton_inputs,
-                triton_outputs=triton_outputs,
-                api_key=api_key,
-            )
-
-            response_data = await self.convert_triton_output_to_task_format(raw_output)
-            all_response_data.extend(response_data)
-
-        postprocessed = await self.postprocess_output(all_response_data)
-        return self._build_response(request, postprocessed)
+            raise
 
     # ------------------------------------------------------------------
-    # Hooks — model classes must implement these
+    # Hooks — subclasses must implement these
     # ------------------------------------------------------------------
+
+    def _get_inference_model_class(self) -> type:
+        """Return GenericTritonMapper — satisfies BaseTaskService.run_inference signature."""
+        from services.base.config_mapper import GenericTritonMapper
+        return GenericTritonMapper
+
+    def _get_default_adapter_config(self) -> Dict[str, Any]:
+        """
+        Fallback adapter config when MMS returns null.
+        Each concrete audio task service must override this.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement _get_default_adapter_config"
+        )
 
     async def convert_payload_to_triton_format(
         self,
