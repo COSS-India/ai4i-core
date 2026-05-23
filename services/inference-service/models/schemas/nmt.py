@@ -1,11 +1,13 @@
 """NMT (Neural Machine Translation) service request/response schemas."""
 
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TextInput(BaseModel):
     """Input for text-based NMT task."""
+
+    model_config = ConfigDict(populate_by_name=True)
 
     source: str = Field(..., description="Text to translate")
 
@@ -13,29 +15,51 @@ class TextInput(BaseModel):
 class LanguagePair(BaseModel):
     """Language pair configuration for NMT."""
 
-    source_language: str = Field(..., description="Source language code (e.g., 'en')")
-    target_language: str = Field(..., description="Target language code (e.g., 'hi')")
-    source_script_code: Optional[str] = Field(None, description="Source script code (e.g., 'Latn')")
-    target_script_code: Optional[str] = Field(None, description="Target script code (e.g., 'Deva')")
+    model_config = ConfigDict(populate_by_name=True)
+
+    source_language: str = Field(
+        ..., alias="sourceLanguage", description="Source language code (e.g., 'en')"
+    )
+    target_language: str = Field(
+        ..., alias="targetLanguage", description="Target language code (e.g., 'hi')"
+    )
+    source_script_code: Optional[str] = Field(
+        None, alias="sourceScriptCode", description="Source script code (e.g., 'Latn')"
+    )
+    target_script_code: Optional[str] = Field(
+        None, alias="targetScriptCode", description="Target script code (e.g., 'Deva')"
+    )
 
 
 class NMTConfig(BaseModel):
     """Configuration for NMT inference."""
 
-    service_id: Optional[str] = Field(None, description="Service ID (optional, resolved by SMR)")
+    model_config = ConfigDict(populate_by_name=True)
+
+    service_id: Optional[str] = Field(
+        None, alias="serviceId", description="Service ID (optional, resolved by SMR)"
+    )
     language: LanguagePair = Field(..., description="Source and target language pair")
-    context: Optional[str] = Field(None, description="Optional context for context-aware translation")
+    context: Optional[str] = Field(
+        None, description="Optional context for context-aware translation"
+    )
 
 
 class NMTInferenceRequest(BaseModel):
     """Request for NMT inference."""
 
-    input: List[TextInput] = Field(..., min_items=1, max_items=90, description="Text inputs to translate")
+    model_config = ConfigDict(populate_by_name=True)
+
+    input: List[TextInput] = Field(
+        ..., min_length=1, max_length=90, description="Text inputs to translate"
+    )
     config: NMTConfig = Field(..., description="NMT configuration")
 
 
 class TranslationOutput(BaseModel):
     """Output from NMT inference."""
+
+    model_config = ConfigDict(populate_by_name=True)
 
     source: str = Field(..., description="Original source text")
     target: str = Field(..., description="Translated target text")
@@ -44,12 +68,17 @@ class TranslationOutput(BaseModel):
 class NMTInferenceResponse(BaseModel):
     """Response from NMT inference."""
 
+    model_config = ConfigDict(populate_by_name=True, use_enum_values=True)
+
     output: List[TranslationOutput] = Field(..., description="Translation results")
-    smr_response: Optional[Dict[str, Any]] = Field(None, description="Smart Model Router metadata")
+    smr_response: Optional[Dict[str, Any]] = Field(
+        None, description="Smart Model Router metadata"
+    )
 
-    class Config:
-        use_enum_values = True
+    def model_dump(self, **kwargs) -> Dict[str, Any]:
+        kwargs.setdefault("exclude_none", True)
+        return super().model_dump(**kwargs)
 
-    def dict(self, **kwargs):
-        """Exclude None values from serialization."""
-        return super().dict(exclude_none=True, **kwargs)
+    def dict(self, **kwargs) -> Dict[str, Any]:
+        kwargs.setdefault("exclude_none", True)
+        return super().dict(**kwargs)

@@ -160,7 +160,6 @@ async def list_available_tasks(
     Useful for clients to discover supported services.
 
     Args:
-        task_factory: TaskFactory instance
 
     Returns:
         Dict with list of available task types
@@ -176,7 +175,6 @@ async def get_task_info(
 
     Args:
         task_type: Task type to get information for
-        task_factory: TaskFactory instance
 
     Returns:
         Dict with task schema information

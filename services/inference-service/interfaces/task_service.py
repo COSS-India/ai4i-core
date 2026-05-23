@@ -3,7 +3,7 @@ Task service interface and base class defining the contract for all inference ta
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 
@@ -66,14 +66,15 @@ class ITaskService(ABC):
 
     @abstractmethod
     async def postprocess_output(
-        self, raw_triton_output: Dict[str, Any]
+        self, response_items: List[Dict[str, Any]], **kwargs: Any
     ) -> Dict[str, Any]:
         """
-        Post-process raw Triton inference output.
-        Handles task-specific transformations like decoding, formatting, etc.
+        Post-process inference output into a response-ready dict.
+        Text services pass source_texts via kwargs; audio/image services pass their own fields.
 
         Args:
-            raw_triton_output: Raw output dictionary from Triton server
+            response_items: Output dicts from convert_triton_output_to_task_format
+            **kwargs: Modality-specific context (e.g. source_texts for text)
 
         Returns:
             Formatted output dictionary for response
@@ -81,17 +82,13 @@ class ITaskService(ABC):
         pass
 
     @abstractmethod
-    async def _deserialize_payload(self, payload: Dict[str, Any]) -> BaseModel:
-        """
-        Deserialize raw payload dictionary to task-specific request model.
-        Each task service implements this for its specific payload format.
+    async def _deserialize_payload(self, payload: Dict[str, Any]) -> Any:
+        """Deserialize raw payload — subclasses override for typed deserialization."""
+        pass
 
-        Args:
-            payload: Raw request payload dictionary
-
-        Returns:
-            Task-specific deserialized request model
-        """
+    @abstractmethod
+    def _build_response(self, request: Any, postprocessed: Dict[str, Any]) -> Any:
+        """Build typed response model from postprocessed inference output."""
         pass
 
 
@@ -118,6 +115,10 @@ class BaseTaskService(ITaskService):
         self.task_name = self.__class__.__name__
         self.service_info: Dict[str, Any] = service_info or {}
         self.logger = logging.getLogger(__name__)
+
+    async def _deserialize_payload(self, payload: Dict[str, Any]) -> Any:
+        """Passthrough — subclasses override for typed deserialization."""
+        return payload
 
     async def process(
         self,
@@ -193,22 +194,20 @@ class BaseTaskService(ITaskService):
             raise ValueError(f"{self.task_name}: Input data cannot be empty")
         return input_data
 
-    async def postprocess_output(
-        self, raw_triton_output: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Post-process raw Triton inference output.
-        Override in subclasses for task-specific transformations like decoding, formatting, etc.
-
-        Args:
-            raw_triton_output: Raw output dictionary from Triton server
-
-        Returns:
-            Formatted output dictionary for response
-        """
-        if not raw_triton_output:
-            raise ValueError(f"{self.task_name}: Raw output cannot be empty")
-        return raw_triton_output
+    async def run_inference(
+        self,
+        request: Any,
+        user_id: Optional[int] = None,
+        api_key_id: Optional[int] = None,
+        session_id: Optional[str] = None,
+    ) -> Any:
+        config = getattr(request, "config")
+        config._request_payload = request
+        result = await self.execute_triton_inference(config, self._get_inference_model_class())
+        postprocessed = await self.postprocess_output(
+            result["response_data"], source_texts=result["source_texts"]
+        )
+        return self._build_response(request, postprocessed)
 
     async def extract_field_from_items(
         self,
@@ -242,29 +241,9 @@ class BaseTaskService(ITaskService):
         config: Any,
         inference_model_class: type,
     ) -> Dict[str, Any]:
-        """
-        Execute Triton inference and convert output back to task format.
-        Common logic shared across all task services.
-        
-        Handles: service resolution, model instantiation, payload conversion,
-        Triton inference execution, and output conversion.
-
-        Args:
-            config: Task-specific config object with service and language information
-            inference_model_class: InferenceModel class to instantiate (e.g., NMTInferenceModel)
-
-        Returns:
-            Dict with keys:
-                - response_data: Converted response data from Triton output
-                - source_texts: Extracted source texts from request (if available)
-                - service_id: Resolved service ID
-
-        Raises:
-            RuntimeError: If inference execution fails
-        """
         try:
             # 1. Use pre-resolved service info injected at construction time
-            #    (resolved by Orchestrator before TaskFactory creates this service)
+            #    (resolved by Orchestrator before it creates this service)
             service_id = self.service_info.get('service_id', '')
             model_name = self.service_info.get('name', '')
             triton_endpoint = self.service_info.get('endpoint', '')
@@ -364,3 +343,5 @@ class BaseTaskService(ITaskService):
         except Exception as e:
             self.logger.error(f"Failed to connect to Triton: {str(e)}")
             raise RuntimeError(f"Triton inference call failed at {triton_endpoint}: {str(e)}") from e
+
+

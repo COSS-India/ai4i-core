@@ -124,7 +124,7 @@ class Orchestrator:
     ) -> ITaskService:
         """
         Get or instantiate task service for given task_type and resolved service_info.
-        Delegates to TaskFactory for service instantiation.
+        Looks up TASK_SERVICE_REGISTRY and instantiates the matching service class.
 
         Args:
             task_type: Task type to get service for
