@@ -66,14 +66,15 @@ class ITaskService(ABC):
 
     @abstractmethod
     async def postprocess_output(
-        self, raw_triton_output: Dict[str, Any]
+        self, response_items: List[Dict[str, Any]], **kwargs: Any
     ) -> Dict[str, Any]:
         """
-        Post-process raw Triton inference output.
-        Handles task-specific transformations like decoding, formatting, etc.
+        Post-process inference output into a response-ready dict.
+        Text services pass source_texts via kwargs; audio/image services pass their own fields.
 
         Args:
-            raw_triton_output: Raw output dictionary from Triton server
+            response_items: Output dicts from convert_triton_output_to_task_format
+            **kwargs: Modality-specific context (e.g. source_texts for text)
 
         Returns:
             Formatted output dictionary for response
@@ -83,6 +84,11 @@ class ITaskService(ABC):
     @abstractmethod
     async def _deserialize_payload(self, payload: Dict[str, Any]) -> Any:
         """Deserialize raw payload — subclasses override for typed deserialization."""
+        pass
+
+    @abstractmethod
+    def _build_response(self, request: Any, postprocessed: Dict[str, Any]) -> Any:
+        """Build typed response model from postprocessed inference output."""
         pass
 
 
@@ -188,24 +194,21 @@ class BaseTaskService(ITaskService):
             raise ValueError(f"{self.task_name}: Input data cannot be empty")
         return input_data
 
-    async def postprocess_output(
-        self, raw_triton_output: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Post-process raw Triton inference output.
-        Override in subclasses for task-specific transformations like decoding, formatting, etc.
+    async def run_inference(
+        self,
+        request: Any,
+        user_id: Optional[int] = None,
+        api_key_id: Optional[int] = None,
+        session_id: Optional[str] = None,
+    ) -> Any:
+        config = getattr(request, "config")
+        config._request_payload = request
+        result = await self.execute_triton_inference(config, self._get_inference_model_class())
+        postprocessed = await self.postprocess_output(
+            result["response_data"], source_texts=result["source_texts"]
+        )
+        return self._build_response(request, postprocessed)
 
-        Args:
-            raw_triton_output: Raw output dictionary from Triton server
-
-        Returns:
-            Formatted output dictionary for response
-        """
-        if not raw_triton_output:
-            raise ValueError(f"{self.task_name}: Raw output cannot be empty")
-        return raw_triton_output
-
-    
     async def extract_field_from_items(
         self,
         items: List[Any],

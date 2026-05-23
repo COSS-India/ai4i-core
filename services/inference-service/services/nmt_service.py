@@ -1,23 +1,20 @@
 """NMT (Neural Machine Translation) TaskService implementation."""
 
 import logging
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
-
-from interfaces.task_service import BaseTaskService
+from services.base.text_base import TextBase
+from services.base.config_mapper import GenericTritonMapper
 from models.schemas.nmt import (
     NMTInferenceRequest,
     NMTInferenceResponse,
-    NMTConfig,
 )
-from inference_models.nmt_inference_model import NMTInferenceModel  # type: ignore[import]
 from ai4icore_core.telemetry import async_trace_stage
 
 logger = logging.getLogger(__name__)
 
 
-class NMTTaskService(BaseTaskService):
+class NMTTaskService(TextBase):
     """
     TaskService for Neural Machine Translation inference.
     Handles translation requests between language pairs.
@@ -57,7 +54,7 @@ class NMTTaskService(BaseTaskService):
             raise ValueError(f"NMT: Failed to deserialize payload: {str(e)}")
 
     @async_trace_stage("validate")
-    async def validate_request(self, request: BaseModel) -> None:
+    async def validate_request(self, request: Any) -> None:
         await super().validate_request(request)
 
         # Convert to dict for validation
@@ -87,9 +84,7 @@ class NMTTaskService(BaseTaskService):
         self.logger.info(f"NMT request validated: {source_lang} -> {target_lang} ({len(input_items)} inputs)")
     @async_trace_stage("preprocess_input")
     async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
-        input_list = []
-
-        preprocessed = await super().preprocess_input(input_list)
+        preprocessed = await super().preprocess_input(input_data)
 
         cleaned = []
         for item in preprocessed:
@@ -104,36 +99,16 @@ class NMTTaskService(BaseTaskService):
         self.logger.debug(f"NMT preprocessed {len(cleaned)} inputs")
         return cleaned
 
-    @async_trace_stage("triton_inference")
-    async def run_inference(
-        self,
-        request: BaseModel,
-    ) -> BaseModel:
-        nmt_request = cast(NMTInferenceRequest, request)
-        config: NMTConfig = nmt_request.config
+    def _get_inference_model_class(self) -> type:
+        return GenericTritonMapper
 
-        # Attach request payload to config so execute_triton_inference can access
-        # input items and config dict for payload conversion
-        config._request_payload = nmt_request
-
-        # Execute Triton inference (service already resolved by Orchestrator at construction time)
-        result = await self.execute_triton_inference(config, NMTInferenceModel)
-
-        postprocessed = await self.postprocess_output(
-            result["response_data"], result["source_texts"]
-        )
-
-        response = NMTInferenceResponse(
-            output=postprocessed['output'],
+    def _build_response(
+        self, request: NMTInferenceRequest, postprocessed: Dict[str, Any]
+    ) -> NMTInferenceResponse:
+        return NMTInferenceResponse(
+            output=postprocessed["output"],
             smr_response=None,
         )
-
-
-        self.logger.info(
-            f"NMT inference completed successfully: service_id={result['service_id']}, "
-            f"outputs={len(response.output)}"
-        )
-        return response
 
     async def postprocess_output(
         self, response_items: List[Dict[str, Any]], source_texts: Optional[List[str]] = None
