@@ -29,9 +29,3 @@ FULL_NAME_MAX_LENGTH = 255
 PHONE_NUMBER_MAX_LENGTH = 20
 TIMEZONE_MAX_LENGTH = 50
 ORGANISATION_MAX_LENGTH = 255
-
-# ── Non-native SQLAlchemy enums on users (VARCHAR storage) ─────────────
-# We persist enum labels as VARCHAR instead of PostgreSQL ENUM types to avoid
-# reflection/autogenerate drift and simplify migrations (see creation_type in
-# migration 53a41e6233f1). All enum member values must fit this width.
-VARCHAR_ENUM_MAX_LENGTH = 32

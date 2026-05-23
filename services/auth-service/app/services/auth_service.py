@@ -26,7 +26,7 @@ from app.core.exceptions import (
 )
 from app.models.credentials import UserCredentials
 from app.models.tenant import Tenant, TenantStatus
-from app.services.tenant_service import (
+from app.services.tenant_lifecycle import (
     assert_valid_tenant_status_transition,
     sync_tenant_users_for_status,
 )
@@ -386,7 +386,8 @@ class AuthService:
         if not await self._is_pending_tenant_contact_admin(user):
             return
         tenant = await self._tenants.get_by_id(user.tenant_id)
-        assert tenant is not None
+        if tenant is None:
+            raise EntityNotFoundError(f"Tenant {user.tenant_id}")
         assert_valid_tenant_status_transition(tenant.status, TenantStatus.ACTIVE)
         await self._tenants.update(tenant, {"status": TenantStatus.ACTIVE})
         await sync_tenant_users_for_status(

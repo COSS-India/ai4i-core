@@ -119,13 +119,14 @@ class APIKeyService:
                 await self._repo.refresh(db_key)
             await self._refresh_redis_cache(db_key, tenant_id)
         else:
-            if db_key.is_active:
-                await self._repo.update(db_key, {"is_active": False})
-                await self._repo.refresh(db_key)
             await self._cache.delete_api_key_cache(db_key.api_key)
 
     async def sync_keys_for_user(
-        self, user: User, tenant: Optional[Tenant] = None
+        self,
+        user: User,
+        tenant: Optional[Tenant] = None,
+        *,
+        auto_commit: bool = True,
     ) -> None:
         """Align API keys with the user's (and tenant's) access state."""
         if self._repo is None:
@@ -145,7 +146,8 @@ class APIKeyService:
                 should_be_active=eligible and not key.is_expired(),
                 tenant_id=tenant_id_str,
             )
-        await self._repo.commit()
+        if auto_commit:
+            await self._repo.commit()
 
     _SYNC_USERS_PAGE_SIZE = 500
 
@@ -172,7 +174,8 @@ class APIKeyService:
             if not users:
                 break
             for user in users:
-                await self.sync_keys_for_user(user, tenant)
+                await self.sync_keys_for_user(user, tenant, auto_commit=False)
+            await self._repo.commit()
             if len(users) < self._SYNC_USERS_PAGE_SIZE:
                 break
             offset += self._SYNC_USERS_PAGE_SIZE
@@ -300,10 +303,6 @@ class APIKeyService:
             )
 
         await self._repo.revoke(db_key)
-        await self._repo.update(
-            db_key,
-            {"expires_at": datetime.now(timezone.utc)},
-        )
         await self._repo.commit()
 
         # Evict from Redis AFTER DB commit to ensure atomicity

@@ -48,6 +48,10 @@ from app.schemas.user import UserListResponse
 from app.services.api_key_service import APIKeyService
 from app.services.cache_service import CacheService
 from app.services.auth_email_templates import render_setup_link, render_verify_email
+from app.services.tenant_lifecycle import (
+    assert_valid_tenant_status_transition,
+    sync_tenant_users_for_status,
+)
 from app.services.email_helpers import enqueue_email, persist_token_verification, resolve_tenant_id, setup_token_expires_at
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
@@ -57,59 +61,23 @@ logger = logging.getLogger(__name__)
 
 _TENANT_ASSIGNABLE_ROLES: tuple[RoleName, ...] = (RoleName.USER, RoleName.TENANT_ADMIN)
 
-# PATCH /tenants/{id}/status and onboarding (PENDING → ACTIVE on set-password).
-ALLOWED_TENANT_STATUS_TRANSITIONS: dict[TenantStatus, frozenset[TenantStatus]] = {
-    TenantStatus.PENDING: frozenset({TenantStatus.ACTIVE}),
-    TenantStatus.ACTIVE: frozenset({TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED}),
-    TenantStatus.SUSPENDED: frozenset({TenantStatus.ACTIVE, TenantStatus.DEACTIVATED}),
-    TenantStatus.DEACTIVATED: frozenset({TenantStatus.ACTIVE}),
-}
+
+def _payload_touches_user_access(payload: dict) -> bool:
+    """True when the caller explicitly sent ``is_active`` and/or ``is_tenant_active``."""
+    return "is_active" in payload or "is_tenant_active" in payload
 
 
-def assert_valid_tenant_status_transition(
-    current: TenantStatus,
-    target: TenantStatus,
+def _assert_tenant_active_for_user_deactivation(
+    tenant: Tenant, payload: dict
 ) -> None:
-    """Raise ValidationError when ``target`` is not allowed from ``current``."""
-    if current == target:
-        raise ValidationError(
-            message=f"Tenant status is already {current.value}.",
-            code="TENANT_STATUS_UNCHANGED",
-        )
-    allowed = ALLOWED_TENANT_STATUS_TRANSITIONS.get(current, frozenset())
-    if target in allowed:
+    """Tenant admins may set ``is_active=False`` only while the tenant is ACTIVE."""
+    if payload.get("is_active") is not False:
         return
-    allowed_labels = ", ".join(sorted(s.value for s in allowed)) or "none"
-    raise ValidationError(
-        message=(
-            f"Cannot change tenant status from {current.value} to {target.value}. "
-            f"Allowed targets: {allowed_labels}."
-        ),
-        code="INVALID_TENANT_STATUS_TRANSITION",
-    )
-
-
-def _payload_suspends_user(payload: dict) -> bool:
-    return payload.get("is_active") is False or payload.get("is_tenant_active") is False
-
-
-def _payload_activates_user(payload: dict) -> bool:
-    return payload.get("is_active") is True or payload.get("is_tenant_active") is True
-
-
-async def sync_tenant_users_for_status(
-    user_repo: UserRepository,
-    tenant_id: int,
-    status: TenantStatus,
-    updated_by: Optional[UUID] = None,
-) -> None:
-    """Sync ``is_tenant_active`` for all tenant users when platform tenant status changes."""
-    if status == TenantStatus.ACTIVE:
-        await user_repo.unlock_tenant_users_for_status(
-            tenant_id, updated_by=updated_by
+    if tenant.status != TenantStatus.ACTIVE:
+        raise ValidationError(
+            message="Tenant users can only be suspended while the tenant is active.",
+            code="TENANT_NOT_ACTIVE",
         )
-    elif status in (TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED):
-        await user_repo.lock_tenant_users_for_status(tenant_id, updated_by=updated_by)
 
 
 _API_KEY_SYNC_MAX_ATTEMPTS = 3
@@ -493,7 +461,20 @@ class TenantService:
         background_tasks: Optional[BackgroundTasks] = None,
     ) -> Tenant:
         await self.enforce_scope(current_user, tenant_id)
-        tenant = await self._load_tenant_or_404(tenant_id)
+        if body.status in (
+            TenantStatus.SUSPENDED,
+            TenantStatus.DEACTIVATED,
+        ) and not await self.is_system_admin(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "TENANT_STATUS_FORBIDDEN",
+                    "message": (
+                        "Only system administrators can suspend or deactivate a tenant."
+                    ),
+                },
+            )
+        tenant = await self._load_tenant_for_update_or_404(tenant_id)
         assert_valid_tenant_status_transition(tenant.status, body.status)
         await sync_tenant_users_for_status(
             self._users, tenant_id, body.status, updated_by=current_user.id
@@ -560,7 +541,7 @@ class TenantService:
         body: TenantUserUpdate,
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
-        tenant = await self._load_tenant_or_404(tenant_id)
+        await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
         role_update = payload.pop("role", None)
@@ -570,10 +551,6 @@ class TenantService:
             # Single commit via save_and_refresh — role repo shares this session.
             await self._set_tenant_user_role(target.id, role_update, commit=False)
         await self._users.save_and_refresh(target)
-        if self._api_keys is not None and (
-            _payload_suspends_user(payload) or _payload_activates_user(payload)
-        ):
-            await self._api_keys.sync_keys_for_user(target, tenant)
         return target
 
     async def update_tenant_user_status(
@@ -588,20 +565,11 @@ class TenantService:
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
         payload["updated_by"] = current_user.id
-
-        if _payload_suspends_user(payload):
-            if tenant.status != TenantStatus.ACTIVE:
-                raise ValidationError(
-                    message="Tenant users can only be suspended while the tenant is active.",
-                    code="TENANT_NOT_ACTIVE",
-                )
-            payload["is_active"] = False
-        elif _payload_activates_user(payload):
-            payload.setdefault("is_active", True)
+        _assert_tenant_active_for_user_deactivation(tenant, payload)
 
         await self._users.update(target, payload)
         await self._users.save_and_refresh(target)
-        if self._api_keys is not None:
+        if self._api_keys is not None and _payload_touches_user_access(payload):
             await self._api_keys.sync_keys_for_user(target, tenant)
         return target
 
