@@ -240,7 +240,7 @@ class BaseTaskService(ITaskService):
     ) -> Dict[str, Any]:
         try:
             # 1. Use pre-resolved service info injected at construction time
-            #    (resolved by Orchestrator before TaskFactory creates this service)
+            #    (resolved by Orchestrator before it creates this service)
             service_id = self.service_info.get('service_id', '')
             model_name = self.service_info.get('name', '')
             triton_endpoint = self.service_info.get('endpoint', '')
