@@ -44,6 +44,11 @@ class AudioBase(BaseTaskService):
 
     TARGET_SAMPLE_RATE = 16000  # All audio is resampled to this rate before Triton
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        from inference.inference_server_resolver import InferenceServerResolver
+        self.inference_server_resolver = InferenceServerResolver()
+
     # ------------------------------------------------------------------
     # Pipeline methods
     # ------------------------------------------------------------------
