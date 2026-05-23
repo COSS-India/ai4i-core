@@ -101,25 +101,3 @@ class OCRDefaultModel(ImageBase):
             for item in decoded_items
         ]
         return OCRInferenceResponse(output=output_list)
-
-
-# ---------------------------------------------------------------------------
-# Future image task default models — to be implemented in upcoming PRs
-# ---------------------------------------------------------------------------
-
-class DocumentLayoutDefaultModel(ImageBase):
-    """
-    Default Document Layout model service.
-    Will override: postprocess_output (returns bounding boxes + text per region),
-                   _empty_output (no regions).
-    """
-    pass
-
-
-class VisionDefaultModel(ImageBase):
-    """
-    Default Vision (image classification / captioning) model service.
-    Will override: preprocess_input (uses _decode_image + _resize_image),
-                   postprocess_output (label / caption schema).
-    """
-    pass

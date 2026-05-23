@@ -137,32 +137,6 @@ class ImageBase(BaseTaskService):
             resp.raise_for_status()
             return resp.content
 
-    async def _get_image_bytes(self, image_input: Any) -> bytes:
-        """Raw image bytes — base64-decode inline content or download from URI."""
-        content = image_input.get("image_content") if isinstance(image_input, dict) else getattr(image_input, "image_content", None)
-        uri = image_input.get("image_uri") if isinstance(image_input, dict) else getattr(image_input, "image_uri", None)
-        if content:
-            return base64.b64decode(content)
-        if uri:
-            return await self._download_image(uri)
-        raise ValueError("Image input has no image_content or image_uri")
-
-    # ------------------------------------------------------------------
-    # Image processing helpers (stub — fill when first vision task arrives)
-    # ------------------------------------------------------------------
-
-    def _decode_image(self, image_bytes: bytes) -> Any:
-        """Decode raw image bytes into a pixel array. Stub — Pillow integration."""
-        ...
-
-    def _resize_image(self, image: Any, target_width: int, target_height: int) -> Any:
-        """Resize a pixel array. Stub."""
-        ...
-
-    def _normalize_pixels(self, image: Any) -> Any:
-        """Normalize pixel values to [0,1] float32. Stub."""
-        ...
-
     # ------------------------------------------------------------------
     # Validation helpers
     # ------------------------------------------------------------------
@@ -179,10 +153,6 @@ class ImageBase(BaseTaskService):
                 raise ValueError(
                     f"{self.task_name}: image[{idx}] requires image_content or image_uri"
                 )
-
-    async def _validate_language_hint(self, request: Any) -> None:
-        """Opt-in: enforce language hint on the request config. No-op base impl."""
-        ...
 
     # ------------------------------------------------------------------
     # Output / postprocess helpers (concrete)
@@ -219,16 +189,6 @@ class ImageBase(BaseTaskService):
         self, decoded_items: List[Dict[str, Any]]
     ) -> Any:
         """Override in model class — wrap decoded text in task-specific response model."""
-        ...
-
-    async def _wrap_layout_output(
-        self, decoded_items: List[Dict[str, Any]]
-    ) -> Any:
-        """Override in model class — wrap layout/bounding-box payloads."""
-        ...
-
-    async def _empty_output(self, **kwargs: Any) -> Any:
-        """Override in model class — return a safe empty response on failure."""
         ...
 
     # ------------------------------------------------------------------
