@@ -1,4 +1,4 @@
-"""add_ner_and_transliteration_adapter_config_to_mm_services
+"""add_text_inference_adapter_configs
 
 Revision ID: f7e8d9c0b1a2
 Revises: e4f6a8b2c1d0

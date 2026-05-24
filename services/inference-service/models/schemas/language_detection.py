@@ -22,7 +22,7 @@ class LanguageDetectionConfig(BaseModel):
 class LanguageDetectionInferenceRequest(BaseModel):
     """Request for language detection inference."""
 
-    input: List[TextInput] = Field(..., min_items=1, description="Text inputs for language detection")
+    input: List[TextInput] = Field(..., min_length=1, description="Text inputs for language detection")
     config: LanguageDetectionConfig = Field(..., description="Language detection configuration")
 
 

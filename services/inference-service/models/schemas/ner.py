@@ -30,15 +30,11 @@ class NERConfig(BaseModel):
 
     model_config = {"populate_by_name": True}
 
-    @property
-    def resolved_service_id(self) -> Optional[str]:
-        return self.service_id
-
 
 class NERInferenceRequest(BaseModel):
     """Request for NER inference."""
 
-    input: List[TextInput] = Field(..., min_items=1, description="Text inputs for NER")
+    input: List[TextInput] = Field(..., min_length=1, description="Text inputs for NER")
     config: NERConfig = Field(..., description="NER configuration")
 
 

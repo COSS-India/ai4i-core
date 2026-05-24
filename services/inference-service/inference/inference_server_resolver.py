@@ -80,7 +80,7 @@ class InferenceServerResolver:
         if cached:
             self._log_cache_hit(service_id, "cache")
             return cached
-        
+
         # Query model management service
         try:
             service_info = await self._query_model_management_service(service_id)
@@ -162,7 +162,7 @@ class InferenceServerResolver:
 
         try:
             http_client = HTTPServiceClient(timeout=30)
-            url = f"{model_management_url.rstrip('/')}/api/v1/model-management/services/{service_id}"
+            url = f"{model_management_url.rstrip('/')}/api/v1/services/{service_id}"
             raw = await http_client.get_json(url)
             service_info = self._normalize_mms_response(raw, service_id)
             logger.debug(f"Resolved service {service_id}: {service_info}")

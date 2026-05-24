@@ -384,18 +384,26 @@ class NERTaskService(TextBase):
                 continue
             entity_lower = entity.lower()
 
-            span_start = source_lower.find(entity_lower)
-            if span_start >= 0:
+            # Find ALL occurrences of the entity span in source (fixes duplicate entity issue)
+            search_pos = 0
+            matched = False
+            while True:
+                span_start = source_lower.find(entity_lower, search_pos)
+                if span_start < 0:
+                    break
                 span_end = span_start + len(entity_lower)
                 for word_idx, word_info in enumerate(word_positions):
                     if word_info["start"] < span_end and word_info["end"] > span_start:
                         word_to_pred[word_idx] = pred_group
+                matched = True
+                search_pos = span_end
+
+            if matched:
                 continue
 
-            # Fallback: single-word case-insensitive match
+            # Fallback: exact word match only (prevents "in" matching every word with "in")
             for word_idx, word_info in enumerate(word_positions):
-                word_lower = word_info["word"].lower()
-                if word_lower == entity_lower or entity_lower in word_lower or word_lower in entity_lower:
+                if word_info["word"].lower() == entity_lower:
                     word_to_pred[word_idx] = pred_group
 
         return word_to_pred

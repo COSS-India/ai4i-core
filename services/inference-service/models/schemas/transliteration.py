@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 
 class TextInput(BaseModel):
@@ -41,7 +41,7 @@ class TransliterationLanguagePair(BaseModel):
 class TransliterationConfig(BaseModel):
     """Configuration for transliteration inference."""
 
-    service_id: str = Field(..., alias="serviceId", description="Service ID (required)")
+    service_id: Optional[str] = Field(None, alias="serviceId", description="Service ID")
     language: TransliterationLanguagePair = Field(..., description="Source and target language pair")
     is_sentence: bool = Field(
         True,
@@ -57,17 +57,19 @@ class TransliterationConfig(BaseModel):
     )
     preserve_case: Optional[bool] = Field(True, description="Preserve case in transliteration")
 
-    # Populated for GenericTritonMapper value_path resolution
-    is_word_level: bool = Field(default=True, description="Triton IS_WORD_LEVEL tensor")
-    top_k: int = Field(default=0, description="Triton TOP_K tensor")
-
     model_config = {"populate_by_name": True}
 
-    @model_validator(mode="after")
-    def set_triton_tensor_fields(self) -> "TransliterationConfig":
-        self.is_word_level = not self.is_sentence
-        self.top_k = self.num_suggestions
-        return self
+    @computed_field
+    @property
+    def is_word_level(self) -> bool:
+        """Derived from is_sentence — included in model_dump() for Triton mapper."""
+        return not self.is_sentence
+
+    @computed_field
+    @property
+    def top_k(self) -> int:
+        """Derived from num_suggestions — included in model_dump() for Triton mapper."""
+        return self.num_suggestions
 
 
 class TransliterationInferenceRequest(BaseModel):

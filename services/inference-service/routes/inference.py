@@ -178,13 +178,13 @@ async def run_ner_inference(
     summary="TRANSLITERATION Inference Endpoint",
     description="Route inference requests to TRANSLITERATION TaskService",
 )
-async def run_ner_inference(
+async def run_transliteration_inference(
     payload: Dict[str, Any],
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Dict[str, Any]:
     """
-    Dedicated endpoint for NER inference requests.
-    Sets task_type to NER if not provided in payload, then routes via Orchestrator.
+    Dedicated endpoint for Transliteration inference requests.
+    Sets task_type to TRANSLITERATION if not provided in payload, then routes via Orchestrator.
     """
     import time
     start_time = time.time()
@@ -216,13 +216,13 @@ async def run_ner_inference(
     summary="LANGUAGE_DETECTION Inference Endpoint",
     description="Route inference requests to LANGUAGE_DETECTION TaskService",
 )
-async def run_ner_inference(
+async def run_language_detection_inference(
     payload: Dict[str, Any],
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Dict[str, Any]:
     """
-    Dedicated endpoint for NER inference requests.
-    Sets task_type to NER if not provided in payload, then routes via Orchestrator.
+    Dedicated endpoint for Language Detection inference requests.
+    Sets task_type to LANGUAGE_DETECTION if not provided in payload, then routes via Orchestrator.
     """
     import time
     start_time = time.time()
