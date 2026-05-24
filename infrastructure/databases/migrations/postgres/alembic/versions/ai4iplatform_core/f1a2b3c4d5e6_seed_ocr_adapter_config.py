@@ -21,7 +21,7 @@ _OCR_ADAPTER_CONFIG = {
     "version": "1",
     "model_version": "1",
     "inputs": [
-        {"tensor": "IMAGE_DATA", "dtype": "BYTES", "shape": [-1, 1], "value": "image.image_content"},
+        {"tensor": "IMAGE_DATA", "dtype": "BYTES", "shape": [-1, 1], "value_path": "input.image_content"},
     ],
     "outputs": [
         {"tensor": "OUTPUT_TEXT", "dtype": "BYTES", "maps_to": "text"},

@@ -1,27 +1,25 @@
 """
 ImageBase — base class for image-backed inference services.
 
-Inherits the BaseTaskService.process template; overrides execute_triton_inference
-to drive the image-specific Triton call (reads request.image, batches into a
-single KServe v2 call using GenericTritonMapper + adapter_config).
+Adds image-specific pieces to the generic BaseTaskService pipeline:
+  validate_request   → ensures the image list is non-empty and each item carries content/uri
+  preprocess_input   → normalizes each item to base64 image_content (downloads URI if needed)
+  _get_request_input → exposes `request.image` to BaseTaskService.execute_triton_inference
 
-Concrete task services (e.g. OCRTaskService) must implement:
-  _deserialize_payload                              → typed request model
-  _get_default_adapter_config                       → fallback when MMS returns null
-  convert_payload_to_triton_format(items, config)   → (triton_inputs, output_names)
-  convert_triton_output_to_task_format(raw_output)  → List[Dict] per image
-  postprocess_output(response_items)                → response dict
-  _build_response(request, postprocessed)           → typed response model
+All Triton I/O (payload assembly, output mapping) is handled by GenericTritonMapper
+via the adapter_config sourced from MMS — concrete task services don't reimplement it.
 
-Mirrors AudioBase (services/base/audio_base.py).
+Concrete task services (e.g. OCRTaskService) typically provide:
+  REQUEST_SCHEMA       → pydantic request model for the base deserializer
+  postprocess_output   → response shaping
+  _build_response      → typed response model
 """
 
 import base64
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import httpx
-from pydantic import BaseModel
 
 from interfaces.task_service import BaseTaskService
 
@@ -41,7 +39,7 @@ class ImageBase(BaseTaskService):
     # Pipeline hooks called by BaseTaskService.process
     # ------------------------------------------------------------------
 
-    async def validate_request(self, request: BaseModel) -> None:
+    async def validate_request(self, request: Any) -> None:
         """Common image validation: non-empty image list, each item has content or uri."""
         await super().validate_request(request)
         await self._validate_image_items(request)
@@ -56,128 +54,9 @@ class ImageBase(BaseTaskService):
             items.append(d)
         return items
 
-    # ------------------------------------------------------------------
-    # execute_triton_inference — image-shaped override
-    # ------------------------------------------------------------------
-
-    async def execute_triton_inference(
-        self,
-        config: Any,
-        inference_model_class: type,
-    ) -> Dict[str, Any]:
-        """
-        Image inference call — overrides BaseTaskService.execute_triton_inference.
-
-        Differences from the text base:
-          - Reads request.image (not request.input)
-          - Batches all images into ONE Triton call (Surya supports batching;
-            no per-item loop required, unlike audio's variable-length need)
-          - Applies _get_default_adapter_config() when MMS returns null
-          - convert_payload_to_triton_format / convert_triton_output_to_task_format
-            are called on self (subclass methods), not on a separate mapper instance
-        """
-        del inference_model_class  # subclass hooks build the tensors
-
-        service_id      = self.service_info.get("service_id", "")
-        model_name      = self.service_info.get("name", "")
-        triton_endpoint = self.service_info.get("endpoint", "")
-        api_key         = self.service_info.get("api_key")
-        adapter_config  = self.service_info.get("adapter_config")
-
-        if not model_name or not triton_endpoint:
-            raise RuntimeError(
-                f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
-                "Ensure the Orchestrator resolved the service before creating this task service."
-            )
-
-        if not adapter_config:
-            raise RuntimeError(
-                f"{self.task_name}: service_info has no adapter_config. "
-                f"Seed mm_services.adapter_config for service "
-                f"'{self.service_info.get('name')}'."
-            )
-
-        # Store so convert_payload_to_triton_format can access via self._adapter_config
-        self._adapter_config = adapter_config
-
-        request_payload = getattr(config, "_request_payload", None)
-        if not request_payload:
-            raise ValueError(f"{self.task_name}: config must have _request_payload set")
-
-        image_items: List[Any] = getattr(request_payload, "image") or []
-        self.logger.info(
-            "%s: model=%s endpoint=%s inputs=%d",
-            self.task_name, model_name, triton_endpoint, len(image_items),
-        )
-
-        items = [
-            item if isinstance(item, dict) else item.model_dump(by_alias=False)
-            for item in image_items
-        ]
-        config_dict = config.model_dump()
-
-        triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
-            items, config_dict
-        )
-
-        raw_output = await self._call_triton_inference(
-            triton_endpoint=triton_endpoint,
-            triton_inputs=triton_inputs,
-            triton_outputs=triton_outputs,
-            api_key=api_key,
-        )
-
-        response_data = await self.convert_triton_output_to_task_format(raw_output)
-        return {
-            "response_data": response_data,
-            "source_texts": [],
-            "service_id": service_id,
-        }
-
-    # ------------------------------------------------------------------
-    # Hooks — subclasses must implement these
-    # ------------------------------------------------------------------
-
-    def _get_inference_model_class(self) -> type:
-        """Return GenericTritonMapper — satisfies BaseTaskService.run_inference signature."""
-        from services.base.config_mapper import GenericTritonMapper
-        return GenericTritonMapper
-
-    async def convert_payload_to_triton_format(
-        self,
-        input_data: List[Dict[str, Any]],
-        config: Dict[str, Any],
-    ) -> Tuple[List[Dict[str, Any]], List[str]]:
-        """Convert preprocessed image items + config into KServe v2 Triton inputs.
-        self._adapter_config is available (set by execute_triton_inference)."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__} must implement convert_payload_to_triton_format"
-        )
-
-    async def convert_triton_output_to_task_format(
-        self, triton_output: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
-        """Convert raw Triton output into a list of task-specific result dicts.
-        self._adapter_config is available (set by execute_triton_inference)."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__} must implement convert_triton_output_to_task_format"
-        )
-
-    async def postprocess_output(
-        self, response_items: List[Dict[str, Any]], **kwargs: Any
-    ) -> Dict[str, Any]:
-        raise NotImplementedError(
-            f"{self.__class__.__name__} must implement postprocess_output"
-        )
-
-    def _build_response(
-        self, request: BaseModel, postprocessed: Dict[str, Any]
-    ) -> BaseModel:
-        """Wrap postprocessed output in the typed response model.
-        Called by run_inference after postprocess_output."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__} must implement _build_response"
-        )
+    def _get_request_input(self, request: Any) -> List[Any]:
+        """Image tasks carry their items on `request.image`."""
+        return getattr(request, "image", []) or []
 
     # ------------------------------------------------------------------
     # Image input helpers
@@ -251,15 +130,3 @@ class ImageBase(BaseTaskService):
         if value is None:
             return ""
         return str(value)
-
-    async def _decode_output_bytes(
-        self, response_items: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Decode every BYTES value in each response dict to a UTF-8 string."""
-        decoded: List[Dict[str, Any]] = []
-        for item in response_items:
-            d: Dict[str, Any] = {}
-            for key, value in item.items():
-                d[key] = self._decode_text(value) if isinstance(value, (bytes, bytearray)) else value
-            decoded.append(d)
-        return decoded
