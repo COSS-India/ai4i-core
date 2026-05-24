@@ -5,6 +5,9 @@ Keys are 32-char hex strings generated via secrets.token_hex(16).
 The raw hex key is stored directly in Postgres (api_key column = primary key).
 Redis is the sole validation path at inference time — zero DB calls per request.
 Revocation immediately deletes the Redis entry; subsequent lookups find nothing.
+
+Tenant/user access changes only evict or refresh Redis. ``api_key.is_active`` is for
+explicit revoke only; ``user.is_tenant_active`` / tenant status gate auth via cache refresh.
 """
 
 import logging
@@ -27,6 +30,7 @@ from app.services.cache_service import CacheService
 logger = logging.getLogger(__name__)
 
 _HEX_KEY_RE = re.compile(r"[0-9a-f]{32}")
+_USERS_PAGE_SIZE = 500
 
 
 class APIKeyService:
@@ -106,61 +110,58 @@ class APIKeyService:
             },
         )
 
-    async def _apply_effective_state(
-        self,
-        db_key: APIKey,
-        *,
-        should_be_active: bool,
-        tenant_id: Optional[str],
-    ) -> None:
-        if should_be_active:
-            if not db_key.is_active:
-                await self._repo.update(db_key, {"is_active": True})
-                await self._repo.refresh(db_key)
-            await self._refresh_redis_cache(db_key, tenant_id)
-        else:
-            await self._cache.delete_api_key_cache(db_key.api_key)
+    async def evict_keys_for_user(self, user_id: UUID) -> None:
+        """Remove Redis entries for all keys owned by ``user_id``. No DB writes."""
+        if self._repo is None:
+            return
+        for key in await self._repo.list_by_user(user_id):
+            await self._cache.delete_api_key_cache(key.api_key)
 
-    async def sync_keys_for_user(
+    async def evict_keys_for_tenant(self, tenant_id: int) -> None:
+        """Evict Redis cache for all tenant users' keys. No DB writes."""
+        if self._repo is None or self._users is None:
+            logger.warning(
+                "evict_keys_for_tenant skipped: missing repositories (tenant_id=%s)",
+                tenant_id,
+            )
+            return
+        offset = 0
+        while True:
+            users = await self._users.list_by_tenant(
+                tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
+            )
+            if not users:
+                break
+            for user in users:
+                await self.evict_keys_for_user(user.id)
+            if len(users) < _USERS_PAGE_SIZE:
+                break
+            offset += _USERS_PAGE_SIZE
+
+    async def refresh_keys_cache_for_user(
         self,
         user: User,
         tenant: Optional[Tenant] = None,
-        *,
-        auto_commit: bool = True,
     ) -> None:
-        """Align API keys with the user's (and tenant's) access state."""
+        """Repopulate Redis for keys that remain valid for the user's access state."""
         if self._repo is None:
-            logger.warning(
-                "sync_keys_for_user skipped: API key repository not configured (user=%s)",
-                user.id,
-            )
             return
         if tenant is None and user.tenant_id is not None and self._tenants is not None:
             tenant = await self._tenants.get_by_id(user.tenant_id)
-        eligible = self.user_may_use_api_keys(user, tenant)
+        if not self.user_may_use_api_keys(user, tenant):
+            await self.evict_keys_for_user(user.id)
+            return
         tenant_id_str = str(user.tenant_id) if user.tenant_id else None
-        keys = await self._repo.list_by_user(user.id)
-        for key in keys:
-            await self._apply_effective_state(
-                key,
-                should_be_active=eligible and not key.is_expired(),
-                tenant_id=tenant_id_str,
-            )
-        if auto_commit:
-            await self._repo.commit()
+        for key in await self._repo.list_by_user(user.id):
+            if key.is_active and not key.is_expired():
+                await self._refresh_redis_cache(key, tenant_id_str)
 
-    _SYNC_USERS_PAGE_SIZE = 500
-
-    async def sync_keys_for_tenant(self, tenant_id: int) -> None:
-        """Sync API keys for every user in the tenant."""
+    async def refresh_keys_cache_for_tenant(self, tenant_id: int) -> None:
+        """Repopulate Redis for all eligible keys in the tenant."""
         if self._repo is None or self._users is None or self._tenants is None:
             logger.warning(
-                "sync_keys_for_tenant skipped: missing repositories (tenant_id=%s, "
-                "repo=%s, users=%s, tenants=%s)",
+                "refresh_keys_cache_for_tenant skipped: missing repositories (tenant_id=%s)",
                 tenant_id,
-                self._repo is not None,
-                self._users is not None,
-                self._tenants is not None,
             )
             return
         tenant = await self._tenants.get_by_id(tenant_id)
@@ -169,16 +170,15 @@ class APIKeyService:
         offset = 0
         while True:
             users = await self._users.list_by_tenant(
-                tenant_id, offset=offset, limit=self._SYNC_USERS_PAGE_SIZE
+                tenant_id, offset=offset, limit=_USERS_PAGE_SIZE
             )
             if not users:
                 break
             for user in users:
-                await self.sync_keys_for_user(user, tenant, auto_commit=False)
-            await self._repo.commit()
-            if len(users) < self._SYNC_USERS_PAGE_SIZE:
+                await self.refresh_keys_cache_for_user(user, tenant)
+            if len(users) < _USERS_PAGE_SIZE:
                 break
-            offset += self._SYNC_USERS_PAGE_SIZE
+            offset += _USERS_PAGE_SIZE
 
     async def create_api_key(
         self,
@@ -237,7 +237,7 @@ class APIKeyService:
             key_name=key_name,
             permissions=permission_ids,
             expires_at=expires_at,
-            is_active=owner_active,
+            is_active=True,
             created_by=str(user_id),
             updated_by=str(user_id),
         )

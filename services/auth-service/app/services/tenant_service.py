@@ -6,19 +6,16 @@ then shape the ORM result through a Pydantic schema. All scope enforcement,
 repository access and provisioning lives in this file.
 """
 
-import asyncio
 import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Literal, Optional
 from uuid import UUID
 
-import ai4icore_core.bootstrap.database as db_bootstrap
 from ai4icore_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks, HTTPException, status
 
 from app.core.config import settings
-from app.core.redis import get_redis_client
 from app.core.constants import USERNAME_MAX_LENGTH
 from app.core.exceptions import (
     DuplicateEntityError,
@@ -29,7 +26,6 @@ from app.models.role_name import RoleName, role_name_to_str
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
-from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
@@ -46,7 +42,6 @@ from app.schemas.tenant import (
 )
 from app.schemas.user import UserListResponse
 from app.services.api_key_service import APIKeyService
-from app.services.cache_service import CacheService
 from app.services.auth_email_templates import render_setup_link, render_verify_email
 from app.services.tenant_lifecycle import (
     assert_valid_tenant_status_transition,
@@ -78,69 +73,6 @@ def _assert_tenant_active_for_user_deactivation(
             message="Tenant users can only be suspended while the tenant is active.",
             code="TENANT_NOT_ACTIVE",
         )
-
-
-_API_KEY_SYNC_MAX_ATTEMPTS = 3
-_API_KEY_SYNC_RETRY_DELAY_SEC = 0.5
-
-
-async def run_sync_keys_for_tenant_background(tenant_id: int) -> None:
-    """Run ``sync_keys_for_tenant`` after the HTTP response (owns its own DB session)."""
-    factory = db_bootstrap._session_factory
-    if factory is None:
-        logger.error(
-            "Cannot sync API keys for tenant %s: database not initialized.",
-            tenant_id,
-        )
-        return
-
-    last_error: Exception | None = None
-    for attempt in range(1, _API_KEY_SYNC_MAX_ATTEMPTS + 1):
-        async with factory() as session:
-            try:
-                svc = APIKeyService(
-                    APIKeyRepository(session),
-                    CacheService(get_redis_client()),
-                    user_repo=UserRepository(session),
-                    tenant_repo=TenantRepository(session),
-                )
-                await svc.sync_keys_for_tenant(tenant_id)
-                await session.commit()
-                if attempt > 1:
-                    logger.info(
-                        "Background API key sync succeeded for tenant_id=%s on attempt %s",
-                        tenant_id,
-                        attempt,
-                    )
-                return
-            except Exception as exc:
-                last_error = exc
-                await session.rollback()
-                logger.exception(
-                    "Background API key sync failed for tenant_id=%s (attempt %s/%s)",
-                    tenant_id,
-                    attempt,
-                    _API_KEY_SYNC_MAX_ATTEMPTS,
-                )
-                if attempt < _API_KEY_SYNC_MAX_ATTEMPTS:
-                    await asyncio.sleep(_API_KEY_SYNC_RETRY_DELAY_SEC * attempt)
-
-    logger.error(
-        "Background API key sync exhausted retries for tenant_id=%s; "
-        "keys may be out of sync until the next tenant/user update. last_error=%s",
-        tenant_id,
-        last_error,
-    )
-
-
-def enqueue_tenant_api_key_sync(
-    background_tasks: Optional[BackgroundTasks],
-    tenant_id: int,
-) -> None:
-    """Schedule one background job for the whole tenant (not per user)."""
-    if background_tasks is None:
-        return
-    background_tasks.add_task(run_sync_keys_for_tenant_background, tenant_id)
 
 
 class TenantService:
@@ -484,16 +416,11 @@ class TenantService:
         )
         await self._tenants.save_and_refresh(tenant)
         if self._api_keys is not None:
-            # Suspend/deactivate must sync keys before returning — stale Redis keys
-            # would still authorize inference after tenant lockout.
-            must_sync_inline = body.status in (
-                TenantStatus.SUSPENDED,
-                TenantStatus.DEACTIVATED,
-            )
-            if must_sync_inline or background_tasks is None:
-                await self._api_keys.sync_keys_for_tenant(tenant_id)
-            else:
-                enqueue_tenant_api_key_sync(background_tasks, tenant_id)
+            if body.status in (TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED):
+                # Stale Redis entries would still authorize after tenant lockout.
+                await self._api_keys.evict_keys_for_tenant(tenant_id)
+            elif body.status == TenantStatus.ACTIVE:
+                await self._api_keys.refresh_keys_cache_for_tenant(tenant_id)
         return tenant
 
     # ── Tenant-user CRUD ─────────────────────────────────────────────────
@@ -570,7 +497,7 @@ class TenantService:
         await self._users.update(target, payload)
         await self._users.save_and_refresh(target)
         if self._api_keys is not None and _payload_touches_user_access(payload):
-            await self._api_keys.sync_keys_for_user(target, tenant)
+            await self._api_keys.refresh_keys_cache_for_user(target, tenant)
         return target
 
     async def delete_tenant_user(
@@ -590,4 +517,4 @@ class TenantService:
         )
         await self._users.commit()
         if self._api_keys is not None:
-            await self._api_keys.sync_keys_for_user(target, tenant)
+            await self._api_keys.evict_keys_for_user(target.id)

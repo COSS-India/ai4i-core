@@ -394,7 +394,7 @@ class AuthService:
             self._users, tenant.id, TenantStatus.ACTIVE, updated_by=user.id
         )
         if self._api_keys is not None:
-            await self._api_keys.sync_keys_for_tenant(tenant.id)
+            await self._api_keys.refresh_keys_cache_for_tenant(tenant.id)
         logger.info(
             "Tenant %s activated after contact admin set password (user id=%s)",
             tenant.id,
@@ -533,7 +533,7 @@ class AuthService:
         await self._activate_pending_tenant_for_contact_admin(user)
         await self._users.commit()
         if self._api_keys is not None:
-            await self._api_keys.sync_keys_for_user(user)
+            await self._api_keys.refresh_keys_cache_for_user(user)
         logger.info("Password set via activation link for user id=%s", user.id)
         if was_inactive:
             enqueue_email(background_tasks, self._email, lambda: render_welcome(user))
