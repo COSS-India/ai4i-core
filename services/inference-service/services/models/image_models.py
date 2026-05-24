@@ -19,31 +19,6 @@ from models.schemas.ocr import (
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Fallback adapter config for surya_ocr_ensemble when MMS does not return one.
-# Tensor contract: IMAGE_DATA (BYTES, [N, 1]) → OUTPUT_TEXT (BYTES)
-# ---------------------------------------------------------------------------
-_DEFAULT_OCR_ADAPTER_CONFIG: Dict[str, Any] = {
-    "version": "1",
-    "model_version": "1",
-    "inputs": [
-        {
-            "tensor": "IMAGE_DATA",
-            "dtype":  "BYTES",
-            "shape":  [-1, 1],
-            "value":  "image.image_content",
-        },
-    ],
-    "outputs": [
-        {
-            "tensor":  "OUTPUT_TEXT",
-            "dtype":   "BYTES",
-            "maps_to": "text",
-        },
-    ],
-}
-
-
 class OCRTaskService(ImageBase):
     """
     Default OCR service (Surya OCR ensemble).
@@ -55,7 +30,7 @@ class OCRTaskService(ImageBase):
       postprocess_output  → unwrap Surya envelope → wrap OCROutput list
       _build_response     → OCRInferenceResponse
 
-    Tensor I/O is mapper-driven via adapter_config (MMS or default).
+    Tensor I/O is mapper-driven via adapter_config sourced from MMS.
     """
 
     def __init__(
@@ -86,11 +61,8 @@ class OCRTaskService(ImageBase):
             raise ValueError(f"OCR: failed to deserialize payload: {e}") from e
 
     # ------------------------------------------------------------------
-    # Adapter config + mapper hooks
+    # Mapper hooks
     # ------------------------------------------------------------------
-
-    def _get_default_adapter_config(self) -> Dict[str, Any]:
-        return _DEFAULT_OCR_ADAPTER_CONFIG
 
     async def convert_payload_to_triton_format(
         self,

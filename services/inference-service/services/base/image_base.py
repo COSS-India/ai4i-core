@@ -91,11 +91,11 @@ class ImageBase(BaseTaskService):
             )
 
         if not adapter_config:
-            self.logger.warning(
-                "%s: adapter_config missing from service_info — using default",
-                self.task_name,
+            raise RuntimeError(
+                f"{self.task_name}: service_info has no adapter_config. "
+                f"Seed mm_services.adapter_config for service "
+                f"'{self.service_info.get('name')}'."
             )
-            adapter_config = self._get_default_adapter_config()
 
         # Store so convert_payload_to_triton_format can access via self._adapter_config
         self._adapter_config = adapter_config
@@ -142,12 +142,6 @@ class ImageBase(BaseTaskService):
         """Return GenericTritonMapper — satisfies BaseTaskService.run_inference signature."""
         from services.base.config_mapper import GenericTritonMapper
         return GenericTritonMapper
-
-    def _get_default_adapter_config(self) -> Dict[str, Any]:
-        """Fallback adapter config when MMS returns null. Each concrete image task overrides."""
-        raise NotImplementedError(
-            f"{self.__class__.__name__} must implement _get_default_adapter_config"
-        )
 
     async def convert_payload_to_triton_format(
         self,
