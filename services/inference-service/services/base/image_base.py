@@ -1,165 +1,251 @@
 """
-ImageBase — base class for all image-backed inference services.
+ImageBase — base class for image-backed inference services.
 
-Covers: OCR, Document Layout, Vision, and other future image tasks.
+Inherits the BaseTaskService.process template; overrides execute_triton_inference
+to drive the image-specific Triton call (reads request.image, batches into a
+single KServe v2 call using GenericTritonMapper + adapter_config).
 
-Inherits from BaseTaskService and implements the common image pipeline:
-  validate_request      → common image validation (image items only)
-  preprocess_input      → common image preprocessing pipeline
-  run_inference         → resolve → build mapper → batched Triton call → postprocess
-  postprocess_output    → no common pipeline; model classes implement
+Concrete task services (e.g. OCRTaskService) must implement:
+  _deserialize_payload                              → typed request model
+  _get_default_adapter_config                       → fallback when MMS returns null
+  convert_payload_to_triton_format(items, config)   → (triton_inputs, output_names)
+  convert_triton_output_to_task_format(raw_output)  → List[Dict] per image
+  postprocess_output(response_items)                → response dict
+  _build_response(request, postprocessed)           → typed response model
 
-Task-specific helpers (e.g. _validate_language_hint, _build_image_context)
-live here but are NOT called from the pipeline automatically — model classes
-opt in by calling them in their overrides.
+Mirrors AudioBase (services/base/audio_base.py).
 """
 
 import base64
-import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
+import httpx
 from pydantic import BaseModel
 
 from interfaces.task_service import BaseTaskService
 
 
 class ImageBase(BaseTaskService):
-    """
-    Base class for all image inference services.
-    Implements the common image pipeline; model classes extend only what differs.
-    """
+    """Generic image task service base."""
 
-    def __init__(self, **dependencies: Any):
-        super().__init__()
+    def __init__(
+        self,
+        service_info: Optional[Dict[str, Any]] = None,
+        **dependencies: Any,
+    ):
+        super().__init__(service_info=service_info)
         self.logger = logging.getLogger(self.__class__.__module__)
 
     # ------------------------------------------------------------------
-    # Pipeline methods
+    # Pipeline hooks called by BaseTaskService.process
     # ------------------------------------------------------------------
 
-    async def _deserialize_payload(self, payload: Dict[str, Any]) -> BaseModel:
-        """
-        ABC stub: image routes deserialize the request body via FastAPI,
-        so this method is never invoked at runtime. Present only to satisfy
-        ITaskService's abstract contract so subclasses can be instantiated.
-        """
-        ...
-
     async def validate_request(self, request: BaseModel) -> None:
-        """
-        Common image validation pipeline:
-          1. Base null check (super)
-          2. Image list not empty, each item has image_content or image_uri
-
-        Task-specific validation (e.g. language hint) is opt-in —
-        call _validate_language_hint() in the model class override.
-        """
+        """Common image validation: non-empty image list, each item has content or uri."""
         await super().validate_request(request)
         await self._validate_image_items(request)
 
     async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
-        """
-        Common image preprocessing:
-          1. Base empty check (super)
-          2. Resolve each image as base64 (decode inline content or download from URI)
-        Returns list of item dicts enriched with 'data_b64'.
-        """
+        """Normalize each image to base64 on image_content (downloads URI if needed)."""
         await super().preprocess_input(input_data)
-
-        items = await self._resolve_image_base64(input_data)
-        self.logger.debug(f"Image preprocessed {len(items)} inputs")
+        items: List[Dict[str, Any]] = []
+        for item in input_data:
+            d = item if isinstance(item, dict) else item.model_dump(by_alias=False)
+            d["image_content"] = await self._resolve_image_base64(d)
+            items.append(d)
         return items
 
-    async def postprocess_output(
-        self, response_items: List[Dict[str, Any]], **kwargs: Any
-    ) -> Any:
-        """
-        Override in model class — wrap mapper output items in the task-specific
-        response model (e.g. OCRInferenceResponse).
-        """
-        ...
-
     # ------------------------------------------------------------------
-    # Service resolution
+    # execute_triton_inference — image-shaped override
     # ------------------------------------------------------------------
 
-    async def _resolve_service_and_model(
-        self, config: Any
-    ) -> Tuple[str, str, str, Optional[str], Optional[Any]]:
+    async def execute_triton_inference(
+        self,
+        config: Any,
+        inference_model_class: type,
+    ) -> Dict[str, Any]:
         """
-        Resolve Triton endpoint + adapter_config from Model Management.
-        Model classes may override to inject a default adapter_config when the
-        service info doesn't carry one.
-        """
-        service_id = config.service_id
-        try:
-            service_info = await self.inference_server_resolver.resolve_service(service_id)
-        except Exception as e:
-            raise RuntimeError(
-                f"Image task: Failed to resolve service {service_id}: {e}"
-            ) from e
+        Image inference call — overrides BaseTaskService.execute_triton_inference.
 
-        model_name = service_info.get("name", "")
-        triton_endpoint = service_info.get("endpoint", "")
-        api_key = service_info.get("api_key")
-        adapter_config = service_info.get("adapter_config")
+        Differences from the text base:
+          - Reads request.image (not request.input)
+          - Batches all images into ONE Triton call (Surya supports batching;
+            no per-item loop required, unlike audio's variable-length need)
+          - Applies _get_default_adapter_config() when MMS returns null
+          - convert_payload_to_triton_format / convert_triton_output_to_task_format
+            are called on self (subclass methods), not on a separate mapper instance
+        """
+        del inference_model_class  # subclass hooks build the tensors
+
+        service_id      = self.service_info.get("service_id", "")
+        model_name      = self.service_info.get("name", "")
+        triton_endpoint = self.service_info.get("endpoint", "")
+        api_key         = self.service_info.get("api_key")
+        adapter_config  = self.service_info.get("adapter_config")
 
         if not model_name or not triton_endpoint:
             raise RuntimeError(
-                "Image task: Invalid service info from resolver: missing model_name or triton_endpoint"
+                f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
+                "Ensure the Orchestrator resolved the service before creating this task service."
             )
 
-        return (service_id, model_name, triton_endpoint, api_key, adapter_config)
+        if not adapter_config:
+            raise RuntimeError(
+                f"{self.task_name}: service_info has no adapter_config. "
+                f"Seed mm_services.adapter_config for service "
+                f"'{self.service_info.get('name')}'."
+            )
+
+        # Store so convert_payload_to_triton_format can access via self._adapter_config
+        self._adapter_config = adapter_config
+
+        request_payload = getattr(config, "_request_payload", None)
+        if not request_payload:
+            raise ValueError(f"{self.task_name}: config must have _request_payload set")
+
+        image_items: List[Any] = getattr(request_payload, "image") or []
+        self.logger.info(
+            "%s: model=%s endpoint=%s inputs=%d",
+            self.task_name, model_name, triton_endpoint, len(image_items),
+        )
+
+        items = [
+            item if isinstance(item, dict) else item.model_dump(by_alias=False)
+            for item in image_items
+        ]
+        config_dict = config.model_dump()
+
+        triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
+            items, config_dict
+        )
+
+        raw_output = await self._call_triton_inference(
+            triton_endpoint=triton_endpoint,
+            triton_inputs=triton_inputs,
+            triton_outputs=triton_outputs,
+            api_key=api_key,
+        )
+
+        response_data = await self.convert_triton_output_to_task_format(raw_output)
+        return {
+            "response_data": response_data,
+            "source_texts": [],
+            "service_id": service_id,
+        }
 
     # ------------------------------------------------------------------
-    # Image input helpers (concrete)
-    # Always return base64
+    # Hooks — subclasses must implement these
+    # ------------------------------------------------------------------
+
+    def _get_inference_model_class(self) -> type:
+        """Return GenericTritonMapper — satisfies BaseTaskService.run_inference signature."""
+        from services.base.config_mapper import GenericTritonMapper
+        return GenericTritonMapper
+
+    async def convert_payload_to_triton_format(
+        self,
+        input_data: List[Dict[str, Any]],
+        config: Dict[str, Any],
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """Convert preprocessed image items + config into KServe v2 Triton inputs.
+        self._adapter_config is available (set by execute_triton_inference)."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement convert_payload_to_triton_format"
+        )
+
+    async def convert_triton_output_to_task_format(
+        self, triton_output: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Convert raw Triton output into a list of task-specific result dicts.
+        self._adapter_config is available (set by execute_triton_inference)."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement convert_triton_output_to_task_format"
+        )
+
+    async def postprocess_output(
+        self, response_items: List[Dict[str, Any]], **kwargs: Any
+    ) -> Dict[str, Any]:
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement postprocess_output"
+        )
+
+    def _build_response(
+        self, request: BaseModel, postprocessed: Dict[str, Any]
+    ) -> BaseModel:
+        """Wrap postprocessed output in the typed response model.
+        Called by run_inference after postprocess_output."""
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement _build_response"
+        )
+
+    # ------------------------------------------------------------------
+    # Image input helpers
     # ------------------------------------------------------------------
 
     async def _resolve_image_base64(self, image_input: Any) -> str:
         """Return image as a base64 string from inline content or downloaded from a URI."""
-        content = image_input.get("image_content") if isinstance(image_input, dict) else getattr(image_input, "image_content", None)
-        uri = image_input.get("image_uri") if isinstance(image_input, dict) else getattr(image_input, "image_uri", None)
+        if isinstance(image_input, dict):
+            content = image_input.get("image_content")
+            uri = image_input.get("image_uri")
+        else:
+            content = getattr(image_input, "image_content", None)
+            uri = getattr(image_input, "image_uri", None)
 
         if content:
             return content
         if uri:
-            raw = await self._download_image(uri)
+            raw = await self._download_image(str(uri))
             return base64.b64encode(raw).decode("utf-8")
-        raise ValueError("Image input has no image_content or image_uri")
+        raise ValueError(f"{self.task_name}: image item has no image_content or image_uri")
 
     async def _download_image(self, uri: str) -> bytes:
         """Download raw image bytes from an HTTP(S) URI."""
-        import httpx
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(uri)
-            resp.raise_for_status()
-            return resp.content
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(uri)
+                resp.raise_for_status()
+                return resp.content
+        except httpx.TimeoutException as exc:
+            raise RuntimeError(
+                f"{self.task_name}: timed out downloading image from {uri}"
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(
+                f"{self.task_name}: HTTP {exc.response.status_code} downloading image from {uri}"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise RuntimeError(
+                f"{self.task_name}: request error downloading image from {uri}: {exc}"
+            ) from exc
 
     # ------------------------------------------------------------------
     # Validation helpers
     # ------------------------------------------------------------------
 
     async def _validate_image_items(self, request: Any) -> None:
-        """Image list non-empty + each item has image_content or image_uri."""
+        """Image list non-empty; each item has image_content or image_uri."""
         items = getattr(request, "image", None)
         if not items:
             raise ValueError(f"{self.task_name}: image array cannot be empty")
         for idx, item in enumerate(items):
-            content = getattr(item, "image_content", None) if not isinstance(item, dict) else item.get("image_content")
-            uri = getattr(item, "image_uri", None) if not isinstance(item, dict) else item.get("image_uri")
+            if isinstance(item, dict):
+                content = item.get("image_content")
+                uri = item.get("image_uri")
+            else:
+                content = getattr(item, "image_content", None)
+                uri = getattr(item, "image_uri", None)
             if not content and not uri:
                 raise ValueError(
                     f"{self.task_name}: image[{idx}] requires image_content or image_uri"
                 )
 
     # ------------------------------------------------------------------
-    # Output / postprocess helpers (concrete)
+    # Output decoding helpers
     # ------------------------------------------------------------------
 
     def _decode_text(self, value: Any) -> str:
-        """Decode any output value to a UTF-8 string (bytes / str passthrough)."""
+        """Decode any output value to a UTF-8 string."""
         if isinstance(value, bytes):
             return value.decode("utf-8", errors="replace")
         if value is None:
@@ -174,38 +260,6 @@ class ImageBase(BaseTaskService):
         for item in response_items:
             d: Dict[str, Any] = {}
             for key, value in item.items():
-                if isinstance(value, (bytes, bytearray)):
-                    d[key] = self._decode_text(value)
-                else:
-                    d[key] = value
+                d[key] = self._decode_text(value) if isinstance(value, (bytes, bytearray)) else value
             decoded.append(d)
         return decoded
-
-    # ------------------------------------------------------------------
-    # Task-specific hooks (model classes override)
-    # ------------------------------------------------------------------
-
-    async def _wrap_text_output(
-        self, decoded_items: List[Dict[str, Any]]
-    ) -> Any:
-        """Override in model class — wrap decoded text in task-specific response model."""
-        ...
-
-    # ------------------------------------------------------------------
-    # OCR-style output helpers (concrete; used by OCRDefaultModel)
-    # ------------------------------------------------------------------
-
-    def _unwrap_surya_envelope(self, raw_text: Any) -> str:
-        """
-        Surya ensembles return a JSON envelope per image with a 'full_text' field.
-        Unwrap when present; return the value as-is otherwise.
-        """
-        text = self._decode_text(raw_text)
-        if text.startswith("{"):
-            try:
-                parsed = json.loads(text)
-                if isinstance(parsed, dict) and "full_text" in parsed:
-                    return str(parsed.get("full_text", ""))
-            except json.JSONDecodeError:
-                pass
-        return text
