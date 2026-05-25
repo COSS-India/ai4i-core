@@ -4,6 +4,8 @@ import { useState, useCallback, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { performNMTInference } from '../services/nmtService';
+import { getRemainingTryItRequests } from '../services/tryItService';
+import { isAnonymousUser } from '../utils/anonymousSession';
 import { getWordCount } from '../utils/helpers';
 import { UseNMTReturn, NMTInferenceRequest, NMTInferenceResponse, LanguagePair } from '../types/nmt';
 import { DEFAULT_NMT_CONFIG, MAX_TEXT_LENGTH, MIN_NMT_TEXT_LENGTH, NMT_ERRORS } from '../config/constants';
@@ -51,10 +53,10 @@ export const useNMT = (): UseNMTReturn => {
         const translation = response.data.output[0]?.target || '';
         setTranslatedText(translation);
         setResponseWordCount(getWordCount(translation));
-        
+
         // Update request time with actual API response time (in milliseconds)
         setRequestTime(response.responseTime.toString());
-        
+
         setFetched(true);
         setFetching(false);
         setError(null);
@@ -74,10 +76,10 @@ export const useNMT = (): UseNMTReturn => {
     },
     onError: (error: any) => {
       console.error('NMT inference error:', error);
-      
+
       // Use centralized error handler (NMT context so backend message shown as default when no specific mapping)
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error, 'nmt');
-      
+
       setError(errorMessage);
       setFetching(false);
       // Clear previous translation so stale output is not shown alongside the error
@@ -139,7 +141,7 @@ export const useNMT = (): UseNMTReturn => {
       });
       return;
     }
-    
+
     if (trimmed === '') {
       const err = NMT_ERRORS.EMPTY_INPUT;
       toast({
@@ -197,6 +199,21 @@ export const useNMT = (): UseNMTReturn => {
         duration: 3000,
         isClosable: true,
       });
+      return;
+    }
+
+    if (isAnonymousUser() && getRemainingTryItRequests() <= 0) {
+      toast({
+        title: 'Rate limit reached',
+        description:
+          'You can try up to 5 translations per hour. Please sign in for unlimited access.',
+        status: 'warning',
+        duration: 6000,
+        isClosable: true,
+      });
+      setError(
+        'Rate limit exceeded. You can try up to 5 translations per hour. Please sign in for unlimited access.'
+      );
       return;
     }
 
@@ -260,9 +277,9 @@ export const useNMT = (): UseNMTReturn => {
       sourceScriptCode: languagePair.targetScriptCode,
       targetScriptCode: languagePair.sourceScriptCode,
     };
-    
+
     setLanguagePairWithValidation(newPair);
-    
+
     // Also swap the texts
     const tempText = inputText;
     setInputText(translatedText);
@@ -281,7 +298,7 @@ export const useNMT = (): UseNMTReturn => {
     responseWordCount,
     requestTime,
     error,
-    
+
     // Methods
     performInference,
     setInputText: setInputTextWithValidation,

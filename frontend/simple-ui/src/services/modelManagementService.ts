@@ -1,5 +1,6 @@
 // Model Management service API client
 
+import { MODEL_VERSION } from '../config/constants';
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import {
@@ -91,6 +92,35 @@ export const getAllModels = async (): Promise<ModelDetails[]> => {
  * Get models with server-side pagination, filtering, and search.
  * Reads the X-Total-Count response header for the accurate total count.
  */
+const REGISTRY_FETCH_PAGE_SIZE = 100;
+const MAX_REGISTRY_FETCH_PAGES = 500;
+
+/**
+ * Fetches every model matching list filters by walking paginated API pages.
+ * Used by the registry UI so name search and table pagination stay consistent (frontend-only).
+ */
+export const fetchAllModelsMatchingFilters = async (
+  params: Pick<ModelListParams, 'taskType' | 'versionStatus' | 'createdBy'> = {}
+): Promise<PaginatedModels> => {
+  const items: ModelDetails[] = [];
+  let total = 0;
+  let offset = 0;
+
+  for (let page = 0; page < MAX_REGISTRY_FETCH_PAGES; page++) {
+    const result = await getModelsPaginated({
+      ...params,
+      offset,
+      limit: REGISTRY_FETCH_PAGE_SIZE,
+    });
+    total = result.total;
+    items.push(...result.items);
+    if (items.length >= total || result.items.length === 0) break;
+    offset += REGISTRY_FETCH_PAGE_SIZE;
+  }
+
+  return { items, total, offset: 0, limit: null };
+};
+
 export const getModelsPaginated = async (params: ModelListParams = {}): Promise<PaginatedModels> => {
   try {
     const queryParams: Record<string, any> = {};
@@ -185,7 +215,7 @@ export const publishModel = async (modelId: string): Promise<any> => {
     // Platform-core toggles status through the model management PATCH endpoint.
     const response = await apiService.patch(
       apiEndpoints.platform.models.base,
-      { modelId, versionStatus: 'ACTIVE' },
+      { modelId, versionStatus: MODEL_VERSION.STATUS.ACTIVE },
       { responseSchema: unknownPlatformPayloadSchema }
     );
     return response.data;

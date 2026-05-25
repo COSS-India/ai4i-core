@@ -14,21 +14,9 @@ import {
   HStack,
   Text,
   VStack,
-  Spinner,
-  Center,
-  Alert,
-  AlertIcon,
-  AlertDescription,
   Select,
   SimpleGrid,
-  Table,
-  Thead,
-  Tbody,
-  Tr,
-  Th,
-  Td,
   Badge,
-  TableContainer,
   Drawer,
   DrawerOverlay,
   DrawerContent,
@@ -62,8 +50,6 @@ import {
   NumberDecrementStepper,
   Divider,
   Tooltip,
-  InputGroup,
-  InputLeftElement,
   Menu,
   MenuButton,
   MenuList,
@@ -78,9 +64,9 @@ import {
   DeleteIcon,
   ViewIcon,
   EditIcon,
-  SearchIcon,
   LockIcon,
 } from "@chakra-ui/icons";
+import { isTenantStatus, TENANT } from "../../config/constants";
 import * as tenantService from "../../services/tenantService";
 import type { TenantView } from "../../types/tenant";
 import type { NotificationReceiver } from "../../types/alerting";
@@ -101,12 +87,14 @@ import {
   LATENCY_THRESHOLD_UNITS,
   PERCENTAGE_UNIT,
 } from "../../types/alerting";
-import {
-  TableFilterToolbar,
-  TablePaginationBar,
-  TableSortHeader,
-  useAdminTableSurface,
-} from "../common/TableControls";
+import { useAdminTableSurface } from "../common/TableControls";
+import AdminDataTable, {
+  DEFAULT_PAGE_SIZE_OPTIONS,
+  TableSearchField,
+  TableSelectField,
+  type AdminTableColumn,
+} from "../common/AdminDataTable";
+import type { AlertDefinition, AlertHistoryItem } from "../../types/alerting";
 import StandardModal from "../common/StandardModal";
 
 const EVAL_INTERVALS = ["30s", "1m", "5m"] as const;
@@ -217,8 +205,7 @@ export interface AlertingTabProps {
 }
 
 export default function AlertingTab({ isActive = false }: AlertingTabProps) {
-  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor: cardBorder } =
-    useAdminTableSurface();
+  const { cardBg, borderColor: cardBorder } = useAdminTableSurface();
   const [subTabIndex, setSubTabIndex] = useState(0);
   const [createRuleDef, setCreateRuleDef] = useState("");
 
@@ -272,7 +259,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     setIsLoadingTenants(true);
     try {
       const res = await tenantService.listTenants();
-      setTenants((res.tenants || []).filter((t) => t.status === "activated"));
+      setTenants(
+        (res.tenants || []).filter((t) => isTenantStatus(t.status, TENANT.STATUS.ACTIVE))
+      );
     } catch {
       // ignore
     } finally {
@@ -324,20 +313,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     return fromExpr;
   })();
 
-  const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
-
   const [definitionsNameSortDirection, setDefinitionsNameSortDirection] = useState<"asc" | "desc">("asc");
   const [receiversNameSortDirection, setReceiversNameSortDirection] = useState<"asc" | "desc">("asc");
   const [rulesNameSortDirection, setRulesNameSortDirection] = useState<"asc" | "desc">("asc");
   const [historyNameSortDirection, setHistoryNameSortDirection] = useState<"asc" | "desc">("asc");
   const [receiversSearchQuery, setReceiversSearchQuery] = useState("");
-
-  const [definitionsPage, setDefinitionsPage] = useState(1);
-  const [definitionsPageSize, setDefinitionsPageSize] = useState(25);
-  const [receiversPage, setReceiversPage] = useState(1);
-  const [receiversPageSize, setReceiversPageSize] = useState(25);
-  const [rulesPage, setRulesPage] = useState(1);
-  const [rulesPageSize, setRulesPageSize] = useState(25);
 
   const defDeleteRef = useRef<HTMLButtonElement>(null);
   const recvDeleteRef = useRef<HTMLButtonElement>(null);
@@ -424,42 +404,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     });
   }, [history.items, historyNameSortDirection]);
 
-  const definitionsTotal = sortedDefinitions.length;
-  const definitionsTotalPages = Math.max(1, Math.ceil(definitionsTotal / definitionsPageSize));
-  const definitionsStartRow = definitionsTotal === 0 ? 0 : (definitionsPage - 1) * definitionsPageSize + 1;
-  const definitionsEndRow = Math.min(definitionsPage * definitionsPageSize, definitionsTotal);
-  const paginatedDefinitions = sortedDefinitions.slice(
-    (definitionsPage - 1) * definitionsPageSize,
-    definitionsPage * definitionsPageSize
-  );
-
-  const receiversTotal = sortedReceivers.length;
-  const receiversTotalPages = Math.max(1, Math.ceil(receiversTotal / receiversPageSize));
-  const receiversStartRow = receiversTotal === 0 ? 0 : (receiversPage - 1) * receiversPageSize + 1;
-  const receiversEndRow = Math.min(receiversPage * receiversPageSize, receiversTotal);
-  const paginatedReceivers = sortedReceivers.slice(
-    (receiversPage - 1) * receiversPageSize,
-    receiversPage * receiversPageSize
-  );
-
-  const rulesTotal = sortedRules.length;
-  const rulesTotalPages = Math.max(1, Math.ceil(rulesTotal / rulesPageSize));
-  const rulesStartRow = rulesTotal === 0 ? 0 : (rulesPage - 1) * rulesPageSize + 1;
-  const rulesEndRow = Math.min(rulesPage * rulesPageSize, rulesTotal);
-  const paginatedRules = sortedRules.slice((rulesPage - 1) * rulesPageSize, rulesPage * rulesPageSize);
-
-  useEffect(() => {
-    if (definitionsPage > definitionsTotalPages) setDefinitionsPage(definitionsTotalPages);
-  }, [definitionsPage, definitionsTotalPages]);
-
-  useEffect(() => {
-    if (receiversPage > receiversTotalPages) setReceiversPage(receiversTotalPages);
-  }, [receiversPage, receiversTotalPages]);
-
-  useEffect(() => {
-    if (rulesPage > rulesTotalPages) setRulesPage(rulesTotalPages);
-  }, [rulesPage, rulesTotalPages]);
-
   // Re-initialize edit-rule category / severity / linked-def once definitions are available
   // (they may not be loaded yet when the drawer first opens — this effect fires again once they arrive)
   useEffect(() => {
@@ -534,6 +478,324 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     return d.promql_expr || "—";
   };
 
+  const definitionColumns: AdminTableColumn<AlertDefinition>[] = [
+    {
+      id: "name",
+      header: "Name",
+      sortable: {
+        label: "Name",
+        direction: definitionsNameSortDirection,
+        onAsc: () => setDefinitionsNameSortDirection("asc"),
+        onDesc: () => setDefinitionsNameSortDirection("desc"),
+        ascAriaLabel: "Sort definitions by name ascending",
+        descAriaLabel: "Sort definitions by name descending",
+      },
+      cell: (d) => <Text fontWeight="semibold">{d.name}</Text>,
+    },
+    {
+      id: "category",
+      header: "Category",
+      cell: (d) => (
+        <Badge colorScheme={categoryColor(d.category)} textTransform="capitalize">
+          {d.category}
+        </Badge>
+      ),
+    },
+    {
+      id: "severity",
+      header: "Severity",
+      cell: (d) => (
+        <Badge colorScheme={severityColor(d.severity)} textTransform="capitalize">
+          {d.severity}
+        </Badge>
+      ),
+    },
+    {
+      id: "sub_category",
+      header: "Subcategory",
+      cell: (d) => (
+        <Text fontSize="sm">
+          {d.sub_category ? titleCase(d.sub_category.replace(/_/g, " ")) : "—"}
+        </Text>
+      ),
+    },
+    {
+      id: "status",
+      header: "Status",
+      cell: (d) => (
+        <Badge
+          colorScheme={d.enabled ? "green" : "gray"}
+          variant="subtle"
+          fontSize="xs"
+          px={2}
+          py={0.5}
+          borderRadius="full"
+        >
+          {d.enabled ? "Active" : "Inactive"}
+        </Badge>
+      ),
+    },
+    {
+      id: "created",
+      header: "Created",
+      cell: (d) => <Text fontSize="sm">{new Date(d.created_at).toLocaleDateString()}</Text>,
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: (d) => (
+        <HStack spacing={1} className="row-actions">
+          <Tooltip label="View" placement="top" hasArrow>
+            <IconButton
+              aria-label="View"
+              icon={<ViewIcon />}
+              size="sm"
+              variant="ghost"
+              color="gray.700"
+              _hover={{ color: "blue.500", bg: "blue.50" }}
+              onClick={() => defs.openView(d)}
+            />
+          </Tooltip>
+          <Tooltip label="Edit" placement="top" hasArrow>
+            <IconButton
+              aria-label="Edit"
+              icon={<EditIcon />}
+              size="sm"
+              variant="ghost"
+              color="gray.700"
+              _hover={{ color: "green.500", bg: "green.50" }}
+              onClick={() => defs.openUpdate(d)}
+            />
+          </Tooltip>
+          <Tooltip label="Delete" placement="top" hasArrow>
+            <IconButton
+              aria-label="Delete"
+              icon={<DeleteIcon />}
+              size="sm"
+              variant="ghost"
+              color="gray.700"
+              _hover={{ color: "red.500", bg: "red.50" }}
+              onClick={() => defs.openDelete(d)}
+            />
+          </Tooltip>
+        </HStack>
+      ),
+    },
+  ];
+
+  const receiverColumns: AdminTableColumn<NotificationReceiver>[] = [
+    {
+      id: "name",
+      header: "Name",
+      sortable: {
+        label: "Name",
+        direction: receiversNameSortDirection,
+        onAsc: () => setReceiversNameSortDirection("asc"),
+        onDesc: () => setReceiversNameSortDirection("desc"),
+        ascAriaLabel: "Sort receivers by name ascending",
+        descAriaLabel: "Sort receivers by name descending",
+      },
+      cell: (r) => <Text fontWeight="semibold" fontSize="sm">{r.receiver_name}</Text>,
+    },
+    {
+      id: "recipient",
+      header: "Recipient",
+      cell: (r) =>
+        r.rbac_role ? (
+          <Badge colorScheme="purple">Role: {r.rbac_role}</Badge>
+        ) : r.email_to && r.email_to.length > 0 ? (
+          <Wrap spacing={1}>
+            {r.email_to.slice(0, 2).map((e) => (
+              <WrapItem key={e}>
+                <Badge colorScheme="blue" fontSize="xs">{e}</Badge>
+              </WrapItem>
+            ))}
+            {r.email_to.length > 2 && (
+              <WrapItem>
+                <Badge colorScheme="gray" fontSize="xs">+{r.email_to.length - 2}</Badge>
+              </WrapItem>
+            )}
+          </Wrap>
+        ) : (
+          <Text fontSize="sm" color="gray.500">—</Text>
+        ),
+    },
+    {
+      id: "status",
+      header: "Status",
+      cell: (r) => <Switch size="sm" colorScheme="green" isChecked={r.enabled} isReadOnly />,
+    },
+    {
+      id: "organization",
+      header: "Organization",
+      cell: (r) => <Text fontSize="sm">{r.organization}</Text>,
+    },
+    {
+      id: "created",
+      header: "Created",
+      cell: (r) => <Text fontSize="sm">{new Date(r.created_at).toLocaleDateString()}</Text>,
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: (r) => (
+        <HStack spacing={1} className="row-actions">
+          <Tooltip label="View" placement="top" hasArrow>
+            <IconButton aria-label="View" icon={<ViewIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "blue.500", bg: "blue.50" }} onClick={() => recvs.openView(r)} />
+          </Tooltip>
+          <Tooltip label="Edit" placement="top" hasArrow>
+            <IconButton aria-label="Edit" icon={<EditIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "green.500", bg: "green.50" }} onClick={() => recvs.openUpdate(r)} />
+          </Tooltip>
+          <Tooltip label="Delete" placement="top" hasArrow>
+            <IconButton aria-label="Delete" icon={<DeleteIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "red.500", bg: "red.50" }} onClick={() => recvs.openDelete(r)} />
+          </Tooltip>
+        </HStack>
+      ),
+    },
+  ];
+
+  const routingRuleColumns: AdminTableColumn<NotificationReceiver>[] = [
+    {
+      id: "name",
+      header: "Rule Name",
+      sortable: {
+        label: "Rule Name",
+        direction: rulesNameSortDirection,
+        onAsc: () => setRulesNameSortDirection("asc"),
+        onDesc: () => setRulesNameSortDirection("desc"),
+        ascAriaLabel: "Sort rules by name ascending",
+        descAriaLabel: "Sort rules by name descending",
+      },
+      cell: (rule) => <Text fontWeight="semibold">{rule.rule_name ?? rule.receiver_name}</Text>,
+    },
+    {
+      id: "definitions",
+      header: "Alert Definitions",
+      cell: (rule) =>
+        rule.alert_names && rule.alert_names.length > 0 ? (
+          <Text fontSize="sm" color="gray.700">
+            {rule.alert_names.slice(0, 2).join(", ")}
+            {rule.alert_names.length > 2 ? ` +${rule.alert_names.length - 2}` : ""}
+          </Text>
+        ) : (
+          <Text fontSize="sm" color="gray.500">All</Text>
+        ),
+    },
+    {
+      id: "tenant",
+      header: "Tenant",
+      cell: (rule) =>
+        rule.tenant ? (
+          <Badge colorScheme="purple" variant="subtle" textTransform="none">{rule.tenant}</Badge>
+        ) : (
+          <Text fontSize="sm" color="gray.500">Global</Text>
+        ),
+    },
+    {
+      id: "status",
+      header: "Status",
+      cell: (rule) => (
+        <Badge colorScheme={rule.enabled ? "green" : "gray"} variant="subtle" fontSize="xs" px={2} py={0.5} borderRadius="full">
+          {rule.enabled ? "Active" : "Inactive"}
+        </Badge>
+      ),
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: (rule) => (
+        <HStack spacing={1} className="row-actions">
+          <Tooltip label="View" placement="top" hasArrow>
+            <IconButton aria-label="View" icon={<ViewIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "blue.500", bg: "blue.50" }} onClick={() => { defs.fetchDefinitions(); rules.openView(rule); }} />
+          </Tooltip>
+          <Tooltip label="Edit" placement="top" hasArrow>
+            <IconButton aria-label="Edit" icon={<EditIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "green.500", bg: "green.50" }} onClick={() => {
+              defs.fetchDefinitions();
+              fetchTenants();
+              resetEditRuleExtras();
+              initEditRuleExtras(rule);
+              rules.openUpdate(rule);
+            }} />
+          </Tooltip>
+          <Tooltip label="Delete" placement="top" hasArrow>
+            <IconButton aria-label="Delete" icon={<DeleteIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "red.500", bg: "red.50" }} onClick={() => rules.openDelete(rule)} />
+          </Tooltip>
+        </HStack>
+      ),
+    },
+  ];
+
+  const historyColumns: AdminTableColumn<AlertHistoryItem>[] = [
+    {
+      id: "name",
+      header: "Name",
+      sortable: {
+        label: "Name",
+        direction: historyNameSortDirection,
+        onAsc: () => setHistoryNameSortDirection("asc"),
+        onDesc: () => setHistoryNameSortDirection("desc"),
+        ascAriaLabel: "Sort alert history by name ascending",
+        descAriaLabel: "Sort alert history by name descending",
+      },
+      cell: (row) => (
+        <Text fontWeight="semibold" noOfLines={2} title={row.name} maxW="260px">
+          {row.name}
+        </Text>
+      ),
+    },
+    {
+      id: "category",
+      header: "Category",
+      cell: (row) => (
+        <Badge colorScheme={categoryColor(row.category)} textTransform="capitalize">
+          {row.category || "—"}
+        </Badge>
+      ),
+    },
+    {
+      id: "severity",
+      header: "Severity",
+      cell: (row) => (
+        <Badge colorScheme={severityColor(row.severity)} textTransform="capitalize">
+          {row.severity || "—"}
+        </Badge>
+      ),
+    },
+    {
+      id: "triggered",
+      header: "Triggered At",
+      cell: (row) => <Text fontSize="sm">{row.triggered_at ?? "—"}</Text>,
+    },
+    {
+      id: "notified",
+      header: "Notified",
+      cell: (row) => (
+        <Text fontSize="sm" noOfLines={2} title={row.notified} maxW="220px">
+          {row.notified || "—"}
+        </Text>
+      ),
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: (row) => (
+        <HStack spacing={1} className="row-actions">
+          <Tooltip label="View" placement="top" hasArrow>
+            <IconButton
+              aria-label="View"
+              icon={<ViewIcon />}
+              size="sm"
+              variant="ghost"
+              color="gray.700"
+              _hover={{ color: "blue.500", bg: "blue.50" }}
+              onClick={() => history.openView(row)}
+            />
+          </Tooltip>
+        </HStack>
+      ),
+    },
+  ];
+
   // ═══════════════════════════════════════════════
   //  ALERT DEFINITIONS SECTION
   // ═══════════════════════════════════════════════
@@ -541,200 +803,73 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
     <>
       <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
         <CardBody>
-          <VStack spacing={5} align="stretch">
-            {/* Search + Filters + Actions — single row */}
-            {/*
-             * Keep filter/clear UX consistent with model/service registries:
-             * show "Clear all" only when any filter is active.
-             */}
-            <TableFilterToolbar
-              hasActiveFilters={
-                !!defs.searchQuery.trim() ||
-                defs.filterSeverity !== "all" ||
-                defs.filterCategory !== "all" ||
-                defs.filterEnabled !== "all"
-              }
-              onClear={() => {
-                defs.resetFilters();
-                setDefinitionsPage(1);
-              }}
-              rightContent={(
-                <Button
-                  size="sm"
-                  colorScheme="orange"
-                  leftIcon={<AddIcon />}
-                  onClick={defs.openCreate}
-                >
-                  Create Alert Definition
-                </Button>
-              )}
-            >
-              <InputGroup maxW="260px" size="sm">
-                <InputLeftElement pointerEvents="none">
-                  <SearchIcon color="gray.400" />
-                </InputLeftElement>
-                <Input
-                  placeholder="Search alerts..."
-                  value={defs.searchQuery}
-                  onChange={(e) => {
-                    defs.setSearchQuery(e.target.value);
-                    setDefinitionsPage(1);
-                  }}
-                  bg="white"
-                />
-              </InputGroup>
-              <Select size="sm" maxW="130px" value={defs.filterSeverity} onChange={(e) => { defs.setFilterSeverity(e.target.value); setDefinitionsPage(1); }} bg="white">
-                <option value="all">Severity</option>
-                {SEVERITIES.map((s) => (<option key={s} value={s}>{titleCase(s)}</option>))}
-              </Select>
-              <Select size="sm" maxW="140px" value={defs.filterCategory} onChange={(e) => { defs.setFilterCategory(e.target.value); setDefinitionsPage(1); }} bg="white">
-                <option value="all">Category</option>
-                {CATEGORIES.map((c) => (<option key={c} value={c}>{titleCase(c)}</option>))}
-              </Select>
-              <Select size="sm" maxW="120px" value={defs.filterEnabled} onChange={(e) => { defs.setFilterEnabled(e.target.value); setDefinitionsPage(1); }} bg="white">
-                <option value="all">Status</option>
-                <option value="enabled">Active</option>
-                <option value="disabled">Inactive</option>
-              </Select>
-              <Box flex="1" />
-            </TableFilterToolbar>
-
-            {/* Table */}
-            {defs.isLoading ? (
-              <Center py={8}>
-                <VStack spacing={4}>
-                  <Spinner size="lg" color="blue.500" />
-                  <Text color="gray.600">Loading alert definitions...</Text>
-                </VStack>
-              </Center>
-            ) : defs.filteredDefinitions.length > 0 ? (
-              <TableContainer maxH="60vh" overflowY="auto">
-                <Table variant="simple" bg={tableBg} size="sm" w="100%">
-                  <Thead bg={tableHeaderBg}>
-                    <Tr>
-                      <Th>
-                        <TableSortHeader
-                          label="Name"
-                          direction={definitionsNameSortDirection}
-                          onAsc={() => setDefinitionsNameSortDirection("asc")}
-                          onDesc={() => setDefinitionsNameSortDirection("desc")}
-                          ascAriaLabel="Sort definitions by name ascending"
-                          descAriaLabel="Sort definitions by name descending"
-                        />
-                      </Th>
-                      <Th>Category</Th>
-                      <Th>Severity</Th>
-                      <Th>Subcategory</Th>
-                      <Th>Status</Th>
-                      <Th>Created</Th>
-                      <Th>Actions</Th>
-                    </Tr>
-                  </Thead>
-                  <Tbody>
-                    {paginatedDefinitions.map((d) => (
-                      <Tr
-                        key={d.id}
-                        _hover={{ bg: tableRowHoverBg }}
-                        transition="background 0.15s"
-                      >
-                        <Td fontWeight="semibold">{d.name}</Td>
-                        <Td><Badge colorScheme={categoryColor(d.category)} textTransform="capitalize">{d.category}</Badge></Td>
-                        <Td><Badge colorScheme={severityColor(d.severity)} textTransform="capitalize">{d.severity}</Badge></Td>
-                        <Td>
-                          <Text fontSize="sm">
-                            {d.sub_category ? titleCase(d.sub_category.replace(/_/g, " ")) : "—"}
-                          </Text>
-                        </Td>
-                        <Td>
-                          <Badge
-                            colorScheme={d.enabled ? "green" : "gray"}
-                            variant="subtle"
-                            fontSize="xs"
-                            px={2}
-                            py={0.5}
-                            borderRadius="full"
-                          >
-                            {d.enabled ? "Active" : "Inactive"}
-                          </Badge>
-                        </Td>
-                        <Td fontSize="sm">{new Date(d.created_at).toLocaleDateString()}</Td>
-                        <Td>
-                          <HStack spacing={1} className="row-actions">
-                            <Tooltip label="View" placement="top" hasArrow>
-                              <IconButton
-                                aria-label="View"
-                                icon={<ViewIcon />}
-                                size="sm"
-                                variant="ghost"
-                                color="gray.700"
-                                _hover={{ color: "blue.500", bg: "blue.50" }}
-                                onClick={() => defs.openView(d)}
-                              />
-                            </Tooltip>
-                            <Tooltip label="Edit" placement="top" hasArrow>
-                              <IconButton
-                                aria-label="Edit"
-                                icon={<EditIcon />}
-                                size="sm"
-                                variant="ghost"
-                                color="gray.700"
-                                _hover={{ color: "green.500", bg: "green.50" }}
-                                onClick={() => defs.openUpdate(d)}
-                              />
-                            </Tooltip>
-                            <Tooltip label="Delete" placement="top" hasArrow>
-                              <IconButton
-                                aria-label="Delete"
-                                icon={<DeleteIcon />}
-                                size="sm"
-                                variant="ghost"
-                                color="gray.700"
-                                _hover={{ color: "red.500", bg: "red.50" }}
-                                onClick={() => defs.openDelete(d)}
-                              />
-                            </Tooltip>
-                          </HStack>
-                        </Td>
-                      </Tr>
-                    ))}
-                  </Tbody>
-                </Table>
-              </TableContainer>
-            ) : null}
-
-            {!defs.isLoading && defs.filteredDefinitions.length > 0 ? (
-              <TablePaginationBar
-                startRow={definitionsStartRow}
-                endRow={definitionsEndRow}
-                totalItems={definitionsTotal}
-                page={definitionsPage}
-                totalPages={definitionsTotalPages}
-                pageSize={definitionsPageSize}
-                pageSizeOptions={PAGE_SIZE_OPTIONS}
-                onPageSizeChange={(value) => {
-                  setDefinitionsPageSize(value);
-                  setDefinitionsPage(1);
-                }}
-                onFirst={() => setDefinitionsPage(1)}
-                onPrev={() => setDefinitionsPage((p) => Math.max(1, p - 1))}
-                onNext={() => setDefinitionsPage((p) => Math.min(definitionsTotalPages, p + 1))}
-                onLast={() => setDefinitionsPage(definitionsTotalPages)}
-                canPrev={definitionsPage > 1}
-                canNext={definitionsPage < definitionsTotalPages}
-                borderColor={cardBorder}
-                bg={cardBg}
-              />
-            ) : (
-              <Alert status="info" borderRadius="md">
-                <AlertIcon />
-                <AlertDescription>
-                  {defs.definitions.length === 0
-                    ? "No alert definitions found. Click 'Create Alert Definition' to get started."
-                    : "No definitions match the current filters."}
-                </AlertDescription>
-              </Alert>
+          <AdminDataTable
+            items={sortedDefinitions}
+            columns={definitionColumns}
+            getRowKey={(d) => String(d.id)}
+            paginate="client"
+            pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+            isLoading={defs.isLoading}
+            loadingMessage="Loading alert definitions..."
+            emptyMessage="No alert definitions found. Click 'Create Alert Definition' to get started."
+            noResultsMessage="No definitions match the current filters."
+            unfilteredCount={defs.definitions.length}
+            hasActiveFilters={
+              !!defs.searchQuery.trim() ||
+              defs.filterSeverity !== "all" ||
+              defs.filterCategory !== "all" ||
+              defs.filterEnabled !== "all"
+            }
+            onClearFilters={() => defs.resetFilters()}
+            filterToolbarRightContent={(
+              <Button
+                size="sm"
+                colorScheme="orange"
+                leftIcon={<AddIcon />}
+                onClick={defs.openCreate}
+              >
+                Create Alert Definition
+              </Button>
             )}
-          </VStack>
+            filters={(
+              <>
+                <TableSearchField
+                  value={defs.searchQuery}
+                  onChange={defs.setSearchQuery}
+                  placeholder="Search alerts..."
+                  formControlProps={{ maxW: "260px" }}
+                />
+                <TableSelectField
+                  label="Severity"
+                  value={defs.filterSeverity}
+                  onChange={defs.setFilterSeverity}
+                  selectProps={{ maxW: "130px" }}
+                >
+                  <option value="all">Severity</option>
+                  {SEVERITIES.map((s) => (<option key={s} value={s}>{titleCase(s)}</option>))}
+                </TableSelectField>
+                <TableSelectField
+                  label="Category"
+                  value={defs.filterCategory}
+                  onChange={defs.setFilterCategory}
+                  selectProps={{ maxW: "140px" }}
+                >
+                  <option value="all">Category</option>
+                  {CATEGORIES.map((c) => (<option key={c} value={c}>{titleCase(c)}</option>))}
+                </TableSelectField>
+                <TableSelectField
+                  label="Status"
+                  value={defs.filterEnabled}
+                  onChange={defs.setFilterEnabled}
+                  selectProps={{ maxW: "120px" }}
+                >
+                  <option value="all">Status</option>
+                  <option value="enabled">Active</option>
+                  <option value="disabled">Inactive</option>
+                </TableSelectField>
+              </>
+            )}
+          />
         </CardBody>
       </Card>
 
@@ -1636,150 +1771,45 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
           </HStack>
         </CardHeader>
         <CardBody>
-          <VStack spacing={6} align="stretch">
-            <TableFilterToolbar
-              hasActiveFilters={recvs.filterEnabled !== "all" || !!receiversSearchQuery.trim()}
-              onClear={() => {
-                recvs.setFilterEnabled("all");
-                setReceiversSearchQuery("");
-                setReceiversPage(1);
-              }}
-              align="end"
-            >
-              <FormControl maxW="260px">
-                <FormLabel fontWeight="semibold">Search</FormLabel>
-                <InputGroup size="sm">
-                  <InputLeftElement pointerEvents="none">
-                    <SearchIcon color="gray.400" />
-                  </InputLeftElement>
-                  <Input
-                    placeholder="Search receivers..."
-                    value={receiversSearchQuery}
-                    onChange={(e) => {
-                      setReceiversSearchQuery(e.target.value);
-                      setReceiversPage(1);
-                    }}
-                    bg="white"
-                  />
-                </InputGroup>
-              </FormControl>
-              <FormControl maxW="200px">
-                <FormLabel fontWeight="semibold">Status</FormLabel>
-                <Select value={recvs.filterEnabled} onChange={(e) => { recvs.setFilterEnabled(e.target.value); setReceiversPage(1); }} bg="white">
+          <AdminDataTable
+            items={sortedReceivers}
+            columns={receiverColumns}
+            getRowKey={(r) => String(r.id)}
+            paginate="client"
+            pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+            filterToolbarAlign="flex-end"
+            isLoading={recvs.isLoading}
+            loadingMessage="Loading receivers..."
+            emptyMessage="No notification receivers found. Click 'Create' to add one."
+            noResultsMessage="No receivers match the current filters."
+            unfilteredCount={recvs.receivers.length}
+            hasActiveFilters={recvs.filterEnabled !== "all" || !!receiversSearchQuery.trim()}
+            onClearFilters={() => {
+              recvs.setFilterEnabled("all");
+              setReceiversSearchQuery("");
+            }}
+            filters={(
+              <>
+                <TableSearchField
+                  label="Search"
+                  value={receiversSearchQuery}
+                  onChange={setReceiversSearchQuery}
+                  placeholder="Search receivers..."
+                  formControlProps={{ maxW: "260px" }}
+                />
+                <TableSelectField
+                  label="Status"
+                  value={recvs.filterEnabled}
+                  onChange={recvs.setFilterEnabled}
+                  formControlProps={{ maxW: "200px" }}
+                >
                   <option value="all">All</option>
                   <option value="enabled">Enabled</option>
                   <option value="disabled">Disabled</option>
-                </Select>
-              </FormControl>
-            </TableFilterToolbar>
-
-            {recvs.isLoading ? (
-              <Center py={8}>
-                <VStack spacing={4}>
-                  <Spinner size="lg" color="blue.500" />
-                  <Text color="gray.600">Loading receivers...</Text>
-                </VStack>
-              </Center>
-            ) : sortedReceivers.length > 0 ? (
-              <TableContainer maxH="60vh" overflowY="auto">
-                <Table variant="simple" bg={tableBg} size="sm" w="100%">
-                  <Thead bg={tableHeaderBg}>
-                    <Tr>
-                      <Th>
-                        <TableSortHeader
-                          label="Name"
-                          direction={receiversNameSortDirection}
-                          onAsc={() => setReceiversNameSortDirection("asc")}
-                          onDesc={() => setReceiversNameSortDirection("desc")}
-                          ascAriaLabel="Sort receivers by name ascending"
-                          descAriaLabel="Sort receivers by name descending"
-                        />
-                      </Th>
-                      <Th>Recipient</Th>
-                      <Th>Status</Th>
-                      <Th>Organization</Th>
-                      <Th>Created</Th>
-                      <Th>Actions</Th>
-                    </Tr>
-                  </Thead>
-                  <Tbody>
-                    {paginatedReceivers.map((r) => (
-                      <Tr
-                        key={r.id}
-                        _hover={{ bg: tableRowHoverBg }}
-                        transition="background 0.15s"
-                      >
-                        <Td fontWeight="semibold" fontSize="sm">{r.receiver_name}</Td>
-                        <Td>
-                          {r.rbac_role ? (
-                            <Badge colorScheme="purple">Role: {r.rbac_role}</Badge>
-                          ) : r.email_to && r.email_to.length > 0 ? (
-                            <Wrap spacing={1}>
-                              {r.email_to.slice(0, 2).map((e) => (<WrapItem key={e}><Badge colorScheme="blue" fontSize="xs">{e}</Badge></WrapItem>))}
-                              {r.email_to.length > 2 && (<WrapItem><Badge colorScheme="gray" fontSize="xs">+{r.email_to.length - 2}</Badge></WrapItem>)}
-                            </Wrap>
-                          ) : (
-                            <Text fontSize="sm" color="gray.500">—</Text>
-                          )}
-                        </Td>
-                        <Td>
-                          <Switch size="sm" colorScheme="green" isChecked={r.enabled} isReadOnly />
-                        </Td>
-                        <Td fontSize="sm">{r.organization}</Td>
-                        <Td fontSize="sm">{new Date(r.created_at).toLocaleDateString()}</Td>
-                        <Td>
-                          <HStack spacing={1} className="row-actions">
-                            <Tooltip label="View" placement="top" hasArrow>
-                              <IconButton aria-label="View" icon={<ViewIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "blue.500", bg: "blue.50" }} onClick={() => recvs.openView(r)} />
-                            </Tooltip>
-                            <Tooltip label="Edit" placement="top" hasArrow>
-                              <IconButton aria-label="Edit" icon={<EditIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "green.500", bg: "green.50" }} onClick={() => recvs.openUpdate(r)} />
-                            </Tooltip>
-                            <Tooltip label="Delete" placement="top" hasArrow>
-                              <IconButton aria-label="Delete" icon={<DeleteIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "red.500", bg: "red.50" }} onClick={() => recvs.openDelete(r)} />
-                            </Tooltip>
-                          </HStack>
-                        </Td>
-                      </Tr>
-                    ))}
-                  </Tbody>
-                </Table>
-              </TableContainer>
-            ) : null}
-
-            {!recvs.isLoading && sortedReceivers.length > 0 ? (
-              <TablePaginationBar
-                startRow={receiversStartRow}
-                endRow={receiversEndRow}
-                totalItems={receiversTotal}
-                page={receiversPage}
-                totalPages={receiversTotalPages}
-                pageSize={receiversPageSize}
-                pageSizeOptions={PAGE_SIZE_OPTIONS}
-                onPageSizeChange={(value) => {
-                  setReceiversPageSize(value);
-                  setReceiversPage(1);
-                }}
-                onFirst={() => setReceiversPage(1)}
-                onPrev={() => setReceiversPage((p) => Math.max(1, p - 1))}
-                onNext={() => setReceiversPage((p) => Math.min(receiversTotalPages, p + 1))}
-                onLast={() => setReceiversPage(receiversTotalPages)}
-                canPrev={receiversPage > 1}
-                canNext={receiversPage < receiversTotalPages}
-                borderColor={cardBorder}
-                bg={cardBg}
-              />
-            ) : (
-              <Alert status="info" borderRadius="md">
-                <AlertIcon />
-                <AlertDescription>
-                  {recvs.receivers.length === 0
-                    ? "No notification receivers found. Click 'Create' to add one."
-                    : "No receivers match the current filters."}
-                </AlertDescription>
-              </Alert>
+                </TableSelectField>
+              </>
             )}
-          </VStack>
+          />
         </CardBody>
       </Card>
 
@@ -1991,16 +2021,23 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const renderRoutingRulesSection = () => (
     <>
       <Box bg={cardBg} borderColor={cardBorder} borderWidth="1px" borderRadius="lg" p={4}>
-      <VStack spacing={5} align="stretch">
-        {/* Search + Filters + Actions */}
-        <TableFilterToolbar
+        <AdminDataTable
+          items={sortedRules}
+          columns={routingRuleColumns}
+          getRowKey={(rule) => String(rule.id)}
+          paginate="client"
+          pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+          isLoading={rules.isLoading}
+          loadingMessage="Loading alert routing..."
+          emptyMessage="No alert routing configured. Click 'Create Routing Rule' to add one."
+          noResultsMessage="No entries match the current filters."
+          unfilteredCount={rules.rules.length}
           hasActiveFilters={!!rules.searchQuery.trim() || rules.filterEnabled !== "all"}
-          onClear={() => {
+          onClearFilters={() => {
             rules.setSearchQuery("");
             rules.setFilterEnabled("all");
-            setRulesPage(1);
           }}
-          rightContent={(
+          filterToolbarRightContent={(
             <Button
               size="sm"
               colorScheme="orange"
@@ -2010,148 +2047,27 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               Create Routing Rule
             </Button>
           )}
-          justify="space-between"
-        >
-          <HStack spacing={3}>
-            <InputGroup maxW="280px" size="sm">
-              <InputLeftElement pointerEvents="none">
-                <SearchIcon color="gray.400" />
-              </InputLeftElement>
-              <Input
-                placeholder="Search routing rules..."
+          filters={(
+            <>
+              <TableSearchField
                 value={rules.searchQuery}
-                  onChange={(e) => {
-                    rules.setSearchQuery(e.target.value);
-                    setRulesPage(1);
-                  }}
-                bg="white"
+                onChange={rules.setSearchQuery}
+                placeholder="Search routing rules..."
+                formControlProps={{ maxW: "280px" }}
               />
-            </InputGroup>
-            <Select size="sm" maxW="120px" value={rules.filterEnabled} onChange={(e) => { rules.setFilterEnabled(e.target.value); setRulesPage(1); }} bg="white">
-              <option value="all">Status</option>
-              <option value="enabled">Active</option>
-              <option value="disabled">Inactive</option>
-            </Select>
-          </HStack>
-        </TableFilterToolbar>
-
-        {rules.isLoading ? (
-          <Center py={8}>
-            <VStack spacing={4}>
-              <Spinner size="lg" color="orange.500" />
-              <Text color="gray.600">Loading alert routing...</Text>
-            </VStack>
-          </Center>
-        ) : rules.filteredRules.length > 0 ? (
-          <TableContainer maxH="60vh" overflowY="auto">
-            <Table variant="simple" bg={tableBg} size="sm" w="100%">
-              <Thead bg={tableHeaderBg}>
-                <Tr>
-                  <Th>
-                    <TableSortHeader
-                      label="Rule Name"
-                      direction={rulesNameSortDirection}
-                      onAsc={() => setRulesNameSortDirection("asc")}
-                      onDesc={() => setRulesNameSortDirection("desc")}
-                      ascAriaLabel="Sort rules by name ascending"
-                      descAriaLabel="Sort rules by name descending"
-                    />
-                  </Th>
-                  <Th>Alert Definitions</Th>
-                  <Th>Tenant</Th>
-                  <Th>Status</Th>
-                  <Th>Actions</Th>
-                </Tr>
-              </Thead>
-              <Tbody>
-                {paginatedRules.map((rule) => (
-                    <Tr
-                      key={rule.id}
-                      _hover={{ bg: tableRowHoverBg }}
-                      transition="background 0.15s"
-                    >
-                      <Td fontWeight="semibold">{rule.rule_name ?? rule.receiver_name}</Td>
-                      <Td>
-                        {rule.alert_names && rule.alert_names.length > 0 ? (
-                          <Text fontSize="sm" color="gray.700">
-                            {rule.alert_names.slice(0, 2).join(", ")}
-                            {rule.alert_names.length > 2 ? ` +${rule.alert_names.length - 2}` : ""}
-                          </Text>
-                        ) : (
-                          <Text fontSize="sm" color="gray.500">All</Text>
-                        )}
-                      </Td>
-                      <Td>
-                        {rule.tenant ? (
-                          <Badge colorScheme="purple" variant="subtle" textTransform="none">{rule.tenant}</Badge>
-                        ) : (
-                          <Text fontSize="sm" color="gray.500">Global</Text>
-                        )}
-                      </Td>
-                      <Td>
-                        <Badge colorScheme={rule.enabled ? "green" : "gray"} variant="subtle" fontSize="xs" px={2} py={0.5} borderRadius="full">
-                          {rule.enabled ? "Active" : "Inactive"}
-                        </Badge>
-                      </Td>
-                      <Td>
-                        <HStack spacing={1} className="row-actions">
-                          <Tooltip label="View" placement="top" hasArrow>
-                            <IconButton aria-label="View" icon={<ViewIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "blue.500", bg: "blue.50" }} onClick={() => { defs.fetchDefinitions(); rules.openView(rule); }} />
-                          </Tooltip>
-                          <Tooltip label="Edit" placement="top" hasArrow>
-                            <IconButton aria-label="Edit" icon={<EditIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "green.500", bg: "green.50" }} onClick={() => {
-                              defs.fetchDefinitions();
-                              fetchTenants();
-                              resetEditRuleExtras();
-                              initEditRuleExtras(rule);
-                              rules.openUpdate(rule);
-                            }} />
-                          </Tooltip>
-                          <Tooltip label="Delete" placement="top" hasArrow>
-                            <IconButton aria-label="Delete" icon={<DeleteIcon />} size="sm" variant="ghost" color="gray.700" _hover={{ color: "red.500", bg: "red.50" }} onClick={() => rules.openDelete(rule)} />
-                          </Tooltip>
-                        </HStack>
-                      </Td>
-                    </Tr>
-                  ))}
-              </Tbody>
-            </Table>
-          </TableContainer>
-        ) : null}
-
-        {!rules.isLoading && rules.filteredRules.length > 0 ? (
-          <TablePaginationBar
-            startRow={rulesStartRow}
-            endRow={rulesEndRow}
-            totalItems={rulesTotal}
-            page={rulesPage}
-            totalPages={rulesTotalPages}
-            pageSize={rulesPageSize}
-            pageSizeOptions={PAGE_SIZE_OPTIONS}
-            onPageSizeChange={(value) => {
-              setRulesPageSize(value);
-              setRulesPage(1);
-            }}
-            onFirst={() => setRulesPage(1)}
-            onPrev={() => setRulesPage((p) => Math.max(1, p - 1))}
-            onNext={() => setRulesPage((p) => Math.min(rulesTotalPages, p + 1))}
-            onLast={() => setRulesPage(rulesTotalPages)}
-            canPrev={rulesPage > 1}
-            canNext={rulesPage < rulesTotalPages}
-            borderColor={cardBorder}
-            bg={cardBg}
-          />
-        ) : (
-          <Alert status="info" borderRadius="md">
-            <AlertIcon />
-            <AlertDescription>
-              {rules.rules.length === 0
-                ? "No alert routing configured. Click 'Create Routing Rule' to add one."
-                : "No entries match the current filters."}
-            </AlertDescription>
-          </Alert>
-        )}
-      </VStack>
+              <TableSelectField
+                label="Status"
+                value={rules.filterEnabled}
+                onChange={rules.setFilterEnabled}
+                selectProps={{ maxW: "120px" }}
+              >
+                <option value="all">Status</option>
+                <option value="enabled">Active</option>
+                <option value="disabled">Inactive</option>
+              </TableSelectField>
+            </>
+          )}
+        />
       </Box>
 
       {/* ── Create Routing Rule Drawer ── */}
@@ -2295,7 +2211,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       <Select value="global" isDisabled bg="gray.50">
                         <option value="global">Global</option>
                       </Select>
-                     
+
                     </>
                   ) : (
                     <Select
@@ -2708,7 +2624,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       <Select value="global" isDisabled bg="gray.50">
                         <option value="global">Global</option>
                       </Select>
-                      
+
                     </>
                   ) : (
                     <Select
@@ -2871,177 +2787,86 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       {/* Same shell + filter toolbar pattern as Alert Definitions (Card, toolbar, Clear all) */}
       <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
         <CardBody>
-          <VStack spacing={5} align="stretch">
-            <TableFilterToolbar
-              hasActiveFilters={history.hasActiveFilters}
-              onClear={() => history.clearFilters()}
-            >
-              <InputGroup maxW="260px" size="sm">
-                <InputLeftElement pointerEvents="none">
-                  <SearchIcon color="gray.400" />
-                </InputLeftElement>
-                <Input
-                  placeholder="Search alerts..."
+          <AdminDataTable
+            items={sortedHistoryItems}
+            columns={historyColumns}
+            getRowKey={(row) => String(row.id)}
+            paginate="server"
+            paginationPosition="top"
+            pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+            initialPageSize={history.pageSize}
+            serverPagination={{
+              page: history.currentPage,
+              pageSize: history.pageSize,
+              totalItems: history.total,
+              onPageChange: history.goToPage,
+              onPageSizeChange: history.setPageSize,
+            }}
+            isLoading={history.isLoading}
+            loadingMessage="Loading alert history..."
+            emptyMessage="No alert history yet. Triggered alerts will appear here once your alerting pipeline records them."
+            noResultsMessage="No entries match the current filters."
+            hasActiveFilters={history.hasActiveFilters}
+            onClearFilters={() => history.clearFilters()}
+            filters={(
+              <>
+                <TableSearchField
                   value={history.searchQuery}
-                  onChange={(e) => history.setSearchQuery(e.target.value)}
-                  bg="white"
+                  onChange={history.setSearchQuery}
+                  placeholder="Search alerts..."
+                  formControlProps={{ maxW: "260px" }}
                 />
-              </InputGroup>
-              <Select
-                size="sm"
-                maxW="130px"
-                value={history.filterSeverity}
-                onChange={(e) => history.setFilterSeverity(e.target.value)}
-                bg="white"
-              >
-                <option value="all">Severity</option>
-                {SEVERITIES.map((s) => (
-                  <option key={s} value={s}>{titleCase(s)}</option>
-                ))}
-              </Select>
-              <Select
-                size="sm"
-                maxW="140px"
-                value={history.filterCategory}
-                onChange={(e) => history.setFilterCategory(e.target.value)}
-                bg="white"
-              >
-                <option value="all">Category</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>{titleCase(c)}</option>
-                ))}
-              </Select>
-              {/* From/To stay paired; inline labels match toolbar row height (no stacked FormLabel) */}
-              <HStack spacing={2} align="center" flexWrap="nowrap" flexShrink={0}>
-                <Text fontSize="xs" fontWeight="semibold" color="gray.600" whiteSpace="nowrap">
-                  From
-                </Text>
-                <Input
-                  type="date"
-                  size="sm"
-                  w="140px"
-                  maxW="140px"
-                  value={history.dateFrom}
-                  onChange={(e) => history.setDateFrom(e.target.value)}
-                  bg="white"
-                />
-                <Text fontSize="xs" fontWeight="semibold" color="gray.600" whiteSpace="nowrap">
-                  To
-                </Text>
-                <Input
-                  type="date"
-                  size="sm"
-                  w="140px"
-                  maxW="140px"
-                  value={history.dateTo}
-                  onChange={(e) => history.setDateTo(e.target.value)}
-                  bg="white"
-                />
-              </HStack>
-              <Box flex="1" minW={{ base: "100%", sm: 0 }} display={{ base: "none", md: "block" }} />
-            </TableFilterToolbar>
-
-            {!history.isLoading && history.total > 0 ? (
-              <TablePaginationBar
-                startRow={history.pageStart}
-                endRow={history.pageEnd}
-                totalItems={history.total}
-                page={history.currentPage}
-                totalPages={history.totalPages}
-                pageSize={history.pageSize}
-                pageSizeOptions={PAGE_SIZE_OPTIONS}
-                onPageSizeChange={(value) => history.setPageSize(value)}
-                onFirst={() => history.goFirst()}
-                onPrev={() => history.goPrev()}
-                onNext={() => history.goNext()}
-                onLast={() => history.goLast()}
-                canPrev={history.canPrev}
-                canNext={history.canNext}
-                borderColor={cardBorder}
-                bg={cardBg}
-              />
-            ) : null}
-
-            {history.isLoading ? (
-              <Center py={8}>
-                <VStack spacing={4}>
-                  <Spinner size="lg" color="blue.500" />
-                  <Text color="gray.600">Loading alert history...</Text>
-                </VStack>
-              </Center>
-            ) : history.items.length > 0 ? (
-              <TableContainer maxH="60vh" overflowY="auto">
-                <Table variant="simple" bg={tableBg} size="sm" w="100%">
-                  <Thead bg={tableHeaderBg}>
-                    <Tr>
-                      <Th>
-                        <TableSortHeader
-                          label="Name"
-                          direction={historyNameSortDirection}
-                          onAsc={() => setHistoryNameSortDirection("asc")}
-                          onDesc={() => setHistoryNameSortDirection("desc")}
-                          ascAriaLabel="Sort alert history by name ascending"
-                          descAriaLabel="Sort alert history by name descending"
-                        />
-                      </Th>
-                      <Th>Category</Th>
-                      <Th>Severity</Th>
-                      <Th>Triggered At</Th>
-                      <Th>Notified</Th>
-                      <Th>Actions</Th>
-                    </Tr>
-                  </Thead>
-                  <Tbody>
-                    {sortedHistoryItems.map((row) => (
-                      <Tr key={row.id} _hover={{ bg: tableRowHoverBg }} transition="background 0.15s">
-                        <Td fontWeight="semibold" maxW="260px">
-                          <Text noOfLines={2} title={row.name}>{row.name}</Text>
-                        </Td>
-                        <Td>
-                          <Badge colorScheme={categoryColor(row.category)} textTransform="capitalize">
-                            {row.category || "—"}
-                          </Badge>
-                        </Td>
-                        <Td>
-                          <Badge colorScheme={severityColor(row.severity)} textTransform="capitalize">
-                            {row.severity || "—"}
-                          </Badge>
-                        </Td>
-                        <Td fontSize="sm">{row.triggered_at ?? "—"}</Td>
-                        <Td fontSize="sm" maxW="220px">
-                          <Text noOfLines={2} title={row.notified}>{row.notified || "—"}</Text>
-                        </Td>
-                        <Td>
-                          <HStack spacing={1} className="row-actions">
-                            <Tooltip label="View" placement="top" hasArrow>
-                              <IconButton
-                                aria-label="View"
-                                icon={<ViewIcon />}
-                                size="sm"
-                                variant="ghost"
-                                color="gray.700"
-                                _hover={{ color: "blue.500", bg: "blue.50" }}
-                                onClick={() => history.openView(row)}
-                              />
-                            </Tooltip>
-                          </HStack>
-                        </Td>
-                      </Tr>
-                    ))}
-                  </Tbody>
-                </Table>
-              </TableContainer>
-            ) : (
-              <Alert status="info" borderRadius="md">
-                <AlertIcon />
-                <AlertDescription>
-                  {history.hasActiveFilters
-                    ? "No entries match the current filters."
-                    : "No alert history yet. Triggered alerts will appear here once your alerting pipeline records them."}
-                </AlertDescription>
-              </Alert>
+                <TableSelectField
+                  label="Severity"
+                  value={history.filterSeverity}
+                  onChange={history.setFilterSeverity}
+                  selectProps={{ maxW: "130px" }}
+                >
+                  <option value="all">Severity</option>
+                  {SEVERITIES.map((s) => (
+                    <option key={s} value={s}>{titleCase(s)}</option>
+                  ))}
+                </TableSelectField>
+                <TableSelectField
+                  label="Category"
+                  value={history.filterCategory}
+                  onChange={history.setFilterCategory}
+                  selectProps={{ maxW: "140px" }}
+                >
+                  <option value="all">Category</option>
+                  {CATEGORIES.map((c) => (
+                    <option key={c} value={c}>{titleCase(c)}</option>
+                  ))}
+                </TableSelectField>
+                <HStack spacing={2} align="center" flexWrap="nowrap" flexShrink={0}>
+                  <Text fontSize="xs" fontWeight="semibold" color="gray.600" whiteSpace="nowrap">
+                    From
+                  </Text>
+                  <Input
+                    type="date"
+                    size="sm"
+                    w="140px"
+                    maxW="140px"
+                    value={history.dateFrom}
+                    onChange={(e) => history.setDateFrom(e.target.value)}
+                    bg={cardBg}
+                  />
+                  <Text fontSize="xs" fontWeight="semibold" color="gray.600" whiteSpace="nowrap">
+                    To
+                  </Text>
+                  <Input
+                    type="date"
+                    size="sm"
+                    w="140px"
+                    maxW="140px"
+                    value={history.dateTo}
+                    onChange={(e) => history.setDateTo(e.target.value)}
+                    bg={cardBg}
+                  />
+                </HStack>
+              </>
             )}
-          </VStack>
+          />
         </CardBody>
       </Card>
 

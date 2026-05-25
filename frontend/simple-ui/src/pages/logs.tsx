@@ -8,21 +8,12 @@ import {
   Heading,
   HStack,
   Input,
-  Link,
   Select,
   Switch,
-  Table,
-  Thead,
-  Tbody,
-  Tr,
-  Th,
-  Td,
-  TableContainer,
   Text,
   Tooltip,
   VStack,
   Badge,
-  Spinner,
   Flex,
   IconButton,
   Card,
@@ -54,8 +45,12 @@ import {
   LogAggregationResponse,
 } from "../services/observabilityService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { isTenantStatus, TENANT } from "../config/constants";
 import { listTenants, getViewTenant } from "../services/tenantService";
-import { TablePaginationBar, useAdminTableSurface } from "../components/common/TableControls";
+import { useAdminTableSurface } from "../components/common/TableControls";
+import AdminDataTable, {
+  type AdminTableColumn,
+} from "../components/common/AdminDataTable";
 
 /**
  * Convert datetime-local format (YYYY-MM-DDTHH:mm) to ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
@@ -65,7 +60,7 @@ const convertToISOFormat = (datetimeLocal: string): string => {
   if (!datetimeLocal || datetimeLocal.trim() === "") {
     return "";
   }
-  
+
   // Parse the datetime-local string (YYYY-MM-DDTHH:mm)
   // Treat it as local time and convert to ISO format
   try {
@@ -74,21 +69,21 @@ const convertToISOFormat = (datetimeLocal: string): string => {
     if (!normalized.includes(":")) {
       return ""; // Invalid format
     }
-    
+
     // Count colons to determine format
     const colonCount = (normalized.match(/:/g) || []).length;
     if (colonCount === 1) {
       // Format: YYYY-MM-DDTHH:mm - add seconds
       normalized = normalized + ":00";
     }
-    
+
     // Parse as local time and convert to ISO (UTC)
     const date = new Date(normalized);
     if (isNaN(date.getTime())) {
       console.warn(`Invalid datetime format: ${datetimeLocal}`);
       return "";
     }
-    
+
     // Return ISO format string
     return date.toISOString();
   } catch (error) {
@@ -101,10 +96,7 @@ const LogsPage: React.FC = () => {
   const toast = useToastWithDeduplication();
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
-  const [page, setPage] = useState(1);
-  const [size, setSize] = useState(10);
-  const [clientPage, setClientPage] = useState(1); // Client-side pagination for filtered logs
-  
+
   // Filter input values (what user types/selects - not applied until Search is clicked)
   const [service, setService] = useState<string>("");
   const [level, setLevel] = useState<string>("");
@@ -112,7 +104,7 @@ const LogsPage: React.FC = () => {
   const [startTime, setStartTime] = useState<string>("");
   const [endTime, setEndTime] = useState<string>("");
   const [selectedTenantId, setSelectedTenantId] = useState<string>(""); // Admin-only tenant filter
-  
+
   // Applied filter values (what's actually used in the query)
   const [appliedService, setAppliedService] = useState<string>("");
   const [appliedLevel, setAppliedLevel] = useState<string>("");
@@ -137,8 +129,8 @@ const LogsPage: React.FC = () => {
   const isTenantAdmin = user?.roles?.includes('TENANT ADMIN') || false;
   // Kept for reference (e.g. display purposes); no longer drives access logic
   const tenantIdFromToken = getTenantIdFromToken();
-  
-  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor } = useAdminTableSurface();
+
+  const { cardBg, borderColor } = useAdminTableSurface();
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -239,15 +231,14 @@ const LogsPage: React.FC = () => {
   });
 
   // Fetch the current tenant's detail (subscriptions) for TENANT ADMIN role
-  // Filter tenants to only show activated tenants
+  // Filter tenants to only show active tenants
   const activeTenants = useMemo(() => {
     if (!tenantsData?.tenants || !Array.isArray(tenantsData.tenants)) {
       return [];
     }
-    return tenantsData.tenants.filter((tenant: any) => {
-      const status = String(tenant?.status || '').trim().toLowerCase();
-      return status === 'activated';
-    });
+    return tenantsData.tenants.filter((tenant: { status?: string }) =>
+      isTenantStatus(tenant?.status, TENANT.STATUS.ACTIVE)
+    );
   }, [tenantsData]);
 
   // Debug: Log admin status, tenant data, and errors
@@ -318,18 +309,17 @@ const LogsPage: React.FC = () => {
       appliedSearchText,
       appliedStartTime,
       appliedEndTime,
-      size, // Include size in query key since we use it for fetch size
       appliedTenantId, // Include tenant_id for admin filtering
     ],
     queryFn: async () => {
       // API has a maximum limit of 100 for size parameter
       // Fetch multiple pages to get all available logs, then filter and paginate client-side
       const fetchSize = 100; // API maximum limit
-      
+
       // Prepare API parameters (using applied values)
       const apiService = appliedService && appliedService.trim() !== "" ? appliedService : undefined;
       const apiLevel = appliedLevel && appliedLevel.trim() !== "" ? appliedLevel : undefined;
-      
+
       console.log('Fetching logs with filters:', {
         service: apiService || 'All Services',
         level: apiLevel || 'All Levels',
@@ -337,18 +327,18 @@ const LogsPage: React.FC = () => {
         startTime: appliedStartTime || 'not set',
         endTime: appliedEndTime || 'not set',
       });
-      
+
       // Convert datetime-local format to ISO format for API
       const apiStartTime = appliedStartTime && appliedStartTime.trim() !== "" ? convertToISOFormat(appliedStartTime) : undefined;
       const apiEndTime = appliedEndTime && appliedEndTime.trim() !== "" ? convertToISOFormat(appliedEndTime) : undefined;
-      
+
       console.log('Time conversion:', {
         startTime_local: appliedStartTime,
         startTime_iso: apiStartTime,
         endTime_local: appliedEndTime,
         endTime_iso: apiEndTime,
       });
-      
+
       // First, fetch page 1 to get total count
       // Only ADMIN role (not TENANT ADMIN) can send the tenant_id filter param;
       // TENANT ADMIN is automatically scoped by the backend via their JWT.
@@ -362,32 +352,32 @@ const LogsPage: React.FC = () => {
         end_time: apiEndTime,
         tenant_id: isAdmin && !isTenantAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
       });
-      
+
       // Ensure logs is always an array
       if (firstPage && !Array.isArray(firstPage.logs)) {
         console.warn('API returned non-array logs, converting:', firstPage);
         firstPage.logs = [];
       }
-      
+
       const allLogs = firstPage.logs || [];
       const totalPages = firstPage.total_pages || 1;
-      
+
       console.log('First page fetched:', {
         total: firstPage.total,
         logsCount: allLogs.length,
         totalPages,
       });
-      
+
       // Fetch all remaining pages to get all available logs
       if (totalPages > 1) {
         console.log(`Fetching all ${totalPages} pages to get all available logs...`);
-        
+
         // Fetch pages in parallel batches to speed up loading
         const batchSize = 5; // Fetch 5 pages at a time to avoid overwhelming the API
         for (let batchStart = 2; batchStart <= totalPages; batchStart += batchSize) {
           const batchEnd = Math.min(batchStart + batchSize - 1, totalPages);
           const batchPromises = [];
-          
+
           for (let page = batchStart; page <= batchEnd; page++) {
               batchPromises.push(
                 searchLogs({
@@ -405,20 +395,20 @@ const LogsPage: React.FC = () => {
               })
             );
           }
-          
+
           const batchResults = await Promise.all(batchPromises);
           batchResults.forEach((pageResult) => {
             if (pageResult && Array.isArray(pageResult.logs)) {
               allLogs.push(...pageResult.logs);
             }
           });
-          
+
           console.log(`Fetched pages ${batchStart}-${batchEnd}: ${allLogs.length} total logs so far (${Math.round((batchEnd / totalPages) * 100)}% complete)`);
         }
-        
+
         console.log(`Completed fetching: ${allLogs.length} total logs from ${totalPages} pages`);
       }
-      
+
       // Return combined result
       return {
         ...firstPage,
@@ -444,7 +434,7 @@ const LogsPage: React.FC = () => {
         message: error?.message,
         url: error?.config?.url,
       });
-      
+
       if (error?.response?.status === 401 || error?.response?.status === 403) {
         forceFrontendSessionEnd();
         return;
@@ -575,9 +565,6 @@ const LogsPage: React.FC = () => {
     setAppliedStartTime(startTime);
     setAppliedEndTime(endTime);
     setAppliedTenantId(selectedTenantId);
-    // Reset pagination
-    setPage(1);
-    setClientPage(1);
     // Note: React Query will automatically refetch when applied values change
   };
 
@@ -603,11 +590,11 @@ const LogsPage: React.FC = () => {
         const startDate = new Date(currentStartTime);
         const endDate = new Date(currentEndTime);
         const timeRangeMs = endDate.getTime() - startDate.getTime();
-        
+
         // Set new endTime to now, and startTime to maintain the same range
         const newEndTime = formatDateTime(now);
         const newStartTime = formatDateTime(new Date(now.getTime() - timeRangeMs));
-        
+
         setEndTime(newEndTime);
         setStartTime(newStartTime);
         // Also update applied values to trigger immediate refresh
@@ -631,11 +618,8 @@ const LogsPage: React.FC = () => {
       setAppliedEndTime(formattedNow);
       setAppliedStartTime(formattedOneHourAgo);
     }
-    
-    // Reset to first page
+
     // Note: React Query will automatically refetch when applied values change
-    setPage(1);
-    setClientPage(1);
   }, [appliedStartTime, appliedEndTime, startTime, endTime]);
 
   // Keep a ref to always point to the latest handleRefresh.
@@ -673,8 +657,6 @@ const LogsPage: React.FC = () => {
     setAppliedTenantId("");
     setAppliedEndTime(formattedNow);
     setAppliedStartTime(formattedOneHourAgo);
-    setPage(1);
-    setClientPage(1);
   };
 
   const getLevelColor = (level: string) => {
@@ -697,7 +679,7 @@ const LogsPage: React.FC = () => {
   // Filter out irrelevant health check, metrics endpoint, infrastructure errors, and Jaeger trace URLs
   const shouldFilterLog = (log: LogEntry): boolean => {
     const message = (log.message || '').toLowerCase();
-    
+
     // Filter patterns for health/metrics endpoints
     const healthMetricsPatterns = [
       // Patterns for /enterprise/metrics and /metrics endpoints
@@ -714,13 +696,13 @@ const LogsPage: React.FC = () => {
       /\b(get|post|put|delete|patch)\s+.*\/metrics\s+-\s+\d+/i,
       /\b(get|post|put|delete|patch)\s+.*\/health\s+-\s+\d+/i, // Matches any path ending in /health
     ];
-    
+
     // Filter patterns for Jaeger trace URLs
     const jaegerPatterns = [
       /\/jaeger\/api\/traces\//i, // Matches /jaeger/api/traces/...
       /jaeger.*trace/i, // Matches any mention of jaeger trace
     ];
-    
+
     // Filter patterns for infrastructure/health check errors
     const infrastructureErrorPatterns = [
       /failed to check server readiness/i,
@@ -732,14 +714,14 @@ const LogsPage: React.FC = () => {
       /connection.*closed/i,
       /network.*unreachable/i,
     ];
-    
+
     // Filter patterns for feature-flags endpoint
     const featureFlagsPatterns = [
       /\/api\/v1\/feature-flags\/evaluate/i,
       /feature-flags\/evaluate/i,
       /\b(get|post|put|delete|patch)\s+.*\/feature-flags\/evaluate/i,
     ];
-    
+
     // Check if message matches any filter pattern
     return healthMetricsPatterns.some(pattern => pattern.test(message)) ||
            jaegerPatterns.some(pattern => pattern.test(message)) ||
@@ -754,15 +736,15 @@ const LogsPage: React.FC = () => {
       console.log('No logs data available for filtering');
       return [];
     }
-    
+
     console.log('Filtering logs:', {
       totalFromAPI: logsData.logs.length,
       service: appliedService || 'All Services',
       level: appliedLevel || 'All Levels',
     });
-    
+
     const filtered = logsData.logs.filter((log: LogEntry) => !shouldFilterLog(log));
-    
+
     // Debug logging
     if (logsData.logs.length > 0) {
       const filteredCount = logsData.logs.length - filtered.length;
@@ -773,14 +755,14 @@ const LogsPage: React.FC = () => {
         service: appliedService || 'All Services',
         level: appliedLevel || 'All Levels',
       });
-      
+
       if (filtered.length === 0 && logsData.logs.length > 0) {
-        console.warn('All logs were filtered out as noise! Sample log messages:', 
+        console.warn('All logs were filtered out as noise! Sample log messages:',
           logsData.logs.slice(0, 3).map((log: LogEntry) => log.message?.substring(0, 100))
         );
       }
     }
-    
+
     return filtered;
   }, [logsData, appliedService, appliedLevel]);
 
@@ -792,47 +774,115 @@ const LogsPage: React.FC = () => {
       warn: 0,
       info: 0,
     };
-    
+
     allFilteredLogs.forEach((log: LogEntry) => {
       const logLevel = (log.level || '').toUpperCase();
       if (logLevel === 'ERROR') stats.error++;
       else if (logLevel === 'WARN' || logLevel === 'WARNING') stats.warn++;
       else if (logLevel === 'INFO') stats.info++;
     });
-    
+
     return stats;
   }, [allFilteredLogs]);
 
-  // Calculate pagination for filtered logs
   const totalFilteredLogs = allFilteredLogs.length;
-  const totalFilteredPages = Math.max(1, Math.ceil(totalFilteredLogs / size));
-  const filteredStartRow = totalFilteredLogs === 0 ? 0 : (clientPage - 1) * size + 1;
-  const filteredEndRow = Math.min(clientPage * size, totalFilteredLogs);
-  
-  // Step 2: Get the current page of filtered logs (client-side pagination)
-  const filteredLogs = useMemo(() => {
-    const startIndex = (clientPage - 1) * size;
-    const endIndex = startIndex + size;
-    return allFilteredLogs.slice(startIndex, endIndex);
-  }, [allFilteredLogs, clientPage, size]);
 
-  // Reset client page when applied filters change
-  useEffect(() => {
-    setClientPage(1);
-  }, [appliedService, appliedLevel, appliedSearchText, appliedStartTime, appliedEndTime, size, appliedTenantId]);
+  const logsTableKey = `${appliedService}-${appliedLevel}-${appliedSearchText}-${appliedStartTime}-${appliedEndTime}-${appliedTenantId}`;
 
-  // Debug: Log filtered results
-  useEffect(() => {
-    if (logsData && logsData.logs && Array.isArray(logsData.logs) && logsData.logs.length > 0) {
-      console.log('Filtered logs:', {
-        page: logsData.page,
-        totalLogs: logsData.logs.length,
-        filteredLogs: filteredLogs.length,
-        filteredOut: logsData.logs.length - filteredLogs.length,
-        service: appliedService || 'All Services',
-      });
-    }
-  }, [logsData, filteredLogs, appliedService]);
+  const logColumns = useMemo((): AdminTableColumn<LogEntry>[] => {
+    return [
+      {
+        id: "timestamp",
+        header: "Timestamp",
+        thProps: { fontWeight: "semibold", color: "gray.700", py: 3 },
+        cell: (log) => {
+          const timestamp = log.timestamp || log["@timestamp"] || log.time || "";
+          return (
+            <Text fontSize="sm" color="gray.600" py={3}>
+              {formatTimestamp(timestamp)}
+            </Text>
+          );
+        },
+      },
+      {
+        id: "level",
+        header: "Level",
+        thProps: { fontWeight: "semibold", color: "gray.700" },
+        cell: (log) => {
+          const level = log.level || "INFO";
+          return (
+            <Badge
+              colorScheme={getLevelColor(level)}
+              fontSize="xs"
+              px={2}
+              py={1}
+              borderRadius="md"
+              fontWeight="semibold"
+            >
+              {level}
+            </Badge>
+          );
+        },
+      },
+      {
+        id: "service",
+        header: "Service",
+        thProps: { fontWeight: "semibold", color: "gray.700" },
+        cell: (log) => (
+          <Text fontSize="sm" fontWeight="medium" color="gray.700">
+            {log.service || "unknown"}
+          </Text>
+        ),
+      },
+      {
+        id: "message",
+        header: "Message",
+        thProps: { fontWeight: "semibold", color: "gray.700" },
+        cell: (log) => (
+          <Text
+            noOfLines={2}
+            maxW="500px"
+            fontSize="sm"
+            color="gray.700"
+            fontFamily="mono"
+          >
+            {log.message || ""}
+          </Text>
+        ),
+      },
+      {
+        id: "trace",
+        header: "Trace",
+        thProps: { fontWeight: "semibold", color: "gray.700" },
+        cell: (log) => {
+          const traceId = log.trace_id || log["trace_id"] || "";
+          return traceId ? (
+            <Button
+              size="sm"
+              colorScheme="blue"
+              variant="link"
+              onClick={() => router.push(`/traces?traceId=${traceId}`)}
+              fontSize="sm"
+              fontWeight="medium"
+              _hover={{ textDecoration: "underline" }}
+            >
+              View Trace
+            </Button>
+          ) : (
+            <Text color="gray.400" fontSize="sm">
+              -
+            </Text>
+          );
+        },
+      },
+    ];
+  }, [router]);
+
+  const hasAppliedFilters =
+    appliedService !== "" ||
+    appliedLevel !== "" ||
+    appliedSearchText.trim() !== "" ||
+    appliedTenantId !== "";
 
   return (
     <>
@@ -939,9 +989,9 @@ const LogsPage: React.FC = () => {
           {/* Aggregations */}
           {aggregations && (
             <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
-              <Card 
-                bg={cardBg} 
-                border="1px" 
+              <Card
+                bg={cardBg}
+                border="1px"
                 borderColor={borderColor}
                 boxShadow="sm"
                 _hover={{ boxShadow: "md", transform: "translateY(-2px)" }}
@@ -956,9 +1006,9 @@ const LogsPage: React.FC = () => {
                   </Stat>
                 </CardBody>
               </Card>
-              <Card 
-                bg={cardBg} 
-                border="1px" 
+              <Card
+                bg={cardBg}
+                border="1px"
                 borderColor="red.200"
                 boxShadow="sm"
                 _hover={{ boxShadow: "md", transform: "translateY(-2px)", borderColor: "red.300" }}
@@ -973,9 +1023,9 @@ const LogsPage: React.FC = () => {
                   </Stat>
                 </CardBody>
               </Card>
-              <Card 
-                bg={cardBg} 
-                border="1px" 
+              <Card
+                bg={cardBg}
+                border="1px"
                 borderColor="orange.200"
                 boxShadow="sm"
                 _hover={{ boxShadow: "md", transform: "translateY(-2px)", borderColor: "orange.300" }}
@@ -990,9 +1040,9 @@ const LogsPage: React.FC = () => {
                   </Stat>
                 </CardBody>
               </Card>
-              <Card 
-                bg={cardBg} 
-                border="1px" 
+              <Card
+                bg={cardBg}
+                border="1px"
                 borderColor="blue.200"
                 boxShadow="sm"
                 _hover={{ boxShadow: "md", transform: "translateY(-2px)", borderColor: "blue.300" }}
@@ -1010,444 +1060,246 @@ const LogsPage: React.FC = () => {
             </SimpleGrid>
           )}
 
-          {/* Filters */}
-          <Card 
-            bg={cardBg} 
-            border="1px" 
-            borderColor={borderColor}
-            boxShadow="sm"
-            w="full"
-          >
-            <CardBody>
-              <Heading size="sm" mb={4} color="gray.700">Filters</Heading>
-              <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} w="full">
-                {/* Tenant Filter - only for ADMIN role (not TENANT ADMIN who is scoped to their own tenant) */}
-                {isAdmin && !isTenantAdmin && (
-                  <FormControl>
-                    <FormLabel fontWeight="medium">Tenant</FormLabel>
-                    <Select
-                      value={selectedTenantId || ""}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setSelectedTenantId(value === "" ? "" : value);
-                        // Reset service selection so a previously selected service
-                        // that no longer belongs to the newly selected tenant is cleared.
-                        setService("");
-                        // Don't reset pagination here - wait for Search button
-                      }}
-                      bg="white"
-                      isDisabled={tenantsLoading}
-                    >
-                      <option value="">All Tenants</option>
-                      {tenantsLoading ? (
-                        <option value="" disabled>Loading tenants...</option>
-                      ) : tenantsError ? (
-                        <option value="" disabled>Error loading tenants</option>
-                      ) : activeTenants.length > 0 ? (
-                        activeTenants.map((tenant: any) => (
-                          <option key={tenant.tenant_id} value={tenant.tenant_id}>
-                            {tenant.organisation || tenant.tenant_id}
-                          </option>
-                        ))
-                      ) : (
-                        <option value="" disabled>No active tenants found</option>
-                      )}
-                    </Select>
-                  </FormControl>
-                )}
-
-                <FormControl>
-                  <FormLabel fontWeight="medium">Service</FormLabel>
-                    <Select
-                      value={service || ""}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setService(value === "" ? "" : value);
-                        // Don't reset pagination here - wait for Search button
-                      }}
-                    bg="white"
-                  >
-                    <option value="">All Services</option>
-                    {filteredServices.map((svc) => (
-                      <option key={svc} value={svc}>
-                        {svc}
-                      </option>
-                    ))}
-                  </Select>
-                </FormControl>
-
-                <FormControl>
-                  <FormLabel fontWeight="medium">Level</FormLabel>
-                    <Select
-                      value={level || ""}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setLevel(value === "" ? "" : value);
-                        // Don't reset pagination here - wait for Search button
-                      }}
-                    bg="white"
-                  >
-                    <option value="">All Levels</option>
-                    <option value="ERROR">ERROR</option>
-                    <option value="WARN">WARN</option>
-                    <option value="INFO">INFO</option>
-                    <option value="DEBUG">DEBUG</option>
-                  </Select>
-                </FormControl>
-
-                <FormControl>
-                  <FormLabel fontWeight="medium">Search Text</FormLabel>
-                  <Input
-                    placeholder="Search in log messages..."
-                    value={searchText}
-                    onChange={(e) => setSearchText(e.target.value)}
-                    onKeyPress={(e) => {
-                      if (e.key === "Enter") handleSearch();
-                    }}
-                    bg="white"
-                  />
-                </FormControl>
-
-                <FormControl>
-                  <FormLabel fontWeight="medium">Start Time</FormLabel>
-                  <Input
-                    type="datetime-local"
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                    bg="white"
-                  />
-                </FormControl>
-
-                <FormControl>
-                  <FormLabel fontWeight="medium">End Time</FormLabel>
-                  <Input
-                    type="datetime-local"
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                    bg="white"
-                  />
-                </FormControl>
-
-                <FormControl>
-                  <FormLabel fontWeight="medium">Page Size</FormLabel>
-                    <Select
-                      value={size}
-                      onChange={(e) => {
-                        setSize(Number(e.target.value));
-                        setPage(1);
-                        setClientPage(1);
-                        // Page size change applies immediately (no need for Search button)
-                      }}
-                    bg="white"
-                  >
-                    <option value={10}>10</option>
-                    <option value={25}>25</option>
-                    <option value={50}>50</option>
-                    <option value={100}>100</option>
-                  </Select>
-                </FormControl>
-              </SimpleGrid>
-
-              {/* Action row: auto-refresh controls (left) + action buttons (right) */}
-              <Flex mt={6} w="full" justify="space-between" align="center" flexWrap="wrap" gap={3}>
-
-                {/* ── Auto-refresh controls ── */}
-                <HStack spacing={3} align="center">
-                  <FormControl display="flex" alignItems="center" w="auto">
-                    <FormLabel htmlFor="auto-refresh-toggle" mb="0" fontWeight="medium" fontSize="sm" mr={2} whiteSpace="nowrap">
-                      Auto-refresh
-                    </FormLabel>
-                      <Switch
-                        id="auto-refresh-toggle"
-                        colorScheme="green"
-                        isChecked={autoRefresh}
-                        onChange={(e) => setAutoRefresh(e.target.checked)}
-                      />
-                  </FormControl>
-
-
-                </HStack>
-
-                {/* ── Search / Clear / Refresh buttons ── */}
-                <HStack spacing={4}>
-                  <Button
-                    leftIcon={<SearchIcon />}
-                    colorScheme="blue"
-                    onClick={handleSearch}
-                    isLoading={logsLoading}
-                    size="md"
-                    fontWeight="medium"
-                  >
-                    Search
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={handleClear}
-                    size="md"
-                    fontWeight="medium"
-                  >
-                    Clear
-                  </Button>
-                  <Tooltip label="Refresh now" placement="top" hasArrow>
-                    <IconButton
-                      aria-label="Refresh"
-                      icon={<RepeatIcon />}
-                      onClick={handleRefresh}
-                      isLoading={logsLoading}
-                      size="md"
-                      variant="outline"
-                    />
-                  </Tooltip>
-                </HStack>
-              </Flex>
-            </CardBody>
-          </Card>
-
-          {/* Logs Table */}
+          {/* Logs table with filters */}
           <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
             <CardBody>
-              {logsLoading ? (
-                <Flex justify="center" align="center" py={8}>
-                  <Spinner size="xl" />
-                  <Text ml={4}>Loading logs...</Text>
-                </Flex>
-              ) : logsError ? (
-                <VStack spacing={2} py={8}>
-                  <Text textAlign="center" color="red.500" fontWeight="bold">
-                    Error Loading Logs
-                  </Text>
-                  <Text textAlign="center" color="red.400" fontSize="sm">
-                    {(() => {
-                      const error = logsError as any;
-                      if (error?.response?.data?.detail) {
-                        const detail = error?.response?.data?.detail;
-                        if (typeof detail === 'string') return detail;
-                        if (typeof detail === 'object') return detail.message || detail.detail || JSON.stringify(detail);
-                        return String(detail);
-                      }
-                      return error?.message || 'Unknown error';
-                    })()}
-                  </Text>
-                  <Button
-                    size="sm"
-                    colorScheme="blue"
-                    onClick={handleRefresh}
-                  >
-                    Retry
-                  </Button>
-                </VStack>
-              ) : logsData && logsData.logs && Array.isArray(logsData.logs) ? (
-                totalFilteredLogs > 0 ? (
-                <>
-                  {logsData.logs.length > allFilteredLogs.length && (
-                    <Alert status="info" borderRadius="md" mb={4}>
-                      <AlertIcon />
-                      <AlertDescription fontSize="sm">
-                        Showing {filteredLogs.length} logs on page {clientPage} of {totalFilteredPages} ({totalFilteredLogs.toLocaleString()} total filtered logs). 
-                        Health check, metrics endpoint, feature-flags, infrastructure errors, and Jaeger trace URL logs are hidden.
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                  <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
-                    <CardBody p={0}>
-                      <TableContainer w="full" maxH="60vh" overflowY="auto" overflowX="auto">
-                        <Table variant="simple" bg={tableBg} size="md" w="full">
-                          <Thead bg={tableHeaderBg}>
-                            <Tr>
-                              <Th fontWeight="semibold" color="gray.700" py={3}>Timestamp</Th>
-                              <Th fontWeight="semibold" color="gray.700">Level</Th>
-                              <Th fontWeight="semibold" color="gray.700">Service</Th>
-                              <Th fontWeight="semibold" color="gray.700">Message</Th>
-                              <Th fontWeight="semibold" color="gray.700">Trace</Th>
-                            </Tr>
-                          </Thead>
-                          <Tbody>
-                            {filteredLogs.map((log: LogEntry, index: number) => {
-                              // Normalize timestamp field (OpenSearch uses @timestamp, we use timestamp)
-                          const timestamp = log.timestamp || log['@timestamp'] || log.time || '';
-                          // Normalize level field
-                          const level = log.level || 'INFO';
-                          // Normalize service field
-                          const service = log.service || 'unknown';
-                          // Normalize message field
-                          const message = log.message || '';
-                          // Extract Jaeger trace URL or trace ID
-                          const jaegerTraceUrl = log.jaeger_trace_url || log['jaeger_trace_url'] || '';
-                          const traceId = log.trace_id || log['trace_id'] || '';
-                          // Build Jaeger URL - use provided URL or construct from trace_id
-                          let jaegerUrl = '';
-                          if (jaegerTraceUrl) {
-                            // If it's already a full URL, use it
-                            if (jaegerTraceUrl.startsWith('http')) {
-                              jaegerUrl = jaegerTraceUrl;
-                            } else {
-                              // If it's just a trace ID, construct the URL
-                              const jaegerBaseUrl = process.env.NEXT_PUBLIC_JAEGER_URL || 'http://localhost:16686';
-                              jaegerUrl = `${jaegerBaseUrl}/trace/${jaegerTraceUrl}`;
-                            }
-                          } else if (traceId) {
-                            // Construct URL from trace_id
-                            const jaegerBaseUrl = process.env.NEXT_PUBLIC_JAEGER_URL || 'http://localhost:16686';
-                            jaegerUrl = `${jaegerBaseUrl}/trace/${traceId}`;
+              {logsError && (() => {
+                const error = logsError as { response?: { status?: number } };
+                if (error?.response?.status === 401 || error?.response?.status === 403) {
+                  return null;
+                }
+                return (
+                  <VStack spacing={2} py={4} mb={4}>
+                    <Text textAlign="center" color="red.500" fontWeight="bold">
+                      Error Loading Logs
+                    </Text>
+                    <Text textAlign="center" color="red.400" fontSize="sm">
+                      {(() => {
+                        const err = logsError as {
+                          response?: { data?: { detail?: unknown } };
+                          message?: string;
+                        };
+                        if (err?.response?.data?.detail) {
+                          const detail = err.response.data.detail;
+                          if (typeof detail === "string") return detail;
+                          if (typeof detail === "object" && detail !== null) {
+                            const d = detail as { message?: string; detail?: string };
+                            return d.message || d.detail || JSON.stringify(detail);
                           }
-                          
-                              return (
-                                <Tr 
-                                  key={index}
-                                  _hover={{ bg: tableRowHoverBg }}
-                                  transition="background 0.2s"
-                                >
-                                  <Td fontSize="sm" color="gray.600" py={3}>
-                                    {formatTimestamp(timestamp)}
-                                  </Td>
-                                  <Td>
-                                    <Badge 
-                                      colorScheme={getLevelColor(level)}
-                                      fontSize="xs"
-                                      px={2}
-                                      py={1}
-                                      borderRadius="md"
-                                      fontWeight="semibold"
-                                    >
-                                      {level}
-                                    </Badge>
-                                  </Td>
-                                  <Td>
-                                    <Text fontSize="sm" fontWeight="medium" color="gray.700">
-                                      {service}
-                                    </Text>
-                                  </Td>
-                                  <Td>
-                                    <Text 
-                                      noOfLines={2} 
-                                      maxW="500px"
-                                      fontSize="sm"
-                                      color="gray.700"
-                                      fontFamily="mono"
-                                    >
-                                      {message}
-                                    </Text>
-                                  </Td>
-                                  <Td>
-                                    {traceId ? (
-                                      <Button
-                                        size="sm"
-                                        colorScheme="blue"
-                                        variant="link"
-                                        onClick={() => router.push(`/traces?traceId=${traceId}`)}
-                                        fontSize="sm"
-                                        fontWeight="medium"
-                                        _hover={{ textDecoration: "underline" }}
-                                      >
-                                        View Trace
-                                      </Button>
-                                    ) : (
-                                      <Text color="gray.400" fontSize="sm">-</Text>
-                                    )}
-                                  </Td>
-                                </Tr>
-                              );
-                            })}
-                          </Tbody>
-                        </Table>
-                      </TableContainer>
-                    </CardBody>
-                  </Card>
+                          return String(detail);
+                        }
+                        return err?.message || "Unknown error";
+                      })()}
+                    </Text>
+                    <Button size="sm" colorScheme="blue" onClick={handleRefresh}>
+                      Retry
+                    </Button>
+                  </VStack>
+                );
+              })()}
 
-                  {totalFilteredLogs > 0 && (
-                    <TablePaginationBar
-                      startRow={filteredStartRow}
-                      endRow={filteredEndRow}
-                      totalItems={totalFilteredLogs}
-                      page={clientPage}
-                      totalPages={totalFilteredPages}
-                      pageSize={size}
-                      pageSizeOptions={[10, 25, 50, 100]}
-                      onPageSizeChange={(value) => {
-                        setSize(value);
-                        setPage(1);
-                        setClientPage(1);
-                      }}
-                      onFirst={() => setClientPage(1)}
-                      onPrev={() => setClientPage((p) => Math.max(1, p - 1))}
-                      onNext={() => setClientPage((p) => Math.min(totalFilteredPages, p + 1))}
-                      onLast={() => setClientPage(totalFilteredPages)}
-                      canPrev={clientPage > 1}
-                      canNext={clientPage < totalFilteredPages}
-                      borderColor={borderColor}
-                      bg={cardBg}
-                    />
-                  )}
+              {!logsError && (
+                <>
+                  {logsData &&
+                    Array.isArray(logsData.logs) &&
+                    logsData.logs.length > allFilteredLogs.length && (
+                      <Alert status="info" borderRadius="md" mb={4}>
+                        <AlertIcon />
+                        <AlertDescription fontSize="sm">
+                          {totalFilteredLogs.toLocaleString()} logs after filtering (
+                          {logsData.logs.length.toLocaleString()} fetched). Health check, metrics
+                          endpoint, feature-flags, infrastructure errors, and Jaeger trace URL logs
+                          are hidden.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                  <AdminDataTable
+                    key={logsTableKey}
+                    items={allFilteredLogs}
+                    columns={logColumns}
+                    getRowKey={(log) =>
+                      `${log.timestamp || log["@timestamp"] || ""}-${log.service || ""}-${log.message || ""}-${log.trace_id || log["trace_id"] || ""}`
+                    }
+                    paginate="client"
+                    initialPageSize={10}
+                    pageSizeOptions={[10, 25, 50, 100]}
+                    size="md"
+                    isLoading={logsLoading}
+                    loadingMessage="Loading logs..."
+                    emptyMessage={
+                      logsData &&
+                      Array.isArray(logsData.logs) &&
+                      logsData.logs.length > 0 &&
+                      allFilteredLogs.length === 0
+                        ? "All logs were filtered out (health checks and metrics endpoints are hidden). Try adjusting your filters or time range."
+                        : logsData?.total === 0
+                          ? "No logs found for the selected filters. Try adjusting the time range or removing filters."
+                          : "No logs data available. Make sure OpenSearch has logs indexed and your time range includes log entries."
+                    }
+                    noResultsMessage="No logs match the current filters."
+                    hasActiveFilters={hasAppliedFilters}
+                    showFiltersHeading
+                    filtersHeading="Filters"
+                    filters={
+                      <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} w="full">
+                        {isAdmin && !isTenantAdmin && (
+                          <FormControl>
+                            <FormLabel fontWeight="medium">Tenant</FormLabel>
+                            <Select
+                              value={selectedTenantId || ""}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                setSelectedTenantId(value === "" ? "" : value);
+                                setService("");
+                              }}
+                              bg="white"
+                              isDisabled={tenantsLoading}
+                            >
+                              <option value="">All Tenants</option>
+                              {tenantsLoading ? (
+                                <option value="" disabled>
+                                  Loading tenants...
+                                </option>
+                              ) : tenantsError ? (
+                                <option value="" disabled>
+                                  Error loading tenants
+                                </option>
+                              ) : activeTenants.length > 0 ? (
+                                activeTenants.map((tenant: { tenant_id: string; organisation?: string }) => (
+                                  <option key={tenant.tenant_id} value={tenant.tenant_id}>
+                                    {tenant.organisation || tenant.tenant_id}
+                                  </option>
+                                ))
+                              ) : (
+                                <option value="" disabled>
+                                  No active tenants found
+                                </option>
+                              )}
+                            </Select>
+                          </FormControl>
+                        )}
+
+                        <FormControl>
+                          <FormLabel fontWeight="medium">Service</FormLabel>
+                          <Select
+                            value={service || ""}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setService(value === "" ? "" : value);
+                            }}
+                            bg="white"
+                          >
+                            <option value="">All Services</option>
+                            {filteredServices.map((svc) => (
+                              <option key={svc} value={svc}>
+                                {svc}
+                              </option>
+                            ))}
+                          </Select>
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel fontWeight="medium">Level</FormLabel>
+                          <Select
+                            value={level || ""}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setLevel(value === "" ? "" : value);
+                            }}
+                            bg="white"
+                          >
+                            <option value="">All Levels</option>
+                            <option value="ERROR">ERROR</option>
+                            <option value="WARN">WARN</option>
+                            <option value="INFO">INFO</option>
+                            <option value="DEBUG">DEBUG</option>
+                          </Select>
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel fontWeight="medium">Search Text</FormLabel>
+                          <Input
+                            placeholder="Search in log messages..."
+                            value={searchText}
+                            onChange={(e) => setSearchText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleSearch();
+                            }}
+                            bg="white"
+                          />
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel fontWeight="medium">Start Time</FormLabel>
+                          <Input
+                            type="datetime-local"
+                            value={startTime}
+                            onChange={(e) => setStartTime(e.target.value)}
+                            bg="white"
+                          />
+                        </FormControl>
+
+                        <FormControl>
+                          <FormLabel fontWeight="medium">End Time</FormLabel>
+                          <Input
+                            type="datetime-local"
+                            value={endTime}
+                            onChange={(e) => setEndTime(e.target.value)}
+                            bg="white"
+                          />
+                        </FormControl>
+                      </SimpleGrid>
+                    }
+                    filterToolbarAlign="flex-start"
+                    filterToolbarRightContent={
+                      <HStack spacing={4} flexWrap="wrap">
+                        <FormControl display="flex" alignItems="center" w="auto">
+                          <FormLabel
+                            htmlFor="auto-refresh-toggle"
+                            mb="0"
+                            fontWeight="medium"
+                            fontSize="sm"
+                            mr={2}
+                            whiteSpace="nowrap"
+                          >
+                            Auto-refresh
+                          </FormLabel>
+                          <Switch
+                            id="auto-refresh-toggle"
+                            colorScheme="green"
+                            isChecked={autoRefresh}
+                            onChange={(e) => setAutoRefresh(e.target.checked)}
+                          />
+                        </FormControl>
+                        <Button
+                          leftIcon={<SearchIcon />}
+                          colorScheme="blue"
+                          onClick={handleSearch}
+                          isLoading={logsLoading}
+                          size="md"
+                          fontWeight="medium"
+                        >
+                          Search
+                        </Button>
+                        <Button variant="outline" onClick={handleClear} size="md" fontWeight="medium">
+                          Clear
+                        </Button>
+                        <Tooltip label="Refresh now" placement="top" hasArrow>
+                          <IconButton
+                            aria-label="Refresh"
+                            icon={<RepeatIcon />}
+                            onClick={handleRefresh}
+                            isLoading={logsLoading}
+                            size="md"
+                            variant="outline"
+                          />
+                        </Tooltip>
+                      </HStack>
+                    }
+                    tableContainerProps={{ overflowX: "auto" }}
+                  />
                 </>
-                ) : logsData.logs.length > 0 ? (
-                  <VStack spacing={2} py={8}>
-                    <Text textAlign="center" color="gray.500" fontWeight="medium">
-                      All logs were filtered out (health checks and metrics endpoints are hidden).
-                    </Text>
-                    <Text fontSize="sm" color="gray.400">
-                      {logsData.logs.length} logs were fetched, but all were filtered. 
-                      Try adjusting your filters or time range.
-                    </Text>
-                    <HStack spacing={2} justify="center" mt={2}>
-                      <Button size="xs" variant="outline" onClick={handleClear}>
-                        Clear Filters
-                      </Button>
-                      <Button size="xs" variant="outline" onClick={handleRefresh}>
-                        Refresh
-                      </Button>
-                    </HStack>
-                  </VStack>
-                ) : (
-                  <VStack spacing={2} py={8}>
-                    <Text textAlign="center" color="gray.500" fontWeight="medium">
-                      No logs found on this page.
-                    </Text>
-                    <Text fontSize="sm" color="gray.400">
-                      Try adjusting your filters or navigating to another page.
-                    </Text>
-                    <HStack spacing={2} justify="center" mt={2}>
-                      <Button size="xs" variant="outline" onClick={handleClear}>
-                        Clear Filters
-                      </Button>
-                      <Button size="xs" variant="outline" onClick={handleRefresh}>
-                        Refresh
-                      </Button>
-                    </HStack>
-                  </VStack>
-                )
-              ) : logsData && logsData.total === 0 ? (
-                <VStack spacing={2} py={8}>
-                  <Text textAlign="center" color="gray.500" fontWeight="medium">
-                    No logs found for the selected filters.
-                  </Text>
-                  <Text fontSize="sm" color="gray.400">
-                    Total: {logsData.total || 0} logs. Try adjusting the time range or removing filters.
-                  </Text>
-                  <HStack spacing={2} justify="center" mt={2}>
-                    <Button size="xs" variant="outline" onClick={handleClear}>
-                      Clear Filters
-                    </Button>
-                    <Button size="xs" variant="outline" onClick={handleRefresh}>
-                      Refresh
-                    </Button>
-                  </HStack>
-                </VStack>
-              ) : (
-                <VStack spacing={2} py={8}>
-                  <Text textAlign="center" color="gray.500">
-                    {logsData ? 'No logs data available.' : 'Waiting for data...'}
-                  </Text>
-                  {isAuthenticated && (
-                    <>
-                      <Text fontSize="sm" color="gray.400" textAlign="center">
-                        Make sure OpenSearch has logs indexed and your time range includes log entries.
-                      </Text>
-                      <Button size="sm" variant="outline" onClick={handleRefresh}>
-                        Refresh
-                      </Button>
-                    </>
-                  )}
-                </VStack>
               )}
             </CardBody>
           </Card>

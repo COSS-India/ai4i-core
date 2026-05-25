@@ -1,7 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import roleService, { Role } from "../../../services/roleService";
 import type { User } from "../../../types/auth";
+import {
+  DEFAULT_TENANT_ASSIGNABLE_ROLES,
+  isDefaultTenantAssignableRole,
+} from "../../../utils/defaultTenant";
 import type { UserSearchablePick } from "../../common/UserSearchableSelect";
 
 export interface UseRolesTabOptions {
@@ -84,10 +88,8 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     }
   };
 
-  const availableRoles = roles
-    .map((role) => role.name)
-    .filter((name) => name && name.trim().length > 0)
-    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  /** Adopter / Default tenant: Admin, Moderator, User only. */
+  const availableRoles = useMemo(() => [...DEFAULT_TENANT_ASSIGNABLE_ROLES], []);
 
   const openManageRoles = async () => {
     if (!selectedUser) {
@@ -101,9 +103,6 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
       return;
     }
     if (!isAdmin || isModeratorOnly) return;
-    if (roles.length === 0) {
-      await handleLoadRoles();
-    }
     if (selectedUserRoles.length > 1) {
       toast({
         title: "Multiple roles detected",
@@ -138,6 +137,16 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
         description: "Select a role to assign to this user.",
         status: "warning",
         duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (!isDefaultTenantAssignableRole(draftRole)) {
+      toast({
+        title: "Invalid role",
+        description: "Only Admin, Moderator, or User can be assigned from Role Assignment.",
+        status: "warning",
+        duration: 4000,
         isClosable: true,
       });
       return;

@@ -37,6 +37,7 @@ class APIKey(Base):
     user = relationship("User", back_populates="api_keys")
 
     def is_expired(self) -> bool:
+        """True when ``expires_at`` is in the past. Revocation uses ``is_active``."""
         if self.expires_at is None:
             return False
         return datetime.now(timezone.utc) > self.expires_at

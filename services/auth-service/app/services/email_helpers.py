@@ -106,16 +106,31 @@ async def issue_session(
 
 
 async def resolve_tenant_id(explicit: Optional[int | str], tenant_repo) -> Optional[int]:
-    """Honor an explicit tenant_id, otherwise fall back to the default tenant."""
+    """Honor an explicit tenant_id, otherwise fall back to the default tenant.
+
+    If an explicit tenant_id is provided, validates that the tenant exists.
+    """
     if explicit is not None:
         try:
-            return int(explicit)
+            tenant_id = int(explicit)
         except (TypeError, ValueError) as exc:
             raise ValidationError(
                 message="Invalid tenant_id.",
                 code="INVALID_TENANT_ID",
                 errors=[f"tenant_id must be an integer, got: {explicit!r}"],
             ) from exc
+
+        # Validate that the tenant exists
+        tenant = await tenant_repo.get_by_id(tenant_id)
+        if tenant is None:
+            raise ValidationError(
+                message="Tenant not found.",
+                code="TENANT_NOT_FOUND",
+                errors=[f"Tenant with ID {tenant_id} does not exist"],
+            )
+        return tenant_id
+
+    # No explicit tenant_id: fall back to default tenant
     default = await tenant_repo.get_by_organisation(settings.default_tenant_org)
     if default is None:
         logger.warning(

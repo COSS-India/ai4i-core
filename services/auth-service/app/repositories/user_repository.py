@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import or_, select, func
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import USERNAME_MAX_LENGTH
@@ -83,3 +83,37 @@ class UserRepository(BaseRepository):
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def lock_tenant_users_for_status(
+        self,
+        tenant_id: int,
+        *,
+        updated_by: Optional[UUID] = None,
+    ) -> None:
+        """When tenant is SUSPENDED/DEACTIVATED: clear tenant access only (``is_tenant_active``)."""
+        values: dict = {"is_tenant_active": False}
+        if updated_by is not None:
+            values["updated_by"] = updated_by
+        await self._db.execute(
+            update(User)
+            .where(User.tenant_id == tenant_id, User.is_delete.isnot(True))
+            .values(**values)
+        )
+        await self._db.flush()
+
+    async def unlock_tenant_users_for_status(
+        self,
+        tenant_id: int,
+        *,
+        updated_by: Optional[UUID] = None,
+    ) -> None:
+        """When tenant becomes ACTIVE: restore tenant access (``is_tenant_active``) for all users."""
+        values: dict = {"is_tenant_active": True}
+        if updated_by is not None:
+            values["updated_by"] = updated_by
+        await self._db.execute(
+            update(User)
+            .where(User.tenant_id == tenant_id, User.is_delete.isnot(True))
+            .values(**values)
+        )
+        await self._db.flush()
