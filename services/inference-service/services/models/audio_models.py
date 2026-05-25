@@ -19,41 +19,6 @@ logger = logging.getLogger(__name__)
 # ASR
 # ---------------------------------------------------------------------------
 
-# Fallback adapter config for asr_am_ensemble when MMS does not return one.
-# Tensor contract: asr_preprocessor → asr_am → asr_greedy_decoder
-_DEFAULT_ASR_ADAPTER_CONFIG = {
-    "version": "1",
-    "model_version": "1",
-    "inputs": [
-        {
-            "tensor": "AUDIO_SIGNAL",
-            "dtype":  "FP32",
-            "shape":  [-1, -1],
-            "value":  "audio.samples",
-        },
-        {
-            "tensor": "NUM_SAMPLES",
-            "dtype":  "INT32",
-            "shape":  [-1, 1],
-            "value":  "audio.num_samples",
-        },
-        {
-            "tensor": "LANG_ID",
-            "dtype":  "BYTES",
-            "shape":  [-1, 1],
-            "value":  "request.config.language.source_language",
-        },
-    ],
-    "outputs": [
-        {
-            "tensor":  "TRANSCRIPTS",
-            "dtype":   "BYTES",
-            "maps_to": "transcript",
-        },
-    ],
-}
-
-
 class ASRTaskService(AudioBase):
     """
     TaskService for Automatic Speech Recognition inference.
@@ -77,9 +42,6 @@ class ASRTaskService(AudioBase):
         """AudioBase validation + ASR-specific sourceLanguage check."""
         await super().validate_request(payload)
         await self._validate_source_language(payload)
-
-    def _get_default_adapter_config(self) -> Dict[str, Any]:
-        return _DEFAULT_ASR_ADAPTER_CONFIG
 
     async def convert_payload_to_triton_format(
         self,
@@ -149,7 +111,7 @@ class SpeakerDiarizationDefaultModel(AudioBase):
     Default Speaker Diarization model service.
     Will override: preprocess_input (base64 passthrough),
                    postprocess_output (speaker segments schema),
-                   _get_default_adapter_config.
+                   convert_payload_to_triton_format, postprocess_output.
     """
     pass
 
@@ -159,6 +121,6 @@ class LanguageDiarizationDefaultModel(AudioBase):
     Default Language Diarization model service.
     Will override: preprocess_input (base64 passthrough),
                    postprocess_output (language segments schema),
-                   _get_default_adapter_config.
+                   convert_payload_to_triton_format, postprocess_output.
     """
     pass

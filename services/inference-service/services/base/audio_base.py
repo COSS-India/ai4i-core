@@ -151,7 +151,7 @@ class AudioBase(BaseTaskService):
         Differences from the text base:
           - Reads payload['audio'] (not payload['input'])
           - Calls Triton once per audio item (one file per call)
-          - Applies _get_default_adapter_config() when MMS returns null
+          - Raises RuntimeError if adapter_config is missing from service_info
           - convert_payload_to_triton_format / convert_triton_output_to_task_format
             are called on self (model methods), not on a separate mapper instance
 
@@ -171,11 +171,10 @@ class AudioBase(BaseTaskService):
                 )
 
             if not adapter_config:
-                self.logger.warning(
-                    "%s: adapter_config missing from service_info — using default",
-                    self.task_name,
+                raise RuntimeError(
+                    f"{self.task_name}: adapter_config missing from service_info. "
+                    "Every audio service must have an adapter_config seeded in mm_services."
                 )
-                adapter_config = self._get_default_adapter_config()
 
             # Store so convert_payload_to_triton_format can access via self._adapter_config
             self._adapter_config = adapter_config
@@ -229,15 +228,6 @@ class AudioBase(BaseTaskService):
         """Return GenericTritonMapper — satisfies BaseTaskService.run_inference signature."""
         from services.base.config_mapper import GenericTritonMapper
         return GenericTritonMapper
-
-    def _get_default_adapter_config(self) -> Dict[str, Any]:
-        """
-        Fallback adapter config when MMS returns null.
-        Each concrete audio task service must override this.
-        """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} must implement _get_default_adapter_config"
-        )
 
     async def convert_payload_to_triton_format(
         self,
