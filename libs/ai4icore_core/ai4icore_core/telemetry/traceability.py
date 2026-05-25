@@ -17,17 +17,17 @@ logger = logging.getLogger(__name__)
 
 
 def _get_default_mapper_path() -> Path:
-    """Resolve default mapper path to inference-service/utils/telemetry."""
+    """Resolve default mapper path to libs/ai4icore_core/ai4icore_core/telemetry/util."""
     current = Path.cwd()
 
     while current != current.parent:
-        inference_service = current / "services" / "inference-service" / "utils" / "telemetry"
-        if inference_service.exists():
-            return inference_service
+        lib_telemetry = current / "libs" / "ai4icore_core" / "ai4icore_core" / "telemetry" / "util"
+        if lib_telemetry.exists():
+            return lib_telemetry
         current = current.parent
 
-    logger.warning("Could not find inference-service telemetry path, using src/mappers")
-    return Path("src/mappers")
+    logger.warning("Could not find libs telemetry util path, using fallback")
+    return Path("libs/ai4icore_core/ai4icore_core/telemetry/util")
 
 
 def _initialize_tracer_provider() -> TracerProvider:
