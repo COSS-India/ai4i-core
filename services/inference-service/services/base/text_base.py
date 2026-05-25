@@ -1,47 +1,40 @@
 """
-TextBase — base class for all text-backed inference services (NMT, NER, Transliteration, etc.).
+TextBase — base class for all text-backed inference services.
 
-Implements common text pipeline steps:
-  validate_request  → input + config presence check
-  preprocess_input  → extract → sanitize → chunk pipeline
+Centralised validation:
+  - input existence and non-empty
+  - source_language (all services with language config)
+  - target_language + not-equal (REQUIRES_TARGET_LANGUAGE=True)
 
-Subclasses must implement:
-  _get_inference_model_class, postprocess_output, _build_response
-
-Task-specific helpers (_pair_with_sources, _chunk_inputs, etc.) are available opt-in.
+Child classes only add service-specific logic on top of super().validate_request().
 """
 
-from typing import Any, Dict, List
-
+from typing import Any, Dict, List, Optional
 from interfaces.task_service import BaseTaskService
 from ai4icore_core.telemetry import async_trace_stage
 
 
 class TextBase(BaseTaskService):
-    """Base class for all text inference services."""
-
     CHUNK_SIZE: int = 90
 
-    # ------------------------------------------------------------------
-    # Pipeline hooks — subclasses must implement all four
-    # ------------------------------------------------------------------
-
-    # async def postprocess_output(
-    #     self,
-    #     response_items: List[Dict[str, Any]],
-    #     source_texts: List[str] = None,
-    #     **kwargs: Any,
-    # ) -> Dict[str, Any]:
-    #     raise NotImplementedError(f"{self.__class__.__name__} must implement postprocess_output")
-
-    # def _create_inference_model(self, adapter_config: Any) -> Any:
-    #     raise NotImplementedError(f"{self.__class__.__name__} must implement _create_inference_model")
-
-    # def _build_response(self, request: Any, postprocessed: Dict[str, Any]) -> Any:
-    #     raise NotImplementedError(f"{self.__class__.__name__} must implement _build_response")
+    # Set True in subclasses that require both source and target language (NMT, Transliteration)
+    REQUIRES_TARGET_LANGUAGE: bool = False
 
     # ------------------------------------------------------------------
-    # Pipeline methods
+    # Common language helpers
+    # ------------------------------------------------------------------
+
+    def _get_language(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return payload.get("config", {}).get("language", {})
+
+    def _extract_source_lang(self, language: Dict[str, Any]) -> Optional[str]:
+        return language.get("source_language") or language.get("sourceLanguage")
+
+    def _extract_target_lang(self, language: Dict[str, Any]) -> Optional[str]:
+        return language.get("target_language") or language.get("targetLanguage")
+
+    # ------------------------------------------------------------------
+    # Common validate_request
     # ------------------------------------------------------------------
 
     @async_trace_stage("validate")
@@ -57,6 +50,23 @@ class TextBase(BaseTaskService):
             source = item.get("source") if isinstance(item, dict) else getattr(item, "source", None)
             if not source or not isinstance(source, str):
                 raise ValueError(f"{self.task_name}: input[{idx}]['source'] must be a non-empty string")
+
+        language = self._get_language(payload)
+        if language:
+            source_lang = self._extract_source_lang(language)
+            if not source_lang:
+                raise ValueError(f"{self.task_name}: config.language.source_language is required")
+
+            if self.REQUIRES_TARGET_LANGUAGE:
+                target_lang = self._extract_target_lang(language)
+                if not target_lang:
+                    raise ValueError(f"{self.task_name}: config.language.target_language is required")
+                if source_lang == target_lang:
+                    raise ValueError(f"{self.task_name}: source_language and target_language cannot be the same")
+
+    # ------------------------------------------------------------------
+    # preprocess_input
+    # ------------------------------------------------------------------
 
     @async_trace_stage("preprocess_input")
     async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
@@ -80,34 +90,26 @@ class TextBase(BaseTaskService):
         return items
 
     # ------------------------------------------------------------------
-    # Text input helpers
+    # Text helpers
     # ------------------------------------------------------------------
 
     def _sanitize_source(self, text: Any) -> str:
-        """Normalize a source string: None/empty → single space, collapse whitespace runs."""
         if not text:
             return " "
         text = str(text).replace("\n", " ").replace("\r", " ")
         return self._normalize_text(text) or " "
 
     def _chunk_inputs(self, items: List[Any], size: int = 90) -> List[List[Any]]:
-        """Split a flat list into consecutive chunks of at most `size` items."""
         return [items[i: i + size] for i in range(0, len(items), size)]
 
     def _normalize_text(self, text: str) -> str:
-        """Collapse all whitespace runs to a single space and strip ends."""
         return " ".join(text.split()).strip()
-
-    # ------------------------------------------------------------------
-    # Postprocess helpers (opt-in)
-    # ------------------------------------------------------------------
 
     def _pair_with_sources(
         self,
         response_items: List[Dict[str, Any]],
         source_texts: List[str],
     ) -> List[Dict[str, Any]]:
-        """Zip each response item with its source text, adding a 'source' key."""
         paired = []
         for idx, item in enumerate(response_items):
             source = source_texts[idx] if idx < len(source_texts) else ""

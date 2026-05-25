@@ -2,23 +2,16 @@
 import logging
 from typing import Any, Dict, List, Optional
 from services.base.text_base import TextBase
-from services.base.config_mapper import GenericTritonMapper
 from models.schemas.language_detection import LanguageDetectionInferenceResponse, LanguageDetectionOutput, LanguagePrediction
 logger = logging.getLogger(__name__)
 
 class LanguageDetectionTaskService(TextBase):
+    # No language config required — language is DETECTED not specified
+    # Base validate_request handles input existence; language block skipped (no language in config)
+
     def __init__(self, service_info=None, **deps):
         super().__init__(service_info=service_info)
         self.logger = logger
-
-    def _get_inference_model_class(self):
-        return GenericTritonMapper
-
-    async def validate_request(self, payload):
-        await super().validate_request(payload)
-        if not payload.get("input"):
-            raise ValueError("LANGUAGE_DETECTION: input array cannot be empty")
-        self.logger.info(f"LANGUAGE_DETECTION: {len(payload.get('input', []))} inputs")
 
     async def postprocess_output(self, response_items, source_texts=None):
         import math

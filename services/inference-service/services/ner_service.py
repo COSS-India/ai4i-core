@@ -7,20 +7,11 @@ from models.schemas.ner import NERInferenceResponse, NEROutput, Token
 logger = logging.getLogger(__name__)
 
 class NERTaskService(TextBase):
+    # source_language check handled by base; no target language needed
+
     def __init__(self, service_info=None, **deps):
         super().__init__(service_info=service_info)
         self.logger = logger
-
-    def _get_inference_model_class(self):
-        return GenericTritonMapper
-
-    async def validate_request(self, payload):
-        await super().validate_request(payload)
-        language = payload.get("config", {}).get("language", {})
-        source_lang = language.get("source_language") or language.get("sourceLanguage")
-        if not source_lang:
-            raise ValueError("NER: source_language is required in config.language")
-        self.logger.info(f"NER: language={source_lang} ({len(payload.get('input', []))} inputs)")
 
     async def postprocess_output(self, response_items, source_texts=None):
         sources = source_texts or []

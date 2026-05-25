@@ -2,36 +2,34 @@
 import logging
 from typing import Any, Dict, List, Optional
 from services.base.text_base import TextBase
-from services.base.config_mapper import GenericTritonMapper
 from models.schemas.transliteration import TransliterationInferenceResponse
 logger = logging.getLogger(__name__)
 
 class TransliterationTaskService(TextBase):
+    REQUIRES_TARGET_LANGUAGE = True  # enables target_language + not-equal check in base
+
     def __init__(self, service_info=None, **deps):
         super().__init__(service_info=service_info)
         self.logger = logger
 
-    def _get_inference_model_class(self):
-        return GenericTritonMapper
-
     async def validate_request(self, payload):
-        await super().validate_request(payload)
+        await super().validate_request(payload)  # handles input + source/target language checks
+
+        # --- Transliteration-specific: numSuggestions/isSentence + derived field injection ---
         config = payload.get("config", {})
-        language = config.get("language", {})
-        source_lang = language.get("source_language") or language.get("sourceLanguage")
-        target_lang = language.get("target_language") or language.get("targetLanguage")
-        if not source_lang or not target_lang:
-            raise ValueError("Transliteration: source_language and target_language are required")
-        if source_lang == target_lang:
-            raise ValueError("Transliteration: source_language and target_language cannot be the same")
         num_suggestions = config.get("num_suggestions") or config.get("numSuggestions") or 0
         is_sentence = config.get("is_sentence") or config.get("isSentence") or False
+
         if num_suggestions > 0 and is_sentence:
             raise ValueError("Transliteration: numSuggestions is not valid for sentence-level transliteration")
+
         # Inject derived fields so mapper can resolve value_path: request.config.is_word_level/top_k
         config["is_word_level"] = not is_sentence
         config["top_k"] = num_suggestions
-        self.logger.info(f"Transliteration: {source_lang} -> {target_lang} (sentence={is_sentence}, top_k={num_suggestions}, {len(payload.get('input', []))} inputs)")
+
+        src = self._extract_source_lang(self._get_language(payload))
+        tgt = self._extract_target_lang(self._get_language(payload))
+        self.logger.info(f"Transliteration: {src} -> {tgt} (sentence={is_sentence}, top_k={num_suggestions}, {len(payload.get('input', []))} inputs)")
 
     def _build_response(self, payload, postprocessed):
         return TransliterationInferenceResponse(output=postprocessed["output"])

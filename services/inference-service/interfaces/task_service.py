@@ -190,7 +190,7 @@ class BaseTaskService(ITaskService):
         api_key_id: Optional[int] = None,
         session_id: Optional[str] = None,
     ) -> Any:
-        result = await self.execute_triton_inference(payload, self._get_inference_model_class())
+        result = await self.execute_triton_inference(payload)
         postprocessed = await self.postprocess_output(
             result["response_data"], source_texts=result["source_texts"]
         )
@@ -226,7 +226,7 @@ class BaseTaskService(ITaskService):
     async def execute_triton_inference(
         self,
         payload: Dict[str, Any],
-        inference_model_class: type,
+
     ) -> Dict[str, Any]:
         try:
             # 1. Use pre-resolved service info injected at construction time
@@ -245,7 +245,8 @@ class BaseTaskService(ITaskService):
             self.logger.debug(f"Converting payload to Triton format for model {model_name}")
 
             # 2. Instantiate inference model with adapter config
-            inference_model = inference_model_class(adapter_config=adapter_config)
+            from services.base.config_mapper import GenericTritonMapper
+            inference_model = GenericTritonMapper(adapter_config=adapter_config)
 
             # 3. Extract input and config from payload
             input_items = payload.get('input', [])
