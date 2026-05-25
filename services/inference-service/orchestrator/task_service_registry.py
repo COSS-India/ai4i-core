@@ -46,7 +46,7 @@ TASK_SERVICE_REGISTRY = [
     },
     {
         "task_type":     "NER",
-        "model_name":    ["ai4bharat/triton-ner"],
+        "model_name":    ["ner-gpu"],
         "service_class": NERTaskService,
     },
     {
@@ -66,12 +66,12 @@ TASK_SERVICE_REGISTRY = [
     },
     {
         "task_type":     "LANGUAGE_DETECTION",
-        "model_name":    ["ai4bharat/triton-language-detection"],
+        "model_name":    ["indiclid-gpu"],
         "service_class": LanguageDetectionTaskService,
     },
     {
         "task_type":     "TRANSLITERATION",
-        "model_name":    ["ai4bharat/triton-transliteration"],
+        "model_name":    ["indic-xlit-cpu"],
         "service_class": TransliterationTaskService,
     },
     {
