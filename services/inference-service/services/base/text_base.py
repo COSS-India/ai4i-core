@@ -6,7 +6,7 @@ Implements common text pipeline steps:
   preprocess_input  → extract → sanitize → chunk pipeline
 
 Subclasses must implement:
-  _get_inference_model_class, postprocess_output, _build_response
+  postprocess_output, _build_response
 
 Task-specific helpers (_pair_with_sources, _chunk_inputs, etc.) are available opt-in.
 """
@@ -23,22 +23,13 @@ class TextBase(BaseTaskService):
     CHUNK_SIZE: int = 90
 
     # ------------------------------------------------------------------
-    # Pipeline hooks — subclasses must implement all four
+    # Common inference model
     # ------------------------------------------------------------------
 
-    # async def postprocess_output(
-    #     self,
-    #     response_items: List[Dict[str, Any]],
-    #     source_texts: List[str] = None,
-    #     **kwargs: Any,
-    # ) -> Dict[str, Any]:
-    #     raise NotImplementedError(f"{self.__class__.__name__} must implement postprocess_output")
-
-    # def _create_inference_model(self, adapter_config: Any) -> Any:
-    #     raise NotImplementedError(f"{self.__class__.__name__} must implement _create_inference_model")
-
-    # def _build_response(self, request: Any, postprocessed: Dict[str, Any]) -> Any:
-    #     raise NotImplementedError(f"{self.__class__.__name__} must implement _build_response")
+    def _get_inference_model_class(self) -> type:
+        """Returns GenericTritonMapper — shared by all text services."""
+        from services.base.config_mapper import GenericTritonMapper
+        return GenericTritonMapper
 
     # ------------------------------------------------------------------
     # Pipeline methods
