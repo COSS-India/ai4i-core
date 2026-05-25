@@ -50,12 +50,41 @@ def compute_first_item_source(data: List[Any]) -> str:
     return ""
 
 
+def compute_customer_id(request: Dict[str, Any]) -> Any:
+    """Extract customer/user ID from request config."""
+    config = request.get("config", {})
+    if isinstance(config, dict):
+        return config.get("userId") or config.get("customer_id") or config.get("user_id")
+    return getattr(config, "userId", None) or getattr(config, "user_id", None)
+
+
+def compute_input_size(request: Dict[str, Any]) -> int:
+    """Compute input size from request."""
+    input_data = request.get("input") or request.get("audio") or request.get("image")
+    return len(input_data) if input_data else 0
+
+
+def compute_request_status(response: Dict[str, Any]) -> str:
+    """Determine request success status from response."""
+    if response is None:
+        return "failed"
+    if isinstance(response, dict):
+        error = response.get("error")
+        detail = response.get("detail")
+        if error or detail:
+            return "failed"
+    return "success"
+
+
 REGISTRY = {
     "compute_input_quality": compute_input_quality,
     "compute_sentiment_score": compute_sentiment_score,
     "compute_quality_metrics": compute_quality_metrics,
     "compute_list_count": compute_list_count,
     "compute_first_item_source": compute_first_item_source,
+    "compute_customer_id": compute_customer_id,
+    "compute_input_size": compute_input_size,
+    "compute_request_status": compute_request_status,
 }
 
 

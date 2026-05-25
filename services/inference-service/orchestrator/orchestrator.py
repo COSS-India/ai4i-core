@@ -12,6 +12,7 @@ from models.task_types import task_registry
 from interfaces.task_service import ITaskService
 from inference.inference_server_resolver import InferenceServerResolver
 from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
+from ai4icore_core.telemetry import async_trace_stage
 
 
 logger = logging.getLogger(__name__)
@@ -171,6 +172,7 @@ class Orchestrator:
         except Exception as e:
             raise TaskServiceExecutionError(f"Failed to get task service: {str(e)}")
 
+    @async_trace_stage("resolve_model")
     async def _resolve_service_and_model(
         self, payload: Dict[str, Any]
     ) -> Dict[str, Any]:

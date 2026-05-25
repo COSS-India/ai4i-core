@@ -1,20 +1,37 @@
 {
-  "preprocess": {
+  "validate": {
     "start": [
-      {"attr": "image_size", "expr": "image.get('size', 0)"},
-      {"attr": "page_count", "expr": "page_count"}
+      {"attr": "task_type", "expr": "task_type"},
+      {"attr": "input_size", "expr": "len(image)"},
+      {"attr": "customer_id", "func": "compute_customer_id"}
+    ],
+    "end": []
+  },
+  "preprocess_input": {
+    "start": [
+      {"attr": "input_count", "expr": "item_count"}
     ],
     "end": [
-      {"attr": "preprocessed_segments", "expr": "len(segments)"}
+      {"attr": "processed_count", "expr": "item_count"}
     ]
   },
   "resolve_model": {
-    "start": [],
-    "end": []
+    "start": [
+      {"attr": "task_type", "expr": "task_type"},
+      {"attr": "input_size", "func": "compute_input_size"},
+      {"attr": "customer_id", "func": "compute_customer_id"}
+    ],
+    "end": [
+      {"attr": "service_used", "expr": "name"},
+      {"attr": "model_used", "expr": "name"},
+      {"attr": "endpoint", "expr": "endpoint"}
+    ]
   },
   "triton_inference": {
     "start": [],
-    "end": []
+    "end": [
+      {"attr": "output_size", "expr": "len(response_data)"}
+    ]
   },
   "postprocess": {
     "start": [],

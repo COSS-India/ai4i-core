@@ -4,11 +4,17 @@ from functools import wraps
 from .traceability import get_trace_manager
 
 
-def _get_service_name(self) -> str:
-    """Extract service name from task_name or service_name attribute."""
+def _get_service_name(self, request=None) -> str:
+    """Extract service name from task_name, service_name attribute, or request payload."""
     service_name = getattr(self, 'service_name', None)
     if service_name:
         return service_name
+
+    # For Orchestrator: extract task_type from request payload if available
+    if request and isinstance(request, dict):
+        task_type = request.get('task_type', '').lower()
+        if task_type:
+            return task_type
 
     task_name = getattr(self, 'task_name', self.__class__.__name__)
     service_name = task_name.replace('TaskService', '').lower()
@@ -21,7 +27,7 @@ def trace_stage(stage_name):
         @wraps(func)
         def wrapper(self, request):
             trace_manager = get_trace_manager()
-            service_name = _get_service_name(self)
+            service_name = _get_service_name(self, request)
             span = trace_manager.trace_stage_start(service_name, stage_name, request)
             try:
                 response = func(self, request)
@@ -40,8 +46,8 @@ def async_trace_stage(stage_name):
         @wraps(func)
         async def wrapper(self, request):
             trace_manager = get_trace_manager()
-            service_name = _get_service_name(self)
             request_dict = request.dict() if hasattr(request, 'dict') else request
+            service_name = _get_service_name(self, request_dict)
             span = trace_manager.trace_stage_start(service_name, stage_name, request_dict)
             try:
                 response = await func(self, request)
