@@ -15,7 +15,7 @@ Lookup at runtime:
 """
 
 from services.asr_service import ASRTaskService
-from services.audio_language_detection_service import AudioLanguageDetectionTaskService
+from services.models.audio_default_model import AudioDefaultModel
 from services.language_detection_service import LanguageDetectionTaskService
 from services.language_diarization_service import LanguageDiarizationTaskService
 from services.llm_service import LLMTaskService
@@ -85,8 +85,13 @@ TASK_SERVICE_REGISTRY = [
         "service_class": LanguageDiarizationTaskService,
     },
     {
+        "task_type":     "AUDIO_LANG_DETECTION",
+        "model_name":    ["ai4bharat/triton-audio-language-detection"],
+        "service_class": AudioDefaultModel,
+    },
+    {
         "task_type":     "AUDIO_LANGUAGE_DETECTION",
         "model_name":    ["ai4bharat/triton-audio-language-detection"],
-        "service_class": AudioLanguageDetectionTaskService,
+        "service_class": AudioDefaultModel,
     },
 ]
