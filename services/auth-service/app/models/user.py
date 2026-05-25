@@ -14,10 +14,11 @@ from app.models import Base
 
 
 class CreationType(str, enum.Enum):
-    """Persisted labels: `creation_type_enum` allows only ``default`` and ``google``."""
+    """User account origin; persisted as PostgreSQL ``creation_type_enum``."""
 
-    DEFAULT = "default"
-    GOOGLE = "google"
+    DEFAULT = "default" # for normal users
+    GOOGLE = "google" # for google users
+    TENANT = "tenant" # for tenant users
 
 
 class User(Base):
@@ -41,7 +42,11 @@ class User(Base):
     is_delete = Column(Boolean, default=False, nullable=True)
     is_tenant_active = Column(Boolean, default=True, nullable=True)
     creation_type = Column(
-        Enum(CreationType, name="creation_type_enum", values_callable=lambda x: [e.value for e in x]),
+        Enum(
+            CreationType,
+            name="creation_type_enum",
+            values_callable=lambda x: [e.value for e in x],
+        ),
         nullable=True,
         server_default=CreationType.DEFAULT.value,
     )

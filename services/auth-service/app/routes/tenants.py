@@ -20,7 +20,6 @@ from app.schemas.tenant import (
     TenantUserStatusUpdate,
     TenantUserUpdate,
 )
-from app.schemas.user import UserListResponse
 from app.services.tenant_service import TenantService
 
 router = APIRouter(prefix="/tenants", tags=["Tenants"])
@@ -74,10 +73,13 @@ async def update_tenant(
 async def update_tenant_status(
     tenant_id: int,
     body: TenantStatusUpdate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     svc: TenantService = Depends(get_tenant_service),
 ):
-    tenant = await svc.update_tenant_status(current_user, tenant_id, body)
+    tenant = await svc.update_tenant_status(
+        current_user, tenant_id, body, background_tasks
+    )
     return success_response(data=to_response(tenant, TenantResponse))
 
 
@@ -90,7 +92,8 @@ async def list_tenant_users(
     svc: TenantService = Depends(get_tenant_service),
 ):
     users = await svc.list_tenant_users(current_user, tenant_id, offset, limit)
-    return success_response(data=[to_response(u, UserListResponse) for u in users])
+    data = await svc.build_tenant_user_responses(users)
+    return success_response(data=data)
 
 
 @router.post("/{tenant_id}/users", status_code=status.HTTP_201_CREATED)
@@ -118,7 +121,7 @@ async def update_tenant_user_status(
     svc: TenantService = Depends(get_tenant_service),
 ):
     target = await svc.update_tenant_user_status(current_user, tenant_id, user_id, body)
-    return success_response(data=to_response(target, UserListResponse))
+    return success_response(data=await svc.build_tenant_user_response(target))
 
 
 @router.patch("/{tenant_id}/users/{user_id}")
@@ -130,7 +133,7 @@ async def update_tenant_user(
     svc: TenantService = Depends(get_tenant_service),
 ):
     target = await svc.update_tenant_user(current_user, tenant_id, user_id, body)
-    return success_response(data=to_response(target, UserListResponse))
+    return success_response(data=await svc.build_tenant_user_response(target))
 
 
 @router.delete("/{tenant_id}/users/{user_id}")

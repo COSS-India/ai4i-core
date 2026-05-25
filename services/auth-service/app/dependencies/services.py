@@ -65,11 +65,24 @@ async def get_user_service(
     return UserService(UserRepository(db), RoleRepository(db))
 
 
+async def get_api_key_service(
+    db: AsyncSession = Depends(get_db),
+    cache: CacheService = Depends(get_cache_service),
+) -> APIKeyService:
+    return APIKeyService(
+        APIKeyRepository(db),
+        cache,
+        user_repo=UserRepository(db),
+        tenant_repo=TenantRepository(db),
+    )
+
+
 async def get_auth_service(
     db: AsyncSession = Depends(get_db),
     role_service: RoleService = Depends(get_role_service),
     token_service: TokenService = Depends(get_token_service),
     email_client: EmailClient = Depends(get_email_client),
+    api_key_service: APIKeyService = Depends(get_api_key_service),
 ) -> AuthService:
     return AuthService(
         user_repo=UserRepository(db),
@@ -80,14 +93,8 @@ async def get_auth_service(
         verification_repo=VerificationRepository(db),
         tenant_repo=TenantRepository(db),
         email_client=email_client,
+        api_key_service=api_key_service,
     )
-
-
-async def get_api_key_service(
-    db: AsyncSession = Depends(get_db),
-    cache: CacheService = Depends(get_cache_service),
-) -> APIKeyService:
-    return APIKeyService(APIKeyRepository(db), cache)
 
 
 async def get_tenant_service(
@@ -95,6 +102,7 @@ async def get_tenant_service(
     role_service: RoleService = Depends(get_role_service),
     token_service: TokenService = Depends(get_token_service),
     email_client: EmailClient = Depends(get_email_client),
+    api_key_service: APIKeyService = Depends(get_api_key_service),
 ) -> TenantService:
     """Lightweight tenant service — only injects what's needed for user provisioning.
 
@@ -109,6 +117,7 @@ async def get_tenant_service(
         verification_repo=VerificationRepository(db),
         token_service=token_service,
         email_client=email_client,
+        api_key_service=api_key_service,
     )
 
 

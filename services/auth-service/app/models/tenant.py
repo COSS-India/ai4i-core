@@ -27,7 +27,11 @@ class Tenant(Base):
     email = Column(String(255), nullable=False)
     phone_number = Column(String(20), nullable=True)
     status = Column(
-        Enum(TenantStatus, name="tenant_status_enum", values_callable=lambda x: [e.value for e in x]),
+        Enum(
+            TenantStatus,
+            name="tenant_status_enum",
+            values_callable=lambda x: [e.value for e in x],
+        ),
         nullable=False,
         server_default=TenantStatus.PENDING.value,
     )

@@ -39,10 +39,21 @@ class RoleService:
 
     # ── Role management ──
 
-    async def assign_role(self, user_id: UUID, role_name: str | RoleName) -> None:
+    async def ensure_role_exists(self, role_name: str | RoleName) -> None:
+        """Raise EntityNotFoundError when the role name is not in the database."""
+        key = role_name_to_str(role_name)
+        if not await self._roles.get_role_by_name(key):
+            raise EntityNotFoundError(f"Role '{key}'")
+
+    async def assign_role(
+        self, user_id: UUID, role_name: str | RoleName, *, commit: bool = True
+    ) -> None:
         """
         Assign a role to a user. Permissions are additive — existing roles are
         kept. Silently skips if the user already has this role.
+
+        When ``commit=False``, flush only — caller commits the shared session
+        (e.g. tenant user PATCH batches role + profile in one transaction).
         """
         key = role_name_to_str(role_name)
         role = await self._roles.get_role_by_name(key)
@@ -54,10 +65,14 @@ class RoleService:
             return
 
         await self._roles.assign_role(user_id, role.id)
-        await self._roles.commit()
-        logger.info("Role '%s' assigned to user %s", key, user_id)
+        if commit:
+            await self._roles.commit()
+            logger.info("Role '%s' assigned to user %s", key, user_id)
 
-    async def remove_role(self, user_id: UUID, role_name: str | RoleName) -> None:
+    async def remove_role(
+        self, user_id: UUID, role_name: str | RoleName, *, commit: bool = True
+    ) -> None:
+        """When ``commit=False``, defer commit to the caller's session commit."""
         key = role_name_to_str(role_name)
         role = await self._roles.get_role_by_name(key)
         if not role:
@@ -65,10 +80,14 @@ class RoleService:
         removed = await self._roles.remove_role(user_id, role.id)
         if not removed:
             raise AppError(message="The user does not have this role assigned.", code="NOT_FOUND", status_code=404)
-        await self._roles.commit()
+        if commit:
+            await self._roles.commit()
 
     async def get_user_roles(self, user_id: UUID) -> list[str]:
         return await self._roles.get_user_roles(user_id)
+
+    async def get_roles_for_users(self, user_ids: list[UUID]) -> dict[UUID, list[str]]:
+        return await self._roles.get_roles_for_users(user_ids)
 
     async def get_user_permission_ids(self, user_id: UUID) -> list[int]:
         """
