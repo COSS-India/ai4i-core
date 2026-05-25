@@ -322,3 +322,10 @@ class GenericTritonMapper:
         if isinstance(value, list):
             return [self._decode_output_value(item) for item in value]
         return value
+
+    @staticmethod
+    def unwrap_scalar(value: Any) -> Any:
+        """Unwrap single-element list nesting (shape [1], [1,1] tensors) to a plain value."""
+        while isinstance(value, list) and len(value) == 1:
+            value = value[0]
+        return value

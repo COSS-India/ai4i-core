@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Unit tests for TextDefaultModel (NMT) — no live Triton required.
+Unit tests for NMTTaskService — no live Triton required.
 
 Tests each pipeline stage in isolation:
-  1. _deserialize_payload  — camelCase and snake_case inputs
-  2. validate_request      — valid + four error paths
-  3. preprocess_input      — sanitisation + _chunk key
-  4. _create_inference_model — returns NMTInferenceModel
-  5. postprocess_output    — pairing + TranslationOutput wrapping
-  6. _build_response       — NMTInferenceResponse wrapping
-  7. run_inference          — full loop with mocked InferenceModel + Triton
+  1. validate_request      — valid + four error paths
+  2. preprocess_input      — sanitisation + _chunk key
+  3. _get_inference_model_class — returns GenericTritonMapper
+  4. postprocess_output    — pairing + TranslationOutput wrapping
+  5. _build_response       — NMTInferenceResponse wrapping
+  6. run_inference          — full loop with mocked InferenceModel + Triton
 
 Triton HTTP is mocked via unittest.mock so no running server is needed.
 """
@@ -31,7 +30,7 @@ MOCK_SERVICE_INFO = {
     "name": "indictrans-gpu-t4",
     "endpoint": "http://localhost:8000/v2/models/indictrans-gpu-t4/infer",
     "api_key": None,
-    "adapter_config": None,  # individual tests mock _create_inference_model
+    "adapter_config": None,
 }
 
 # ---------------------------------------------------------------------------
@@ -49,8 +48,8 @@ MOCK_TRITON_OUTPUT = {
 }
 
 
-def _make_mock_inference_model(translated: str = "नमस्ते, आप कैसे हैं?") -> MagicMock:
-    """Return a mock InferenceModel that produces one translated item."""
+def _make_mock_inference_model(translated: str = "नमस्ते, आप कैसे हैं?", num_outputs: int = 1) -> MagicMock:
+    """Return a mock InferenceModel that produces `num_outputs` translated items."""
     model = MagicMock()
     model.convert_payload_to_triton_format = AsyncMock(
         return_value=(
@@ -59,96 +58,71 @@ def _make_mock_inference_model(translated: str = "नमस्ते, आप क
         )
     )
     model.convert_triton_output_to_task_format = AsyncMock(
-        return_value=[{"target": translated}]
+        return_value=[{"target": translated}] * num_outputs
     )
     return model
 
 
-async def test_deserialize_payload():
-    """Accepts both camelCase (portal) and snake_case field names."""
-    from services.models.text_models import TextDefaultModel
-    from models.schemas.nmt import NMTInferenceRequest
+async def test_validate_request_valid():
+    from services.models.text_models import NMTTaskService
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
-
-    # snake_case payload
-    snake_payload = {
-        "input": [{"source": "Hello, how are you?"}],
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    payload = {
+        "input": [{"source": "Hello"}],
         "config": {
             "service_id": "indictrans-v2-all",
             "language": {"sourceLanguage": "en", "targetLanguage": "hi"},
         },
     }
-    req = await service._deserialize_payload(snake_payload)
-    assert isinstance(req, NMTInferenceRequest)
-    assert req.input[0].source == "Hello, how are you?"
-    assert req.config.language.source_language == "en"
-    assert req.config.language.target_language == "hi"
-    logger.info("   [PASS] snake_case payload deserialised")
-
-    # camelCase payload (portal format)
-    camel_payload = {
-        "input": [{"source": "What is your name?"}],
-        "config": {
-            "serviceId": "indictrans-v2-all",
-            "language": {"sourceLanguage": "en", "targetLanguage": "te"},
-        },
-    }
-    req2 = await service._deserialize_payload(camel_payload)
-    assert req2.config.service_id == "indictrans-v2-all"
-    assert req2.config.language.source_language == "en"
-    assert req2.config.language.target_language == "te"
-    logger.info("   [PASS] camelCase payload deserialised")
-
-
-async def test_validate_request_valid():
-    from services.models.text_models import TextDefaultModel
-    from models.schemas.nmt import NMTInferenceRequest, NMTConfig, LanguagePair, TextInput
-
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
-    request = NMTInferenceRequest(
-        input=[TextInput(source="Hello")],
-        config=NMTConfig(
-            language=LanguagePair(sourceLanguage="en", targetLanguage="hi")
-        ),
-    )
-    await service.validate_request(request)  # must not raise
+    await service.validate_request(payload)  # must not raise
     logger.info("   [PASS] valid request accepted")
 
 
 async def test_validate_request_errors():
-    from services.models.text_models import TextDefaultModel
-    from models.schemas.nmt import NMTInferenceRequest, NMTConfig, LanguagePair, TextInput
+    from services.models.text_models import NMTTaskService
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     # 1. Same source and target language
     try:
-        req = NMTInferenceRequest(
-            input=[TextInput(source="Hello")],
-            config=NMTConfig(language=LanguagePair(sourceLanguage="en", targetLanguage="en")),
-        )
-        await service.validate_request(req)
+        payload = {
+            "input": [{"source": "Hello"}],
+            "config": {"language": {"sourceLanguage": "en", "targetLanguage": "en"}},
+        }
+        await service.validate_request(payload)
         raise AssertionError("Should have raised ValueError for same language")
     except ValueError as e:
-        assert "must differ" in str(e)
+        assert "cannot be the same" in str(e)
         logger.info("   [PASS] same language rejected")
 
-    # 2. Pydantic rejects empty input list at construction
+    # 2. Empty input list
     try:
-        NMTInferenceRequest(
-            input=[],
-            config=NMTConfig(language=LanguagePair(sourceLanguage="en", targetLanguage="hi")),
-        )
+        payload = {
+            "input": [],
+            "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+        }
+        await service.validate_request(payload)
         raise AssertionError("Should have rejected empty input")
-    except Exception:
-        logger.info("   [PASS] empty input list rejected by schema")
+    except ValueError:
+        logger.info("   [PASS] empty input list rejected")
+
+    # 3. Missing language pair
+    try:
+        payload = {
+            "input": [{"source": "Hello"}],
+            "config": {"language": {}},
+        }
+        await service.validate_request(payload)
+        raise AssertionError("Should have raised ValueError for missing language")
+    except ValueError as e:
+        assert "required" in str(e)
+        logger.info("   [PASS] missing language pair rejected")
 
 
 async def test_preprocess_input():
-    from services.models.text_models import TextDefaultModel
+    from services.models.text_models import NMTTaskService
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     raw = [
         {"source": "  Hello   world  "},
@@ -159,7 +133,7 @@ async def test_preprocess_input():
     result = await service.preprocess_input(raw)
 
     assert len(result) == 4
-    assert result[0]["source"] == "Hello   world"  # strip only, not internal spaces
+    assert result[0]["source"] == "Hello world"  # internal whitespace collapsed by _normalize_text
     assert result[1]["source"] == "What is the weather?"  # newlines removed
     assert result[2]["source"] == " "  # empty → single space
     assert result[3]["source"] == " "  # None → single space
@@ -168,24 +142,21 @@ async def test_preprocess_input():
     logger.info("   [PASS] preprocess_input sanitised and chunked correctly")
 
 
-async def test_create_inference_model():
-    from services.models.text_models import TextDefaultModel
-    from inference_models.nmt_inference_model import NMTInferenceModel
+async def test_get_inference_model_class():
+    from services.models.text_models import NMTTaskService
+    from services.base.config_mapper import GenericTritonMapper
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
-
-    # With adapter_config=None, NMTInferenceModel.mapper is None
-    # (will raise InferenceModelError on convert, but construction succeeds)
-    model = service._create_inference_model(adapter_config=None)
-    assert isinstance(model, NMTInferenceModel)
-    logger.info("   [PASS] _create_inference_model returns NMTInferenceModel")
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    model_class = service._get_inference_model_class()
+    assert model_class is GenericTritonMapper
+    logger.info("   [PASS] _get_inference_model_class returns GenericTritonMapper")
 
 
 async def test_postprocess_output():
-    from services.models.text_models import TextDefaultModel
+    from services.models.text_models import NMTTaskService
     from models.schemas.nmt import TranslationOutput
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     response_items = [{"target": "नमस्ते"}, {"target": "आपका नाम क्या है?"}]
     source_texts = ["Hello", "What is your name?"]
@@ -202,19 +173,16 @@ async def test_postprocess_output():
 
 
 async def test_build_response():
-    from services.models.text_models import TextDefaultModel
-    from models.schemas.nmt import (
-        NMTInferenceRequest, NMTConfig, LanguagePair, TextInput,
-        NMTInferenceResponse, TranslationOutput,
-    )
+    from services.models.text_models import NMTTaskService
+    from models.schemas.nmt import NMTInferenceResponse, TranslationOutput
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
-    request = NMTInferenceRequest(
-        input=[TextInput(source="Hello")],
-        config=NMTConfig(language=LanguagePair(sourceLanguage="en", targetLanguage="hi")),
-    )
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    payload = {
+        "input": [{"source": "Hello"}],
+        "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+    }
     postprocessed = {"output": [TranslationOutput(source="Hello", target="नमस्ते")]}
-    response = service._build_response(request, postprocessed)
+    response = service._build_response(payload, postprocessed)
 
     assert isinstance(response, NMTInferenceResponse)
     assert len(response.output) == 1
@@ -224,34 +192,36 @@ async def test_build_response():
 
 async def test_run_inference_full():
     """Full run_inference with mocked InferenceModel and mocked _call_triton_inference."""
-    from services.models.text_models import TextDefaultModel
-    from models.schemas.nmt import (
-        NMTInferenceRequest, NMTConfig, LanguagePair, TextInput, NMTInferenceResponse,
-    )
+    from services.models.text_models import NMTTaskService
+    from models.schemas.nmt import NMTInferenceResponse
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
-    request = NMTInferenceRequest(
-        input=[
-            TextInput(source="Hello, how are you?"),
-            TextInput(source="What is your name?"),
+    payload = {
+        "input": [
+            {"source": "Hello, how are you?"},
+            {"source": "What is your name?"},
         ],
-        config=NMTConfig(language=LanguagePair(sourceLanguage="en", targetLanguage="hi")),
-    )
+        "config": {
+            "service_id": "indictrans-v2-all",
+            "language": {"sourceLanguage": "en", "targetLanguage": "hi"},
+        },
+    }
 
-    # Preprocess mutates request.input (as process() would do)
-    preprocessed = await service.preprocess_input(request.input)
-    request.input = preprocessed
+    # Preprocess mutates payload['input'] (as process() would do)
+    preprocessed = await service.preprocess_input(payload["input"])
+    payload["input"] = preprocessed
 
-    mock_inference_model = _make_mock_inference_model("नमस्ते, आप कैसे हैं?")
+    mock_inference_model = _make_mock_inference_model("नमस्ते, आप कैसे हैं?", num_outputs=2)
+    mock_model_class = MagicMock(return_value=mock_inference_model)
 
-    with patch.object(service, "_create_inference_model", return_value=mock_inference_model):
+    with patch.object(service, "_get_inference_model_class", return_value=mock_model_class):
         with patch.object(
             service,
             "_call_triton_inference",
             new=AsyncMock(return_value=MOCK_TRITON_OUTPUT),
         ):
-            response = await service.run_inference(request)
+            response = await service.run_inference(payload)
 
     assert isinstance(response, NMTInferenceResponse)
     assert len(response.output) == 2  # one per input item
@@ -262,22 +232,59 @@ async def test_run_inference_full():
 
 async def test_run_inference_missing_endpoint():
     """run_inference raises RuntimeError when service_info lacks endpoint."""
-    from services.models.text_models import TextDefaultModel
-    from models.schemas.nmt import NMTInferenceRequest, NMTConfig, LanguagePair, TextInput
+    from services.models.text_models import NMTTaskService
 
     bad_service_info = {"service_id": "x", "name": "model", "endpoint": "", "api_key": None}
-    service = TextDefaultModel(service_info=bad_service_info)
+    service = NMTTaskService(service_info=bad_service_info)
 
-    request = NMTInferenceRequest(
-        input=[TextInput(source="Hello")],
-        config=NMTConfig(language=LanguagePair(sourceLanguage="en", targetLanguage="hi")),
-    )
+    payload = {
+        "input": [{"source": "Hello"}],
+        "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+    }
     try:
-        await service.run_inference(request)
+        await service.run_inference(payload)
         raise AssertionError("Should have raised RuntimeError")
     except RuntimeError as e:
         assert "endpoint" in str(e)
         logger.info("   [PASS] missing endpoint raises RuntimeError")
+
+
+async def test_resolver_url_construction():
+    """InferenceServerResolver builds /api/v1/services/{id} regardless of trailing slash."""
+    import os
+    from unittest.mock import patch as _patch
+    from inference.inference_server_resolver import InferenceServerResolver
+
+    resolver = InferenceServerResolver()
+    captured: List[str] = []
+
+    async def _mock_get_json(self_or_url, url=None):
+        actual_url = url if url is not None else self_or_url
+        captured.append(actual_url)
+        return {
+            "service_id": "indictrans-v2-all",
+            "name": "indictrans-gpu-t4",
+            "endpoint": "http://triton:8000/v2/models/indictrans-gpu-t4/infer",
+            "api_key": None,
+            "adapter_config": None,
+        }
+
+    cases = [
+        ("http://localhost:9090",   "http://localhost:9090/api/v1/services/indictrans-v2-all"),
+        ("http://localhost:9090/",  "http://localhost:9090/api/v1/services/indictrans-v2-all"),
+        ("https://mms.internal",    "https://mms.internal/api/v1/services/indictrans-v2-all"),
+        ("https://mms.internal/",   "https://mms.internal/api/v1/services/indictrans-v2-all"),
+    ]
+
+    for base_url, expected in cases:
+        captured.clear()
+        resolver._memory_cache.clear()
+        with _patch.dict(os.environ, {"MODEL_MANAGEMENT_SERVICE_URL": base_url}):
+            with _patch("utils.http_client.HTTPServiceClient.get_json", new=_mock_get_json):
+                await resolver.resolve_service("indictrans-v2-all")
+        assert captured[0] == expected, f"base={base_url!r}: got {captured[0]!r}, want {expected!r}"
+
+    logger.info("   [PASS] resolver URL constructed correctly for all base URL variants")
 
 
 # ---------------------------------------------------------------------------
@@ -286,19 +293,19 @@ async def test_run_inference_missing_endpoint():
 
 async def run_all():
     tests = [
-        ("_deserialize_payload (camelCase + snake_case)", test_deserialize_payload),
         ("validate_request — valid", test_validate_request_valid),
         ("validate_request — error paths", test_validate_request_errors),
         ("preprocess_input — sanitise + chunk", test_preprocess_input),
-        ("_create_inference_model", test_create_inference_model),
+        ("_get_inference_model_class", test_get_inference_model_class),
         ("postprocess_output — pairing", test_postprocess_output),
         ("_build_response", test_build_response),
         ("run_inference — full pipeline (mocked)", test_run_inference_full),
         ("run_inference — missing endpoint", test_run_inference_missing_endpoint),
+        ("resolver URL — /api/v1/services/{id} path", test_resolver_url_construction),
     ]
 
     logger.info("=" * 70)
-    logger.info("NMT TextDefaultModel Unit Tests")
+    logger.info("NMTTaskService Unit Tests")
     logger.info("=" * 70)
 
     passed = 0
