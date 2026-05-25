@@ -23,7 +23,6 @@ from services.tts_service import TTSTaskService
 from services.transliteration_service import TransliterationTaskService
 from services.language_diarization_service import LanguageDiarizationTaskService
 from services.speaker_diarization_service import SpeakerDiarizationTaskService
-from services.audio_language_detection_service import AudioLanguageDetectionTaskService
 from services.pii_service import PIITaskService
 
 __all__ = [
@@ -37,6 +36,5 @@ __all__ = [
     "TransliterationTaskService",
     "LanguageDiarizationTaskService",
     "SpeakerDiarizationTaskService",
-    "AudioLanguageDetectionTaskService",
     "PIITaskService",
 ]
