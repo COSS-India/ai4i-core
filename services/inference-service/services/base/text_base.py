@@ -6,7 +6,7 @@ Implements common text pipeline steps:
   preprocess_input  → extract → sanitize → chunk pipeline
 
 Subclasses must implement:
-  _deserialize_payload, _get_inference_model_class, postprocess_output, _build_response
+  _get_inference_model_class, postprocess_output, _build_response
 
 Task-specific helpers (_pair_with_sources, _chunk_inputs, etc.) are available opt-in.
 """
@@ -45,16 +45,15 @@ class TextBase(BaseTaskService):
     # ------------------------------------------------------------------
 
     @async_trace_stage("validate")
-    async def validate_request(self, request: Any) -> None:
-        await super().validate_request(request)
+    async def validate_request(self, payload: Any) -> None:
+        await super().validate_request(payload)
 
-        if not getattr(request, "input", None):
+        if not payload.get("input"):
             raise ValueError(f"{self.task_name}: payload must contain a non-empty 'input' field")
-        if not getattr(request, "config", None):
+        if not payload.get("config"):
             raise ValueError(f"{self.task_name}: payload must contain a 'config' field")
 
-        input_items = getattr(request, "input", [])
-        for idx, item in enumerate(input_items):
+        for idx, item in enumerate(payload.get("input", [])):
             source = item.get("source") if isinstance(item, dict) else getattr(item, "source", None)
             if not source or not isinstance(source, str):
                 raise ValueError(f"{self.task_name}: input[{idx}]['source'] must be a non-empty string")
