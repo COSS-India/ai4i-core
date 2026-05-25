@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
 Migration CLI
-Laravel-like command-line interface for database migrations
+Direct Alembic wrapper for database migrations
 
 Usage:
-    python cli.py migrate [--database <db>] [--steps <n>]
-    python cli.py rollback [--database <db>] [--steps <n>]
-    python cli.py migrate:status [--database <db>]
-    python cli.py migrate:fresh [--seed] [--database <db>]
-    python cli.py make:migration <name> --database <db>
-    python cli.py seed [--class <seeder>] [--database <db>]
+    python cli.py migrate [--postgres-db <db>]
+    python cli.py rollback [--postgres-db <db>] [--steps <n>]
+    python cli.py migrate:status [--postgres-db <db>]
+    python cli.py migrate:fresh [--postgres-db <db>] [--force]
+    python cli.py make:migration <name> --postgres-db <db>
 """
 import argparse
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,21 +21,15 @@ sys.path.insert(0, str(project_root))
 
 from dotenv import load_dotenv
 load_dotenv(project_root / ".env")
-# alembic/.env holds local-dev overrides (localhost:5434); load with override=True
-# so these win over the Docker service names in the root .env
 load_dotenv(
     project_root / "infrastructure" / "databases" / "migrations" / "postgres" / "alembic" / ".env",
     override=True,
 )
 
-from infrastructure.databases.core.migration_manager import MigrationManager
-from infrastructure.databases.config import MigrationConfig
-
 
 class MigrationCLI:
-    """Command-line interface for migrations"""
+    """Alembic migration CLI wrapper"""
 
-    DATABASES = ['postgres']
     POSTGRES_DBS = [
         'ai4iplatform_auth',
         'ai4iplatform_core',
@@ -47,55 +41,48 @@ class MigrationCLI:
     ]
 
     def __init__(self):
-        self.migrations_path = project_root / 'infrastructure' / 'databases' / 'migrations'
+        self.alembic_dir = project_root / 'infrastructure' / 'databases' / 'migrations' / 'postgres'
 
     def run(self):
         """Run CLI"""
         parser = argparse.ArgumentParser(
-            description='Database Migration Manager',
+            description='Alembic Migration CLI',
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="""
 Examples:
   # Run all pending migrations
-  python cli.py migrate
-
-  # Run migrations for specific database
-  python cli.py migrate --database postgres
-  python cli.py migrate --database postgres --postgres-db ai4iplatform_auth
+  python cli.py migrate --postgres-db ai4iplatform_auth
 
   # Run specific number of migrations
-  python cli.py migrate --database postgres --steps 3
+  python cli.py migrate --postgres-db ai4iplatform_auth --steps 3
 
-  # Rollback last batch
-  python cli.py rollback --database postgres
+  # Rollback last migration
+  python cli.py rollback --postgres-db ai4iplatform_auth
 
-  # Rollback multiple batches
-  python cli.py rollback --database postgres --steps 2
+  # Rollback multiple migrations
+  python cli.py rollback --postgres-db ai4iplatform_auth --steps 2
 
   # Check migration status
-  python cli.py migrate:status
-  python cli.py migrate:status --database postgres
+  python cli.py migrate:status --postgres-db ai4iplatform_auth
 
-  # Fresh migration (drop all and re-run)
-  python cli.py migrate:fresh --database postgres
-  python cli.py migrate:fresh:all --force
-
-  # Report DBs, tables, row counts
-  python cli.py report
+  # Fresh migration (downgrade to base, then upgrade)
+  python cli.py migrate:fresh --postgres-db ai4iplatform_auth --force
 
   # Create new migration
-  python cli.py make:migration create_users_table --database postgres
+  python cli.py make:migration create_users_table --postgres-db ai4iplatform_auth
+
+  # Migrate all databases
+  python cli.py migrate:all
             """
         )
 
         parser.add_argument('command', help='Command to run')
-        parser.add_argument('name', nargs='?', help='Migration or seeder name (for make:migration)')
-        parser.add_argument('--database', '-d', choices=self.DATABASES, help='Database type')
+        parser.add_argument('name', nargs='?', help='Migration name (for make:migration)')
         parser.add_argument('--postgres-db', choices=self.POSTGRES_DBS, default='ai4iplatform_auth',
                           help='PostgreSQL database name (default: ai4iplatform_auth)')
-        parser.add_argument('--steps', '-s', type=int, help='Number of steps')
+        parser.add_argument('--steps', '-s', type=int, help='Number of migrations')
         parser.add_argument('--force', '-y', action='store_true', dest='force',
-                          help='Skip confirmation prompts (e.g. for migrate:fresh)')
+                          help='Skip confirmation prompts')
 
         args = parser.parse_args()
 
@@ -106,9 +93,7 @@ Examples:
             'rollback': self.rollback,
             'migrate:status': self.status,
             'migrate:fresh': self.fresh,
-            'migrate:fresh:all': self.fresh_all,
             'make:migration': self.make_migration,
-            'report': self.report,
         }
 
         if args.command not in command_map:
@@ -129,239 +114,117 @@ Examples:
             sys.exit(1)
 
     def migrate(self, args):
-        """Run migrations"""
-        databases = [args.database] if args.database else self.DATABASES
-
+        """Run migrations using Alembic"""
         print("\n" + "=" * 80)
-        print("🚀 Running Database Migrations")
-        print("=" * 80)
-
-        for db_type in databases:
-            try:
-                manager = self._get_manager(db_type, args.postgres_db if db_type == 'postgres' else None)
-                manager.migrate(steps=args.steps)
-            except Exception as e:
-                print(f"❌ Error migrating {db_type}: {str(e)}")
-
-        print("=" * 80)
-        print("✅ Migration process completed!")
+        print(f"🚀 Running Migrations: {args.postgres_db}")
         print("=" * 80 + "\n")
+
+        revision = f"+{args.steps}" if args.steps else "heads"
+        self._run_alembic(['upgrade', revision], args.postgres_db)
+        print("=" * 80)
+        print("✅ Migration completed!\n")
 
     def rollback(self, args):
-        """Rollback migrations"""
-        if not args.database:
-            print("❌ Please specify --database for rollback")
-            sys.exit(1)
-
+        """Rollback migrations using Alembic"""
         print("\n" + "=" * 80)
-        print(f"🔄 Rolling Back {args.database.upper()} Migrations")
-        print("=" * 80)
-
-        manager = self._get_manager(args.database, args.postgres_db if args.database == 'postgres' else None)
-        manager.rollback(steps=args.steps or 1)
-
+        print(f"🔄 Rolling Back: {args.postgres_db}")
         print("=" * 80 + "\n")
+
+        steps = args.steps or 1
+        revision = f"-{steps}"
+        self._run_alembic(['downgrade', revision], args.postgres_db)
 
     def status(self, args):
-        """Show migration status"""
-        databases = [args.database] if args.database else self.DATABASES
-
+        """Show migration status using Alembic"""
         print("\n" + "=" * 80)
-        print("📊 Migration Status")
+        print(f"📊 Migration Status: {args.postgres_db}")
         print("=" * 80 + "\n")
 
-        for db_type in databases:
-            try:
-                manager = self._get_manager(db_type, args.postgres_db if db_type == 'postgres' else None)
-                manager.status()
-            except Exception as e:
-                print(f"❌ Error checking status for {db_type}: {str(e)}\n")
-
-        print("=" * 80 + "\n")
+        self._run_alembic(['current', '-v'], args.postgres_db)
+        print()
+        self._run_alembic(['history', '-v'], args.postgres_db)
 
     def fresh(self, args):
-        """Fresh migration (drop all and re-run)"""
-        if not args.database:
-            print("❌ Please specify --database for fresh migration")
-            sys.exit(1)
-
-        # Confirmation unless --force / -y
+        """Fresh migration (downgrade to base, then upgrade)"""
         if not getattr(args, 'force', False):
             print("\n⚠️  WARNING: This will DROP ALL DATA in the database!")
-            response = input(f"Are you sure you want to continue with {args.database}? (yes/no): ")
+            response = input(f"Are you sure you want to continue? (yes/no): ")
             if response.lower() != 'yes':
                 print("❌ Operation cancelled")
                 sys.exit(0)
 
         print("\n" + "=" * 80)
-        print(f"🔨 Fresh Migration for {args.database.upper()}")
-        if args.database == 'postgres':
-            print(f"   Database: {args.postgres_db}")
-        print("=" * 80)
-
-        manager = self._get_manager(args.database, args.postgres_db if args.database == 'postgres' else None)
-        manager.fresh()
-
+        print(f"🔨 Fresh Migration: {args.postgres_db}")
         print("=" * 80 + "\n")
 
-    def fresh_all(self, args):
-        """Fresh migration for ALL Postgres DBs (clean + re-migrate), then optionally seed."""
-        if not getattr(args, 'force', False):
-            print("\n⚠️  WARNING: This will DROP ALL DATA in ALL Postgres databases!")
-            response = input("Are you sure you want to continue? (yes/no): ")
-            if response.lower() != 'yes':
-                print("❌ Operation cancelled")
-                sys.exit(0)
+        print("  Downgrading to base...")
+        self._run_alembic(['downgrade', 'base'], args.postgres_db)
 
-        print("\n" + "=" * 80)
-        print("🔨 Fresh Migration for ALL Postgres Databases")
-        print("=" * 80)
+        print("\n  Upgrading to head...")
+        self._run_alembic(['upgrade', 'head'], args.postgres_db)
 
-        failed = []
-        for db in self.POSTGRES_DBS:
-            try:
-                print(f"\n  🗄️  Fresh: {db}...")
-                manager = self._get_manager('postgres', db)
-                manager.fresh()
-            except Exception as e:
-                print(f"  ❌ Failed: {db} - {str(e)}")
-                failed.append((db, str(e)))
-
-        print("\n" + "=" * 80)
-        if failed:
-            print(f"⚠️  Fresh completed with {len(failed)} failure(s). Ensure PostgreSQL is running (e.g. localhost:5432, or 5434 if using docker-compose-simple.yml).")
-            if len(failed) == len(self.POSTGRES_DBS):
-                print("   No DB could be reached — is the Postgres server started?")
-        else:
-            print("✅ Fresh (clean + migrate) completed for all Postgres DBs!")
-        print("=" * 80 + "\n")
+        print("\n✅ Fresh migration completed!\n")
 
     def make_migration(self, args):
-        """Create new migration file"""
+        """Create new migration using Alembic"""
         if not args.name:
             print("❌ Please provide migration name")
-            sys.exit(1)
-
-        if not args.database:
-            print("❌ Please specify --database")
             sys.exit(1)
 
         print("\n" + "=" * 80)
         print("📝 Creating New Migration")
         print("=" * 80 + "\n")
 
-        manager = self._get_manager(args.database, args.postgres_db if args.database == 'postgres' else None)
-        filepath = manager.make_migration(args.name)
-
-        print(f"\n📄 Migration file created at:")
-        print(f"   {filepath}\n")
-        print("=" * 80 + "\n")
-
+        self._run_alembic(['revision', '--autogenerate', '-m', args.name], args.postgres_db)
 
     def migrate_all(self, args):
-        """Migrate all databases automatically"""
+        """Migrate all databases"""
         print("\n" + "="*80)
-        print("🚀 Migrating ALL Databases (Auto-Discovery)")
+        print("🚀 Migrating ALL Databases")
         print("="*80 + "\n")
 
         failed = []
-
-        # Migrate all PostgreSQL databases
-        print("📊 PostgreSQL Databases:")
         for db in self.POSTGRES_DBS:
             try:
-                print(f"\n  🗄️  Migrating {db}...")
-                manager = self._get_manager('postgres', db)
-                manager.migrate()
+                print(f"  🗄️  Migrating {db}...")
+                revision = f"+{args.steps}" if args.steps else "head"
+                self._run_alembic(['upgrade', revision], db, show_output=False)
+                print(f"  ✅ {db}")
             except Exception as e:
-                print(f"  ❌ Failed: {db} - {str(e)}")
-                failed.append(('postgres', db))
+                print(f"  ❌ {db}: {str(e)}")
+                failed.append(db)
 
         print("\n" + "="*80)
         if failed:
-            print(f"⚠️  {len(failed)} database(s) failed:")
-            for db_type, db_name in failed:
-                print(f"  - {db_type}" + (f" ({db_name})" if db_name else ""))
+            print(f"⚠️  {len(failed)} database(s) failed: {', '.join(failed)}")
         else:
             print("✅ All databases migrated successfully!")
         print("="*80 + "\n")
 
+    def _run_alembic(self, cmd_args: list, postgres_db: str, show_output: bool = True):
+        """Run Alembic command with database selection"""
+        cmd = [
+            sys.executable, '-m', 'alembic',
+            '-c', str(self.alembic_dir / 'alembic.ini'),
+            '-x', f'db={postgres_db}'
+        ] + cmd_args
 
-    def report(self, args):
-        """Report: how many Postgres DBs, tables per DB, and row counts."""
-        print("\n" + "=" * 80)
-        print("📊 Postgres Databases Report (tables + row counts)")
-        print("=" * 80)
-
-        total_dbs = 0
-        total_tables = 0
-        total_rows = 0
-
-        for db in self.POSTGRES_DBS:
-            try:
-                manager = self._get_manager('postgres', db)
-                with manager.adapter:
-                    # List tables in public schema
-                    tables_result = manager.adapter.fetch_all(
-                        "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
-                    )
-                    tables = [r[0] for r in tables_result]
-                    total_dbs += 1
-                    db_rows = 0
-
-                    if not tables:
-                        print(f"\n  📁 {db}: 0 tables, 0 rows")
-                        continue
-
-                    print(f"\n  📁 {db}: {len(tables)} table(s)")
-                    for t in tables:
-                        try:
-                            r = manager.adapter.fetch_one(f'SELECT count(*) FROM "{t}"')
-                            cnt = r[0] if r else 0
-                            db_rows += cnt
-                            total_tables += 1
-                            total_rows += cnt
-                            print(f"      • {t}: {cnt} row(s)")
-                        except Exception as e:
-                            print(f"      • {t}: error ({e})")
-                    print(f"      ─────────────────────")
-                    print(f"      Subtotal: {len(tables)} tables, {db_rows} rows")
-            except Exception as e:
-                print(f"\n  ⚠️  {db}: skip ({e})")
-
-        print("\n" + "=" * 80)
-        print(f"  Total: {total_dbs} database(s), {total_tables} table(s), {total_rows} row(s)")
-        print("=" * 80 + "\n")
-
-    def _get_manager(self, database_type: str, postgres_db: str = None) -> MigrationManager:
-        """
-        Get migration manager for database type
-
-        Args:
-            database_type: Type of database
-            postgres_db: PostgreSQL database name (for postgres only)
-
-        Returns:
-            MigrationManager instance
-        """
-        # Get configuration
-        kwargs = {}
-        if database_type == 'postgres' and postgres_db:
-            kwargs['database'] = postgres_db
-
-        config = MigrationConfig.get_config_for_database(database_type, **kwargs)
-
-        # Get adapter
-        adapter_class = MigrationConfig.get_adapter_class(database_type)
-        adapter = adapter_class(config)
-
-        # Create manager
-        return MigrationManager(
-            migrations_path=str(self.migrations_path),
-            database_type=database_type,
-            adapter=adapter,
-            database_name=postgres_db  # Pass the specific database name
+        result = subprocess.run(
+            cmd,
+            cwd=str(self.alembic_dir),
+            capture_output=not show_output,
+            text=True
         )
+
+        if show_output:
+            if result.stdout:
+                print(result.stdout)
+            if result.stderr:
+                print(result.stderr, file=sys.stderr)
+
+        if result.returncode != 0:
+            err_msg = result.stderr or "unknown error"
+            raise Exception(f"Alembic failed: {err_msg}")
 
 
 def main():

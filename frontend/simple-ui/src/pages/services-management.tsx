@@ -11,15 +11,7 @@ import {
   Heading,
   IconButton,
   Input,
-  InputGroup,
-  InputLeftElement,
   Select,
-  Table,
-  Thead,
-  Tbody,
-  Tr,
-  Th,
-  Td,
   Badge,
   Text,
   VStack,
@@ -36,7 +28,7 @@ import {
   Tooltip,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import { SearchIcon, ViewIcon, DeleteIcon } from "@chakra-ui/icons";
+import { ViewIcon, DeleteIcon } from "@chakra-ui/icons";
 import { FaUpload, FaDownload } from "react-icons/fa";
 import { useRouter } from "next/router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -44,7 +36,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import {
-  listServicesPaginated,
+  fetchAllServicesMatchingFilters,
   createService,
   getServiceById,
   updateService,
@@ -53,16 +45,18 @@ import {
 } from "../services/servicesManagementService";
 import { getAllModels, getModelById } from "../services/modelManagementService";
 import { useAuth } from "../hooks/useAuth";
+import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 import ConfirmDialog from "../components/common/ConfirmDialog";
-import {
-  TableFilterToolbar,
-  TablePaginationBar,
-  TableSortHeader,
-  useAdminTableSurface,
-} from "../components/common/TableControls";
+import { useAdminTableSurface } from "../components/common/TableControls";
+import AdminDataTable, {
+  DEFAULT_PAGE_SIZE_OPTIONS,
+  TableSearchField,
+  TableSelectField,
+  type AdminTableColumn,
+} from "../components/common/AdminDataTable";
 
 type ModelSummary = {
   modelId?: string;
@@ -81,7 +75,6 @@ type ModelSummary = {
 
 const ServicesManagementPage: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
-  const [serverTotal, setServerTotal] = useState(0);
   const [models, setModels] = useState<ModelSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
@@ -106,8 +99,7 @@ const ServicesManagementPage: React.FC = () => {
   const [publishingServiceUuid, setPublishingServiceUuid] = useState<string | null>(null);
   const [unpublishingServiceUuid, setUnpublishingServiceUuid] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
-  const [listPage, setListPage] = useState(1);
-  const [listPageSize, setListPageSize] = useState(25);
+  const [registryEpoch, setRegistryEpoch] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
@@ -123,8 +115,8 @@ const ServicesManagementPage: React.FC = () => {
   const cancelUnpublishRef = useRef<HTMLButtonElement>(null);
   const toast = useToastWithDeduplication();
   const { user } = useAuth();
-
-  const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+  const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
+  const viewTabIndex = isRegistryReadOnly ? 1 : 2;
 
   const isServiceModelDeprecated = (service: Service | null | undefined): boolean => {
     if (!service) return false;
@@ -162,8 +154,8 @@ const ServicesManagementPage: React.FC = () => {
     return Array.from(types).sort();
   }, [services]);
 
-  // Client-side name filter + sort applied to the current server-fetched page.
-  const paginatedServices = useMemo(() => {
+  // Client-side name filter + sort over the full fetched registry list.
+  const registryTableItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const filtered = q
       ? services.filter((s) => (s.name ?? "").toLowerCase().includes(q))
@@ -176,18 +168,11 @@ const ServicesManagementPage: React.FC = () => {
     });
   }, [services, searchQuery, sortBy, nameSortDirection]);
 
-  // Server handles pagination; these values drive the pagination bar.
-  const totalServices = serverTotal;
-  const totalPages = Math.max(1, Math.ceil(totalServices / listPageSize));
-  const startRow = totalServices === 0 ? 0 : (listPage - 1) * listPageSize + 1;
-  const endRow = Math.min(listPage * listPageSize, totalServices);
-
   const hasActiveFilters = filterStatus !== "" || filterTaskType !== "" || searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterStatus("");
     setFilterTaskType("");
-    setListPage(1);
   };
 
   const router = useRouter();
@@ -215,7 +200,7 @@ const ServicesManagementPage: React.FC = () => {
   // Model fetched by ID when navigating from a deprecated model's "Create Service" (not in active list)
   const [preselectedModelFromQuery, setPreselectedModelFromQuery] = useState<ModelSummary | null>(null);
 
-  // Fetch services with server-side pagination + filters (task type, publish status)
+  // Fetch all services for current task/publish filters (paginated API walk) for client search + pagination
   const fetchServices = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -224,14 +209,11 @@ const ServicesManagementPage: React.FC = () => {
         filterStatus === "unpublished" ? false :
         undefined;
 
-      const result = await listServicesPaginated({
-        offset: (listPage - 1) * listPageSize,
-        limit: listPageSize,
+      const result = await fetchAllServicesMatchingFilters({
         taskType: filterTaskType || undefined,
         isPublished: isPublishedFilter,
       });
       setServices(result.items);
-      setServerTotal(result.total);
     } catch (error: any) {
       console.error("Failed to fetch services:", error);
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
@@ -243,11 +225,10 @@ const ServicesManagementPage: React.FC = () => {
         isClosable: true,
       });
       setServices([]);
-      setServerTotal(0);
     } finally {
       setIsLoading(false);
     }
-  }, [listPage, listPageSize, filterTaskType, filterStatus, toast]);
+  }, [filterTaskType, filterStatus, toast]);
 
   useEffect(() => { fetchServices(); }, [fetchServices]);
 
@@ -277,13 +258,24 @@ const ServicesManagementPage: React.FC = () => {
   // Sync URL tab param to activeTab (e.g. when header back clears tab=2, show list)
   useEffect(() => {
     const t = router.query.tab;
-    if (t === "2") setActiveTab(2);
+    if (isRegistryReadOnly && (t === "1" || t === "create")) {
+      setActiveTab(0);
+      if (router.query.tab || router.query.modelId) {
+        const q = { ...router.query } as Record<string, string>;
+        delete q.tab;
+        delete q.modelId;
+        router.replace({ pathname: "/services-management", query: q }, undefined, { shallow: true });
+      }
+      return;
+    }
+    if (t === "2") setActiveTab(viewTabIndex);
     else if (t === "1" || t === "create") setActiveTab(1);
     else if (t !== "1" && t !== "2") setActiveTab(0);
-  }, [router.query.tab]);
+  }, [router.query.tab, isRegistryReadOnly, router, viewTabIndex]);
 
   // Handle query parameters for pre-selecting model from model-management page
   useEffect(() => {
+    if (isRegistryReadOnly) return;
     const { modelId, tab } = router.query;
     if (!modelId || typeof modelId !== "string") return;
 
@@ -345,8 +337,7 @@ const ServicesManagementPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.query, models]);
 
-  const { tableBg, tableHeaderBg, tableRowHoverBg, cardBg, borderColor: cardBorder } =
-    useAdminTableSurface();
+  const { cardBg, borderColor: cardBorder } = useAdminTableSurface();
 
   // Dropdown options: active models only (no deprecated). Include preselected from query only if not deprecated and not already in list.
   const preselectedNotDeprecated =
@@ -410,10 +401,10 @@ const ServicesManagementPage: React.FC = () => {
       try {
         setIsLoadingModels(true);
         const modelDetails = await getModelById(modelId);
-        
+
         // Extract task_type from model
         const taskType = modelDetails?.task?.type || modelDetails?.task_type || modelDetails?.taskType || "";
-        
+
         // Extract model version (required field after migration)
         const modelVersion = modelDetails?.version || modelDetails?.modelVersion || "1.0";
 
@@ -421,10 +412,10 @@ const ServicesManagementPage: React.FC = () => {
         const modelSubmissionDate = formatModelSubmissionDate(
           modelDetails?.submittedOn ?? modelDetails?.submitted_on ?? ""
         );
-        
+
         // Get model name for display
         const modelName = modelDetails?.name || modelDetails?.modelId || modelDetails?.model_id || "";
-        
+
         setFormData((prev) => ({
           ...prev,
           modelId: modelId,
@@ -460,17 +451,17 @@ const ServicesManagementPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Check session expiry before submitting
     if (!checkSessionExpiry()) return;
-    
+
     setIsSubmitting(true);
 
     try {
       // Auto-generate serviceId from name and timestamp
       const timestamp = Date.now();
       const serviceId = `${formData.name?.toLowerCase().replace(/\s+/g, '-') || 'service'}-${timestamp}`;
-      
+
       // Prepare service data with auto-generated serviceId.
       // Do not send modelSubmissionDate because backend owns this field.
       const serviceFormData: Partial<Service> = { ...formData };
@@ -521,9 +512,8 @@ const ServicesManagementPage: React.FC = () => {
       });
       setPreselectedModelFromQuery(null);
 
-      // Go to page 1 so the newly created service (newest first) is immediately visible
-      setListPage(1);
       await fetchServices();
+      setRegistryEpoch((e) => e + 1);
 
       // Switch to list tab
       setActiveTab(0);
@@ -556,7 +546,7 @@ const ServicesManagementPage: React.FC = () => {
       setSelectedService(service);
       setUpdateFormData(service);
       setIsViewingService(true);
-      setActiveTab(2);
+      setActiveTab(viewTabIndex);
       router.replace({ pathname: "/services-management", query: { ...router.query, tab: "2" } }, undefined, { shallow: true });
       // Fetch model to know if deprecated (detail API may not include model.versionStatus)
       const modelId = service.modelId || service.model_id;
@@ -589,10 +579,10 @@ const ServicesManagementPage: React.FC = () => {
 
   const handleUpdateService = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Check session expiry before updating
     if (!checkSessionExpiry()) return;
-    
+
     if (!selectedService?.serviceId) {
       toast({
         title: "Update Failed",
@@ -887,6 +877,168 @@ const ServicesManagementPage: React.FC = () => {
     }
   };
 
+  const serviceColumns = useMemo((): AdminTableColumn<Service>[] => {
+    return [
+      {
+        id: "name",
+        header: "Name",
+        sortable: {
+          label: "Name",
+          direction: nameSortDirection,
+          onAsc: () => {
+            setSortBy("name");
+            setNameSortDirection("asc");
+          },
+          onDesc: () => {
+            setSortBy("name");
+            setNameSortDirection("desc");
+          },
+          ascAriaLabel: "Sort services by name ascending",
+          descAriaLabel: "Sort services by name descending",
+        },
+        cell: (service) => (
+          <Text fontSize="sm" noOfLines={1} title={service.name}>
+            {service.name || "N/A"}
+          </Text>
+        ),
+      },
+      {
+        id: "task",
+        header: "Model Task Type",
+        cell: (service) => (
+          <Badge
+            colorScheme={getTaskColor(
+              service.model?.task?.type || service.task?.type || service.task_type
+            )}
+            fontSize="sm"
+            p={1}
+          >
+            {(service.model?.task?.type || service.task?.type || service.task_type)?.toUpperCase() ||
+              "N/A"}
+          </Badge>
+        ),
+      },
+      {
+        id: "status",
+        header: "Status",
+        cell: (service) => (
+          <Badge
+            colorScheme={service.isPublished === true ? "green" : "gray"}
+            fontSize="sm"
+            p={1}
+          >
+            {service.isPublished === true ? "Published" : "Unpublished"}
+          </Badge>
+        ),
+      },
+      {
+        id: "created",
+        header: "Created At",
+        cell: (service) => (
+          <Text fontSize="sm" color="gray.600">
+            {service.createdAt ? new Date(service.createdAt).toLocaleDateString() : "N/A"}
+          </Text>
+        ),
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        tdProps: { onClick: (e) => e.stopPropagation() },
+        cell: (service) => (
+          <HStack spacing={1}>
+            <Tooltip label="View" placement="top" hasArrow>
+              <IconButton
+                aria-label="View"
+                icon={<ViewIcon />}
+                size="sm"
+                variant="ghost"
+                colorScheme="blue"
+                _hover={{ bg: "blue.50" }}
+                onClick={() =>
+                  handleViewService(service.serviceId || service.service_id || "")
+                }
+              />
+            </Tooltip>
+            {!isRegistryReadOnly &&
+              (service.isPublished === true ? (
+                <Tooltip label="Unpublish" placement="top" hasArrow>
+                  <IconButton
+                    aria-label="Unpublish"
+                    icon={<FaDownload />}
+                    size="sm"
+                    variant="ghost"
+                    colorScheme="red"
+                    _hover={{ bg: "red.50" }}
+                    onClick={() => {
+                      setConfirmUnpublishService(service);
+                      onUnpublishConfirmOpen();
+                    }}
+                    isLoading={unpublishingServiceUuid === service.serviceId}
+                    isDisabled={
+                      unpublishingServiceUuid !== null || publishingServiceUuid !== null
+                    }
+                  />
+                </Tooltip>
+              ) : (
+                <Tooltip
+                  label={
+                    isServiceModelDeprecated(service)
+                      ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
+                      : "Publish"
+                  }
+                  hasArrow
+                  placement="top"
+                >
+                  <Box as="span" display="inline-block">
+                    <IconButton
+                      aria-label="Publish"
+                      icon={<FaUpload />}
+                      size="sm"
+                      variant="ghost"
+                      colorScheme="green"
+                      _hover={{ bg: "green.50" }}
+                      onClick={() => {
+                        setConfirmPublishService(service);
+                        onPublishConfirmOpen();
+                      }}
+                      isLoading={publishingServiceUuid === service.serviceId}
+                      isDisabled={
+                        unpublishingServiceUuid !== null ||
+                        publishingServiceUuid !== null ||
+                        isServiceModelDeprecated(service)
+                      }
+                    />
+                  </Box>
+                </Tooltip>
+              ))}
+            {!isRegistryReadOnly && (
+              <Tooltip label="Delete" placement="top" hasArrow>
+                <IconButton
+                  aria-label="Delete"
+                  icon={<DeleteIcon />}
+                  size="sm"
+                  variant="ghost"
+                  colorScheme="red"
+                  _hover={{ bg: "red.50" }}
+                  onClick={() => handleDeleteClick(service)}
+                  isLoading={deletingServiceUuid === service.serviceId}
+                  isDisabled={deletingServiceUuid !== null}
+                />
+              </Tooltip>
+            )}
+          </HStack>
+        ),
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    nameSortDirection,
+    unpublishingServiceUuid,
+    publishingServiceUuid,
+    deletingServiceUuid,
+    isRegistryReadOnly,
+  ]);
+
   return (
     <>
       <Head>
@@ -898,7 +1050,11 @@ const ServicesManagementPage: React.FC = () => {
         <VStack spacing={6} w="full">
           <ManagementPageHeader
             title="Services Management"
-            description="Manage and configure services"
+            description={
+              isRegistryReadOnly
+                ? "View services in the registry (read-only)"
+                : "Manage and configure services"
+            }
           />
 
           <Grid gap={8} w="full" mx="auto">
@@ -908,8 +1064,9 @@ const ServicesManagementPage: React.FC = () => {
                 variant="enclosed"
                 index={activeTab}
                 onChange={(index) => {
+                  if (isRegistryReadOnly && index === 1) return;
                   setActiveTab(index);
-                  if (index !== 2) {
+                  if (index !== viewTabIndex) {
                     setIsViewingService(false);
                     setSelectedService(null);
                     setSelectedServiceModelDeprecated(null);
@@ -922,7 +1079,9 @@ const ServicesManagementPage: React.FC = () => {
               >
                 <TabList>
                   <Tab fontWeight="semibold">Service Registry</Tab>
-                  <Tab fontWeight="semibold">Create Service</Tab>
+                  {!isRegistryReadOnly && (
+                    <Tab fontWeight="semibold">Create Service</Tab>
+                  )}
                   {isViewingService && (
                     <Tab fontWeight="semibold">View Service</Tab>
                   )}
@@ -938,255 +1097,113 @@ const ServicesManagementPage: React.FC = () => {
                         </Heading>
                       </CardHeader>
                       <CardBody>
-                        {isLoading ? (
-                          <Box textAlign="center" py={8}>
-                            <Text color="gray.500">Loading services...</Text>
-                          </Box>
-                        ) : (
-                          <>
-                          <VStack align="stretch" spacing={4} mb={4}>
-                            <TableFilterToolbar
-                              hasActiveFilters={hasActiveFilters}
-                              onClear={clearAllFilters}
-                              align="flex-end"
-                            >
-                              <FormControl w={{ base: "full", md: "280px" }}>
-                                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>Search</FormLabel>
-                                <InputGroup>
-                                  <InputLeftElement pointerEvents="none">
-                                    <SearchIcon color="gray.400" />
-                                  </InputLeftElement>
-                                  <Input
-                                    placeholder="Search by service name..."
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                    bg={cardBg}
-                                    pl={10}
-                                    size="sm"
-                                  />
-                                </InputGroup>
-                              </FormControl>
-                              <FormControl w={{ base: "full", sm: "140px" }}>
-                                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>Status</FormLabel>
-                                <Select
-                                  size="sm"
+                        <AdminDataTable
+                          key={`${filterStatus}-${filterTaskType}-${registryEpoch}`}
+                          items={registryTableItems}
+                          columns={serviceColumns}
+                          getRowKey={(service) =>
+                            service.serviceId || service.service_id || ""
+                          }
+                          onRowClick={(service) =>
+                            handleViewService(service.serviceId || service.service_id || "")
+                          }
+                          paginate="client"
+                          pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+                          isLoading={isLoading}
+                          loadingMessage="Loading services..."
+                          emptyMessage="No services in the registry yet."
+                          noResultsMessage="No results found. Try adjusting your search or filters."
+                          unfilteredCount={services.length}
+                          hasActiveFilters={hasActiveFilters}
+                          onClearFilters={clearAllFilters}
+                          filters={
+                            <VStack align="stretch" spacing={3} w="full">
+                              <HStack flexWrap="wrap" spacing={3} align="flex-end">
+                                <TableSearchField
+                                  label="Search"
+                                  value={searchQuery}
+                                  onChange={setSearchQuery}
+                                  placeholder="Search by service name..."
+                                  formControlProps={{ w: { base: "full", md: "280px" } }}
+                                />
+                                <TableSelectField
+                                  label="Status"
                                   value={filterStatus}
-                                  onChange={(e) => { setFilterStatus(e.target.value); setListPage(1); }}
-                                  bg={cardBg}
+                                  onChange={setFilterStatus}
+                                  formControlProps={{ w: { base: "full", sm: "140px" } }}
                                 >
                                   <option value="">All</option>
                                   <option value="published">Published</option>
                                   <option value="unpublished">Unpublished</option>
-                                </Select>
-                              </FormControl>
-                              <FormControl w={{ base: "full", sm: "160px" }}>
-                                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>Model Task Type</FormLabel>
-                                <Select
-                                  size="sm"
+                                </TableSelectField>
+                                <TableSelectField
+                                  label="Model Task Type"
                                   value={filterTaskType}
-                                  onChange={(e) => { setFilterTaskType(e.target.value); setListPage(1); }}
-                                  bg={cardBg}
+                                  onChange={setFilterTaskType}
+                                  formControlProps={{ w: { base: "full", sm: "160px" } }}
                                 >
                                   <option value="">All</option>
                                   {taskTypeOptions.map((t) => (
-                                    <option key={t} value={t}>{t}</option>
+                                    <option key={t} value={t}>
+                                      {t}
+                                    </option>
                                   ))}
-                                </Select>
-                              </FormControl>
-                            </TableFilterToolbar>
-                            {hasActiveFilters && (
-                              <HStack spacing={2} flexWrap="wrap">
-                                {searchQuery.trim() && (
-                                  <Badge colorScheme="blue" fontSize="xs" px={2} py={1} cursor="pointer" onClick={() => { setSearchQuery(""); setListPage(1); }} _hover={{ opacity: 0.8 }}>
-                                    Search: &quot;{searchQuery.trim()}&quot; ×
-                                  </Badge>
-                                )}
-                                {filterStatus && (
-                                  <Badge colorScheme="gray" fontSize="xs" px={2} py={1} cursor="pointer" onClick={() => { setFilterStatus(""); setListPage(1); }} _hover={{ opacity: 0.8 }}>
-                                    Status: {filterStatus === "published" ? "Published" : "Unpublished"} ×
-                                  </Badge>
-                                )}
-                                {filterTaskType && (
-                                  <Badge colorScheme="gray" fontSize="xs" px={2} py={1} cursor="pointer" onClick={() => { setFilterTaskType(""); setListPage(1); }} _hover={{ opacity: 0.8 }}>
-                                    Model Task Type: {filterTaskType} ×
-                                  </Badge>
-                                )}
+                                </TableSelectField>
                               </HStack>
-                            )}
-                          </VStack>
-
-                          {paginatedServices.length === 0 ? (
-                            <Box textAlign="center" py={8}>
-                              <Text color="gray.500">
-                                No results found.
-                                {serverTotal === 0 ? " No services in the registry yet." : " Try adjusting your search or filters."}
-                              </Text>
-                            </Box>
-                          ) : (
-                          <Box maxH="60vh" overflowY="auto" overflowX="hidden">
-                            <Table variant="simple" bg={tableBg} size="sm" w="100%">
-                              <Thead bg={tableHeaderBg}>
-                                <Tr>
-                                  <Th>
-                                    <TableSortHeader
-                                      label="Name"
-                                      direction={nameSortDirection}
-                                      onAsc={() => {
-                                        setSortBy("name");
-                                        setNameSortDirection("asc");
-                                        setListPage(1);
-                                      }}
-                                      onDesc={() => {
-                                        setSortBy("name");
-                                        setNameSortDirection("desc");
-                                        setListPage(1);
-                                      }}
-                                      ascAriaLabel="Sort services by name ascending"
-                                      descAriaLabel="Sort services by name descending"
-                                    />
-                                  </Th>
-                                  <Th>Model Task Type</Th>
-                                  <Th>Status</Th>
-                                  <Th>Created At</Th>
-                                  <Th>Actions</Th>
-                                </Tr>
-                              </Thead>
-                              <Tbody>
-                                {paginatedServices.map((service) => (
-                                  <Tr
-                                    key={service.serviceId || service.service_id}
-                                    _hover={{ bg: tableRowHoverBg, cursor: "pointer" }}
-                                    onClick={() => handleViewService(service.serviceId || service.service_id || "")}
-                                  >
-                                    <Td>
-                                      <Text fontSize="sm" noOfLines={1} title={service.name}>{service.name || "N/A"}</Text>
-                                    </Td>
-                                    <Td>
-                                      <Badge
-                                        colorScheme={getTaskColor(service.model?.task?.type || service.task?.type || service.task_type)}
-                                        fontSize="sm"
-                                        p={1}
-                                      >
-                                        {(service.model?.task?.type || service.task?.type || service.task_type)?.toUpperCase() || "N/A"}
-                                      </Badge>
-                                    </Td>
-                                    <Td>
-                                      <Badge
-                                        colorScheme={service.isPublished === true ? "green" : "gray"}
-                                        fontSize="sm"
-                                        p={1}
-                                      >
-                                        {service.isPublished === true ? "Published" : "Unpublished"}
-                                      </Badge>
-                                    </Td>
-                                    <Td>
-                                      <Text fontSize="sm" color="gray.600">
-                                        {service.createdAt ? new Date(service.createdAt).toLocaleDateString() : "N/A"}
-                                      </Text>
-                                    </Td>
-                                    <Td onClick={(e) => e.stopPropagation()}>
-                                      <HStack spacing={1}>
-                                        <Tooltip label="View" placement="top" hasArrow>
-                                          <IconButton
-                                            aria-label="View"
-                                            icon={<ViewIcon />}
-                                            size="sm"
-                                            variant="ghost"
-                                            colorScheme="blue"
-                                            _hover={{ bg: "blue.50" }}
-                                            onClick={() => handleViewService(service.serviceId || service.service_id || "")}
-                                          />
-                                        </Tooltip>
-                                        {service.isPublished === true ? (
-                                          <Tooltip label="Unpublish" placement="top" hasArrow>
-                                            <IconButton
-                                              aria-label="Unpublish"
-                                              icon={<FaDownload />}
-                                              size="sm"
-                                              variant="ghost"
-                                              colorScheme="red"
-                                              _hover={{ bg: "red.50" }}
-                                              onClick={() => { setConfirmUnpublishService(service); onUnpublishConfirmOpen(); }}
-                                              isLoading={unpublishingServiceUuid === service.serviceId}
-                                              isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
-                                            />
-                                          </Tooltip>
-                                        ) : (
-                                          <Tooltip
-                                            label={isServiceModelDeprecated(service) ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing." : "Publish"}
-                                            hasArrow
-                                            placement="top"
-                                          >
-                                            <Box as="span" display="inline-block">
-                                              <IconButton
-                                                aria-label="Publish"
-                                                icon={<FaUpload />}
-                                                size="sm"
-                                                variant="ghost"
-                                                colorScheme="green"
-                                                _hover={{ bg: "green.50" }}
-                                                onClick={() => { setConfirmPublishService(service); onPublishConfirmOpen(); }}
-                                                isLoading={publishingServiceUuid === service.serviceId}
-                                                isDisabled={
-                                                  unpublishingServiceUuid !== null ||
-                                                  publishingServiceUuid !== null ||
-                                                  isServiceModelDeprecated(service)
-                                                }
-                                              />
-                                            </Box>
-                                          </Tooltip>
-                                        )}
-                                        <Tooltip label="Delete" placement="top" hasArrow>
-                                          <IconButton
-                                            aria-label="Delete"
-                                            icon={<DeleteIcon />}
-                                            size="sm"
-                                            variant="ghost"
-                                            colorScheme="red"
-                                            _hover={{ bg: "red.50" }}
-                                            onClick={() => handleDeleteClick(service)}
-                                            isLoading={deletingServiceUuid === service.serviceId}
-                                            isDisabled={deletingServiceUuid !== null}
-                                          />
-                                        </Tooltip>
-                                      </HStack>
-                                    </Td>
-                                  </Tr>
-                                ))}
-                              </Tbody>
-                            </Table>
-                          </Box>
-                          )}
-                        </>
-                        )}
-                        {!isLoading && totalServices > 0 && (
-                          <TablePaginationBar
-                            startRow={startRow}
-                            endRow={endRow}
-                            totalItems={totalServices}
-                            page={listPage}
-                            totalPages={totalPages}
-                            pageSize={listPageSize}
-                            pageSizeOptions={PAGE_SIZE_OPTIONS}
-                            onPageSizeChange={(value) => {
-                              setListPageSize(value);
-                              setListPage(1);
-                            }}
-                            onFirst={() => setListPage(1)}
-                            onPrev={() => setListPage((p) => Math.max(1, p - 1))}
-                            onNext={() => setListPage((p) => Math.min(totalPages, p + 1))}
-                            onLast={() => setListPage(totalPages)}
-                            canPrev={listPage > 1}
-                            canNext={listPage < totalPages}
-                            borderColor={cardBorder}
-                            bg={cardBg}
-                          />
-                        )}
+                              {hasActiveFilters && (
+                                <HStack spacing={2} flexWrap="wrap">
+                                  {searchQuery.trim() && (
+                                    <Badge
+                                      colorScheme="blue"
+                                      fontSize="xs"
+                                      px={2}
+                                      py={1}
+                                      cursor="pointer"
+                                      onClick={() => setSearchQuery("")}
+                                      _hover={{ opacity: 0.8 }}
+                                    >
+                                      Search: &quot;{searchQuery.trim()}&quot; ×
+                                    </Badge>
+                                  )}
+                                  {filterStatus && (
+                                    <Badge
+                                      colorScheme="gray"
+                                      fontSize="xs"
+                                      px={2}
+                                      py={1}
+                                      cursor="pointer"
+                                      onClick={() => setFilterStatus("")}
+                                      _hover={{ opacity: 0.8 }}
+                                    >
+                                      Status:{" "}
+                                      {filterStatus === "published" ? "Published" : "Unpublished"}{" "}
+                                      ×
+                                    </Badge>
+                                  )}
+                                  {filterTaskType && (
+                                    <Badge
+                                      colorScheme="gray"
+                                      fontSize="xs"
+                                      px={2}
+                                      py={1}
+                                      cursor="pointer"
+                                      onClick={() => setFilterTaskType("")}
+                                      _hover={{ opacity: 0.8 }}
+                                    >
+                                      Model Task Type: {filterTaskType} ×
+                                    </Badge>
+                                  )}
+                                </HStack>
+                              )}
+                            </VStack>
+                          }
+                        />
                       </CardBody>
                     </Card>
                   </TabPanel>
 
                   {/* Create Service Tab */}
+                  {!isRegistryReadOnly && (
                   <TabPanel px={0} pt={6}>
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
@@ -1327,6 +1344,7 @@ const ServicesManagementPage: React.FC = () => {
                       </CardBody>
                     </Card>
                   </TabPanel>
+                  )}
 
                   {/* View Service Tab */}
                   {isViewingService && selectedService ? (
@@ -1341,6 +1359,11 @@ const ServicesManagementPage: React.FC = () => {
                           {!isEditingService && (
                             // View Mode - Display service details
                             <VStack spacing={6} align="stretch">
+                              {isRegistryReadOnly && (
+                                <Badge colorScheme="gray" alignSelf="flex-start" fontSize="sm" px={2} py={1}>
+                                  Read-only
+                                </Badge>
+                              )}
                               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                                 <Box>
                                   <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
@@ -1388,44 +1411,45 @@ const ServicesManagementPage: React.FC = () => {
                                     >
                                       {selectedService.isPublished === true ? "Published" : "Unpublished"}
                                     </Badge>
-                                    {selectedService.isPublished === true ? (
-                                      <Tooltip label="Unpublish" placement="top" hasArrow>
-                                        <IconButton
-                                          aria-label="Unpublish"
-                                          icon={<FaDownload />}
-                                          size="sm"
-                                          colorScheme="red"
-                                          variant="outline"
-                                          onClick={() => { setConfirmUnpublishService(selectedService); onUnpublishConfirmOpen(); }}
-                                          isLoading={unpublishingServiceUuid === selectedService.serviceId}
-                                          isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
-                                        />
-                                      </Tooltip>
-                                    ) : (
-                                      <Tooltip
-                                        label={isServiceModelDeprecated(selectedService) || selectedServiceModelDeprecated === true ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing." : "Publish"}
-                                        hasArrow
-                                        placement="top"
-                                      >
-                                        <Box as="span" display="inline-block">
+                                    {!isRegistryReadOnly &&
+                                      (selectedService.isPublished === true ? (
+                                        <Tooltip label="Unpublish" placement="top" hasArrow>
                                           <IconButton
-                                            aria-label="Publish"
-                                            icon={<FaUpload />}
+                                            aria-label="Unpublish"
+                                            icon={<FaDownload />}
                                             size="sm"
-                                            colorScheme="green"
+                                            colorScheme="red"
                                             variant="outline"
-                                            onClick={() => { setConfirmPublishService(selectedService); onPublishConfirmOpen(); }}
-                                            isLoading={publishingServiceUuid === selectedService.serviceId}
-                                            isDisabled={
-                                              unpublishingServiceUuid !== null ||
-                                              publishingServiceUuid !== null ||
-                                              isServiceModelDeprecated(selectedService) ||
-                                              selectedServiceModelDeprecated === true
-                                            }
+                                            onClick={() => { setConfirmUnpublishService(selectedService); onUnpublishConfirmOpen(); }}
+                                            isLoading={unpublishingServiceUuid === selectedService.serviceId}
+                                            isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
                                           />
-                                        </Box>
-                                      </Tooltip>
-                                    )}
+                                        </Tooltip>
+                                      ) : (
+                                        <Tooltip
+                                          label={isServiceModelDeprecated(selectedService) || selectedServiceModelDeprecated === true ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing." : "Publish"}
+                                          hasArrow
+                                          placement="top"
+                                        >
+                                          <Box as="span" display="inline-block">
+                                            <IconButton
+                                              aria-label="Publish"
+                                              icon={<FaUpload />}
+                                              size="sm"
+                                              colorScheme="green"
+                                              variant="outline"
+                                              onClick={() => { setConfirmPublishService(selectedService); onPublishConfirmOpen(); }}
+                                              isLoading={publishingServiceUuid === selectedService.serviceId}
+                                              isDisabled={
+                                                unpublishingServiceUuid !== null ||
+                                                publishingServiceUuid !== null ||
+                                                isServiceModelDeprecated(selectedService) ||
+                                                selectedServiceModelDeprecated === true
+                                              }
+                                            />
+                                          </Box>
+                                        </Tooltip>
+                                      ))}
                                   </HStack>
                                 </Box>
                               </SimpleGrid>
@@ -1459,7 +1483,7 @@ const ServicesManagementPage: React.FC = () => {
                                     Published On
                                   </Text>
                                   <Text fontSize="md">
-                                    {selectedService.publishedOn 
+                                    {selectedService.publishedOn
                                       ? new Date(selectedService.publishedOn * 1000).toLocaleString()
                                       : "N/A"}
                                   </Text>
@@ -1571,5 +1595,3 @@ const ServicesManagementPage: React.FC = () => {
 };
 
 export default ServicesManagementPage;
-
-

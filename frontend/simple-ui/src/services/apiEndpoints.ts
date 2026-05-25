@@ -40,6 +40,7 @@ export const apiEndpoints = {
         `/users?limit=${limit}&offset=${offset}`,
       userById: (userId: string) => `/users/${userId}`,
       inferencePermissions: '/inference/permissions',
+      permissions: '/permissions/',
     },
     /** Relative to `rolesBase`. */
     rolePaths: {
@@ -78,7 +79,8 @@ export const apiEndpoints = {
     services: {
       base: `${API_V1}/services`,
       byId: (serviceId: string) => `${API_V1}/services/${serviceId}`,
-      tryItList: `${API_V1}/services/try-it-service-list`,
+      /** Public gateway route (no JWT) — see apisix model-management-try-it-service-list-public-route */
+      tryItList: `${API_V1}/model-management/services/try-it-service-list`,
     },
     tryIt: {
       execute: `${API_V1}/try-it`,

@@ -21,9 +21,11 @@ import {
 import { ViewIcon, ViewOffIcon } from '@chakra-ui/icons';
 import { useAuth } from '../../hooks/useAuth';
 import { RegisterRequest } from '../../types/auth';
+import { ApiValidationError } from '../../services/dto/apiValidationError';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
-import PasswordRequirements, { passwordPasses } from './password/PasswordRequirements';
+import { PASSWORD_POLICY } from '../../config/constants';
+import PasswordRequirements, { getPasswordValidationError, passwordPasses } from './password/PasswordRequirements';
 
 interface RegisterFormProps {
   onSuccess?: () => void;
@@ -83,8 +85,9 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       errors.confirm_password = 'Passwords do not match';
     }
 
-    if (!passwordPasses(formData.password)) {
-      errors.password = 'Password does not meet all requirements';
+    const passwordError = getPasswordValidationError(formData.password);
+    if (passwordError) {
+      errors.password = passwordError;
     }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
@@ -112,7 +115,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
         ...formData,
         full_name: (formData.full_name ?? '').trim(),
       });
-      
+
       // Clear form data after successful registration
       setFormData({
         full_name: '',
@@ -124,7 +127,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       setValidationErrors({});
       setShowPassword(false);
       setShowConfirmPassword(false);
-      
+
       // Show success toast — user must verify email before sign-in works.
       toast({
         title: "Check your email",
@@ -134,7 +137,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
         duration: 8000,
         isClosable: true,
       });
-      
+
       // After successful registration, switch to login page
       if (onRegisterSuccess) {
         onRegisterSuccess();
@@ -145,16 +148,19 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       }
     } catch (error: any) {
       console.error('Registration failed:', error);
-      
+
       // Extract error message from response
       let errorMessage = 'Registration failed. Please try again.';
       let errorTitle = 'Registration Error';
-      
-      // Check if error has response data
-      if (error?.response) {
+
+      if (error instanceof ApiValidationError) {
+        errorTitle = 'Registration Error';
+        errorMessage =
+          'We could not confirm your registration. If you received a verification email, use that link to activate your account; otherwise try again or sign in.';
+      } else if (error?.response) {
         const status = error?.response?.status;
         const errorData = error?.response?.data ?? error?.response;
-        
+
         // Extract error message from different possible formats
         if (typeof errorData === 'string') {
           errorMessage = errorData;
@@ -163,7 +169,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
         } else if (errorData?.message) {
           errorMessage = String(errorData.message);
         } else if (Array.isArray(errorData)) {
-          errorMessage = errorData.map((err: any) => 
+          errorMessage = errorData.map((err: any) =>
             err.detail || err.message || String(err)
           ).join(', ');
         } else if (typeof errorData === 'object' && Object.keys(errorData).length > 0) {
@@ -171,14 +177,14 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
           const errorText = errorData.detail || errorData.message || errorData.error;
           errorMessage = errorText ? String(errorText) : JSON.stringify(errorData);
         }
-        
+
         // Provide user-friendly messages based on status code
         if (status === 400) {
           errorTitle = 'Invalid Registration Data';
           if (!errorMessage.includes('already') && !errorMessage.includes('exists')) {
             errorMessage = errorMessage || 'Please check your registration information and try again.';
           }
-        } else if (status === 409 || errorMessage.toLowerCase().includes('already exists') || 
+        } else if (status === 409 || errorMessage.toLowerCase().includes('already exists') ||
                    errorMessage.toLowerCase().includes('already registered') ||
                    errorMessage.toLowerCase().includes('duplicate')) {
           errorTitle = 'Account Already Exists';
@@ -203,7 +209,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
         // Handle Error objects
         const errorMsg = error.message;
         errorMessage = errorMsg;
-        
+
         // Provide user-friendly messages for common error types
         if (errorMsg.includes('timeout') || errorMsg.includes('Timeout')) {
           errorTitle = 'Request Timeout';
@@ -219,7 +225,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
           errorMessage = 'An account with this information already exists. Please sign in instead.';
         }
       }
-      
+
       // Show error toast
       toast({
         title: errorTitle,
@@ -321,8 +327,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
                 pr="4.5rem"
                 autoComplete="new-password"
                 data-form-type="other"
-                minLength={8}
-                maxLength={64}
+                minLength={PASSWORD_POLICY.MIN_LENGTH}
+                maxLength={PASSWORD_POLICY.MAX_LENGTH}
               />
               <InputRightElement width="4.5rem">
                 <IconButton
@@ -355,6 +361,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
                 pr="4.5rem"
                 autoComplete="new-password"
                 data-form-type="other"
+                minLength={PASSWORD_POLICY.MIN_LENGTH}
+                maxLength={PASSWORD_POLICY.MAX_LENGTH}
               />
               <InputRightElement width="4.5rem">
                 <IconButton

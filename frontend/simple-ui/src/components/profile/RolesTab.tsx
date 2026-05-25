@@ -26,13 +26,16 @@ import { useAuth } from "../../hooks/useAuth";
 import { useRolesTab } from "./hooks/useRolesTab";
 import UserSearchableSelect from "../common/UserSearchableSelect";
 import StandardModal from "../common/StandardModal";
+import { formatDefaultTenantAssignableRoleLabel } from "../../utils/defaultTenant";
 
 export interface RolesTabProps {
   users: import("../../types/auth").User[];
   isLoadingUsers: boolean;
+  /** Default-tenant scope for platform role assignment (Profile → Roles). */
+  defaultTenantId?: string | null;
 }
 
-export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
+export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: RolesTabProps) {
   const { user } = useAuth();
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
@@ -72,21 +75,29 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
           </HStack>
 
           <Box>
-           
+
             <FormControl>
               <FormLabel fontWeight="semibold">User</FormLabel>
               <UserSearchableSelect
+                key={`${defaultTenantId ?? "pending"}-${users.length}`}
                 variant="pick"
                 value={rt.selectedUser?.user_id ?? null}
                 onChange={(id, picked) => rt.handleUserSelect(id, picked)}
-                seedUsers={users}
+                seedUsers={isLoadingUsers ? [] : users}
+                usersFromSeedOnly={true}
                 isLoading={isLoadingUsers}
-                isDisabled={isLoadingUsers}
-                placeholder={isLoadingUsers ? "Loading users..." : "Select a user"}
+                isDisabled={isLoadingUsers || !defaultTenantId}
+                placeholder={
+                  isLoadingUsers
+                    ? "Loading users..."
+                    : defaultTenantId
+                      ? "Select a user"
+                      : "Default tenant not found"
+                }
                 selectedPreview={rt.selectedUser}
                 allowClear
               />
-            
+
             </FormControl>
           </Box>
 
@@ -104,7 +115,7 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
                   {rt.selectedUserRoles.map((roleName) => (
                     <WrapItem key={roleName}>
                       <Badge colorScheme="green" fontSize="sm" px={2} py={1}>
-                        {roleName}
+                        {formatDefaultTenantAssignableRoleLabel(roleName)}
                       </Badge>
                     </WrapItem>
                   ))}
@@ -169,10 +180,10 @@ export default function RolesTab({ users, isLoadingUsers }: RolesTabProps) {
                 bg="white"
                 size="sm"
               >
-                <option value="">Select a role to assign to this user.</option>
+                <option value="">Select a role</option>
                 {rt.availableRoles.map((roleName) => (
                   <option key={roleName} value={roleName}>
-                    {roleName}
+                    {formatDefaultTenantAssignableRoleLabel(roleName)}
                   </option>
                 ))}
               </Select>

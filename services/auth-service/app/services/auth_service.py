@@ -26,6 +26,10 @@ from app.core.exceptions import (
 )
 from app.models.credentials import UserCredentials
 from app.models.tenant import Tenant, TenantStatus
+from app.services.tenant_lifecycle import (
+    assert_valid_tenant_status_transition,
+    sync_tenant_users_for_status,
+)
 from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
 from app.repositories.credentials_repository import CredentialsRepository
@@ -43,6 +47,7 @@ from app.services.auth_email_templates import (
 )
 from app.core.security import password_manager
 from app.services.email_helpers import enqueue_email, issue_session, persist_token_verification, resolve_tenant_id, setup_token_expires_at
+from app.services.api_key_service import APIKeyService
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
 from app.utils.username import allocate_unique_username, derive_username_from_email
@@ -104,6 +109,7 @@ class AuthService:
         verification_repo: VerificationRepository,
         tenant_repo: TenantRepository,
         email_client: EmailClient,
+        api_key_service: Optional[APIKeyService] = None,
     ) -> None:
         self._users = user_repo
         self._roles = role_service
@@ -113,6 +119,7 @@ class AuthService:
         self._verifications = verification_repo
         self._tenants = tenant_repo
         self._email = email_client
+        self._api_keys = api_key_service
 
     def _validate_token_of_type(self, token: str, expected_type: str):
         """Validate a JWT and assert its type. Raises TokenExpiredError / TokenInvalidError on failure."""
@@ -379,8 +386,15 @@ class AuthService:
         if not await self._is_pending_tenant_contact_admin(user):
             return
         tenant = await self._tenants.get_by_id(user.tenant_id)
-        assert tenant is not None
+        if tenant is None:
+            raise EntityNotFoundError(f"Tenant {user.tenant_id}")
+        assert_valid_tenant_status_transition(tenant.status, TenantStatus.ACTIVE)
         await self._tenants.update(tenant, {"status": TenantStatus.ACTIVE})
+        await sync_tenant_users_for_status(
+            self._users, tenant.id, TenantStatus.ACTIVE, updated_by=user.id
+        )
+        if self._api_keys is not None:
+            await self._api_keys.refresh_keys_cache_for_tenant(tenant.id)
         logger.info(
             "Tenant %s activated after contact admin set password (user id=%s)",
             tenant.id,
@@ -518,6 +532,8 @@ class AuthService:
         await self._verifications.deactivate(token_obj)
         await self._activate_pending_tenant_for_contact_admin(user)
         await self._users.commit()
+        if self._api_keys is not None:
+            await self._api_keys.refresh_keys_cache_for_user(user)
         logger.info("Password set via activation link for user id=%s", user.id)
         if was_inactive:
             enqueue_email(background_tasks, self._email, lambda: render_welcome(user))

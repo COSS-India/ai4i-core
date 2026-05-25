@@ -10,7 +10,7 @@
 
     { "endpoint": "POST:/api/v1/auth/api-keys",                            "permissionRequired": 30, "description": "Create API key (apiKey.create)" },
     { "endpoint": "GET:/api/v1/auth/api-keys",                             "permissionRequired": 31, "description": "List own API keys (apiKey.read)" },
-    { "endpoint": "PATCH:/api/v1/auth/api-keys",                           "permissionRequired": 32, "description": "Update API key (apiKey.update)" },
+    { "endpoint": "PATCH:/api/v1/auth/api-keys/{api_key}",                "permissionRequired": 32, "description": "Update API key (apiKey.update)" },
     { "endpoint": "DELETE:/api/v1/auth/api-keys/{api_key}",                "permissionRequired": 33, "description": "Revoke API key (apiKey.delete)" },
     { "endpoint": "GET:/api/v1/auth/api-keys/all",                         "permissionRequired": 34, "description": "Admin: list all API keys (apiKey.read.all)" },
 

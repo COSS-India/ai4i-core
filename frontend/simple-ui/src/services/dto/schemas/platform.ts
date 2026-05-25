@@ -1,5 +1,11 @@
 import { z } from 'zod';
+import { unwrapAuthV2Payload } from '../unwrap';
 import { unwrapPlatformDataEnvelope } from '../unwrap';
+
+/** Platform list responses may use `{ success, data }` or `{ data }`. */
+function unwrapPlatformListPayload(raw: unknown): unknown {
+  return unwrapPlatformDataEnvelope(unwrapAuthV2Payload(raw));
+}
 
 /** Single platform record (models / services) — passthrough for evolving API fields. */
 export const platformRecordSchema = z.object({}).passthrough();
@@ -29,7 +35,7 @@ export const serviceSingleSchema = withPlatformEnvelope(serviceRecordSchema);
 
 /** Try-it and other callers expect a plain service array. */
 export const tryItServiceListSchema = z.preprocess(
-  (raw: unknown) => unwrapPlatformDataEnvelope(raw),
+  unwrapPlatformListPayload,
   z.array(platformRecordSchema)
 );
 

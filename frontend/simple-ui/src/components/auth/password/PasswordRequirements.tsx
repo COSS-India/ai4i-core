@@ -7,6 +7,7 @@
 import { Box, HStack, Icon, Text, VStack } from "@chakra-ui/react";
 import { CheckIcon, CloseIcon } from "@chakra-ui/icons";
 import React from "react";
+import { PASSWORD_POLICY } from "../../../config/constants";
 
 const SPECIAL_CHARS = "!@#$%^&*()_+-=[]{}|;:,.<>?";
 
@@ -19,17 +20,46 @@ export interface PasswordRule {
 // function from password to bool. Keep keyed-by-label so the UI doesn't
 // reorder under render.
 export const PASSWORD_RULES: PasswordRule[] = [
-  { label: "Minimum 8 characters",          test: (p) => p.length >= 8 },
-  { label: "Maximum 64 characters",         test: (p) => p.length <= 64 && p.length > 0 },
+  { label: `Minimum ${PASSWORD_POLICY.MIN_LENGTH} characters`, test: (p) => p.length >= PASSWORD_POLICY.MIN_LENGTH },
+  { label: `Maximum ${PASSWORD_POLICY.MAX_LENGTH} characters`, test: (p) => p.length <= PASSWORD_POLICY.MAX_LENGTH && p.length > 0 },
   { label: "At least one uppercase letter", test: (p) => /[A-Z]/.test(p) },
   { label: "At least one lowercase letter", test: (p) => /[a-z]/.test(p) },
-  { label: "At least one number",           test: (p) => /[0-9]/.test(p) },
-  { label: "At least one special character",test: (p) => Array.from(SPECIAL_CHARS).some((c) => p.includes(c)) },
-  { label: "No spaces",                     test: (p) => p.length > 0 && !/\s/.test(p) },
+  { label: "At least one number", test: (p) => /[0-9]/.test(p) },
+  { label: "At least one special character", test: (p) => Array.from(SPECIAL_CHARS).some((c) => p.includes(c)) },
+  { label: "No spaces", test: (p) => p.length > 0 && !/\s/.test(p) },
 ];
 
 export function passwordPasses(password: string): boolean {
   return PASSWORD_RULES.every((r) => r.test(password));
+}
+
+/** First failing rule as a user-facing validation message (submit-time). */
+export function getPasswordValidationError(password: string): string | null {
+  if (!password) {
+    return "Password is required.";
+  }
+  if (password.length > PASSWORD_POLICY.MAX_LENGTH) {
+    return "Password must not exceed 64 characters.";
+  }
+  if (password.length < PASSWORD_POLICY.MIN_LENGTH) {
+    return `Password must be at least ${PASSWORD_POLICY.MIN_LENGTH} characters.`;
+  }
+  if (!/[A-Z]/.test(password)) {
+    return "Password must contain at least one uppercase letter.";
+  }
+  if (!/[a-z]/.test(password)) {
+    return "Password must contain at least one lowercase letter.";
+  }
+  if (!/[0-9]/.test(password)) {
+    return "Password must contain at least one number.";
+  }
+  if (!Array.from(SPECIAL_CHARS).some((c) => password.includes(c))) {
+    return "Password must contain at least one special character.";
+  }
+  if (/\s/.test(password)) {
+    return "Password must not contain spaces.";
+  }
+  return null;
 }
 
 interface Props {

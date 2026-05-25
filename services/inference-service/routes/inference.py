@@ -281,7 +281,7 @@ async def list_available_tasks(
     Returns:
         Dict with list of available task types
     """
-    return {"tasks": ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "TRANSLITERATION", "AUDIO_LANG_DETECTION", "SMR"]}
+    return {"tasks": ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "TRANSLITERATION", "AUDIO_LANG_DETECTION", "AUDIO_LANGUAGE_DETECTION", "SMR"]}
 
 async def get_task_info(
     task_type: str,

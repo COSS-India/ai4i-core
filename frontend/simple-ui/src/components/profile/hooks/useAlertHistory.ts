@@ -90,6 +90,14 @@ export function useAlertHistory(enabled: boolean) {
     if (lastOffset !== offset) void loadPage(lastOffset);
   }, [loadPage, offset, pageSize, total]);
 
+  const goToPage = useCallback(
+    (page: number) => {
+      const nextOffset = Math.max(0, (page - 1) * pageSize);
+      if (nextOffset !== offset) void loadPage(nextOffset);
+    },
+    [loadPage, offset, pageSize]
+  );
+
   const openView = useCallback((row: AlertHistoryItem) => {
     setViewItem(row);
     setIsViewOpen(true);
@@ -151,6 +159,7 @@ export function useAlertHistory(enabled: boolean) {
     goNext,
     goFirst,
     goLast,
+    goToPage,
     canPrev,
     canNext,
     openView,

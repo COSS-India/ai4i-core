@@ -39,6 +39,21 @@ class RoleRepository(BaseRepository):
         )
         return [role_name_to_str(n) for n in result.scalars().all()]
 
+    async def get_roles_for_users(self, user_ids: list[UUID]) -> dict[UUID, list[str]]:
+        """Batch-fetch role names for many users (one query)."""
+        if not user_ids:
+            return {}
+        result = await self._db.execute(
+            select(UserRole.user_id, Role.name)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(UserRole.user_id.in_(user_ids))
+            .order_by(UserRole.user_id, UserRole.created_at.desc())
+        )
+        roles_by_user: dict[UUID, list[str]] = {uid: [] for uid in user_ids}
+        for user_id, role_name in result.all():
+            roles_by_user[user_id].append(role_name_to_str(role_name))
+        return roles_by_user
+
     async def get_user_role_records(self, user_id: UUID) -> list[UserRole]:
         result = await self._db.execute(
             select(UserRole)
