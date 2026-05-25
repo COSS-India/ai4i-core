@@ -113,7 +113,7 @@ class Orchestrator:
             UnknownTaskTypeError: If task_type not registered
         """
         # For now, allow all known task types
-        allowed_tasks = ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]
+        allowed_tasks = ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "TRANSLITERATION", "AUDIO_LANG_DETECTION", "AUDIO_LANGUAGE_DETECTION", "SMR"]
         if task_type not in allowed_tasks:
             raise UnknownTaskTypeError(f"Unknown task_type: {task_type}. Allowed: {', '.join(allowed_tasks)}")
 

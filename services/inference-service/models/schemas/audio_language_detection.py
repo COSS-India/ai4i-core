@@ -1,69 +1,50 @@
 """Audio Language Detection service request/response schemas."""
 
-from typing import List, Optional
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, Field
 
 
 class AudioInput(BaseModel):
     """Input for audio-based language detection task."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
-    audio_content: Optional[str] = Field(
-        None, alias="audioContent", description="Base64 encoded audio data"
-    )
-    audio_uri: Optional[str] = Field(
-        None, alias="audioUri", description="HTTP URL to audio file"
-    )
+    audio_content: Optional[str] = Field(None, description="Base64 encoded audio data")
+    audio_uri: Optional[str] = Field(None, description="HTTP URL to audio file")
 
 
 class AudioLanguageDetectionConfig(BaseModel):
     """Configuration for audio language detection inference."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
-    service_id: Optional[str] = Field(
-        None, alias="serviceId", description="Service ID (optional, uses default if omitted)"
-    )
+    service_id: str = Field(..., description="Service ID (required)")
+    return_all_scores: Optional[bool] = Field(False, description="Return scores for all languages")
 
 
 class AudioLanguageDetectionInferenceRequest(BaseModel):
     """Request for audio language detection inference."""
 
     audio: List[AudioInput] = Field(
-        ..., description="Audio inputs for language detection"
+        ..., min_items=1, description="Audio inputs for language detection"
     )
     config: AudioLanguageDetectionConfig = Field(
         ..., description="Audio language detection configuration"
     )
 
 
-class AllScores(BaseModel):
-    """Full score breakdown returned by the Triton ALD model."""
+class LanguagePrediction(BaseModel):
+    """Language prediction with confidence score."""
 
-    predicted_language: str = Field(
-        ..., description="Top predicted language (e.g. 'ms: Malay')"
-    )
-    confidence: float = Field(
-        ..., description="Confidence of top prediction (0-1)"
-    )
-    top_scores: List[float] = Field(
-        default_factory=list, description="Confidence scores for top-N languages"
-    )
+    language_code: str = Field(..., description="ISO 639-1 language code (e.g., 'en')")
+    language: str = Field(..., description="Language name (e.g., 'English')")
+    confidence: float = Field(..., description="Confidence score (0-1)")
 
 
 class AudioLanguageDetectionOutput(BaseModel):
-    """Output for a single audio item from language detection inference."""
+    """Output from audio language detection inference."""
 
-    language_code: str = Field(
-        ..., description="Detected language (e.g. 'ms: Malay')"
+    predicted_language: LanguagePrediction = Field(..., description="Primary detected language")
+    all_scores: Optional[List[LanguagePrediction]] = Field(
+        None, description="All language predictions if requested"
     )
-    confidence: float = Field(
-        ..., description="Detection confidence (0-1)"
-    )
-    all_scores: Optional[AllScores] = Field(
-        None, description="Full score breakdown from the model"
-    )
+    duration_ms: Optional[float] = Field(None, description="Audio duration in milliseconds")
 
 
 class AudioLanguageDetectionInferenceResponse(BaseModel):
@@ -72,3 +53,10 @@ class AudioLanguageDetectionInferenceResponse(BaseModel):
     output: List[AudioLanguageDetectionOutput] = Field(
         ..., description="Audio language detection results"
     )
+
+    class Config:
+        use_enum_values = True
+
+    def dict(self, **kwargs):
+        """Exclude None values from serialization."""
+        return super().dict(exclude_none=True, **kwargs)
