@@ -249,6 +249,44 @@ async def test_run_inference_missing_endpoint():
         logger.info("   [PASS] missing endpoint raises RuntimeError")
 
 
+async def test_resolver_url_construction():
+    """InferenceServerResolver builds /api/v1/services/{id} regardless of trailing slash."""
+    import os
+    from unittest.mock import patch as _patch
+    from inference.inference_server_resolver import InferenceServerResolver
+
+    resolver = InferenceServerResolver()
+    captured: List[str] = []
+
+    async def _mock_get_json(self_or_url, url=None):
+        actual_url = url if url is not None else self_or_url
+        captured.append(actual_url)
+        return {
+            "service_id": "indictrans-v2-all",
+            "name": "indictrans-gpu-t4",
+            "endpoint": "http://triton:8000/v2/models/indictrans-gpu-t4/infer",
+            "api_key": None,
+            "adapter_config": None,
+        }
+
+    cases = [
+        ("http://localhost:9090",   "http://localhost:9090/api/v1/services/indictrans-v2-all"),
+        ("http://localhost:9090/",  "http://localhost:9090/api/v1/services/indictrans-v2-all"),
+        ("https://mms.internal",    "https://mms.internal/api/v1/services/indictrans-v2-all"),
+        ("https://mms.internal/",   "https://mms.internal/api/v1/services/indictrans-v2-all"),
+    ]
+
+    for base_url, expected in cases:
+        captured.clear()
+        resolver._memory_cache.clear()
+        with _patch.dict(os.environ, {"MODEL_MANAGEMENT_SERVICE_URL": base_url}):
+            with _patch("utils.http_client.HTTPServiceClient.get_json", new=_mock_get_json):
+                await resolver.resolve_service("indictrans-v2-all")
+        assert captured[0] == expected, f"base={base_url!r}: got {captured[0]!r}, want {expected!r}"
+
+    logger.info("   [PASS] resolver URL constructed correctly for all base URL variants")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -263,6 +301,7 @@ async def run_all():
         ("_build_response", test_build_response),
         ("run_inference — full pipeline (mocked)", test_run_inference_full),
         ("run_inference — missing endpoint", test_run_inference_missing_endpoint),
+        ("resolver URL — /api/v1/services/{id} path", test_resolver_url_construction),
     ]
 
     logger.info("=" * 70)
