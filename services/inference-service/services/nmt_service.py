@@ -1,3 +1,3 @@
-from services.models.text_models import NMTTaskService
+from services.models.text_default_model import TextDefaultModel
 
-__all__ = ["NMTTaskService"]
+__all__ = ["TextDefaultModel"]
