@@ -130,6 +130,9 @@ class BaseTaskService(ITaskService):
         Raises:
             ValueError: If validation fails
         """
+        # Shallow copy so preprocessing mutations don't affect the caller's original dict
+        payload = dict(payload)
+
         # 1. Validate request
         await self.validate_request(payload)
 
