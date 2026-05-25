@@ -6,15 +6,10 @@ Language Diarization (each to be fleshed out in their own PR).
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from pydantic import BaseModel
-
 from services.base.audio_base import AudioBase
 from services.base.config_mapper import GenericTritonMapper
 from models.schemas.asr import (
-    ASRConfig,
-    ASRInferenceRequest,
     ASRInferenceResponse,
-    AudioInput,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,26 +73,10 @@ class ASRTaskService(AudioBase):
         super().__init__(service_info=service_info, **kwargs)
         self.logger = logger
 
-    async def _deserialize_payload(self, payload: Dict[str, Any]) -> ASRInferenceRequest:
-        """Parse the raw request dict into a typed ASRInferenceRequest."""
-        try:
-            audio_items = payload.get("audio", [])
-            if isinstance(audio_items, list) and audio_items:
-                if isinstance(audio_items[0], dict):
-                    audio_items = [AudioInput(**item) for item in audio_items]
-
-            config_data = payload.get("config", {})
-            if isinstance(config_data, dict):
-                config_data = ASRConfig(**config_data)
-
-            return ASRInferenceRequest(audio=audio_items, config=config_data)
-        except Exception as exc:
-            raise ValueError(f"ASR: failed to deserialize payload: {exc}") from exc
-
-    async def validate_request(self, request: BaseModel) -> None:
+    async def validate_request(self, payload: Dict[str, Any]) -> None:
         """AudioBase validation + ASR-specific sourceLanguage check."""
-        await super().validate_request(request)
-        await self._validate_source_language(request)
+        await super().validate_request(payload)
+        await self._validate_source_language(payload)
 
     def _get_default_adapter_config(self) -> Dict[str, Any]:
         return _DEFAULT_ASR_ADAPTER_CONFIG
@@ -148,7 +127,7 @@ class ASRTaskService(AudioBase):
         return await self._wrap_transcription_output(decoded)
 
     def _build_response(
-        self, request: ASRInferenceRequest, postprocessed: Dict[str, Any]
+        self, payload: Dict[str, Any], postprocessed: Dict[str, Any]
     ) -> ASRInferenceResponse:
         return ASRInferenceResponse(output=postprocessed["output"], smr_response=None)
 

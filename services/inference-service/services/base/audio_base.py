@@ -29,7 +29,6 @@ import numpy as np
 import scipy.signal as sps
 from pydub import AudioSegment
 from pydub.effects import normalize as pydub_normalize
-from pydantic import BaseModel
 
 from interfaces.task_service import BaseTaskService
 
@@ -45,10 +44,53 @@ class AudioBase(BaseTaskService):
     TARGET_SAMPLE_RATE = 16000  # All audio is resampled to this rate before Triton
 
     # ------------------------------------------------------------------
-    # Pipeline methods
+    # Pipeline entry points — self-contained raw-dict pipeline
     # ------------------------------------------------------------------
 
-    async def validate_request(self, request: BaseModel) -> None:
+    async def process(self, payload: Dict[str, Any]) -> Any:
+        """
+        Audio inference pipeline (overrides BaseTaskService.process).
+
+        Works with the raw request dict throughout — no Pydantic deserialization.
+        This makes AudioBase self-contained regardless of whether the base class
+        uses the typed-model (pre-PR #730) or raw-dict (post-PR #730) pattern.
+
+        Flow:
+          validate_request(payload)         — audio items present, language if required
+          preprocess_input(payload['audio']) — decode / resample / equalize (or passthrough)
+          run_inference(payload)             — Triton loop → postprocess → _build_response
+        """
+        payload = dict(payload)  # shallow copy — don't mutate caller's dict
+        await self.validate_request(payload)
+        audio_items = payload.get("audio")
+        if audio_items:
+            payload["audio"] = await self.preprocess_input(audio_items)
+        return await self.run_inference(payload)
+
+    async def run_inference(
+        self,
+        payload: Dict[str, Any],
+        user_id: Optional[int] = None,
+        api_key_id: Optional[int] = None,
+        session_id: Optional[str] = None,
+    ) -> Any:
+        """
+        Audio inference runner (overrides BaseTaskService.run_inference).
+
+        Calls execute_triton_inference directly with the raw payload dict —
+        no config._request_payload indirection.
+        """
+        result = await self.execute_triton_inference(payload, self._get_inference_model_class())
+        postprocessed = await self.postprocess_output(
+            result["response_data"], source_texts=result["source_texts"]
+        )
+        return self._build_response(payload, postprocessed)
+
+    # ------------------------------------------------------------------
+    # Validation
+    # ------------------------------------------------------------------
+
+    async def validate_request(self, payload: Dict[str, Any]) -> None:
         """
         Common audio validation pipeline:
           1. Base null check (super)
@@ -57,8 +99,8 @@ class AudioBase(BaseTaskService):
         Task-specific validation (e.g. sourceLanguage) is opt-in —
         call _validate_source_language() in the model class override.
         """
-        await super().validate_request(request)
-        await self._validate_audio_items(request)
+        await super().validate_request(payload)
+        await self._validate_audio_items(payload)
 
     async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
         """
@@ -100,14 +142,14 @@ class AudioBase(BaseTaskService):
 
     async def execute_triton_inference(
         self,
-        config: Any,
+        payload: Dict[str, Any],
         inference_model_class: type,
     ) -> Dict[str, Any]:
         """
         Audio inference loop — overrides BaseTaskService.execute_triton_inference.
 
         Differences from the text base:
-          - Reads request.audio (not request.input)
+          - Reads payload['audio'] (not payload['input'])
           - Calls Triton once per audio item (one file per call)
           - Applies _get_default_adapter_config() when MMS returns null
           - convert_payload_to_triton_format / convert_triton_output_to_task_format
@@ -138,11 +180,10 @@ class AudioBase(BaseTaskService):
             # Store so convert_payload_to_triton_format can access via self._adapter_config
             self._adapter_config = adapter_config
 
-            request_payload = getattr(config, "_request_payload", None)
-            if not request_payload:
-                raise ValueError(f"{self.task_name}: config must have _request_payload set")
-
-            audio_items: List[Any] = getattr(request_payload, "audio") or []
+            # Audio items are already preprocessed by process() via preprocess_input.
+            # Config is the raw payload dict — field names match the schema (snake_case for ASR).
+            audio_items: List[Any] = payload.get("audio") or []
+            config_dict: Dict[str, Any] = payload.get("config") or {}
             all_response_data: List[Dict[str, Any]] = []
 
             for idx, audio_item in enumerate(audio_items):
@@ -152,7 +193,7 @@ class AudioBase(BaseTaskService):
                 )
 
                 triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
-                    [item_dict], config.model_dump()
+                    [item_dict], config_dict
                 )
 
                 self.logger.debug(
@@ -224,8 +265,8 @@ class AudioBase(BaseTaskService):
         )
 
     def _build_response(
-        self, request: BaseModel, postprocessed: Dict[str, Any]
-    ) -> BaseModel:
+        self, payload: Any, postprocessed: Dict[str, Any]
+    ) -> Any:
         """
         Response-builder hook: wrap postprocessed output in the typed response model.
 
@@ -233,7 +274,7 @@ class AudioBase(BaseTaskService):
         Every concrete model class must implement this.
 
         Example:
-            def _build_response(self, request, postprocessed):
+            def _build_response(self, payload, postprocessed):
                 return ASRInferenceResponse(output=postprocessed["output"])
         """
         raise NotImplementedError(
@@ -261,10 +302,11 @@ class AudioBase(BaseTaskService):
         Extract raw audio bytes from an AudioInput item.
         Base64-decodes audioContent or downloads from audioUri.
         Returns raw bytes before any format decoding.
+        Accepts both snake_case (audio_content) and camelCase (audioContent) keys.
         """
         if isinstance(audio_input, dict):
-            audio_content = audio_input.get("audio_content")
-            audio_uri     = audio_input.get("audio_uri")
+            audio_content = audio_input.get("audio_content") or audio_input.get("audioContent")
+            audio_uri     = audio_input.get("audio_uri") or audio_input.get("audioUri")
         else:
             audio_content = getattr(audio_input, "audio_content", None)
             audio_uri     = getattr(audio_input, "audio_uri", None)
@@ -305,12 +347,12 @@ class AudioBase(BaseTaskService):
         """
         Return audio as a base64 string.
         Returns audioContent directly, or downloads from audioUri and base64-encodes.
-        Used by services that send base64 directly to Triton
-        (Language Diarization, Speaker Diarization).
+        Used by services that send base64 directly to Triton (ALD, Language Diarization, etc.).
+        Accepts both snake_case (audio_content) and camelCase (audioContent) keys.
         """
         if isinstance(audio_input, dict):
-            audio_content = audio_input.get("audio_content")
-            audio_uri     = audio_input.get("audio_uri")
+            audio_content = audio_input.get("audio_content") or audio_input.get("audioContent")
+            audio_uri     = audio_input.get("audio_uri") or audio_input.get("audioUri")
         else:
             audio_content = getattr(audio_input, "audio_content", None)
             audio_uri     = getattr(audio_input, "audio_uri", None)
@@ -461,20 +503,21 @@ class AudioBase(BaseTaskService):
     # Validation helpers
     # ------------------------------------------------------------------
 
-    async def _validate_audio_items(self, request: Any) -> None:
+    async def _validate_audio_items(self, payload: Dict[str, Any]) -> None:
         """
         Validate that the audio list is not empty and each item
         has either audio_content or audio_uri.
         Common to all audio task types — called from validate_request pipeline.
+        Accepts both snake_case (audio_content) and camelCase (audioContent) keys.
         """
-        audio_items = getattr(request, "audio", None)
+        audio_items = payload.get("audio")
         if not audio_items:
             raise ValueError(f"{self.task_name}: audio list cannot be empty")
 
         for idx, item in enumerate(audio_items):
             if isinstance(item, dict):
-                has_content = bool(item.get("audio_content"))
-                has_uri     = bool(item.get("audio_uri"))
+                has_content = bool(item.get("audio_content") or item.get("audioContent"))
+                has_uri     = bool(item.get("audio_uri") or item.get("audioUri"))
             else:
                 has_content = bool(getattr(item, "audio_content", None))
                 has_uri     = bool(getattr(item, "audio_uri", None))
@@ -484,15 +527,24 @@ class AudioBase(BaseTaskService):
                     f"{self.task_name}: audio[{idx}] must have audio_content or audio_uri"
                 )
 
-    async def _validate_source_language(self, request: Any) -> None:
+    async def _validate_source_language(self, payload: Dict[str, Any]) -> None:
         """
         Validate that sourceLanguage is present in the request config.
         Opt-in — not called from base pipeline.
-        Call from model class validate_request override (e.g. ASRDefaultModel).
+        Call from model class validate_request override (e.g. ASRTaskService).
+        Accepts both snake_case (source_language) and camelCase (sourceLanguage) keys.
         """
-        config   = getattr(request, "config", None)
-        language = getattr(config, "language", None)
-        source_language = getattr(language, "source_language", None)
+        config_dict = payload.get("config") or {}
+        language = (
+            config_dict.get("language") or {}
+            if isinstance(config_dict, dict)
+            else getattr(config_dict, "language", None) or {}
+        )
+        source_language = (
+            language.get("source_language") or language.get("sourceLanguage")
+            if isinstance(language, dict)
+            else getattr(language, "source_language", None)
+        )
 
         if not source_language:
             raise ValueError(
