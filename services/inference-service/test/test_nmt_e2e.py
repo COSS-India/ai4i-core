@@ -88,7 +88,7 @@ MOCK_TRITON_RESPONSE_HINDI = {
 
 async def test_full_pipeline_camel_payload():
     """process() with a camelCase portal payload → NMTInferenceResponse."""
-    from services.models.text_models import NMTTaskService
+    from services.models.text_default_model import NMTTaskService
     from models.schemas.nmt import NMTInferenceResponse
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
@@ -116,7 +116,7 @@ async def test_full_pipeline_camel_payload():
 
 async def test_full_pipeline_snake_payload():
     """process() with snake_case payload (both naming conventions work)."""
-    from services.models.text_models import NMTTaskService
+    from services.models.text_default_model import NMTTaskService
     from models.schemas.nmt import NMTInferenceResponse
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
@@ -142,7 +142,7 @@ async def test_full_pipeline_snake_payload():
 
 async def test_multi_input_pipeline():
     """Two input items → two separate Triton calls → two TranslationOutput items."""
-    from services.models.text_models import NMTTaskService
+    from services.models.text_default_model import NMTTaskService
     from models.schemas.nmt import NMTInferenceResponse
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
@@ -184,7 +184,7 @@ async def test_multi_input_pipeline():
 
 async def test_response_serialization():
     """NMTInferenceResponse.model_dump() excludes None fields."""
-    from services.models.text_models import NMTTaskService
+    from services.models.text_default_model import NMTTaskService
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
@@ -209,7 +209,7 @@ async def test_response_serialization():
 
 async def test_validate_same_language_rejected():
     """process() raises ValueError when source == target language."""
-    from services.models.text_models import NMTTaskService
+    from services.models.text_default_model import NMTTaskService
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
@@ -228,7 +228,7 @@ async def test_validate_same_language_rejected():
 
 async def test_validate_whitespace_source_accepted():
     """Whitespace-only source is sanitised to single space and accepted."""
-    from services.models.text_models import NMTTaskService
+    from services.models.text_default_model import NMTTaskService
     from models.schemas.nmt import NMTInferenceResponse
 
     service = NMTTaskService(service_info=MOCK_SERVICE_INFO)

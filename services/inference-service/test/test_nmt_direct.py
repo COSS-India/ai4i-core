@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unit tests for NMTTaskService — no live Triton required.
+Unit tests for TextDefaultModel — no live Triton required.
 
 Tests each pipeline stage in isolation:
   1. validate_request      — valid + four error paths
@@ -64,9 +64,9 @@ def _make_mock_inference_model(translated: str = "नमस्ते, आप क
 
 
 async def test_validate_request_valid():
-    from services.models.text_models import NMTTaskService
+    from services.models.text_default_model import TextDefaultModel
 
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
     payload = {
         "input": [{"source": "Hello"}],
         "config": {
@@ -79,9 +79,9 @@ async def test_validate_request_valid():
 
 
 async def test_validate_request_errors():
-    from services.models.text_models import NMTTaskService
+    from services.models.text_default_model import TextDefaultModel
 
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
     # 1. Same source and target language
     try:
@@ -120,9 +120,9 @@ async def test_validate_request_errors():
 
 
 async def test_preprocess_input():
-    from services.models.text_models import NMTTaskService
+    from services.models.text_default_model import TextDefaultModel
 
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
     raw = [
         {"source": "  Hello   world  "},
@@ -143,20 +143,20 @@ async def test_preprocess_input():
 
 
 async def test_get_inference_model_class():
-    from services.models.text_models import NMTTaskService
+    from services.models.text_default_model import TextDefaultModel
     from services.base.config_mapper import GenericTritonMapper
 
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
     model_class = service._get_inference_model_class()
     assert model_class is GenericTritonMapper
     logger.info("   [PASS] _get_inference_model_class returns GenericTritonMapper")
 
 
 async def test_postprocess_output():
-    from services.models.text_models import NMTTaskService
+    from services.models.text_default_model import TextDefaultModel
     from models.schemas.nmt import TranslationOutput
 
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
     response_items = [{"target": "नमस्ते"}, {"target": "आपका नाम क्या है?"}]
     source_texts = ["Hello", "What is your name?"]
@@ -173,10 +173,10 @@ async def test_postprocess_output():
 
 
 async def test_build_response():
-    from services.models.text_models import NMTTaskService
+    from services.models.text_default_model import TextDefaultModel
     from models.schemas.nmt import NMTInferenceResponse, TranslationOutput
 
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
     payload = {
         "input": [{"source": "Hello"}],
         "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
@@ -192,10 +192,10 @@ async def test_build_response():
 
 async def test_run_inference_full():
     """Full run_inference with mocked InferenceModel and mocked _call_triton_inference."""
-    from services.models.text_models import NMTTaskService
+    from services.models.text_default_model import TextDefaultModel
     from models.schemas.nmt import NMTInferenceResponse
 
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
     payload = {
         "input": [
@@ -232,10 +232,10 @@ async def test_run_inference_full():
 
 async def test_run_inference_missing_endpoint():
     """run_inference raises RuntimeError when service_info lacks endpoint."""
-    from services.models.text_models import NMTTaskService
+    from services.models.text_default_model import TextDefaultModel
 
     bad_service_info = {"service_id": "x", "name": "model", "endpoint": "", "api_key": None}
-    service = NMTTaskService(service_info=bad_service_info)
+    service = TextDefaultModel(service_info=bad_service_info)
 
     payload = {
         "input": [{"source": "Hello"}],
@@ -305,7 +305,7 @@ async def run_all():
     ]
 
     logger.info("=" * 70)
-    logger.info("NMTTaskService Unit Tests")
+    logger.info("TextDefaultModel Unit Tests")
     logger.info("=" * 70)
 
     passed = 0

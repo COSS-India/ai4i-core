@@ -13,7 +13,6 @@ if "inference_models" not in sys.modules:
     _pkg.__package__ = "inference_models"
     sys.modules["inference_models"] = _pkg
 
-from services.nmt_service import NMTTaskService
 from services.asr_service import ASRTaskService
 from services.ocr_service import OCRTaskService
 from services.llm_service import LLMTaskService
@@ -25,9 +24,10 @@ from services.language_diarization_service import LanguageDiarizationTaskService
 from services.speaker_diarization_service import SpeakerDiarizationTaskService
 from services.audio_language_detection_service import AudioLanguageDetectionTaskService
 from services.pii_service import PIITaskService
+from services.models.text_default_model import TextDefaultModel
 
 __all__ = [
-    "NMTTaskService",
+    "TextDefaultModel",
     "ASRTaskService",
     "OCRTaskService",
     "LLMTaskService",
