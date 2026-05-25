@@ -12,15 +12,20 @@ Lookup at runtime:
   Given task_type and service_id (from the payload), the Orchestrator finds
   the entry where task_type matches AND service_id is in model_name[].
   It then instantiates service_class(service_info=...) to handle the request.
+
+Text modality note:
+  TextDefaultModel is the registered class for NMT and can also be used
+  directly for any future simple text task that needs no custom postprocessing —
+  just add a new entry pointing at TextDefaultModel with the appropriate model_name.
 """
 
+from services.models.text_default_model import TextDefaultModel
 from services.asr_service import ASRTaskService
 from services.audio_language_detection_service import AudioLanguageDetectionTaskService
 from services.language_detection_service import LanguageDetectionTaskService
 from services.language_diarization_service import LanguageDiarizationTaskService
 from services.llm_service import LLMTaskService
 from services.ner_service import NERTaskService
-from services.nmt_service import NMTTaskService
 from services.ocr_service import OCRTaskService
 from services.pii_service import PIITaskService
 from services.speaker_diarization_service import SpeakerDiarizationTaskService
@@ -32,7 +37,7 @@ TASK_SERVICE_REGISTRY = [
     {
         "task_type":     "NMT",
         "model_name":    ["indictrans-gpu-t4"],
-        "service_class": NMTTaskService,
+        "service_class": TextDefaultModel,
     },
     {
         "task_type":     "ASR",
