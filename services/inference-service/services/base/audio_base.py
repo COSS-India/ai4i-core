@@ -31,7 +31,7 @@ from pydub import AudioSegment
 from pydub.effects import normalize as pydub_normalize
 
 from interfaces.task_service import BaseTaskService
-from ai4icore_core.telemetry import async_trace_stage
+from ai4icore_core.telemetry import async_trace_stage, get_trace_manager
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +160,10 @@ class AudioBase(BaseTaskService):
 
         VAD / chunk-batching is a future enhancement; add it here when ready.
         """
+        trace_manager = get_trace_manager()
+        service_name = getattr(self, 'service_name', None) or self.task_name.replace('TaskService', '').lower()
+        span = trace_manager.trace_stage_start(service_name, "triton_inference", payload)
+
         try:
             service_id      = self.service_info.get("service_id", "")
             model_name      = self.service_info.get("name", "")
@@ -212,12 +216,15 @@ class AudioBase(BaseTaskService):
                 response_data = await self.convert_triton_output_to_task_format(raw_output)
                 all_response_data.extend(response_data)
 
-            return {
+            result = {
                 "response_data": all_response_data,
                 "source_texts": [],
                 "service_id": service_id,
             }
+            trace_manager.trace_stage_end(span, result)
+            return result
         except Exception as e:
+            span.span.end()
             self.logger.error(
                 "Audio Triton inference failed: %s", str(e), exc_info=True
             )

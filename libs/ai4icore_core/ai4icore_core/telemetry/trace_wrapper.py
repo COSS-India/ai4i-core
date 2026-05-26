@@ -41,22 +41,25 @@ def trace_stage(stage_name):
 
 
 def async_trace_stage(stage_name):
-    """Decorator for automatic tracing of async processing stages."""
+    """Decorator for automatic tracing of async processing stages. Supports variable signatures."""
     def decorator(func):
-        @wraps(func)
-        async def wrapper(self, request):
+        async def wrapper(self, *args, **kwargs):
             trace_manager = get_trace_manager()
+            # Extract request/payload from first positional argument
+            request = args[0] if args else {}
             request_dict = request.dict() if hasattr(request, 'dict') else request
             service_name = _get_service_name(self, request_dict)
             span = trace_manager.trace_stage_start(service_name, stage_name, request_dict)
             try:
-                response = await func(self, request)
+                response = await func(self, *args, **kwargs)
                 response_dict = response.dict() if response and hasattr(response, 'dict') else (response or {})
                 trace_manager.trace_stage_end(span, response_dict)
                 return response
             except Exception:
                 span.span.end()
                 raise
+        wrapper.__name__ = func.__name__
+        wrapper.__doc__ = func.__doc__
         return wrapper
     return decorator
 

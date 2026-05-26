@@ -9,10 +9,10 @@
   },
   "preprocess_input": {
     "start": [
-      {"attr": "input_count", "expr": "item_count"}
+      {"attr": "input_count", "expr": "len(input_data)"}
     ],
     "end": [
-      {"attr": "processed_count", "expr": "item_count"}
+      {"attr": "processed_count", "expr": "len(result)"}
     ]
   },
   "resolve_model": {
@@ -30,7 +30,7 @@
   "triton_inference": {
     "start": [],
     "end": [
-      {"attr": "output_size", "expr": "len(response_data)"}
+      {"attr": "output_size", "expr": "len(result.get('response_data', []))"}
     ]
   },
   "postprocess": {
