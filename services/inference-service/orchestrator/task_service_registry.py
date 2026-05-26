@@ -36,7 +36,7 @@ TASK_SERVICE_REGISTRY = [
     },
     {
         "task_type":     "ASR",
-        "model_name":    ["ai4bharat/triton-multilingual-asr"],
+        "model_name":    ["ai4bharat/triton-multilingual-asr", "asr-gpu"],
         "service_class": ASRTaskService,
     },
     {
@@ -86,12 +86,12 @@ TASK_SERVICE_REGISTRY = [
     },
     {
         "task_type":     "AUDIO_LANG_DETECTION",
-        "model_name":    ["ai4bharat/triton-audio-language-detection"],
+        "model_name":    ["ai4bharat/triton-audio-language-detection", "ald-gpu"],
         "service_class": AudioDefaultModel,
     },
     {
         "task_type":     "AUDIO_LANGUAGE_DETECTION",
-        "model_name":    ["ai4bharat/triton-audio-language-detection"],
+        "model_name":    ["ai4bharat/triton-audio-language-detection", "ald-gpu"],
         "service_class": AudioDefaultModel,
     },
 ]
