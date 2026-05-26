@@ -14,3 +14,8 @@ httpx>=0.25.0
 
 # Utilities
 python-dotenv>=1.0.0
+
+# Audio processing
+scipy>=1.11.0
+numpy>=1.24.0
+pydub>=0.25.1
