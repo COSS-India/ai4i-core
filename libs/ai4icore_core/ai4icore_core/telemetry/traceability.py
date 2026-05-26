@@ -7,13 +7,64 @@ from typing import Optional, Dict, Any
 
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 
 from .registry import get_attribute_value
 from ai4icore_core.context import get_trace_id, set_trace_id
 
 logger = logging.getLogger(__name__)
+
+
+def _serialize_span_dict(span) -> Dict[str, Any]:
+    """Serialize span to dictionary without status field. Reusable across all exporters."""
+    from datetime import datetime, timezone
+
+    def _to_iso_string(timestamp_nanos: int) -> str:
+        """Convert nanosecond timestamp to ISO 8601 string."""
+        if timestamp_nanos is None:
+            return None
+        seconds = timestamp_nanos // 1_000_000_000
+        nanos = timestamp_nanos % 1_000_000_000
+        dt = datetime.fromtimestamp(seconds, tz=timezone.utc)
+        return dt.replace(microsecond=nanos // 1_000).isoformat()
+
+    result = {
+        "name": span.name,
+        "context": {
+            "trace_id": f"0x{format(span.context.trace_id, '032x')}",
+            "span_id": f"0x{format(span.context.span_id, '016x')}",
+            "trace_state": str(span.context.trace_state),
+        },
+        "kind": str(span.kind),
+        "parent_id": f"0x{format(span.parent.span_id, '016x')}" if span.parent else None,
+        "start_time": _to_iso_string(span.start_time),
+        "end_time": _to_iso_string(span.end_time),
+        "attributes": dict(span.attributes) if span.attributes else {},
+        "resource": {"attributes": dict(span.resource.attributes) if span.resource and span.resource.attributes else {}, "schema_url": ""},
+    }
+
+    if span.events:
+        result["events"] = [{"name": e.name, "timestamp": _to_iso_string(e.timestamp)} for e in span.events]
+
+    return result
+
+
+class ConsoleSpanExporter(SpanExporter):
+    """Exports spans to console (stdout)."""
+
+    def export(self, spans) -> SpanExportResult:
+        for span in spans:
+            span_dict = _serialize_span_dict(span)
+            print(json.dumps(span_dict))
+        return SpanExportResult.SUCCESS
+
+    def shutdown(self) -> None:
+        pass
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        _ = timeout_millis
+        return True
 
 
 def _get_default_mapper_path() -> Path:
