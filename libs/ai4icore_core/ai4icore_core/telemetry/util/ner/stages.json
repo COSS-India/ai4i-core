@@ -1,5 +1,5 @@
 {
-  "overall_request": {
+  "request": {
     "start": [
       {"attr": "task_type", "expr": "task_type"},
       {"attr": "input_size", "func": "compute_input_size"},
@@ -12,7 +12,7 @@
       {"attr": "success_status", "func": "compute_success_status"}
     ]
   },
-  "model_loading": {
+  "model": {
     "start": [],
     "end": [
       {"attr": "load_time_ms", "func": "compute_elapsed_time"}
