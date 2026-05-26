@@ -44,6 +44,7 @@ import {
   Service,
 } from "../services/servicesManagementService";
 import { getAllModels, getModelById } from "../services/modelManagementService";
+import type { ModelDetails } from "../types/platform";
 import { useAuth } from "../hooks/useAuth";
 import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
@@ -58,24 +59,9 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../components/common/AdminDataTable";
 
-type ModelSummary = {
-  modelId?: string;
-  model_id?: string;
-  name?: string;
-  versionStatus?: string;
-  version_status?: string;
-  task?: { type?: string };
-  task_type?: string;
-  taskType?: string;
-  version?: string;
-  modelVersion?: string;
-  submittedOn?: string | number;
-  submitted_on?: string | number;
-};
-
 const ServicesManagementPage: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
-  const [models, setModels] = useState<ModelSummary[]>([]);
+  const [models, setModels] = useState<ModelDetails[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
@@ -198,7 +184,7 @@ const ServicesManagementPage: React.FC = () => {
     }
   }, [user, router, toast]);
   // Model fetched by ID when navigating from a deprecated model's "Create Service" (not in active list)
-  const [preselectedModelFromQuery, setPreselectedModelFromQuery] = useState<ModelSummary | null>(null);
+  const [preselectedModelFromQuery, setPreselectedModelFromQuery] = useState<ModelDetails | null>(null);
 
   // Fetch all services for current task/publish filters (paginated API walk) for client search + pagination
   const fetchServices = useCallback(async () => {

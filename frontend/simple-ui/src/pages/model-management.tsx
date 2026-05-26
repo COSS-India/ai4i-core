@@ -47,6 +47,7 @@ import {
   getModelById,
   updateModel,
 } from "../services/modelManagementService";
+import type { ModelCreateRequest, ModelDetails, ModelUpdateRequest, TaskSpec } from "../types/platform";
 import { listServices as listServicesForModels } from "../services/servicesManagementService";
 import { useAuth } from "../hooks/useAuth";
 import { isRegistryReadOnlyUser } from "../utils/rbac";
@@ -61,65 +62,25 @@ import AdminDataTable, {
   TableSelectField,
   type AdminTableColumn,
 } from "../components/common/AdminDataTable";
+import {
+  MODEL_VERSION,
+  MODEL_VERSION_FILTER_LIST,
+  formatModelVersionFilterLabel,
+  formatModelVersionStatusLabel,
+  isModelVersionStatusActive,
+} from "../config/constants";
 
-// TypeScript interfaces for model data
-interface OAuthId {
-  oauthId: string;
-  provider: string;
-}
-
-interface TeamMember {
-  name: string;
-  aboutMe: string;
-  oauthId: OAuthId;
-}
-
-interface Submitter {
-  name: string;
-  aboutMe: string;
-  team: TeamMember[];
-}
-
-interface ModelProcessingType {
-  type: string;
-}
-
-interface InferenceSchema {
-  modelProcessingType: ModelProcessingType;
-  request: Record<string, any>;
-  response: Record<string, any>;
-}
-
-interface InferenceEndPoint {
-  schema: InferenceSchema;
-}
-
-interface Task {
-  type: string;
-}
-
-interface Model {
-  modelId: string;
+/** Registry UI model row — requires fields used in forms/tables. */
+type Model = ModelDetails & {
   name: string;
   description: string;
-  languages: Record<string, any>[];
+  languages: Record<string, unknown>[];
   domain: string[];
-  submitter: Submitter;
   license: string;
-  inferenceEndPoint: InferenceEndPoint;
+  inferenceEndPoint: NonNullable<ModelDetails["inferenceEndPoint"]>;
   source: string;
-  task: Task;
-  version?: string;
-  versionStatus?: "active" | "deprecated" | "ACTIVE" | "DEPRECATED";
-  refUrl?: string;
-  /** ISO timestamp when version status was last updated; used for list ordering */
-  versionStatusUpdatedAt?: string;
-  createdAt?: string;
-  /** Epoch (seconds or ms) when model was created; fallback for ordering */
-  submittedOn?: number;
-  /** Epoch (seconds or ms) when model was last updated; fallback for ordering */
-  updatedOn?: number;
-}
+  task: NonNullable<ModelDetails["task"]>;
+};
 
 const ModelManagementPage: React.FC = () => {
   const [models, setModels] = useState<Model[]>([]);
@@ -293,7 +254,7 @@ const ModelManagementPage: React.FC = () => {
 
   const handleInputChange = (
     field: keyof Model,
-    value: string | Task | string[]
+    value: string | TaskSpec | string[]
   ) => {
     setFormData((prev) => ({
       ...prev,
@@ -695,7 +656,7 @@ const ModelManagementPage: React.FC = () => {
       await updateModel({
         modelId: model.modelId,
         version: model.version,
-        versionStatus: "DEPRECATED",
+        versionStatus: MODEL_VERSION.STATUS.DEPRECATED,
       });
 
       toast({
@@ -748,7 +709,7 @@ const ModelManagementPage: React.FC = () => {
       await updateModel({
         modelId: model.modelId,
         version: model.version,
-        versionStatus: "ACTIVE",
+        versionStatus: MODEL_VERSION.STATUS.ACTIVE,
       });
 
       toast({
@@ -843,16 +804,10 @@ const ModelManagementPage: React.FC = () => {
         header: "Status",
         cell: (model) => (
           <Badge
-            colorScheme={
-              model.versionStatus?.toLowerCase() === "active" || !model.versionStatus
-                ? "green"
-                : "gray"
-            }
+            colorScheme={isModelVersionStatusActive(model.versionStatus) ? "green" : "gray"}
             fontSize="xs"
           >
-            {model.versionStatus?.toLowerCase() === "active" || !model.versionStatus
-              ? "ACTIVE"
-              : "DEPRECATED"}
+            {formatModelVersionStatusLabel(model.versionStatus)}
           </Badge>
         ),
       },
@@ -1019,9 +974,12 @@ const ModelManagementPage: React.FC = () => {
                                 onChange={setFilterVersionStatus}
                                 formControlProps={{ w: { base: "full", sm: "140px" } }}
                               >
-                                <option value="">All</option>
-                                <option value="active">Active</option>
-                                <option value="deprecated">Deprecated</option>
+                                <option value={MODEL_VERSION.FILTER.ALL}>All</option>
+                                {MODEL_VERSION_FILTER_LIST.map((s) => (
+                                  <option key={s} value={s}>
+                                    {formatModelVersionFilterLabel(s)}
+                                  </option>
+                                ))}
                               </TableSelectField>
                               <TableSelectField
                                 label="Task type"
@@ -1062,8 +1020,7 @@ const ModelManagementPage: React.FC = () => {
                                     onClick={() => setFilterVersionStatus("")}
                                     _hover={{ opacity: 0.8 }}
                                   >
-                                    Status:{" "}
-                                    {filterVersionStatus === "active" ? "Active" : "Deprecated"} ×
+                                    Status: {formatModelVersionFilterLabel(filterVersionStatus)} ×
                                   </Badge>
                                 )}
                                 {filterTaskType && (
@@ -1397,11 +1354,15 @@ const ModelManagementPage: React.FC = () => {
                                   Status
                                 </Text>
                                 <Badge
-                                  colorScheme={selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus ? "green" : "gray"}
+                                  colorScheme={
+                                    isModelVersionStatusActive(selectedModel.versionStatus)
+                                      ? "green"
+                                      : "gray"
+                                  }
                                   fontSize="sm"
                                   p={2}
                                 >
-                                  {selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus ? "ACTIVE" : "DEPRECATED"}
+                                  {formatModelVersionStatusLabel(selectedModel.versionStatus)}
                                 </Badge>
                               </Box>
                               <Box>

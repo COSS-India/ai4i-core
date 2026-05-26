@@ -39,6 +39,11 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../common/AdminDataTable";
 import StandardModal from "../common/StandardModal";
+import {
+  API_KEY,
+  API_KEY_FILTER_STATUS_LIST,
+  formatApiKeyFilterStatusLabel,
+} from "../../config/constants";
 
 export interface ApiKeyManagementTabProps {
   /** When true, tab is visible; used to fetch data when user switches to this tab */
@@ -275,9 +280,12 @@ export default function ApiKeyManagementTab({
                   onChange={mgmt.setFilterActive}
                   formControlProps={{ w: { base: "full", sm: "160px" } }}
                 >
-                  <option value="all">All</option>
-                  <option value="active">Active</option>
-                  <option value="revoked">Revoked</option>
+                  <option value={API_KEY.FILTER_STATUS.ALL}>All</option>
+                  {API_KEY_FILTER_STATUS_LIST.map((s) => (
+                    <option key={s} value={s}>
+                      {formatApiKeyFilterStatusLabel(s)}
+                    </option>
+                  ))}
                 </TableSelectField>
               </>
             }

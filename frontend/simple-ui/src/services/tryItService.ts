@@ -7,6 +7,7 @@ import { apiEndpoints } from './apiEndpoints';
 import { nmtInferenceResponseSchema } from './dto/schemas/inference';
 import { tryItServiceListSchema } from './dto/schemas/platform';
 import { NMTInferenceRequest, NMTInferenceResponse } from '../types/nmt';
+import type { Service } from '../types/platform';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
 
 const getTryItHeaders = () => ({
@@ -27,7 +28,7 @@ export interface TryItRequest {
  * Uses the centralized try-it service-list endpoint with no auth.
  * @returns Promise with raw list of services from the API
  */
-export const listTryItNMTServices = async (): Promise<any[]> => {
+export const listTryItNMTServices = async (): Promise<Service[]> => {
   const response = await apiService.get(apiEndpoints.platform.services.tryItList, {
     params: { task_type: 'nmt' },
     headers: getTryItHeaders(),

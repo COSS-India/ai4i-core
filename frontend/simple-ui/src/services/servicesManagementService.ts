@@ -4,66 +4,26 @@ import { z } from 'zod';
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import { serviceRecordSchema, serviceSingleSchema, servicesListSchema } from './dto/schemas/platform';
+import type {
+  DeleteServiceResponse,
+  PaginatedServices,
+  Service,
+  ServiceCreateRequest,
+  ServiceListParams,
+  ServiceUpdateRequest,
+} from '../types/platform';
 
-export interface ServiceListParams {
-  offset?: number;
-  limit?: number;
-  taskType?: string;
-  isPublished?: boolean;
-  createdBy?: string;
-}
-
-export interface PaginatedServices {
-  items: Service[];
-  total: number;
-  offset: number;
-  limit: number | null;
-}
-
-export interface Service {
-  serviceId?: string;
-  service_id?: string; // For backward compatibility
-  name?: string;
-  serviceDescription?: string;
-  description?: string; // For backward compatibility
-  hardwareDescription?: string;
-  publishedOn?: number;
-  modelId?: string;
-  model_id?: string; // For backward compatibility
-  modelVersion?: string;
-  model_version?: string; // For backward compatibility
-  modelSubmissionDate?: string;
-  endpoint?: string;
-  endpoint_url?: string; // For backward compatibility
-  api_key?: string;
-  apiKey?: string; // For backward compatibility
-  task_type?: string; // For backward compatibility
-  task?: {
-    type: string;
-  };
-  model?: {
-    task?: {
-      type: string;
-    };
-    [key: string]: any;
-  };
-  status?: string;
-  healthStatus?: {
-    status: string;
-    lastUpdated: string;
-  };
-  isPublished?: boolean;
-  /** ISO timestamp when service was published; used for list ordering */
-  publishedAt?: string | null;
-  /** ISO timestamp when service was unpublished; used for list ordering */
-  unpublishedAt?: string | null;
-  createdAt?: string;
-  created_at?: string;
-  updated_at?: string;
-  /** ISO timestamp when status was last updated; used for list ordering */
-  versionStatusUpdatedAt?: string;
-  [key: string]: any;
-}
+export type {
+  DeleteServiceResponse,
+  PaginatedServices,
+  Service,
+  ServiceCreateRequest,
+  ServiceDetailResponse,
+  ServiceListItem,
+  ServiceListParams,
+  ServiceResponse,
+  ServiceUpdateRequest,
+} from '../types/platform';
 
 /**
  * List all services (no pagination — returns everything, backward-compatible)
@@ -172,7 +132,7 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
   try {
     // Transform snake_case to camelCase for API
     // The API expects camelCase format
-    const apiPayload: any = {
+    const apiPayload: Record<string, unknown> = {
       serviceId: serviceData.serviceId || serviceData.service_id,
       name: serviceData.name,
       serviceDescription: serviceData.serviceDescription || serviceData.description,
@@ -222,7 +182,7 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
     // For other updates, send all fields
     const isPublishUpdate = serviceData.serviceId && serviceData.hasOwnProperty('isPublished') && Object.keys(serviceData).length <= 2;
 
-    let apiPayload: any;
+    let apiPayload: Record<string, unknown>;
 
     if (isPublishUpdate) {
       // Publish/unpublish: only send serviceId and isPublished
@@ -276,7 +236,7 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
  * @param serviceId - The service_id of the service to delete
  * @returns Promise with deletion response
  */
-export const deleteService = async (serviceId: string): Promise<any> => {
+export const deleteService = async (serviceId: string): Promise<DeleteServiceResponse> => {
   try {
     // The apiClient interceptor will automatically add authentication headers
     const response = await apiService.delete(apiEndpoints.platform.services.byId(serviceId), {

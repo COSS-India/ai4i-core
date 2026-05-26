@@ -3,6 +3,14 @@
 import { apiService, apiEndpoints } from './api';
 import { audioLanguageDetectionInferenceResponseSchema } from './dto/schemas/inference';
 import { listServices } from './modelManagementService';
+import type { Service } from '../types/platform';
+import {
+  extractLanguageCodes,
+  resolveEndpoint,
+  resolveModelId,
+  resolveModelVersion,
+  resolveServiceId,
+} from '../utils/platformService';
 
 export interface AudioLanguageDetectionServiceDetailsResponse {
   service_id: string;
@@ -38,34 +46,19 @@ export interface AudioLanguageDetectionInferenceResponse {
 export const listAudioLanguageDetectionServices = async (): Promise<AudioLanguageDetectionServiceDetailsResponse[]> => {
   try {
     const services = await listServices('audio-lang-detection', true);
-    
+
     // Transform to AudioLanguageDetectionServiceDetailsResponse format
-    const transformedServices = services.map((service: any) => {
-      // Extract languages from service.languages array
-      const supportedLanguages: string[] = [];
-      if (service.languages && Array.isArray(service.languages)) {
-        service.languages.forEach((lang: any) => {
-          if (typeof lang === 'string') {
-            supportedLanguages.push(lang);
-          } else if (lang && typeof lang === 'object') {
-            // Handle different language object formats
-            const langCode = lang.code || lang.language;
-            if (langCode) {
-              supportedLanguages.push(langCode);
-            }
-          }
-        });
-      }
-      
-      const endpoint = service.endpoint || '';
-      
+    const transformedServices = services.map((service: Service) => {
+      const supportedLanguages = extractLanguageCodes(service.languages, 'simple');
+      const endpoint = resolveEndpoint(service);
+
       return {
-        service_id: service.serviceId || service.service_id,
-        model_id: service.modelId || service.model_id || '',
-        model_version: service.modelVersion || service.model_version || '',
-        name: service.name || service.serviceId || '',
+        service_id: resolveServiceId(service),
+        model_id: resolveModelId(service),
+        model_version: resolveModelVersion(service),
+        name: service.name || resolveServiceId(service),
         serviceDescription: service.serviceDescription || service.description || 'No description available',
-        endpoint: endpoint,
+        endpoint,
         supported_languages: supportedLanguages,
       };
     });
@@ -115,4 +108,3 @@ export const performAudioLanguageDetectionInference = async (
     throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
-
