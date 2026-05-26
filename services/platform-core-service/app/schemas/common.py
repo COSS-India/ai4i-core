@@ -100,6 +100,8 @@ class InferenceEndPoint(BaseModel):
     model_name: Optional[str] = None
     modelName: Optional[str] = None
     model: Optional[str] = None
+    callbackUrl: Optional[str] = None
+    adapter_config: Optional[Dict[str, Any]] = None
 
 
 # ── Submitter / team ──
