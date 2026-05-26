@@ -31,7 +31,7 @@ from pydub import AudioSegment
 from pydub.effects import normalize as pydub_normalize
 
 from interfaces.task_service import BaseTaskService
-from ai4icore_core.telemetry import async_trace_stage, get_trace_manager
+from ai4icore_core.telemetry import async_trace_stage
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,6 @@ class AudioBase(BaseTaskService):
     # Validation
     # ------------------------------------------------------------------
 
-    @async_trace_stage("validate")
     async def validate_request(self, payload: Dict[str, Any]) -> None:
         """
         Common audio validation pipeline:
@@ -104,7 +103,6 @@ class AudioBase(BaseTaskService):
         await super().validate_request(payload)
         await self._validate_audio_items(payload)
 
-    @async_trace_stage("preprocess_input")
     async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
         """
         Common audio preprocessing pipeline, applied to each item in sequence:
@@ -143,6 +141,7 @@ class AudioBase(BaseTaskService):
     # execute_triton_inference — audio-specific override
     # ------------------------------------------------------------------
 
+    @async_trace_stage("ai_inference")
     async def execute_triton_inference(
         self,
         payload: Dict[str, Any],
@@ -160,75 +159,63 @@ class AudioBase(BaseTaskService):
 
         VAD / chunk-batching is a future enhancement; add it here when ready.
         """
-        trace_manager = get_trace_manager()
-        service_name = getattr(self, 'service_name', None) or self.task_name.replace('TaskService', '').lower()
-        span = trace_manager.trace_stage_start(service_name, "triton_inference", payload)
+        service_id      = self.service_info.get("service_id", "")
+        model_name      = self.service_info.get("name", "")
+        triton_endpoint = self.service_info.get("endpoint", "")
+        api_key         = self.service_info.get("api_key")
+        adapter_config  = self.service_info.get("adapter_config")
 
-        try:
-            service_id      = self.service_info.get("service_id", "")
-            model_name      = self.service_info.get("name", "")
-            triton_endpoint = self.service_info.get("endpoint", "")
-            api_key         = self.service_info.get("api_key")
-            adapter_config  = self.service_info.get("adapter_config")
-
-            if not model_name or not triton_endpoint:
-                raise RuntimeError(
-                    f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
-                    "Ensure the Orchestrator resolved the service before creating this task service."
-                )
-
-            if not adapter_config:
-                raise RuntimeError(
-                    f"{self.task_name}: adapter_config missing from service_info. "
-                    "Every audio service must have an adapter_config seeded in mm_services."
-                )
-
-            # Store so convert_payload_to_triton_format can access via self._adapter_config
-            self._adapter_config = adapter_config
-
-            # Audio items are already preprocessed by process() via preprocess_input.
-            # Config is the raw payload dict — field names match the schema (snake_case for ASR).
-            audio_items: List[Any] = payload.get("audio") or []
-            config_dict: Dict[str, Any] = payload.get("config") or {}
-            all_response_data: List[Dict[str, Any]] = []
-
-            for idx, audio_item in enumerate(audio_items):
-                item_dict = (
-                    audio_item if isinstance(audio_item, dict)
-                    else audio_item.model_dump(by_alias=False)
-                )
-
-                triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
-                    [item_dict], config_dict
-                )
-
-                self.logger.debug(
-                    "%s: Triton call %d / %d  endpoint=%s",
-                    self.task_name, idx + 1, len(audio_items), triton_endpoint,
-                )
-                raw_output = await self._call_triton_inference(
-                    triton_endpoint=triton_endpoint,
-                    triton_inputs=triton_inputs,
-                    triton_outputs=triton_outputs,
-                    api_key=api_key,
-                )
-
-                response_data = await self.convert_triton_output_to_task_format(raw_output)
-                all_response_data.extend(response_data)
-
-            result = {
-                "response_data": all_response_data,
-                "source_texts": [],
-                "service_id": service_id,
-            }
-            trace_manager.trace_stage_end(span, result)
-            return result
-        except Exception as e:
-            span.span.end()
-            self.logger.error(
-                "Audio Triton inference failed: %s", str(e), exc_info=True
+        if not model_name or not triton_endpoint:
+            raise RuntimeError(
+                f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
+                "Ensure the Orchestrator resolved the service before creating this task service."
             )
-            raise
+
+        if not adapter_config:
+            raise RuntimeError(
+                f"{self.task_name}: adapter_config missing from service_info. "
+                "Every audio service must have an adapter_config seeded in mm_services."
+            )
+
+        # Store so convert_payload_to_triton_format can access via self._adapter_config
+        self._adapter_config = adapter_config
+
+        # Audio items are already preprocessed by process() via preprocess_input.
+        # Config is the raw payload dict — field names match the schema (snake_case for ASR).
+        audio_items: List[Any] = payload.get("audio") or []
+        config_dict: Dict[str, Any] = payload.get("config") or {}
+        all_response_data: List[Dict[str, Any]] = []
+
+        for idx, audio_item in enumerate(audio_items):
+            item_dict = (
+                audio_item if isinstance(audio_item, dict)
+                else audio_item.model_dump(by_alias=False)
+            )
+
+            triton_inputs, triton_outputs = await self.convert_payload_to_triton_format(
+                [item_dict], config_dict
+            )
+
+            self.logger.debug(
+                "%s: Triton call %d / %d  endpoint=%s",
+                self.task_name, idx + 1, len(audio_items), triton_endpoint,
+            )
+            raw_output = await self._call_triton_inference(
+                triton_endpoint=triton_endpoint,
+                triton_inputs=triton_inputs,
+                triton_outputs=triton_outputs,
+                api_key=api_key,
+            )
+
+            response_data = await self.convert_triton_output_to_task_format(raw_output)
+            all_response_data.extend(response_data)
+
+        result = {
+            "response_data": all_response_data,
+            "source_texts": [],
+            "service_id": service_id,
+        }
+        return result
 
     # ------------------------------------------------------------------
     # Hooks — subclasses must implement these

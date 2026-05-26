@@ -15,10 +15,6 @@ from ai4icore_core.telemetry import async_trace_stage
 import json, logging
 
 
-# For NMT-specific tracing, we use "ai_inference" instead of "triton_inference"
-_trace_ai_inference = async_trace_stage("ai_inference")
-
-
 class TextBase(BaseTaskService):
     CHUNK_SIZE: int = 90
 
@@ -190,7 +186,7 @@ class TextBase(BaseTaskService):
                  "tokenIndex": idx, "tokenStartIndex": wi["start"], "tokenEndIndex": wi["end"]}
                 for idx, wi in enumerate(word_positions)]
 
-    @_trace_ai_inference
+    @async_trace_stage("ai_inference")
     async def execute_triton_inference(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Override to use ai_inference stage name for NMT tracing."""
+        """Override to use ai_inference stage name for text-based task tracing."""
         return await super().execute_triton_inference(payload)
