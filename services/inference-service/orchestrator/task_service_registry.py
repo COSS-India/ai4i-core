@@ -41,7 +41,7 @@ TASK_SERVICE_REGISTRY = [
     },
     {
         "task_type":     "TTS",
-        "model_name":    ["ai4bharat/triton-indo-aryan-tts"],
+        "model_name":    ["ai4bharat/triton-indo-aryan-tts", "indo-aryan-tts-gpu"],
         "service_class": TTSTaskService,
     },
     {
@@ -51,12 +51,12 @@ TASK_SERVICE_REGISTRY = [
     },
     {
         "task_type":     "OCR",
-        "model_name":    ["ai4bharat/triton-ocr"],
+        "model_name":    ["ai4bharat/triton-ocr", "surya-ocr-gpu"],
         "service_class": OCRTaskService,
     },
     {
         "task_type":     "LLM",
-        "model_name":    ["ai4bharat/triton-llm"],
+        "model_name":    ["ai4bharat/triton-llm", "llm-indic-prod"],
         "service_class": LLMTaskService,
     },
     {
@@ -76,12 +76,12 @@ TASK_SERVICE_REGISTRY = [
     },
     {
         "task_type":     "SPEAKER_DIARIZATION",
-        "model_name":    ["ai4bharat/triton-speaker-diarization"],
+        "model_name":    ["ai4bharat/triton-speaker-diarization", "sd-gpu"],
         "service_class": SpeakerDiarizationTaskService,
     },
     {
         "task_type":     "LANGUAGE_DIARIZATION",
-        "model_name":    ["ai4bharat/triton-language-diarization"],
+        "model_name":    ["ai4bharat/triton-language-diarization", "lang-diarization-gpu"],
         "service_class": LanguageDiarizationTaskService,
     },
     {
