@@ -46,7 +46,7 @@ import {
 import { getAllModels, getModelById } from "../services/modelManagementService";
 import type { ModelDetails } from "../types/platform";
 import { useAuth } from "../hooks/useAuth";
-import { canAccessServicesManagement, isRegistryReadOnlyUser } from "../utils/rbac";
+import { isRegistryReadOnlyUser } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
@@ -58,7 +58,6 @@ import AdminDataTable, {
   TableSelectField,
   type AdminTableColumn,
 } from "../components/common/AdminDataTable";
-import { MODEL_TASK_TYPE_LIST, formatModelTaskTypeLabel } from "../config/constants";
 
 const ServicesManagementPage: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
@@ -132,6 +131,15 @@ const ServicesManagementPage: React.FC = () => {
     return new Date(timestampMs).toISOString().slice(0, 10);
   };
 
+  const taskTypeOptions = useMemo(() => {
+    const types = new Set<string>();
+    services.forEach((s) => {
+      const t = s.model?.task?.type || s.task?.type || s.task_type;
+      if (t) types.add(String(t).toUpperCase());
+    });
+    return Array.from(types).sort();
+  }, [services]);
+
   // Client-side name filter + sort over the full fetched registry list.
   const registryTableItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -162,14 +170,9 @@ const ServicesManagementPage: React.FC = () => {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
 
-  // GUEST/USER and tenant-scoped admins cannot access Services Management
+  // Check if user is GUEST or USER and redirect if so
   useEffect(() => {
-    if (!user?.roles) return;
-    const denied =
-      user.roles.includes("GUEST") ||
-      user.roles.includes("USER") ||
-      !canAccessServicesManagement(user.roles);
-    if (denied) {
+    if (user?.roles?.includes('GUEST') || user?.roles?.includes('USER')) {
       toast({
         title: "Access Denied",
         description: "You do not have access to Services Management.",
@@ -177,7 +180,7 @@ const ServicesManagementPage: React.FC = () => {
         duration: 5000,
         isClosable: true,
       });
-      router.push("/");
+      router.push('/');
     }
   }, [user, router, toast]);
   // Model fetched by ID when navigating from a deprecated model's "Create Service" (not in active list)
@@ -519,8 +522,6 @@ const ServicesManagementPage: React.FC = () => {
     !!formData.serviceDescription?.trim() &&
     !!formData.modelId?.trim() &&
     !!formData.endpoint?.trim();
-
-  const isCreateFormModelSelected = !!formData.modelId?.trim();
 
   const handleViewService = async (serviceId: string) => {
     // Check session expiry before viewing service
@@ -1128,9 +1129,9 @@ const ServicesManagementPage: React.FC = () => {
                                   formControlProps={{ w: { base: "full", sm: "160px" } }}
                                 >
                                   <option value="">All</option>
-                                  {MODEL_TASK_TYPE_LIST.map((t) => (
+                                  {taskTypeOptions.map((t) => (
                                     <option key={t} value={t}>
-                                      {formatModelTaskTypeLabel(t)}
+                                      {t}
                                     </option>
                                   ))}
                                 </TableSelectField>
@@ -1175,7 +1176,7 @@ const ServicesManagementPage: React.FC = () => {
                                       onClick={() => setFilterTaskType("")}
                                       _hover={{ opacity: 0.8 }}
                                     >
-                                      Model Task Type: {formatModelTaskTypeLabel(filterTaskType)} ×
+                                      Model Task Type: {filterTaskType} ×
                                     </Badge>
                                   )}
                                 </HStack>
@@ -1267,21 +1268,16 @@ const ServicesManagementPage: React.FC = () => {
                             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                               <FormControl isRequired>
                                 <FormLabel fontWeight="semibold">Model ID</FormLabel>
-                                <Input
-                                  value={formData.modelId || ""}
-                                  bg={isCreateFormModelSelected ? "gray.50" : "white"}
-                                  isReadOnly
-                                  placeholder="Select a model above"
-                                />
+                                <Input value={formData.modelId || ""} bg="gray.50" isReadOnly />
                               </FormControl>
 
                               <FormControl isRequired>
                                 <FormLabel fontWeight="semibold">Model Task Type</FormLabel>
                                 <Input
                                   value={formData.task_type || ""}
-                                  placeholder="Select a model above"
-                                  bg={isCreateFormModelSelected ? "gray.50" : "white"}
-                                  isReadOnly
+                                  onChange={(e) => handleInputChange("task_type", e.target.value)}
+                                  placeholder="Enter model task type"
+                                  bg="white"
                                 />
                               </FormControl>
                             </SimpleGrid>
@@ -1293,9 +1289,8 @@ const ServicesManagementPage: React.FC = () => {
                               <Input
                                 type="date"
                                 value={(formData.modelSubmissionDate as string) || ""}
-                                placeholder="Select a model above"
-                                bg={isCreateFormModelSelected ? "gray.50" : "white"}
-                                isReadOnly
+                                onChange={(e) => handleInputChange("modelSubmissionDate", e.target.value)}
+                                bg="white"
                               />
                             </FormControl>
 

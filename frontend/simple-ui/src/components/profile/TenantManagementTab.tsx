@@ -55,7 +55,6 @@ import AdminDataTable, {
   type AdminTableColumn,
 } from "../common/AdminDataTable";
 import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
-import { TENANT_USER_ROLE_OPTIONS } from "./types";
 import {
   TENANT,
   TENANT_ADMIN_UPDATABLE_STATUSES,
@@ -73,7 +72,7 @@ import type { TenantUserStatus, TenantUserView, TenantView } from "../../types/t
 function userActiveStatus(u: TenantUserView): TenantUserStatus {
   return u.is_active && (u.is_tenant_active ?? true)
     ? TENANT.USER_STATUS.ACTIVE
-    : TENANT.USER_STATUS.SUSPENDED;
+    : TENANT.USER_STATUS.INACTIVE;
 }
 
 function dash(v?: string | null): string {
@@ -557,7 +556,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             onClick={() =>
               tm.handleOpenUserStatus(
                 u,
-                isActive ? TENANT.USER_STATUS.SUSPENDED : TENANT.USER_STATUS.ACTIVE
+                isActive ? TENANT.USER_STATUS.INACTIVE : TENANT.USER_STATUS.ACTIVE
               )
             }
           />
@@ -687,22 +686,18 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   }
                 />
               </FormControl>
-              <FormControl isRequired isInvalid={Boolean(tm.editTenantFormErrors.email)}>
+              <FormControl isRequired>
                 <FormLabel>Email</FormLabel>
                 <Input
                   type="email"
                   value={tm.editTenantForm.email ?? ""}
-                  onChange={(e) => {
-                    const value = e.target.value;
+                  onChange={(e) =>
                     tm.setEditTenantForm({
                       ...tm.editTenantForm,
-                      email: value,
-                    });
-                    tm.checkEditTenantContactEmailUnique(value);
-                  }}
-                  onBlur={(e) => tm.checkEditTenantContactEmailUnique(e.target.value)}
+                      email: e.target.value,
+                    })
+                  }
                 />
-                <FormErrorMessage>{tm.editTenantFormErrors.email}</FormErrorMessage>
                 <FormHelperText>
                   If you change the contact email, the update takes effect only after the new
                   address is verified.
@@ -730,7 +725,6 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
               colorScheme="blue"
               onClick={tm.handleSaveEditTenant}
               isLoading={tm.isSubmittingEditTenant}
-              isDisabled={!tm.canSubmitEditTenantForm}
             >
               Save
             </Button>
@@ -813,24 +807,6 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 />
                 <FormErrorMessage>{tm.userFormErrors.full_name}</FormErrorMessage>
               </FormControl>
-              <FormControl isRequired>
-                <FormLabel>Role</FormLabel>
-                <Select
-                  value={tm.userForm.role}
-                  onChange={(e) =>
-                    tm.setUserForm({
-                      ...tm.userForm,
-                      role: e.target.value as typeof tm.userForm.role,
-                    })
-                  }
-                >
-                  {TENANT_USER_ROLE_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </Select>
-              </FormControl>
               <FormControl>
                 <FormLabel>Phone Number</FormLabel>
                 <Input
@@ -885,22 +861,17 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   }
                 />
               </FormControl>
-              <FormControl isRequired isInvalid={Boolean(tm.editUserFormErrors.email)}>
+              <FormControl>
                 <FormLabel>Email</FormLabel>
                 <Input
                   type="email"
-                  value={tm.editUserForm.email ?? ""}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    tm.setEditUserForm({
-                      ...tm.editUserForm,
-                      email: value,
-                    });
-                    tm.checkEditUserEmailUnique(value);
-                  }}
-                  onBlur={(e) => tm.checkEditUserEmailUnique(e.target.value)}
+                  value={tm.editUserRow?.email ?? ""}
+                  isReadOnly
+                  bg="gray.50"
+                  _dark={{ bg: "whiteAlpha.100" }}
+                  cursor="not-allowed"
                 />
-                <FormErrorMessage>{tm.editUserFormErrors.email}</FormErrorMessage>
+                <FormHelperText>Email cannot be changed.</FormHelperText>
               </FormControl>
               <FormControl>
                 <FormLabel>Full Name</FormLabel>
@@ -913,24 +884,6 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     })
                   }
                 />
-              </FormControl>
-              <FormControl isRequired>
-                <FormLabel>Role</FormLabel>
-                <Select
-                  value={tm.editUserForm.role}
-                  onChange={(e) =>
-                    tm.setEditUserForm({
-                      ...tm.editUserForm,
-                      role: e.target.value as typeof tm.editUserForm.role,
-                    })
-                  }
-                >
-                  {TENANT_USER_ROLE_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </Select>
               </FormControl>
               <FormControl>
                 <FormLabel>Phone Number</FormLabel>
@@ -954,7 +907,6 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
               colorScheme="blue"
               onClick={tm.handleSaveEditUser}
               isLoading={tm.isSubmittingEditUser}
-              isDisabled={!tm.canSubmitEditUserForm}
             >
               Save
             </Button>
