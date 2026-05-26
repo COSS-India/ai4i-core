@@ -1,45 +1,33 @@
 {
-  "validate": {
-    "start": [
-      {"attr": "task_type", "expr": "task_type"},
-      {"attr": "input_size", "expr": "len(input)"},
-      {"attr": "customer_id", "func": "compute_customer_id"}
-    ],
-    "end": []
-  },
-  "preprocess_input": {
-    "start": [
-      {"attr": "input_count", "expr": "item_count"},
-      {"attr": "first_source", "func": "compute_first_item_source"}
-    ],
-    "end": [
-      {"attr": "processed_count", "expr": "item_count"}
-    ]
-  },
-  "resolve_model": {
+  "overall_request": {
     "start": [
       {"attr": "task_type", "expr": "task_type"},
       {"attr": "input_size", "func": "compute_input_size"},
       {"attr": "customer_id", "func": "compute_customer_id"}
     ],
     "end": [
-      {"attr": "service_used", "expr": "name"},
-      {"attr": "model_used", "expr": "name"},
-      {"attr": "endpoint", "expr": "endpoint"}
+      {"attr": "total_time_ms", "func": "compute_elapsed_time"},
+      {"attr": "service_used", "func": "compute_service_used"},
+      {"attr": "model_used", "func": "compute_model_used"},
+      {"attr": "success_status", "func": "compute_success_status"}
     ]
   },
-  "triton_inference": {
+  "model_loading": {
     "start": [],
     "end": [
-      {"attr": "output_size", "expr": "len(response_data)"}
+      {"attr": "load_time_ms", "func": "compute_elapsed_time"}
     ]
   },
-  "postprocess": {
+  "ai_inference": {
     "start": [],
-    "end": []
+    "end": [
+      {"attr": "execution_time_ms", "func": "compute_elapsed_time"}
+    ]
   },
-  "persist": {
+  "database_write": {
     "start": [],
-    "end": []
+    "end": [
+      {"attr": "write_time_ms", "func": "compute_elapsed_time"}
+    ]
   }
 }

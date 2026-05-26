@@ -1,52 +1,33 @@
 {
-  "validate": {
-    "start": [
-      {"attr": "input_count", "expr": "len(input) if input else 0"},
-      {"attr": "first_text", "expr": "str(input[0].get('source', '')) if input and len(input) > 0 else ''"},
-      {"attr": "first_text_length", "expr": "len(str(input[0].get('source', ''))) if input and len(input) > 0 else 0"}
-    ],
-    "end": []
-  },
-  "preprocess_input": {
-    "start": [
-      {"attr": "input_count", "expr": "len(items) if items else 0"},
-      {"attr": "first_text_length", "expr": "len(str(items[0].get('source', ''))) if items and len(items) > 0 else 0"},
-      {"attr": "items_processed", "expr": "len(items) if items else 0"}
-    ],
-    "end": []
-  },
-  "preprocess": {
-    "start": [
-      {"attr": "input_count", "expr": "len(items) if items else 0"},
-      {"attr": "first_text_length", "expr": "len(str(items[0].get('source', ''))) if items and len(items) > 0 else 0"},
-      {"attr": "items_processed", "expr": "len(items) if items else 0"}
-    ],
-    "end": []
-  },
-  "resolve_model": {
+  "overall_request": {
     "start": [
       {"attr": "task_type", "expr": "task_type"},
       {"attr": "input_size", "func": "compute_input_size"},
       {"attr": "customer_id", "func": "compute_customer_id"}
     ],
     "end": [
-      {"attr": "service_used", "expr": "name"},
-      {"attr": "model_used", "expr": "name"},
-      {"attr": "endpoint", "expr": "endpoint"}
+      {"attr": "total_time_ms", "func": "compute_elapsed_time"},
+      {"attr": "service_used", "func": "compute_service_used"},
+      {"attr": "model_used", "func": "compute_model_used"},
+      {"attr": "success_status", "func": "compute_success_status"}
     ]
   },
-  "triton_inference": {
-    "start": [],
-    "end": []
-  },
-  "postprocess": {
+  "model_loading": {
     "start": [],
     "end": [
-      {"attr": "results_count", "expr": "len(response) if response else 0"}
+      {"attr": "load_time_ms", "func": "compute_elapsed_time"}
     ]
   },
-  "persist": {
+  "ai_inference": {
     "start": [],
-    "end": []
+    "end": [
+      {"attr": "execution_time_ms", "func": "compute_elapsed_time"}
+    ]
+  },
+  "database_write": {
+    "start": [],
+    "end": [
+      {"attr": "write_time_ms", "func": "compute_elapsed_time"}
+    ]
   }
 }
