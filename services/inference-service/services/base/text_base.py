@@ -15,6 +15,10 @@ from ai4icore_core.telemetry import async_trace_stage
 import json, logging
 
 
+# For NMT-specific tracing, we use "ai_inference" instead of "triton_inference"
+_trace_ai_inference = async_trace_stage("ai_inference")
+
+
 class TextBase(BaseTaskService):
     CHUNK_SIZE: int = 90
 
@@ -38,7 +42,6 @@ class TextBase(BaseTaskService):
     # Common validate_request
     # ------------------------------------------------------------------
 
-    @async_trace_stage("validate")
     async def validate_request(self, payload: Any) -> None:
         await super().validate_request(payload)
 
@@ -69,7 +72,6 @@ class TextBase(BaseTaskService):
     # preprocess_input
     # ------------------------------------------------------------------
 
-    @async_trace_stage("preprocess_input")
     async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
         await super().preprocess_input(input_data)
 
@@ -187,3 +189,8 @@ class TextBase(BaseTaskService):
         return [{"token": wi["word"], "tag": aligned[idx]["tag"] if idx in aligned else "O",
                  "tokenIndex": idx, "tokenStartIndex": wi["start"], "tokenEndIndex": wi["end"]}
                 for idx, wi in enumerate(word_positions)]
+
+    @_trace_ai_inference
+    async def execute_triton_inference(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Override to use ai_inference stage name for NMT tracing."""
+        return await super().execute_triton_inference(payload)

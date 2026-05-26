@@ -26,12 +26,18 @@ def trace_stage(stage_name):
     def decorator(func):
         @wraps(func)
         def wrapper(self, request):
+            import time
             trace_manager = get_trace_manager()
             service_name = _get_service_name(self, request)
+            start_time = time.time()
             span = trace_manager.trace_stage_start(service_name, stage_name, request)
             try:
                 response = func(self, request)
-                trace_manager.trace_stage_end(span, response)
+                elapsed_ms = (time.time() - start_time) * 1000
+                response_dict = response.dict() if response and hasattr(response, 'dict') else (response or {})
+                if isinstance(response_dict, dict):
+                    response_dict['elapsed_time_ms'] = elapsed_ms
+                trace_manager.trace_stage_end(span, response_dict)
                 return response
             except Exception:
                 span.span.end()
@@ -44,15 +50,21 @@ def async_trace_stage(stage_name):
     """Decorator for automatic tracing of async processing stages. Supports variable signatures."""
     def decorator(func):
         async def wrapper(self, *args, **kwargs):
+            import time
             trace_manager = get_trace_manager()
-            # Extract request/payload from first positional argument
-            request = args[0] if args else {}
+            # Extract request/payload from first positional argument or keyword arguments
+            request = args[0] if args else kwargs.get('payload') or kwargs.get('request') or {}
             request_dict = request.dict() if hasattr(request, 'dict') else request
             service_name = _get_service_name(self, request_dict)
+
+            start_time = time.time()
             span = trace_manager.trace_stage_start(service_name, stage_name, request_dict)
             try:
                 response = await func(self, *args, **kwargs)
+                elapsed_ms = (time.time() - start_time) * 1000
                 response_dict = response.dict() if response and hasattr(response, 'dict') else (response or {})
+                if isinstance(response_dict, dict):
+                    response_dict['elapsed_time_ms'] = elapsed_ms
                 trace_manager.trace_stage_end(span, response_dict)
                 return response
             except Exception:

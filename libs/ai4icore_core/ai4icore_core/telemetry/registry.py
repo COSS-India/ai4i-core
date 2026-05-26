@@ -76,6 +76,46 @@ def compute_request_status(response: Dict[str, Any]) -> str:
     return "success"
 
 
+def compute_success_status(response: Dict[str, Any]) -> str:
+    """Determine success status from response (alias for compute_request_status)."""
+    return compute_request_status(response)
+
+
+def compute_service_used(response: Dict[str, Any]) -> str:
+    """Extract service name from response (typically NMT for text services)."""
+    if isinstance(response, dict):
+        service = (response.get("service_used") or response.get("service_name")
+                  or response.get("task_type", "").lower() or "nmt")
+        return str(service).lower()
+    return "nmt"
+
+
+def compute_model_used(response: Dict[str, Any]) -> str:
+    """Extract model name from response (checks multiple possible locations)."""
+    if isinstance(response, dict):
+        model = (response.get("model_used") or response.get("model_name")
+                or response.get("model") or response.get("service_used")
+                or response.get("name") or "unknown")
+        return str(model)
+    return "unknown"
+
+
+def compute_elapsed_time(response: Dict[str, Any]) -> int:
+    """Compute elapsed time in milliseconds from response."""
+    if isinstance(response, dict):
+        elapsed = response.get("elapsed_time_ms") or response.get("elapsed_time") or response.get("duration_ms") or 0
+        return int(elapsed)
+    return 0
+
+
+def compute_records_saved(response: Dict[str, Any]) -> int:
+    """Count records saved to database."""
+    if isinstance(response, dict):
+        saved = response.get("records_saved") or response.get("row_count") or 0
+        return int(saved)
+    return 0
+
+
 REGISTRY = {
     "compute_input_quality": compute_input_quality,
     "compute_sentiment_score": compute_sentiment_score,
@@ -85,6 +125,11 @@ REGISTRY = {
     "compute_customer_id": compute_customer_id,
     "compute_input_size": compute_input_size,
     "compute_request_status": compute_request_status,
+    "compute_success_status": compute_success_status,
+    "compute_service_used": compute_service_used,
+    "compute_model_used": compute_model_used,
+    "compute_elapsed_time": compute_elapsed_time,
+    "compute_records_saved": compute_records_saved,
 }
 
 

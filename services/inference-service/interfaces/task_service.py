@@ -5,7 +5,6 @@ Task service interface and base class defining the contract for all inference ta
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
-from ai4icore_core.telemetry import async_trace_stage
 
 
 class ITaskService(ABC):
@@ -224,7 +223,6 @@ class BaseTaskService(ITaskService):
                 extracted.append('')
         return extracted
 
-    @async_trace_stage("triton_inference")
     async def execute_triton_inference(
         self,
         payload: Dict[str, Any],
