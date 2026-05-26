@@ -300,14 +300,14 @@ async def run_audio_lang_detection_inference(
 ) -> Dict[str, Any]:
     """
     Dedicated endpoint for Audio Language Detection inference requests.
-    Sets task_type to AUDIO_LANG_DETECTION if not provided in payload, then routes via Orchestrator.
+    Sets task_type to AUDIO_LANGUAGE_DETECTION if not provided in payload, then routes via Orchestrator.
     """
     import time
     start_time = time.time()
 
     try:
         if not payload.get("task_type"):
-            request_payload = {**payload, "task_type": "AUDIO_LANG_DETECTION"}
+            request_payload = {**payload, "task_type": "AUDIO_LANGUAGE_DETECTION"}
         else:
             request_payload = payload
 
@@ -437,7 +437,7 @@ async def list_available_tasks(
     Returns:
         Dict with list of available task types
     """
-    return {"tasks": ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANG_DETECTION", "AUDIO_LANGUAGE_DETECTION", "SMR"]}
+    return {"tasks": ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]}
 
 async def get_task_info(
     task_type: str,
