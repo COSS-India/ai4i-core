@@ -108,6 +108,121 @@ def compute_elapsed_time(response: Dict[str, Any]) -> int:
     return 0
 
 
+def compute_endpoint(request: Dict[str, Any]) -> str:
+    """Extract endpoint path from request."""
+    if isinstance(request, dict):
+        return request.get("endpoint") or request.get("path") or request.get("route") or ""
+    return ""
+
+
+def compute_http_status_code(response: Dict[str, Any]) -> int:
+    """Extract HTTP status code from response."""
+    if isinstance(response, dict):
+        status = response.get("status_code") or response.get("http_status") or 200
+        return int(status)
+    return 200
+
+
+def compute_tenant_id(request: Dict[str, Any]) -> str:
+    """Extract tenant ID from request config."""
+    config = request.get("config", {})
+    if isinstance(config, dict):
+        return config.get("tenantId") or config.get("tenant_id") or ""
+    return getattr(config, "tenantId", None) or getattr(config, "tenant_id", None) or ""
+
+
+def compute_user_id_attr(request: Dict[str, Any]) -> str:
+    """Extract user ID from request config (distinct from compute_customer_id)."""
+    config = request.get("config", {})
+    if isinstance(config, dict):
+        return config.get("userId") or config.get("user_id") or ""
+    return getattr(config, "userId", None) or getattr(config, "user_id", None) or ""
+
+
+def compute_model_name(response: Dict[str, Any]) -> str:
+    """Extract model name from response."""
+    if isinstance(response, dict):
+        model = (response.get("model_name") or response.get("model")
+                or response.get("name") or response.get("model_used") or "unknown")
+        return str(model)
+    return "unknown"
+
+
+def compute_model_version(response: Dict[str, Any]) -> str:
+    """Extract model version from response."""
+    if isinstance(response, dict):
+        version = response.get("model_version") or response.get("version") or ""
+        return str(version)
+    return ""
+
+
+def compute_task_type(request: Dict[str, Any]) -> str:
+    """Extract task type from request."""
+    if isinstance(request, dict):
+        task = (request.get("task_type") or request.get("taskType")
+                or request.get("type") or "")
+        return str(task)
+    return ""
+
+
+def compute_input_size_kb(request: Dict[str, Any]) -> int:
+    """Compute input size in kilobytes from request."""
+    if isinstance(request, dict):
+        import json
+        try:
+            size_bytes = len(json.dumps(request).encode('utf-8'))
+            return max(1, size_bytes // 1024)
+        except Exception:
+            pass
+    return 0
+
+
+def compute_output_size_kb(response: Dict[str, Any]) -> int:
+    """Compute output size in kilobytes from response."""
+    if isinstance(response, dict):
+        import json
+        try:
+            size_bytes = len(json.dumps(response).encode('utf-8'))
+            return max(1, size_bytes // 1024)
+        except Exception:
+            pass
+    return 0
+
+
+def compute_input_tokens(request: Dict[str, Any]) -> int:
+    """Extract input token count from request."""
+    if isinstance(request, dict):
+        tokens = request.get("input_tokens") or request.get("tokens") or 0
+        return int(tokens) if tokens else 0
+    return 0
+
+
+def compute_output_tokens(response: Dict[str, Any]) -> int:
+    """Extract output token count from response."""
+    if isinstance(response, dict):
+        tokens = response.get("output_tokens") or response.get("tokens_generated") or 0
+        return int(tokens) if tokens else 0
+    return 0
+
+
+def compute_input_type(request: Dict[str, Any]) -> str:
+    """Extract input data type from request."""
+    if isinstance(request, dict):
+        input_type = (request.get("input_type") or request.get("type")
+                     or request.get("content_type") or "text")
+        return str(input_type)
+    return "text"
+
+
+def compute_output_type(response: Dict[str, Any]) -> str:
+    """Extract output data type from response."""
+    if isinstance(response, dict):
+        output_type = (response.get("output_type") or response.get("type")
+                      or response.get("content_type") or "text")
+        return str(output_type)
+    return "text"
+
+
 def compute_records_saved(response: Dict[str, Any]) -> int:
     """Count records saved to database."""
     if isinstance(response, dict):
@@ -130,6 +245,19 @@ REGISTRY = {
     "compute_model_used": compute_model_used,
     "compute_elapsed_time": compute_elapsed_time,
     "compute_records_saved": compute_records_saved,
+    "compute_endpoint": compute_endpoint,
+    "compute_http_status_code": compute_http_status_code,
+    "compute_tenant_id": compute_tenant_id,
+    "compute_user_id_attr": compute_user_id_attr,
+    "compute_model_name": compute_model_name,
+    "compute_model_version": compute_model_version,
+    "compute_task_type": compute_task_type,
+    "compute_input_size_kb": compute_input_size_kb,
+    "compute_output_size_kb": compute_output_size_kb,
+    "compute_input_tokens": compute_input_tokens,
+    "compute_output_tokens": compute_output_tokens,
+    "compute_input_type": compute_input_type,
+    "compute_output_type": compute_output_type,
 }
 
 
