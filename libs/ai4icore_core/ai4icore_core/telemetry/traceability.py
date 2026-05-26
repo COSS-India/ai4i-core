@@ -29,6 +29,12 @@ def _serialize_span_dict(span) -> Dict[str, Any]:
         dt = datetime.fromtimestamp(seconds, tz=timezone.utc)
         return dt.replace(microsecond=nanos // 1_000).isoformat()
 
+    attributes = {}
+    if span.resource and span.resource.attributes:
+        attributes.update(span.resource.attributes)
+    if span.attributes:
+        attributes.update(span.attributes)
+
     result = {
         "name": span.name,
         "context": {
@@ -40,8 +46,7 @@ def _serialize_span_dict(span) -> Dict[str, Any]:
         "parent_id": f"0x{format(span.parent.span_id, '016x')}" if span.parent else None,
         "start_time": _to_iso_string(span.start_time),
         "end_time": _to_iso_string(span.end_time),
-        "attributes": dict(span.attributes) if span.attributes else {},
-        "resource": {"attributes": dict(span.resource.attributes) if span.resource and span.resource.attributes else {}, "schema_url": ""},
+        "attributes": attributes,
     }
 
     if span.events:
