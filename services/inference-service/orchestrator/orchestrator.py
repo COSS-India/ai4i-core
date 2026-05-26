@@ -55,7 +55,7 @@ class Orchestrator:
         self.inference_server_resolver = InferenceServerResolver()
         self.task_service_registry: list = TASK_SERVICE_REGISTRY
 
-    @async_trace_stage("overall_request")
+    @async_trace_stage("request")
     async def route_inference(
         self,
         payload: Dict[str, Any],
@@ -173,7 +173,7 @@ class Orchestrator:
         except Exception as e:
             raise TaskServiceExecutionError(f"Failed to get task service: {str(e)}")
 
-    @async_trace_stage("model_loading")
+    @async_trace_stage("model")
     async def _resolve_service_and_model(
         self, payload: Dict[str, Any]
     ) -> Dict[str, Any]:

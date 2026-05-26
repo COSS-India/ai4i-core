@@ -126,7 +126,7 @@ class TraceManager:
         All spans in the request are children of the first span.
         """
         current_trace_id = get_trace_id()
-        span_name = f"{service}/{stage}"
+        span_name = stage
 
         # Use the current async context's identity as the key
         # This uniquely identifies each request/task
