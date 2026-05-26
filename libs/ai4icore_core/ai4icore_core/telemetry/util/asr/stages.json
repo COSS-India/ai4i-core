@@ -14,8 +14,7 @@
   },
   "model_loading": {
     "start": [],
-    "end": [
-      {"attr": "load_time_ms", "func": "compute_elapsed_time"}
+    "end": [      {"attr": "load_time_ms", "func": "compute_elapsed_time"}
     ]
   },
   "ai_inference": {
