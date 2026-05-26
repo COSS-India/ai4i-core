@@ -31,6 +31,7 @@ from pydub import AudioSegment
 from pydub.effects import normalize as pydub_normalize
 
 from interfaces.task_service import BaseTaskService
+from ai4icore_core.telemetry import async_trace_stage
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ class AudioBase(BaseTaskService):
     # Validation
     # ------------------------------------------------------------------
 
+    @async_trace_stage("validate")
     async def validate_request(self, payload: Dict[str, Any]) -> None:
         """
         Common audio validation pipeline:
@@ -102,6 +104,7 @@ class AudioBase(BaseTaskService):
         await super().validate_request(payload)
         await self._validate_audio_items(payload)
 
+    @async_trace_stage("preprocess_input")
     async def preprocess_input(self, input_data: List[Any]) -> List[Dict[str, Any]]:
         """
         Common audio preprocessing pipeline, applied to each item in sequence:
