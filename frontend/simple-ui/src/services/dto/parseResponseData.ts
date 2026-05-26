@@ -16,6 +16,14 @@ export function parseResponseData<S extends ZodTypeAny>(
   const result = schema.safeParse(data);
   if (!result.success) {
     const detail = formatZodIssues(result.error.issues);
+    if (process.env.NODE_ENV === 'development') {
+      console.error('[API contract mismatch]', {
+        method: context?.method,
+        url: context?.url,
+        issues: result.error.issues,
+        received: data,
+      });
+    }
     throw new ApiValidationError(`API response validation failed: ${detail}`, result.error.issues, context);
   }
   return result.data;

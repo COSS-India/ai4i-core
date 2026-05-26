@@ -8,6 +8,10 @@ import {
 import type { ZodTypeAny } from 'zod';
 import { parseResponseData } from './dto/parseResponseData';
 
+const warnOnMissingResponseSchema =
+  process.env.NODE_ENV === 'development' &&
+  process.env.NEXT_PUBLIC_API_STRICT_RESPONSE_VALIDATION === 'true';
+
 type ApiRequestHeaders = Record<string, string>;
 const DEFAULT_API_HEADERS: ApiRequestHeaders = {
   'Content-Type': 'application/json',
@@ -111,6 +115,12 @@ class BaseApiService {
           method,
           url,
         }) as T;
+      } else if (
+        warnOnMissingResponseSchema &&
+        response.status >= 200 &&
+        response.status < 300
+      ) {
+        console.warn(`[API] Missing responseSchema for ${method} ${url}`);
       }
       return response;
     } catch (error) {

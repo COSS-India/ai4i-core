@@ -3,6 +3,7 @@
  */
 
 import { ASR_ERRORS, TTS_ERRORS, NMT_ERRORS, PIPELINE_ERRORS, COMMON_ERRORS, OCR_ERRORS, TRANSLITERATION_ERRORS, LANGUAGE_DETECTION_ERRORS, SPEAKER_DIARIZATION_ERRORS, AUDIO_LANGUAGE_DETECTION_ERRORS, NER_ERRORS } from '../config/constants';
+import { ApiValidationError } from '../services/dto/apiValidationError';
 
 export interface ErrorInfo {
   title: string;
@@ -24,16 +25,24 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
   let errorMessage = 'An unexpected error occurred. Please try again.';
   let errorTitle = 'Error';
 
+  if (error instanceof ApiValidationError) {
+    return {
+      title: 'API Contract Mismatch',
+      message: error.message,
+      showOnlyMessage: true,
+    };
+  }
+
   // Check for API error response structure
   if (error?.response?.data) {
     const data = error?.response?.data;
-    
+
     // Prefer backend message as default when we have one (for unknown error codes)
     const backendMessage = data.detail?.message || data.message;
     if (backendMessage && typeof backendMessage === 'string') {
       errorMessage = backendMessage;
     }
-    
+
     // Handle Pydantic validation errors (detail is an array)
     if (data.detail && Array.isArray(data.detail) && data.detail.length > 0) {
       // Extract error messages from validation errors
@@ -52,7 +61,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
           }
           return msg;
         });
-      
+
       if (errorMessages.length > 0) {
         errorMessage = errorMessages.join('; ');
         errorTitle = 'Validation Error';
@@ -63,19 +72,19 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
         };
       }
     }
-    
+
     // Handle nested detail object with error and message
     if (data.detail && typeof data.detail === 'object' && !Array.isArray(data.detail)) {
       if (data.detail.message) {
         let rawMessage = String(data.detail.message);
-        
+
         // Try to extract nested message from string representations like "{'kind': 'DBError', 'message': 'Error listing service details'}"
         // This handles cases where the message is a stringified dict/object
         try {
           // Check if the message looks like a dict/object string representation
           if (rawMessage.trim().startsWith('{') || rawMessage.trim().startsWith('[')) {
             let extracted = false;
-            
+
             // First, try JSON parsing (replace single quotes with double quotes)
             try {
               const jsonLike = rawMessage.replace(/'/g, '"');
@@ -93,7 +102,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             } catch (jsonError) {
               // JSON parsing failed, try regex
             }
-            
+
             // If JSON parsing didn't work, try regex to extract message from Python dict-like string
             if (!extracted) {
               // Pattern matches: 'message': 'value' or "message": "value"
@@ -104,7 +113,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
                 extracted = true;
               }
             }
-            
+
             // If extraction failed, use the raw message
             if (!extracted) {
               errorMessage = rawMessage;
@@ -117,14 +126,14 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
           // Fallback to original message if parsing fails
           errorMessage = rawMessage;
         }
-        
+
         // When we have a structured error with message, show only the message in toast
         // (hide the title/code)
       }
-      
+
       if (data.detail.error) {
         const errorCode = String(data.detail.error).toUpperCase();
-        
+
         // Check for common errors first (apply to all services)
         if (COMMON_ERRORS[errorCode as keyof typeof COMMON_ERRORS]) {
           const commonError = COMMON_ERRORS[errorCode as keyof typeof COMMON_ERRORS];
@@ -136,7 +145,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         // Check for TTS-specific error codes when service is TTS
         if (service === 'tts' && TTS_ERRORS[errorCode as keyof typeof TTS_ERRORS]) {
           const ttsError = TTS_ERRORS[errorCode as keyof typeof TTS_ERRORS];
@@ -151,7 +160,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         // Check for NMT-specific error codes when service is NMT
         if (service === 'nmt' && NMT_ERRORS[errorCode as keyof typeof NMT_ERRORS]) {
           const nmtError = NMT_ERRORS[errorCode as keyof typeof NMT_ERRORS];
@@ -173,7 +182,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         // Check for Pipeline-specific error codes when service is pipeline
         if (service === 'pipeline' && PIPELINE_ERRORS[errorCode as keyof typeof PIPELINE_ERRORS]) {
           const pipelineError = PIPELINE_ERRORS[errorCode as keyof typeof PIPELINE_ERRORS];
@@ -195,7 +204,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         // Check for OCR-specific error codes when service is OCR
         if (service === 'ocr' && OCR_ERRORS[errorCode as keyof typeof OCR_ERRORS]) {
           const ocrError = OCR_ERRORS[errorCode as keyof typeof OCR_ERRORS];
@@ -210,7 +219,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         // Check for Transliteration-specific error codes when service is Transliteration
         if (service === 'transliteration' && TRANSLITERATION_ERRORS[errorCode as keyof typeof TRANSLITERATION_ERRORS]) {
           const transliterationError = TRANSLITERATION_ERRORS[errorCode as keyof typeof TRANSLITERATION_ERRORS];
@@ -225,7 +234,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         // Check for Language Detection-specific error codes when service is Language Detection
         if (service === 'language-detection' && LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof LANGUAGE_DETECTION_ERRORS]) {
           const languageDetectionError = LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof LANGUAGE_DETECTION_ERRORS];
@@ -240,7 +249,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         // Check for Speaker Diarization-specific error codes when service is Speaker Diarization
         if (service === 'speaker-diarization' && SPEAKER_DIARIZATION_ERRORS[errorCode as keyof typeof SPEAKER_DIARIZATION_ERRORS]) {
           const speakerDiarizationError = SPEAKER_DIARIZATION_ERRORS[errorCode as keyof typeof SPEAKER_DIARIZATION_ERRORS];
@@ -255,7 +264,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         // Check for Audio Language Detection-specific error codes when service is Audio Language Detection
         if (service === 'audio-language-detection' && AUDIO_LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof AUDIO_LANGUAGE_DETECTION_ERRORS]) {
           const audioLanguageDetectionError = AUDIO_LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof AUDIO_LANGUAGE_DETECTION_ERRORS];
@@ -270,7 +279,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         // Check for NER-specific error codes when service is NER
         if (service === 'ner' && NER_ERRORS[errorCode as keyof typeof NER_ERRORS]) {
           const nerError = NER_ERRORS[errorCode as keyof typeof NER_ERRORS];
@@ -285,7 +294,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         // Check for ASR-specific error codes (or when no service / asr)
         if (ASR_ERRORS[errorCode as keyof typeof ASR_ERRORS]) {
           const asrError = ASR_ERRORS[errorCode as keyof typeof ASR_ERRORS];
@@ -300,7 +309,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         // Unknown error code: use backend message (already set above) and format title from code
         if (data.detail.message) {
           errorTitle = formatErrorCode(errorCode);
@@ -310,7 +319,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         // Format permission denied errors with clear title
         if (errorCode === 'PERMISSION_DENIED' || errorCode.includes('PERMISSION_DENIED')) {
           errorTitle = 'PERMISSION DENIED';
@@ -324,7 +333,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
         }
       } else if (data.detail.code) {
         const errorCode = String(data.detail.code).toUpperCase();
-        
+
         // Check for common errors first (apply to all services)
         if (COMMON_ERRORS[errorCode as keyof typeof COMMON_ERRORS]) {
           const commonError = COMMON_ERRORS[errorCode as keyof typeof COMMON_ERRORS];
@@ -336,7 +345,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         if (service === 'tts' && TTS_ERRORS[errorCode as keyof typeof TTS_ERRORS]) {
           const ttsError = TTS_ERRORS[errorCode as keyof typeof TTS_ERRORS];
           errorTitle = ttsError.title;
@@ -350,7 +359,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         if (service === 'nmt' && NMT_ERRORS[errorCode as keyof typeof NMT_ERRORS]) {
           const nmtError = NMT_ERRORS[errorCode as keyof typeof NMT_ERRORS];
           errorTitle = nmtError.title;
@@ -370,7 +379,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         if (service === 'pipeline' && PIPELINE_ERRORS[errorCode as keyof typeof PIPELINE_ERRORS]) {
           const pipelineError = PIPELINE_ERRORS[errorCode as keyof typeof PIPELINE_ERRORS];
           errorTitle = pipelineError.title;
@@ -390,7 +399,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         if (service === 'ocr' && OCR_ERRORS[errorCode as keyof typeof OCR_ERRORS]) {
           const ocrError = OCR_ERRORS[errorCode as keyof typeof OCR_ERRORS];
           errorTitle = ocrError.title;
@@ -404,7 +413,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         if (service === 'transliteration' && TRANSLITERATION_ERRORS[errorCode as keyof typeof TRANSLITERATION_ERRORS]) {
           const transliterationError = TRANSLITERATION_ERRORS[errorCode as keyof typeof TRANSLITERATION_ERRORS];
           errorTitle = transliterationError.title;
@@ -418,7 +427,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         if (service === 'language-detection' && LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof LANGUAGE_DETECTION_ERRORS]) {
           const languageDetectionError = LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof LANGUAGE_DETECTION_ERRORS];
           errorTitle = languageDetectionError.title;
@@ -432,7 +441,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         if (service === 'speaker-diarization' && SPEAKER_DIARIZATION_ERRORS[errorCode as keyof typeof SPEAKER_DIARIZATION_ERRORS]) {
           const speakerDiarizationError = SPEAKER_DIARIZATION_ERRORS[errorCode as keyof typeof SPEAKER_DIARIZATION_ERRORS];
           errorTitle = speakerDiarizationError.title;
@@ -446,7 +455,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         if (service === 'audio-language-detection' && AUDIO_LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof AUDIO_LANGUAGE_DETECTION_ERRORS]) {
           const audioLanguageDetectionError = AUDIO_LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof AUDIO_LANGUAGE_DETECTION_ERRORS];
           errorTitle = audioLanguageDetectionError.title;
@@ -460,7 +469,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         if (service === 'ner' && NER_ERRORS[errorCode as keyof typeof NER_ERRORS]) {
           const nerError = NER_ERRORS[errorCode as keyof typeof NER_ERRORS];
           errorTitle = nerError.title;
@@ -474,7 +483,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         if (ASR_ERRORS[errorCode as keyof typeof ASR_ERRORS]) {
           const asrError = ASR_ERRORS[errorCode as keyof typeof ASR_ERRORS];
           errorTitle = asrError.title;
@@ -488,7 +497,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         if (data.detail.message) {
           errorTitle = formatErrorCode(errorCode);
           return {
@@ -497,14 +506,14 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
             showOnlyMessage: true,
           };
         }
-        
+
         if (errorCode === 'PERMISSION_DENIED' || errorCode.includes('PERMISSION_DENIED')) {
           errorTitle = 'PERMISSION DENIED';
         } else {
           errorTitle = formatErrorCode(errorCode);
         }
       }
-      
+
       // Append hint when present (e.g. "set FOO_URL=...")
       if (data.detail.hint && typeof data.detail.hint === 'string') {
         errorMessage = errorMessage + (errorMessage.endsWith('.') ? ' ' : '. ') + data.detail.hint;
@@ -518,11 +527,11 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
           showOnlyMessage: true,
         };
       }
-    } 
+    }
     // Handle detail as string
     else if (data.detail && typeof data.detail === 'string') {
       errorMessage = data.detail;
-    } 
+    }
     // Handle message at root level
     else if (data.message) {
       errorMessage = String(data.message);
@@ -570,7 +579,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
       showOnlyMessage: true,
     };
   }
-  
+
   const lowerMessage = (errorMessage || detailMessage || (error?.message && String(error.message)) || '').toLowerCase();
   if (status === 403) {
     const errorCode = String(error?.response?.data?.detail?.error || error?.response?.data?.detail?.code || '').toUpperCase();
@@ -593,8 +602,8 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
     }
   }
   // Handle network errors (connection refused, not found, etc.)
-  if (error?.code === 'ECONNREFUSED' || error?.code === 'ENOTFOUND' || error?.code === 'ETIMEDOUT' || 
-      error?.code === 'ECONNABORTED' || error?.message?.includes('Network Error') || 
+  if (error?.code === 'ECONNREFUSED' || error?.code === 'ENOTFOUND' || error?.code === 'ETIMEDOUT' ||
+      error?.code === 'ECONNABORTED' || error?.message?.includes('Network Error') ||
       error?.message?.includes('network') || error?.message?.includes('Failed to fetch')) {
     const err = COMMON_ERRORS.NETWORK_ERROR;
     return {
@@ -603,7 +612,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
       showOnlyMessage: true,
     };
   }
-  
+
   // Use error.message only when we didn't get a message from response.data (e.g. avoid overwriting "Invalid API key" with "Request failed with status code 403")
   else if (error?.message && errorMessage === 'An unexpected error occurred. Please try again.') {
     errorMessage = error.message;
@@ -626,7 +635,7 @@ function formatErrorCode(code: string): string {
   if (code === 'PERMISSION_DENIED' || code.includes('PERMISSION_DENIED')) {
     return 'PERMISSION DENIED';
   }
-  
+
   // Convert snake_case to Title Case
   return code
     .split('_')
@@ -641,4 +650,3 @@ export function isPermissionDeniedError(error: any): boolean {
   const errorCode = error?.response?.data?.detail?.error || error?.response?.data?.detail?.code || '';
   return String(errorCode).includes('PERMISSION_DENIED');
 }
-
