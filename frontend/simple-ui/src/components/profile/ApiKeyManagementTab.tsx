@@ -528,7 +528,7 @@ export default function ApiKeyManagementTab({
                     <HStack flexWrap="wrap" spacing={2}>
                       {(mgmt.keyToRevoke.permissions ?? []).map((perm) => (
                         <Badge key={String(perm)} colorScheme="orange" fontSize="xs">
-                          {perm}
+                          {mgmt.formatPermission(perm)}
                         </Badge>
                       ))}
                     </HStack>

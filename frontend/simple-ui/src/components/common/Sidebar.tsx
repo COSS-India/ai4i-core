@@ -42,6 +42,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { useGuestServices } from "../../hooks/useGuestServices";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { getTenantIdFromToken } from "../../utils/helpers";
+import { canAccessServicesManagement } from "../../utils/rbac";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
 const safeColorMap = {
@@ -425,6 +426,9 @@ const Sidebar: React.FC = () => {
         ) {
           return false;
         }
+        if (item.id === TABS.servicesManagement && !canAccessServicesManagement(user?.roles)) {
+          return false;
+        }
         if (item.id === TABS.tenantManagement && !showTenantManagement) return false;
         if (item.id === TABS.alertsManagement && !isAdmin) return false;
         if (item.id === TABS.piiManagement && !(isAdmin || isTenantAdmin)) return false;
@@ -441,6 +445,7 @@ const Sidebar: React.FC = () => {
       isTenantAdmin,
       showTenantManagement,
       tenantId,
+      user?.roles,
     ],
   );
 

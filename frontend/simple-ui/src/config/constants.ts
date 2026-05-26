@@ -1254,7 +1254,7 @@ export const TENANT = {
   },
   USER_STATUS: {
     ACTIVE: "ACTIVE",
-    INACTIVE: "INACTIVE",
+    SUSPENDED: "SUSPENDED",
   },
 } as const;
 
@@ -1276,10 +1276,10 @@ export const TENANT_ADMIN_UPDATABLE_STATUSES: readonly TenantStatusValue[] = [
   TENANT.STATUS.DEACTIVATED,
 ];
 
-/** Static tenant user statuses for filters and display. */
+/** Static tenant user statuses for filters and display (Active, Suspended). */
 export const TENANT_USER_STATUS_LIST: readonly TenantUserStatusValue[] = [
   TENANT.USER_STATUS.ACTIVE,
-  TENANT.USER_STATUS.INACTIVE,
+  TENANT.USER_STATUS.SUSPENDED,
 ];
 
 const TENANT_STATUS_LABELS: Record<TenantStatusValue, string> = {
@@ -1291,7 +1291,7 @@ const TENANT_STATUS_LABELS: Record<TenantStatusValue, string> = {
 
 const TENANT_USER_STATUS_LABELS: Record<TenantUserStatusValue, string> = {
   [TENANT.USER_STATUS.ACTIVE]: "Active",
-  [TENANT.USER_STATUS.INACTIVE]: "Inactive",
+  [TENANT.USER_STATUS.SUSPENDED]: "Suspended",
 };
 
 export function normalizeTenantStatus(status: string): TenantStatusValue {
@@ -1335,7 +1335,7 @@ export function getTenantStatusColorScheme(status?: string | null): string {
   if (isTenantStatus(status, TENANT.STATUS.SUSPENDED)) return "orange";
   if (isTenantStatus(status, TENANT.STATUS.DEACTIVATED)) return "red";
   if (isTenantStatus(status, TENANT.STATUS.PENDING)) return "gray";
-  if (isTenantUserStatus(status, TENANT.USER_STATUS.INACTIVE)) return "red";
+  if (isTenantUserStatus(status, TENANT.USER_STATUS.SUSPENDED)) return "orange";
   return "gray";
 }
 
