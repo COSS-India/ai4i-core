@@ -119,7 +119,7 @@ class OTelSpan:
         """Attach attribute to span."""
         self.attributes[key] = value
         self.span.set_attribute(key, value)
-        logger.debug(f"  [SPAN ATTR] {key} = {value}")
+        logger.info(f"[SET ATTR] {self.service}/{self.stage} {key}={value} (type={type(value).__name__})")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging."""
@@ -151,17 +151,26 @@ class TraceManager:
         """Load attribute mapper from <service>/stages.json (cached)."""
         if service not in self.service_configs:
             mapper_path = self.base_mapper_path / service / "stages.json"
+            logger.info(f"[MAPPER LOAD] service={service}, path={mapper_path}")
 
             if not mapper_path.exists():
-                logger.warning(f"[MAPPER] Not found at: {mapper_path}")
+                logger.error(f"[MAPPER MISSING] Not found at: {mapper_path}")
                 self.service_configs[service] = {}
             else:
-                logger.info(f"[MAPPER] Loaded from: {mapper_path}")
-                with open(mapper_path, "r") as f:
-                    self.service_configs[service] = json.load(f)
+                logger.info(f"[MAPPER FOUND] Loaded from: {mapper_path}")
+                try:
+                    with open(mapper_path, "r") as f:
+                        config = json.load(f)
+                        logger.info(f"[MAPPER JSON] {service} has {len(config)} stages")
+                        self.service_configs[service] = config
+                except Exception as e:
+                    logger.error(f"[MAPPER ERROR] Failed to load {mapper_path}: {e}")
+                    self.service_configs[service] = {}
 
         stages = self.service_configs.get(service, {})
-        return stages.get(stage, {"start": [], "end": []})
+        stage_config = stages.get(stage, {"start": [], "end": []})
+        logger.debug(f"[MAPPER STAGE] {service}/{stage}: start={len(stage_config.get('start', []))} attrs, end={len(stage_config.get('end', []))} attrs")
+        return stage_config
 
     def trace_stage_start(
         self,
@@ -221,19 +230,38 @@ class TraceManager:
 
         span = OTelSpan(otel_span, service, stage)
         mapper = self.load_mapper(service, stage)
-        for config in mapper.get("start", []):
+        start_attrs = mapper.get("start", [])
+        logger.info(f"[TRACE START] {service}/{stage} - Found {len(start_attrs)} start attributes to compute")
+        logger.debug(f"[TRACE START] mapper={mapper}, request_type={type(request).__name__}")
+
+        for i, config in enumerate(start_attrs):
+            attr_name = config.get("attr", f"attr_{i}")
+            logger.info(f"[ATTR {i}] Computing {attr_name} from {service}/{stage}")
             value = get_attribute_value(config, request)
             if value is not None:
+                logger.info(f"[ATTR {i}] SUCCESS: {attr_name}={value}")
                 span.set_attribute(config.get("attr"), value)
+            else:
+                logger.warning(f"[ATTR {i}] SKIPPED: {attr_name} returned None")
         return span
 
     def trace_stage_end(self, span: OTelSpan, response: Dict[str, Any]) -> None:
         """Attach END attributes and close span (triggers console export)."""
         mapper = self.load_mapper(span.service, span.stage)
-        for config in mapper.get("end", []):
+        end_attrs = mapper.get("end", [])
+        logger.info(f"[TRACE END] {span.service}/{span.stage} - Found {len(end_attrs)} end attributes to compute")
+        logger.debug(f"[TRACE END] mapper={mapper}, response_type={type(response).__name__}")
+
+        for i, config in enumerate(end_attrs):
+            attr_name = config.get("attr", f"attr_{i}")
+            logger.info(f"[ATTR END {i}] Computing {attr_name} from {span.service}/{span.stage}")
             value = get_attribute_value(config, response)
             if value is not None:
+                logger.info(f"[ATTR END {i}] SUCCESS: {attr_name}={value}")
                 span.set_attribute(config.get("attr"), value)
+            else:
+                logger.warning(f"[ATTR END {i}] SKIPPED: {attr_name} returned None")
+
         span.span.end()
         logger.info(f"[TRACE RESULT] {json.dumps(span.to_dict(), indent=2)}")
 

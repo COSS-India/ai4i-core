@@ -304,10 +304,13 @@ def safe_eval(expression: str, context: Dict[str, Any]) -> Any:
 
     try:
         namespace = {**context, **safe_builtins}
+        logger.debug(f"[EXPR DEBUG] expr='{expression}', namespace_keys={list(namespace.keys())}")
         result = eval(expression, {"__builtins__": {}}, namespace)
+        logger.debug(f"[EXPR SUCCESS] expr='{expression}' -> {result}")
         return result
     except Exception as e:
-        logger.warning(f"Failed to evaluate expression '{expression}': {e}")
+        logger.error(f"[EXPR ERROR] Failed to evaluate '{expression}': {type(e).__name__}: {e}")
+        logger.debug(f"[EXPR DEBUG] Context keys available: {list(context.keys())}")
         return None
 
 
@@ -323,14 +326,24 @@ def get_attribute_value(attr_config: Dict[str, str], data: Union[Dict[str, Any],
     Returns:
         Computed value or None if evaluation fails
     """
+    attr_name = attr_config.get("attr", "unknown")
+    logger.debug(f"[ATTR DEBUG] Computing {attr_name}: config={attr_config}, data_type={type(data).__name__}")
+
     if "expr" in attr_config:
         context = _build_context(data)
-        return safe_eval(attr_config["expr"], context)
+        logger.debug(f"[ATTR DEBUG] {attr_name}: Evaluating expr='{attr_config['expr']}' with context keys={list(context.keys())}")
+        result = safe_eval(attr_config["expr"], context)
+        logger.debug(f"[ATTR DEBUG] {attr_name}: expr result={result}")
+        return result
 
     if "func" in attr_config:
         func = REGISTRY.get(attr_config["func"])
         if func:
-            return func(data)
-        logger.warning(f"Function '{attr_config['func']}' not found in registry")
+            logger.debug(f"[ATTR DEBUG] {attr_name}: Calling func='{attr_config['func']}'")
+            result = func(data)
+            logger.debug(f"[ATTR DEBUG] {attr_name}: func result={result}")
+            return result
+        logger.warning(f"[ATTR ERROR] Function '{attr_config['func']}' not found in registry for {attr_name}")
 
+    logger.warning(f"[ATTR ERROR] No expr or func in config for {attr_name}: {attr_config}")
     return None

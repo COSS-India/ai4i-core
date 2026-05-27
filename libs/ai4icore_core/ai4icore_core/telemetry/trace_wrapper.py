@@ -27,8 +27,11 @@ def trace_stage(stage_name):
         @wraps(func)
         def wrapper(self, request):
             import time
+            import logging
+            logger = logging.getLogger(__name__)
             trace_manager = get_trace_manager()
             service_name = _get_service_name(self, request)
+            logger.info(f"[TRACE WRAPPER] {stage_name} START: service={service_name}, request_type={type(request).__name__}")
             start_time = time.time()
             span = trace_manager.trace_stage_start(service_name, stage_name, request)
             try:
@@ -37,9 +40,11 @@ def trace_stage(stage_name):
                 response_dict = response.dict() if response and hasattr(response, 'dict') else (response or {})
                 if isinstance(response_dict, dict):
                     response_dict['elapsed_time_ms'] = elapsed_ms
+                logger.info(f"[TRACE WRAPPER] {stage_name} END: response_type={type(response_dict).__name__}")
                 trace_manager.trace_stage_end(span, response_dict)
                 return response
-            except Exception:
+            except Exception as e:
+                logger.error(f"[TRACE WRAPPER] {stage_name} ERROR: {e}")
                 span.span.end()
                 raise
         return wrapper
@@ -51,11 +56,14 @@ def async_trace_stage(stage_name):
     def decorator(func):
         async def wrapper(self, *args, **kwargs):
             import time
+            import logging
+            logger = logging.getLogger(__name__)
             trace_manager = get_trace_manager()
             # Extract request/payload from first positional argument or keyword arguments
             request = args[0] if args else kwargs.get('payload') or kwargs.get('request') or {}
             request_dict = request.dict() if hasattr(request, 'dict') else request
             service_name = _get_service_name(self, request_dict)
+            logger.info(f"[ASYNC TRACE] {stage_name} START: service={service_name}, request_type={type(request_dict).__name__}")
 
             start_time = time.time()
             span = trace_manager.trace_stage_start(service_name, stage_name, request_dict)
@@ -65,9 +73,11 @@ def async_trace_stage(stage_name):
                 response_dict = response.dict() if response and hasattr(response, 'dict') else (response or {})
                 if isinstance(response_dict, dict):
                     response_dict['elapsed_time_ms'] = elapsed_ms
+                logger.info(f"[ASYNC TRACE] {stage_name} END: response_type={type(response_dict).__name__}")
                 trace_manager.trace_stage_end(span, response_dict)
                 return response
-            except Exception:
+            except Exception as e:
+                logger.error(f"[ASYNC TRACE] {stage_name} ERROR: {e}")
                 span.span.end()
                 raise
         wrapper.__name__ = func.__name__
