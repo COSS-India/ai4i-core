@@ -1,27 +1,37 @@
 {
   "request": {
     "start": [
-      {"attr": "task_type", "expr": "task_type"},
-      {"attr": "input_size", "func": "compute_input_size"},
-      {"attr": "customer_id", "func": "compute_customer_id"}
+      {"attr": "tenantId", "func": "compute_tenant_id"},
+      {"attr": "userId", "func": "compute_user_id_attr"}
     ],
     "end": [
       {"attr": "total_time_ms", "func": "compute_elapsed_time"},
-      {"attr": "service_used", "func": "compute_service_used"},
-      {"attr": "model_used", "func": "compute_model_used"},
-      {"attr": "success_status", "func": "compute_success_status"}
+      {"attr": "end_point", "func": "compute_endpoint"},
+      {"attr": "status", "func": "compute_request_status"},
+      {"attr": "status_code", "func": "compute_http_status_code"}
     ]
   },
   "model": {
     "start": [],
     "end": [
-      {"attr": "load_time_ms", "func": "compute_elapsed_time"}
+      {"attr": "total_time_ms", "func": "compute_elapsed_time"},
+      {"attr": "model_name", "func": "compute_model_name"},
+      {"attr": "model_version", "func": "compute_model_version"},
+      {"attr": "task_type", "func": "compute_task_type"}
     ]
   },
   "ai_inference": {
     "start": [],
     "end": [
-      {"attr": "execution_time_ms", "func": "compute_elapsed_time"}
+      {"attr": "execution_time_ms", "func": "compute_elapsed_time"},
+      {"attr": "input_size_kb", "func": "compute_input_size_kb"},
+      {"attr": "output_size_kb", "func": "compute_output_size_kb"},
+      {"attr": "input_tokens", "func": "compute_input_tokens"},
+      {"attr": "output_tokens", "func": "compute_output_tokens"},
+      {"attr": "input_type", "func": "compute_input_type"},
+      {"attr": "output_type", "func": "compute_output_type"},
+      {"attr": "status", "func": "compute_request_status"},
+      {"attr": "status_code", "func": "compute_http_status_code"}
     ]
   },
   "database_write": {

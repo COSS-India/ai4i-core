@@ -106,11 +106,12 @@ _root_span_context_token: Optional[object] = None
 class OTelSpan:
     """Wrapper around OpenTelemetry Span with service/stage metadata and trace ID."""
 
-    def __init__(self, otel_span: trace.Span, service: str, stage: str):
+    def __init__(self, otel_span: trace.Span, service: str, stage: str, request: Dict[str, Any] = None):
         """Initialize OTelSpan wrapper."""
         self.span = otel_span
         self.service = service
         self.stage = stage
+        self.request = request or {}
         self.attributes: Dict[str, Any] = {}
         self.trace_id = get_trace_id()
         logger.info(f"[TRACE START] trace_id={self.trace_id} {service}/{stage}")
@@ -228,7 +229,7 @@ class TraceManager:
 
             otel_span = root_otel_span
 
-        span = OTelSpan(otel_span, service, stage)
+        span = OTelSpan(otel_span, service, stage, request)
         mapper = self.load_mapper(service, stage)
         start_attrs = mapper.get("start", [])
         logger.info(f"[TRACE START] {service}/{stage} - Found {len(start_attrs)} start attributes to compute")
@@ -246,16 +247,22 @@ class TraceManager:
         return span
 
     def trace_stage_end(self, span: OTelSpan, response: Dict[str, Any]) -> None:
-        """Attach END attributes and close span (triggers console export)."""
-        mapper = self.load_mapper(span.service, span.stage)
-        end_attrs = mapper.get("end", [])
-        logger.info(f"[TRACE END] {span.service}/{span.stage} - Found {len(end_attrs)} end attributes to compute")
-        logger.debug(f"[TRACE END] mapper={mapper}, response_type={type(response).__name__}")
+        """Attach END attributes and close span (triggers console export).
 
-        for i, config in enumerate(end_attrs):
-            attr_name = config.get("attr", f"attr_{i}")
-            logger.info(f"[ATTR END {i}] Computing {attr_name} from {span.service}/{span.stage}")
-            value = get_attribute_value(config, response)
+        Computes attributes using both request and response data.
+        Falls back to request if response doesn't have a meaningful value.
+        Enriches response with already-set span attributes for dependent computations.
+        """
+        mapper = self.load_mapper(span.service, span.stage)
+        for config in mapper.get("end", []):
+            # Enrich response with already-set span attributes (e.g., model_name for task_type)
+            enriched_response = {**response, **span.attributes}
+
+            # Try enriched response first, then fallback to request for flexibility
+            value = get_attribute_value(config, enriched_response)
+            # Fallback to request if response value is None
+            if value is None:
+                value = get_attribute_value(config, span.request)
             if value is not None:
                 logger.info(f"[ATTR END {i}] SUCCESS: {attr_name}={value}")
                 span.set_attribute(config.get("attr"), value)

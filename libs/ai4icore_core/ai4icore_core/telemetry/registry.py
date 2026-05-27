@@ -109,10 +109,16 @@ def compute_elapsed_time(response: Dict[str, Any]) -> int:
 
 
 def compute_endpoint(request: Dict[str, Any]) -> str:
-    """Extract endpoint path from request."""
+    """Extract endpoint path from request, fallback to context."""
     if isinstance(request, dict):
-        return request.get("endpoint") or request.get("path") or request.get("route") or ""
-    return ""
+        endpoint = request.get("endpoint") or request.get("path") or request.get("route")
+        if endpoint:
+            return endpoint
+
+    # Fallback to context for services that don't enrich request dict (e.g., StandardSpanManager)
+    from ai4icore_core.context import get_endpoint_path
+    endpoint = get_endpoint_path()
+    return endpoint or ""
 
 
 def compute_http_status_code(response: Dict[str, Any]) -> int:
@@ -124,44 +130,218 @@ def compute_http_status_code(response: Dict[str, Any]) -> int:
 
 
 def compute_tenant_id(request: Dict[str, Any]) -> str:
-    """Extract tenant ID from request config."""
+    """Extract tenant ID from request data, fallback to context.
+
+    Tries request config first, then context (set by middleware from JWT).
+    """
+    # Try request config first
     config = request.get("config", {})
     if isinstance(config, dict):
-        return config.get("tenantId") or config.get("tenant_id") or ""
-    return getattr(config, "tenantId", None) or getattr(config, "tenant_id", None) or ""
+        tid = config.get("tenantId") or config.get("tenant_id")
+        if tid:
+            return str(tid)
+    else:
+        tid = getattr(config, "tenantId", None) or getattr(config, "tenant_id", None)
+        if tid:
+            return str(tid)
+
+    # Try top-level tenant_id field
+    tid = request.get("tenantId") or request.get("tenant_id")
+    if tid:
+        return str(tid)
+
+    # Fallback to context (set by middleware from JWT)
+    from ai4icore_core.context import get_tenant_id
+    tenant_id = get_tenant_id()
+    return tenant_id or ""
+
+
+def compute_tenant_id_int(request: Dict[str, Any]) -> int:
+    """Extract tenant ID as integer from request data, fallback to context.
+
+    Tries request config first, then context (set by middleware from JWT).
+    """
+    # Try request config first
+    config = request.get("config", {})
+    if isinstance(config, dict):
+        tid = config.get("tenantId") or config.get("tenant_id")
+        if tid:
+            try:
+                return int(tid)
+            except (ValueError, TypeError):
+                pass
+    else:
+        tid = getattr(config, "tenantId", None) or getattr(config, "tenant_id", None)
+        if tid:
+            try:
+                return int(tid)
+            except (ValueError, TypeError):
+                pass
+
+    # Try top-level tenant_id field
+    tid = request.get("tenantId") or request.get("tenant_id")
+    if tid:
+        try:
+            return int(tid)
+        except (ValueError, TypeError):
+            pass
+
+    # Fallback to context (set by middleware from JWT)
+    from ai4icore_core.context import get_tenant_id
+    tenant_id = get_tenant_id()
+    if tenant_id:
+        try:
+            return int(tenant_id)
+        except (ValueError, TypeError):
+            pass
+
+    return 0
 
 
 def compute_user_id_attr(request: Dict[str, Any]) -> str:
-    """Extract user ID from request config (distinct from compute_customer_id)."""
+    """Extract user ID from request data, fallback to context.
+
+    Tries request config first, then context (set by middleware from JWT).
+    """
+    # Try request config first
     config = request.get("config", {})
     if isinstance(config, dict):
-        return config.get("userId") or config.get("user_id") or ""
-    return getattr(config, "userId", None) or getattr(config, "user_id", None) or ""
+        uid = config.get("userId") or config.get("user_id")
+        if uid:
+            return str(uid)
+    else:
+        uid = getattr(config, "userId", None) or getattr(config, "user_id", None)
+        if uid:
+            return str(uid)
+
+    # Try top-level userId field
+    uid = request.get("userId") or request.get("user_id")
+    if uid:
+        return str(uid)
+
+    # Fallback to context (set by middleware from JWT)
+    from ai4icore_core.context import get_user_id
+    user_id = get_user_id()
+    return user_id or ""
 
 
-def compute_model_name(response: Dict[str, Any]) -> str:
-    """Extract model name from response."""
-    if isinstance(response, dict):
-        model = (response.get("model_name") or response.get("model")
-                or response.get("name") or response.get("model_used") or "unknown")
+def compute_user_id_int(request: Dict[str, Any]) -> int:
+    """Extract user ID as integer from request data, fallback to context.
+
+    Tries request config first, then context (set by middleware from JWT).
+    """
+    # Try request config first
+    config = request.get("config", {})
+    if isinstance(config, dict):
+        uid = config.get("userId") or config.get("user_id")
+        if uid:
+            try:
+                return int(uid)
+            except (ValueError, TypeError):
+                pass
+    else:
+        uid = getattr(config, "userId", None) or getattr(config, "user_id", None)
+        if uid:
+            try:
+                return int(uid)
+            except (ValueError, TypeError):
+                pass
+
+    # Try top-level userId field
+    uid = request.get("userId") or request.get("user_id")
+    if uid:
+        try:
+            return int(uid)
+        except (ValueError, TypeError):
+            pass
+
+    # Fallback to context (set by middleware from JWT)
+    from ai4icore_core.context import get_user_id
+    user_id = get_user_id()
+    if user_id:
+        try:
+            return int(user_id)
+        except (ValueError, TypeError):
+            pass
+
+    return 0
+
+
+def compute_model_name(data: Dict[str, Any]) -> str:
+    """Extract model name from data (response from service resolution).
+
+    Tries multiple sources where model name might be returned.
+    """
+    if isinstance(data, dict):
+        model = (data.get("model_name")
+                or data.get("model")
+                or data.get("name")
+                or data.get("model_used")
+                or "unknown")
         return str(model)
     return "unknown"
 
 
-def compute_model_version(response: Dict[str, Any]) -> str:
-    """Extract model version from response."""
-    if isinstance(response, dict):
-        version = response.get("model_version") or response.get("version") or ""
-        return str(version)
-    return ""
+def compute_model_version(data: Dict[str, Any]) -> str:
+    """Extract model version from data (request or response).
+
+    Tries multiple sources:
+    - response.model_version (from service resolution)
+    - response.version
+    - request.config.model_version (from client config)
+    - defaults to "1"
+    """
+    if isinstance(data, dict):
+        version = (data.get("model_version")
+                  or data.get("version")
+                  or data.get("config", {}).get("model_version"))
+        if version:
+            return str(version)
+    return "1"
 
 
-def compute_task_type(request: Dict[str, Any]) -> str:
-    """Extract task type from request."""
-    if isinstance(request, dict):
-        task = (request.get("task_type") or request.get("taskType")
-                or request.get("type") or "")
-        return str(task)
+def compute_task_type(data: Dict[str, Any]) -> str:
+    """Extract or infer task type from data (request or response).
+
+    Tries multiple sources:
+    1. Explicit "task_type", "taskType", or "type" field in data
+    2. Infer from model_name if available
+    """
+    if isinstance(data, dict):
+        # Try explicit task_type field
+        task = (data.get("task_type")
+                or data.get("taskType")
+                or data.get("type"))
+        if task:
+            return str(task)
+
+        # Infer from model_name: "lang-diarization-gpu" → "language_diarization"
+        model_name = data.get("model_name") or data.get("model") or ""
+        if model_name:
+            # Map common model patterns to task types
+            model_lower = str(model_name).lower()
+            if "diarization" in model_lower:
+                if "language" in model_lower or "lang" in model_lower:
+                    return "language_diarization"
+                if "speaker" in model_lower:
+                    return "speaker_diarization"
+                if "audio_language" in model_lower or "ald" in model_lower:
+                    return "audio_language_diarization"
+            if "indictrans" in model_lower or "nmt" in model_lower or "translation" in model_lower:
+                return "nmt"
+            if "asr" in model_lower or "speech" in model_lower:
+                return "asr"
+            if "tts" in model_lower or "speech_synthesis" in model_lower:
+                return "tts"
+            if "ner" in model_lower or "entity" in model_lower:
+                return "ner"
+            if "ocr" in model_lower:
+                return "ocr"
+            if "transliteration" in model_lower:
+                return "transliteration"
+            if "language_detection" in model_lower or "lang_detect" in model_lower:
+                return "language_detection"
+
     return ""
 
 
@@ -248,7 +428,9 @@ REGISTRY = {
     "compute_endpoint": compute_endpoint,
     "compute_http_status_code": compute_http_status_code,
     "compute_tenant_id": compute_tenant_id,
+    "compute_tenant_id_int": compute_tenant_id_int,
     "compute_user_id_attr": compute_user_id_attr,
+    "compute_user_id_int": compute_user_id_int,
     "compute_model_name": compute_model_name,
     "compute_model_version": compute_model_version,
     "compute_task_type": compute_task_type,

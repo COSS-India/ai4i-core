@@ -14,7 +14,10 @@
   "model": {
     "start": [],
     "end": [
-      {"attr": "load_time_ms", "func": "compute_elapsed_time"}
+      {"attr": "total_time_ms", "func": "compute_elapsed_time"},
+      {"attr": "model_name", "func": "compute_model_name"},
+      {"attr": "model_version", "func": "compute_model_version"},
+      {"attr": "task_type", "func": "compute_task_type"}
     ]
   },
   "ai_inference": {

@@ -78,7 +78,7 @@ class Orchestrator:
             # Extract task type from payload
             task_type = payload.get("task_type", "").upper()
             self.logger.info(f"Routing {task_type} inference request...")
-            
+
             # Validate task type
             await self._validate_task_type(task_type)
 
