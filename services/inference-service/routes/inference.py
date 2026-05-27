@@ -11,7 +11,6 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Request, HTTPException, Depends
 
 from orchestrator import Orchestrator, OrchestratorError
-from factory import TaskFactory, FactoryError
 from models.common import GenericInferenceRequest, GenericInferenceResponse
 from models.task_types import task_registry
 
@@ -184,12 +183,11 @@ async def list_available_tasks(
     Useful for clients to discover supported services.
 
     Args:
-        task_factory: TaskFactory instance
 
     Returns:
         Dict with list of available task types
     """
-    return {"tasks": ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "TRANSLITERATION", "AUDIO_LANG_DETECTION", "SMR"]}
+    return {"tasks": ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]}
 
 async def get_task_info(
     task_type: str,
@@ -200,7 +198,6 @@ async def get_task_info(
 
     Args:
         task_type: Task type to get information for
-        task_factory: TaskFactory instance
 
     Returns:
         Dict with task schema information

@@ -1,135 +1,42 @@
-"""Language Detection TaskService implementation."""
-
+"""Language Detection TaskService."""
+import logging
 from typing import Any, Dict, List, Optional
+from services.base.text_base import TextBase
 
-from interfaces.task_service import BaseTaskService
-from models.schemas.language_detection import (
-    LanguageDetectionInferenceRequest,
-    LanguageDetectionInferenceResponse,
-    LanguageDetectionConfig,
-)
+logger = logging.getLogger(__name__)
 
 
-class LanguageDetectionTaskService(BaseTaskService):
-    """
-    TaskService for Language Detection inference.
-    Detects language of given text inputs.
-    """
+class LanguageDetectionTaskService(TextBase):
+    # No language config required — language is DETECTED not specified
+    # Base validate_request handles input existence; language block skipped.
 
-    def __init__(self, **dependencies: Any):
+    def __init__(self, service_info=None, **deps):
+        super().__init__(service_info=service_info)
+        self.logger = logger
+
+    async def postprocess_output(self, response_items, source_texts=None):
         """
-        Initialize Language Detection task service.
-
-        Args:
-            **dependencies: Injected dependencies
-                - redis_client: Redis client for caching
-                - model_management_client: Client for model/endpoint resolution
-                - inference_server_resolver: Resolver for Triton endpoints
-                - inference_model_factory: Factory for InferenceModel converters
+        Return output items with 'source' (input text) and 'langPrediction'
+        (raw Triton output, unwrapped) so the frontend receives exactly the
+        fields it validates against.
         """
-        pass
+        output_list = []
+        sources = source_texts or []
+        items = response_items if isinstance(response_items, list) else [response_items]
+        for idx, item in enumerate(items):
+            raw_value = item.get("langPrediction", "") if isinstance(item, dict) else item
+            # Unwrap single-element list nesting from Triton KServe v2 responses
+            while isinstance(raw_value, (list, tuple)) and len(raw_value) == 1:
+                raw_value = raw_value[0]
+            if isinstance(raw_value, bytes):
+                raw_value = raw_value.decode("utf-8", errors="replace")
+            source = sources[idx] if idx < len(sources) else ""
+            output_list.append({"source": source, "langPrediction": str(raw_value).strip()})
+        self.logger.debug(f"LANGUAGE_DETECTION post-processed {len(output_list)} results")
+        return {"output": output_list}
 
-    async def validate_request(
-        self, request: LanguageDetectionInferenceRequest
-    ) -> None:
-        """
-        Validate language detection inference request.
-        Checks input text, parameters, etc.
+    def _build_response(self, payload, postprocessed):
+        return postprocessed
 
-        Args:
-            request: Language detection request to validate
 
-        Raises:
-            ValueError: If request is invalid
-        """
-        pass
-
-    async def preprocess_input(
-        self, input_data: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Preprocess text inputs for language detection.
-        Handles text normalization, etc.
-
-        Args:
-            input_data: List of text inputs
-
-        Returns:
-            Preprocessed input data
-        """
-        pass
-
-    async def run_inference(
-        self,
-        request: LanguageDetectionInferenceRequest,
-        user_id: Optional[int] = None,
-        api_key_id: Optional[int] = None,
-        session_id: Optional[str] = None,
-    ) -> LanguageDetectionInferenceResponse:
-        """
-        Execute end-to-end language detection inference pipeline.
-        Resolves service -> preprocesses -> calls Triton -> postprocesses -> returns response.
-
-        Args:
-            request: Language detection inference request
-            user_id: Optional user ID
-            api_key_id: Optional API key ID
-            session_id: Optional session ID
-
-        Returns:
-            Language detection inference response with language predictions
-        """
-        pass
-
-    async def postprocess_output(
-        self, raw_triton_output: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Post-process raw Triton output for language detection.
-        Formats predictions, extracts confidence scores, etc.
-
-        Args:
-            raw_triton_output: Raw output from Triton server
-
-        Returns:
-            Formatted output dictionary
-        """
-        pass
-
-    async def _resolve_service_and_model(
-        self, config: LanguageDetectionConfig, session_id: Optional[str]
-    ) -> tuple:
-        """
-        Resolve inference service and model information.
-
-        Args:
-            config: Language detection config with required service_id
-            session_id: Optional session ID for tracing
-
-        Returns:
-            Tuple of (service_id, model_name, triton_endpoint, triton_api_key)
-        """
-        pass
-
-    async def _call_triton_inference(
-        self,
-        triton_endpoint: str,
-        model_name: str,
-        triton_inputs: Dict[str, Any],
-        triton_outputs: List[str],
-        api_key: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        Call Triton inference server with prepared inputs.
-
-        Args:
-            triton_endpoint: Triton server URL
-            model_name: Model name in Triton
-            triton_inputs: Formatted inputs for Triton
-            triton_outputs: Expected output names
-            api_key: Optional Triton API key
-
-        Returns:
-            Raw output from Triton
-        """
-        pass
+__all__ = ["LanguageDetectionTaskService"]

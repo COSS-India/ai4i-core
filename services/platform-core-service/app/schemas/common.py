@@ -96,10 +96,8 @@ class InferenceEndPoint(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="allow")
 
     endpoint_schema: Optional[InferenceSchemaSpec] = Field(None, alias="schema")
-    endpoint: Optional[str] = None
-    model_name: Optional[str] = None
-    modelName: Optional[str] = None
-    model: Optional[str] = None
+    call_back_url: Optional[str] = None
+    adapter_config: Optional[Dict[str, Any]] = None
 
 
 # ── Submitter / team ──

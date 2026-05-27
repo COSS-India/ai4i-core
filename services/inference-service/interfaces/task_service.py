@@ -3,7 +3,7 @@ Task service interface and base class defining the contract for all inference ta
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 
@@ -14,12 +14,12 @@ class ITaskService(ABC):
     """
 
     @abstractmethod
-    async def validate_request(self, request: BaseModel) -> None:
+    async def validate_request(self, payload: Dict[str, Any]) -> None:
         """
-        Validate the incoming request.
+        Validate the incoming request payload.
 
         Args:
-            request: Task-specific request model
+            payload: Raw request payload dictionary
 
         Raises:
             ValueError: If request is invalid
@@ -43,7 +43,7 @@ class ITaskService(ABC):
     @abstractmethod
     async def run_inference(
         self,
-        request: BaseModel,
+        payload: Dict[str, Any],
         user_id: Optional[int] = None,
         api_key_id: Optional[int] = None,
         session_id: Optional[str] = None,
@@ -54,7 +54,7 @@ class ITaskService(ABC):
         Subclasses implement the actual Triton inference call here.
 
         Args:
-            request: Task-specific request model
+            payload: Raw request payload dictionary
             user_id: Optional user ID for tracking
             api_key_id: Optional API key ID for tracking
             session_id: Optional session ID for tracing
@@ -66,14 +66,15 @@ class ITaskService(ABC):
 
     @abstractmethod
     async def postprocess_output(
-        self, raw_triton_output: Dict[str, Any]
+        self, response_items: List[Dict[str, Any]], **kwargs: Any
     ) -> Dict[str, Any]:
         """
-        Post-process raw Triton inference output.
-        Handles task-specific transformations like decoding, formatting, etc.
+        Post-process inference output into a response-ready dict.
+        Text services pass source_texts via kwargs; audio/image services pass their own fields.
 
         Args:
-            raw_triton_output: Raw output dictionary from Triton server
+            response_items: Output dicts from convert_triton_output_to_task_format
+            **kwargs: Modality-specific context (e.g. source_texts for text)
 
         Returns:
             Formatted output dictionary for response
@@ -81,17 +82,8 @@ class ITaskService(ABC):
         pass
 
     @abstractmethod
-    async def _deserialize_payload(self, payload: Dict[str, Any]) -> BaseModel:
-        """
-        Deserialize raw payload dictionary to task-specific request model.
-        Each task service implements this for its specific payload format.
-
-        Args:
-            payload: Raw request payload dictionary
-
-        Returns:
-            Task-specific deserialized request model
-        """
+    def _build_response(self, payload: Any, postprocessed: Dict[str, Any]) -> Any:
+        """Build typed response model from postprocessed inference output."""
         pass
 
 
@@ -99,21 +91,24 @@ class BaseTaskService(ITaskService):
     """
     Abstract base class providing common functionality for all task services.
     Implements Template Method pattern for the inference pipeline.
-    
+
     Subclasses must implement run_inference() with actual inference logic.
     Subclasses may override validate_request(), preprocess_input(), postprocess_output() as needed.
     """
 
-    def __init__(self):
+    def __init__(self, service_info: Optional[Dict[str, Any]] = None):
         """
         Initialize base task service.
-        Automatically creates InferenceServerResolver instance for all subclasses.
+
+        Args:
+            service_info: Pre-resolved service dict injected by the Orchestrator/Factory
+                          (contains endpoint, model name, adapter_config, api_key, etc.).
+                          When provided, execute_triton_inference uses it directly
+                          without a redundant resolver call.
         """
         import logging
-        from inference.inference_server_resolver import InferenceServerResolver
-        
         self.task_name = self.__class__.__name__
-        self.inference_server_resolver = InferenceServerResolver()
+        self.service_info: Dict[str, Any] = service_info or {}
         self.logger = logging.getLogger(__name__)
 
     async def process(
@@ -122,10 +117,9 @@ class BaseTaskService(ITaskService):
     ) -> BaseModel:
         """
         Execute the complete inference pipeline (Template Method).
-        Deserializes payload → validate → preprocess → run_inference → postprocess.
-        
+        validate → preprocess → run_inference.
+
         This is the main entry point - Orchestrator calls this method with raw payload.
-        Subclasses override _deserialize_payload() and other methods as needed.
 
         Args:
             payload: Raw request payload dictionary
@@ -136,43 +130,42 @@ class BaseTaskService(ITaskService):
         Raises:
             ValueError: If validation fails
         """
-        # 0. Deserialize payload to task-specific request (implemented by subclass)
-        request = await self._deserialize_payload(payload)
-        
-        # 1. Validate request
-        await self.validate_request(request)
+        # Shallow copy so preprocessing mutations don't affect the caller's original dict
+        payload = dict(payload)
 
-        # 2. Preprocess input - extract and preprocess based on input type
+        # 1. Validate request
+        await self.validate_request(payload)
+
+        # 2. Preprocess input
         input_data = (
-            getattr(request, 'input', None)
-            or getattr(request, 'audio', None)
-            or getattr(request, 'image', None)
+            payload.get('input')
+            or payload.get('audio')
+            or payload.get('image')
         )
         if input_data:
             preprocessed_input = await self.preprocess_input(input_data)
-            # Update request with preprocessed input
-            for attr_name in ('input', 'audio', 'image'):
-                if getattr(request, attr_name, None) is not None:
-                    setattr(request, attr_name, preprocessed_input)
+            for key in ('input', 'audio', 'image'):
+                if payload.get(key) is not None:
+                    payload[key] = preprocessed_input
                     break
 
-        # 3. Run inference (implemented by subclass)
-        response = await self.run_inference(request)
+        # 3. Run inference
+        response = await self.run_inference(payload)
 
         return response
 
-    async def validate_request(self, request: BaseModel) -> None:
+    async def validate_request(self, payload: Dict[str, Any]) -> None:
         """
-        Validate the incoming request.
+        Validate the incoming request payload.
         Override in subclasses for task-specific validation.
 
         Args:
-            request: Task-specific request model
+            payload: Raw request payload dictionary
 
         Raises:
             ValueError: If request is invalid
         """
-        if request is None:
+        if payload is None:
             raise ValueError(f"{self.task_name}: Request cannot be None")
 
     async def preprocess_input(self, input_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -190,22 +183,18 @@ class BaseTaskService(ITaskService):
             raise ValueError(f"{self.task_name}: Input data cannot be empty")
         return input_data
 
-    async def postprocess_output(
-        self, raw_triton_output: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Post-process raw Triton inference output.
-        Override in subclasses for task-specific transformations like decoding, formatting, etc.
-
-        Args:
-            raw_triton_output: Raw output dictionary from Triton server
-
-        Returns:
-            Formatted output dictionary for response
-        """
-        if not raw_triton_output:
-            raise ValueError(f"{self.task_name}: Raw output cannot be empty")
-        return raw_triton_output
+    async def run_inference(
+        self,
+        payload: Dict[str, Any],
+        user_id: Optional[int] = None,
+        api_key_id: Optional[int] = None,
+        session_id: Optional[str] = None,
+    ) -> Any:
+        result = await self.execute_triton_inference(payload)
+        postprocessed = await self.postprocess_output(
+            result["response_data"], source_texts=result["source_texts"]
+        )
+        return self._build_response(payload, postprocessed)
 
     async def extract_field_from_items(
         self,
@@ -236,54 +225,44 @@ class BaseTaskService(ITaskService):
 
     async def execute_triton_inference(
         self,
-        config: Any,
-        inference_model_class: type,
+        payload: Dict[str, Any],
+
     ) -> Dict[str, Any]:
-        """
-        Execute Triton inference and convert output back to task format.
-        Common logic shared across all task services.
-        
-        Handles: service resolution, model instantiation, payload conversion,
-        Triton inference execution, and output conversion.
-
-        Args:
-            config: Task-specific config object with service and language information
-            inference_model_class: InferenceModel class to instantiate (e.g., NMTInferenceModel)
-
-        Returns:
-            Dict with keys:
-                - response_data: Converted response data from Triton output
-                - source_texts: Extracted source texts from request (if available)
-                - service_id: Resolved service ID
-
-        Raises:
-            RuntimeError: If inference execution fails
-        """
         try:
-            # 1. Resolve service and model using config
-            service_id, model_name, triton_endpoint, api_key, adapter_config = (
-                await self._resolve_service_and_model(config)
-            )
+            # 1. Use pre-resolved service info injected at construction time
+            service_id = self.service_info.get('service_id', '')
+            model_name = self.service_info.get('name', '')
+            triton_endpoint = self.service_info.get('endpoint', '')
+            api_key = self.service_info.get('api_key')
+            adapter_config = self.service_info.get('adapter_config')
+
+            if not model_name or not triton_endpoint:
+                raise RuntimeError(
+                    f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
+                    "Ensure the Orchestrator resolved the service before creating this task service."
+                )
 
             self.logger.debug(f"Converting payload to Triton format for model {model_name}")
 
             # 2. Instantiate inference model with adapter config
-            inference_model = inference_model_class(adapter_config=adapter_config)
+            from services.base.config_mapper import GenericTritonMapper
+            inference_model = GenericTritonMapper(adapter_config=adapter_config)
 
-            # 3. Get request payload from config for format conversion
-            request_payload = getattr(config, '_request_payload', None)
-            if not request_payload:
-                raise ValueError("Config must have _request_payload attribute")
+            # 3. Extract input and config from payload
+            input_items = payload.get('input', [])
+            config_data = payload.get('config', {})
 
-            # Extract source texts from request
-            source_texts = await self.extract_field_from_items(request_payload.input, 'source')
+            if not input_items:
+                raise ValueError(f"{self.task_name}: payload 'input' is empty or missing")
 
-            # Convert payload to Triton format using inference model
+            source_texts = await self.extract_field_from_items(input_items, 'source')
+
+            # 4. Convert payload to Triton format using inference model
             triton_inputs, triton_outputs = await inference_model.convert_payload_to_triton_format(
-                request_payload.input, request_payload.config.dict()
+                input_items, config_data
             )
 
-            # 4. Call Triton inference server
+            # 5. Call Triton inference server
             self.logger.info(f"Calling Triton inference server: {triton_endpoint}")
             raw_triton_output = await self._call_triton_inference(
                 triton_endpoint=triton_endpoint,
@@ -292,7 +271,7 @@ class BaseTaskService(ITaskService):
                 api_key=api_key,
             )
 
-            # 5. Convert Triton output back to task format
+            # 6. Convert Triton output back to task format
             self.logger.debug("Converting Triton output to task response format")
             response_data = await inference_model.convert_triton_output_to_task_format(
                 raw_triton_output
@@ -306,48 +285,6 @@ class BaseTaskService(ITaskService):
         except Exception as e:
             self.logger.error(f"Triton inference execution failed: {str(e)}", exc_info=True)
             raise
-
-    async def _resolve_service_and_model(
-        self, config: Any
-    ) -> Tuple[str, str, str, Optional[str], Optional[Any]]:
-        """
-        Resolve the model service details for the given NMT config.
-
-        Returns:
-            Tuple of (service_id, model_name, triton_endpoint, api_key, adapter_config).
-        """
-        service_id = config.service_id
-
-        # If service_id not provided, could use SMR (Smart Model Router)
-        # For now, default to configured service
-        if not service_id:
-            service_id = "indictrans-v2-all"
-            self.logger.warning(f"No service_id provided, using default: {service_id}")
-
-        # Resolve service using InferenceServerResolver
-        self.logger.debug(f"Resolving service: {service_id}")
-        try:
-            service_info = await self.inference_server_resolver.resolve_service(service_id)
-        except Exception as e:
-            self.logger.error(
-                f"Failed to resolve service {service_id}: {type(e).__name__}: {str(e)}",
-                exc_info=True
-            )
-            raise RuntimeError(f"NMT: Failed to resolve service {service_id}: {str(e)}") from e
-
-        # Extract fields from dict response
-        model_name = service_info.get('name', '')
-        triton_endpoint = service_info.get('endpoint', '')
-        api_key = service_info.get('api_key')
-        # adapter_config carries the tensor mapping (inputs/outputs) for this specific model
-        adapter_config = service_info.get('adapter_config')
-
-        if not model_name or not triton_endpoint:
-            raise RuntimeError(
-                "NMT: Invalid service info from resolver: missing model_name or triton_endpoint"
-            )
-
-        return (service_id, model_name, triton_endpoint, api_key, adapter_config)
 
     async def _call_triton_inference(
         self,
@@ -375,18 +312,15 @@ class BaseTaskService(ITaskService):
         from utils.http_client import HTTPServiceClient
 
         try:
-            # Prepare request payload
             payload = {
                 "inputs": triton_inputs,
                 "outputs": [{"name": name} for name in triton_outputs],
             }
 
-            # Add auth header if provided
             headers = {}
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
 
-            # Make HTTP request to Triton
             self.logger.debug(f"Calling Triton: POST {triton_endpoint}")
             return await HTTPServiceClient(timeout=300).post_json(triton_endpoint, payload, headers)
 
