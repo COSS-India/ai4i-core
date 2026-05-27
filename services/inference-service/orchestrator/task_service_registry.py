@@ -37,7 +37,6 @@ TASK_SERVICE_REGISTRY = [
     {
         "task_type":     "ASR",
         "model_name":    ["ai4bharat/triton-multilingual-asr", "asr-gpu"],
-        "model_name":    ["ai4bharat/triton-multilingual-asr", "asr-gpu"],
         "service_class": ASRTaskService,
     },
     {
