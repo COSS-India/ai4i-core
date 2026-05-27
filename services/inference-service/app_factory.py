@@ -98,10 +98,10 @@ class InferenceServiceFactory:
         logger.info("Setting up routes...")
 
         # Include inference router
-        app.include_router(router, prefix="/api/v1")
+        app.include_router(router, prefix=settings.API_PREFIX)
 
-        # Health check endpoint
-        @app.get("/health")
+        # Health check endpoint — excluded from Swagger; used only by Docker HEALTHCHECK
+        @app.get("/health", include_in_schema=False)
         async def health_check():
             return {"status": "healthy"}
 
@@ -173,8 +173,8 @@ async def create_inference_app() -> FastAPI:
         title="AI4I Inference Service",
         description="Unified inference endpoint for NMT, ASR, OCR, NER, LLM and other task services",
         version="1.0.0",
-        docs_url="/api/v1/docs",
-        openapi_url="/api/v1/openapi.json"
+        docs_url="/docs",
+        openapi_url="/openapi.json"
     )
 
     # Setup all components
