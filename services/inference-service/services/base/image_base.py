@@ -4,7 +4,7 @@ ImageBase — base class for image-backed inference services.
 Works on raw payload dicts (same contract as TextBase / BaseTaskService):
   validate_request   → ensures payload['image'] is non-empty and each item carries content/uri
   preprocess_input   → normalizes each item to base64 under 'image_content'
-  INPUT_KEY="image"  → execute_triton_inference (overridden here) reads payload['image']
+  get_payload_object → returns payload['image']; the base execute_triton_inference does the rest
 
 All Triton I/O (payload assembly, output mapping) is handled by GenericTritonMapper
 via the adapter_config sourced from MMS — concrete task services don't reimplement it.
@@ -26,8 +26,6 @@ from interfaces.task_service import BaseTaskService
 
 class ImageBase(BaseTaskService):
     """Generic image task service base."""
-
-    INPUT_KEY = "image"
 
     def __init__(
         self,
@@ -64,64 +62,9 @@ class ImageBase(BaseTaskService):
             items.append(d)
         return items
 
-    async def execute_triton_inference(
-        self,
-        payload: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """
-        Image inference — overrides BaseTaskService.execute_triton_inference,
-        which is hardcoded to payload['input']. Reads payload[self.INPUT_KEY]
-        ('image') instead; Triton I/O is driven by adapter_config via
-        GenericTritonMapper (concrete task services don't reimplement it).
-        """
-        try:
-            service_id = self.service_info.get("service_id", "")
-            model_name = self.service_info.get("name", "")
-            triton_endpoint = self.service_info.get("endpoint", "")
-            api_key = self.service_info.get("api_key")
-            adapter_config = self.service_info.get("adapter_config")
-
-            if not model_name or not triton_endpoint:
-                raise RuntimeError(
-                    f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
-                    "Ensure the Orchestrator resolved the service before creating this task service."
-                )
-
-            from services.base.config_mapper import GenericTritonMapper
-            inference_model = GenericTritonMapper(adapter_config=adapter_config)
-
-            input_items = payload.get(self.INPUT_KEY, [])
-            config_data = payload.get("config", {})
-
-            if not input_items:
-                raise ValueError(
-                    f"{self.task_name}: payload '{self.INPUT_KEY}' is empty or missing"
-                )
-
-            triton_inputs, triton_outputs = await inference_model.convert_payload_to_triton_format(
-                input_items, config_data
-            )
-
-            self.logger.info(f"Calling Triton inference server: {triton_endpoint}")
-            raw_triton_output = await self._call_triton_inference(
-                triton_endpoint=triton_endpoint,
-                triton_inputs=triton_inputs,
-                triton_outputs=triton_outputs,
-                api_key=api_key,
-            )
-
-            response_data = await inference_model.convert_triton_output_to_task_format(
-                raw_triton_output
-            )
-
-            return {
-                "response_data": response_data,
-                "source_texts": [],
-                "service_id": service_id,
-            }
-        except Exception as e:
-            self.logger.error(f"Triton inference execution failed: {str(e)}", exc_info=True)
-            raise
+    def get_payload_object(self, payload: Dict[str, Any]) -> List[Any]:
+        """Image input list lives under payload['image']."""
+        return payload.get("image") or []
 
     # ------------------------------------------------------------------
     # Image input helpers

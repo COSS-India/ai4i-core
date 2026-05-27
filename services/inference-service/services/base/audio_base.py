@@ -87,6 +87,10 @@ class AudioBase(BaseTaskService):
         )
         return self._build_response(payload, postprocessed)
 
+    def get_payload_object(self, payload: Dict[str, Any]) -> List[Any]:
+        """Audio input list lives under payload['audio']."""
+        return payload.get("audio") or []
+
     # ------------------------------------------------------------------
     # Validation
     # ------------------------------------------------------------------
@@ -182,7 +186,7 @@ class AudioBase(BaseTaskService):
 
         # Audio items are already preprocessed by process() via preprocess_input.
         # Config is the raw payload dict — field names match the schema (snake_case for ASR).
-        audio_items: List[Any] = payload.get("audio") or []
+        audio_items: List[Any] = self.get_payload_object(payload)
         config_dict: Dict[str, Any] = payload.get("config") or {}
         all_response_data: List[Dict[str, Any]] = []
 
