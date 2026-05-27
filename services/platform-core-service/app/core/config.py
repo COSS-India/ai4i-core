@@ -67,10 +67,10 @@ class CoreSettings(BaseSettings):
     pii_db_max_overflow: int = 5
 
     # ── NER service (used by PII DetectionEngine for AI-based entity extraction) ──
-    ner_service_url: str = "http://13.206.126.62:8005/ner"
+    ner_service_url: str
 
     # ── LLM service (used by PII /admin/generate-regex to produce regex patterns) ──
-    pii_llm_url: str = "http://13.206.126.62:8000/api/query"
+    pii_llm_url: str
 
     # ── Redis ──
     redis_host: str
