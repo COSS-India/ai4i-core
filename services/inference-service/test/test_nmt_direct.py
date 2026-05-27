@@ -6,8 +6,8 @@ Tests each pipeline stage in isolation:
   1. validate_request      — valid + four error paths
   2. preprocess_input      — sanitisation + _chunk key
   3. _get_inference_model_class — returns GenericTritonMapper
-  4. postprocess_output    — pairing + TranslationOutput wrapping
-  5. _build_response       — NMTInferenceResponse wrapping
+  4. postprocess_output    — pairing, returns plain dicts
+  5. _build_response       — returns plain dict with output list
   6. run_inference          — full loop with mocked InferenceModel + Triton
 
 Triton HTTP is mocked via unittest.mock so no running server is needed.
@@ -154,7 +154,6 @@ async def test_get_inference_model_class():
 
 async def test_postprocess_output():
     from services.models.text_default_model import TextDefaultModel
-    from models.schemas.nmt import TranslationOutput
 
     service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
@@ -164,36 +163,34 @@ async def test_postprocess_output():
     result = await service.postprocess_output(response_items, source_texts=source_texts)
     assert "output" in result
     assert len(result["output"]) == 2
-    assert isinstance(result["output"][0], TranslationOutput)
-    assert result["output"][0].source == "Hello"
-    assert result["output"][0].target == "नमस्ते"
-    assert result["output"][1].source == "What is your name?"
-    assert result["output"][1].target == "आपका नाम क्या है?"
-    logger.info("   [PASS] postprocess_output paired sources and wrapped in TranslationOutput")
+    assert isinstance(result["output"][0], dict)
+    assert result["output"][0]["source"] == "Hello"
+    assert result["output"][0]["target"] == "नमस्ते"
+    assert result["output"][1]["source"] == "What is your name?"
+    assert result["output"][1]["target"] == "आपका नाम क्या है?"
+    logger.info("   [PASS] postprocess_output paired sources and returned plain dicts")
 
 
 async def test_build_response():
     from services.models.text_default_model import TextDefaultModel
-    from models.schemas.nmt import NMTInferenceResponse, TranslationOutput
 
     service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
     payload = {
         "input": [{"source": "Hello"}],
         "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
     }
-    postprocessed = {"output": [TranslationOutput(source="Hello", target="नमस्ते")]}
+    postprocessed = {"output": [{"source": "Hello", "target": "नमस्ते"}]}
     response = service._build_response(payload, postprocessed)
 
-    assert isinstance(response, NMTInferenceResponse)
-    assert len(response.output) == 1
-    assert response.output[0].target == "नमस्ते"
-    logger.info("   [PASS] _build_response returns NMTInferenceResponse")
+    assert isinstance(response, dict)
+    assert len(response["output"]) == 1
+    assert response["output"][0]["target"] == "नमस्ते"
+    logger.info("   [PASS] _build_response returns plain dict with output list")
 
 
 async def test_run_inference_full():
     """Full run_inference with mocked InferenceModel and mocked _call_triton_inference."""
     from services.models.text_default_model import TextDefaultModel
-    from models.schemas.nmt import NMTInferenceResponse
 
     service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
@@ -223,11 +220,11 @@ async def test_run_inference_full():
         ):
             response = await service.run_inference(payload)
 
-    assert isinstance(response, NMTInferenceResponse)
-    assert len(response.output) == 2  # one per input item
-    assert response.output[0].source == "Hello, how are you?"
-    assert response.output[0].target == "नमस्ते, आप कैसे हैं?"
-    logger.info("   [PASS] run_inference returned NMTInferenceResponse with correct sources")
+    assert isinstance(response, dict)
+    assert len(response["output"]) == 2  # one per input item
+    assert response["output"][0]["source"] == "Hello, how are you?"
+    assert response["output"][0]["target"] == "नमस्ते, आप कैसे हैं?"
+    logger.info("   [PASS] run_inference returned dict with correct sources")
 
 
 async def test_run_inference_missing_endpoint():

@@ -214,9 +214,20 @@ class AudioBase(BaseTaskService):
             response_data = await self.convert_triton_output_to_task_format(raw_output)
             all_response_data.extend(response_data)
 
+        # Collect audio URIs to surface as 'source' in postprocess_output (e.g. ASR).
+        # Preprocessed items retain audio_uri / audioUri from the original request.
+        source_uris = [
+            (
+                audio_item.get("audio_uri") or audio_item.get("audioUri") or ""
+                if isinstance(audio_item, dict)
+                else getattr(audio_item, "audio_uri", "") or ""
+            )
+            for audio_item in audio_items
+        ]
+
         result = {
             "response_data": all_response_data,
-            "source_texts": [],
+            "source_texts": source_uris,
             "service_id": service_id,
         }
         return result
@@ -583,21 +594,27 @@ class AudioBase(BaseTaskService):
         return decoded
 
     async def _wrap_transcription_output(
-        self, decoded_items: List[Dict[str, Any]]
+        self,
+        decoded_items: List[Dict[str, Any]],
+        source_texts: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
-        Wrap decoded transcript strings in TranscriptionOutput(source=...).
+        Wrap decoded transcript strings in TranscriptionOutput.
         Returns {"output": [TranscriptionOutput, ...]}.
         Opt-in — not called from base pipeline.
-        Call from model class postprocess_output override (e.g. ASRDefaultModel).
-        """
-        from models.schemas.asr import TranscriptionOutput
+        Call from model class postprocess_output override (e.g. ASRTaskService).
 
+        source_texts: parallel list of audio URIs (or empty strings) collected by
+        execute_triton_inference; used to populate TranscriptionOutput.source so
+        the frontend can identify which audio item each transcript belongs to.
+        """
+        sources = source_texts or []
         output = []
-        for item in decoded_items:
+        for idx, item in enumerate(decoded_items):
             # adapter_config maps TRANSCRIPTS → "transcript" (maps_to field)
             transcript = item.get("transcript", item.get("source", ""))
-            output.append(TranscriptionOutput(transcript=str(transcript)))
+            source = sources[idx] if idx < len(sources) else ""
+            output.append({"source": source, "transcript": str(transcript)})
         return {"output": output}
 
     async def _empty_output(self, **kwargs: Any) -> Dict[str, Any]:

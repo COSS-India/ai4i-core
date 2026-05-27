@@ -79,9 +79,7 @@ async def run_inference(
         logger.info(f"Inference request: task_type={task_type}")
 
         # Route through orchestrator
-        result = await orchestrator.route_inference(
-            payload=payload
-        )
+        result = await orchestrator.route_inference(payload=payload)
 
         duration_ms = (time.time() - start_time) * 1000
         logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")

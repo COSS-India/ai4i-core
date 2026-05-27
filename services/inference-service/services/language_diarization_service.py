@@ -57,7 +57,10 @@ class LanguageDiarizationTaskService(AudioDefaultModel):
         output_list = []
 
         for item in response_items:
-            data = self._parse_json(item.get("diarization_json"))
+            # Try the well-known key first; fall back to the first value in the
+            # dict so different adapter_config maps_to names still work.
+            raw = item.get("diarization_json") or next(iter(item.values()), None)
+            data = self._parse_json(raw)
             if not data:
                 output_list.append({"total_segments": 0, "segments": [], "target_language": ""})
                 continue
@@ -67,13 +70,13 @@ class LanguageDiarizationTaskService(AudioDefaultModel):
                 start = float(seg.get("start_time", 0.0))
                 end = float(seg.get("end_time", 0.0))
                 segments.append({
-                    "start_time": start,
-                    "end_time": end,
+                    "start": start,
+                    "end": end,
                     "duration": float(seg.get("duration", end - start)),
                     "language": str(seg.get("language", "")),
                     "confidence": float(seg.get("confidence", 0.0)),
                 })
-            segments.sort(key=lambda s: s["start_time"])
+            segments.sort(key=lambda s: s["start"])
 
             output_list.append({
                 "total_segments": len(segments),
@@ -97,6 +100,10 @@ class LanguageDiarizationTaskService(AudioDefaultModel):
             return {}
         if isinstance(value, dict):
             return value
+        # Unwrap single-element list nesting from Triton KServe v2 responses
+        # e.g. to_output_items peels [["json"]] → ["json"]; we peel once more → "json"
+        while isinstance(value, (list, tuple)) and len(value) == 1:
+            value = value[0]
         if isinstance(value, bytes):
             value = value.decode("utf-8", errors="replace")
         if isinstance(value, str):

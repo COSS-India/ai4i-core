@@ -3,8 +3,9 @@ import json, logging
 from typing import Any, Dict, List, Optional
 from services.base.text_base import TextBase
 from services.base.config_mapper import GenericTritonMapper
-from models.schemas.ner import NERInferenceResponse, NEROutput, Token
+
 logger = logging.getLogger(__name__)
+
 
 class NERTaskService(TextBase):
     # source_language check handled by base; no target language needed
@@ -34,12 +35,23 @@ class NERTaskService(TextBase):
             groups = self._group_bpe_tokens(ner_raw)
             aligned = self._align_tags_to_words(word_positions, groups, source)
             tokens_raw = self._build_ner_token_predictions(word_positions, aligned)
-            tokens = [Token(text=t["token"], entity_type=t["tag"], start_pos=t["tokenStartIndex"], end_pos=t["tokenEndIndex"]) for t in tokens_raw]
-            output_list.append(NEROutput(source=source, tokens=tokens))
+            # Return camelCase field names so the frontend can read entityType,
+            # startPos, endPos without snake_case → camelCase translation.
+            tokens = [
+                {
+                    "text":       t["token"],
+                    "entityType": t["tag"],
+                    "startPos":   t["tokenStartIndex"],
+                    "endPos":     t["tokenEndIndex"],
+                }
+                for t in tokens_raw
+            ]
+            output_list.append({"source": source, "tokens": tokens})
         self.logger.debug(f"NER post-processed {len(output_list)} predictions")
         return {"output": output_list}
 
     def _build_response(self, payload, postprocessed):
-        return NERInferenceResponse(output=postprocessed["output"])
+        return postprocessed
+
 
 __all__ = ["NERTaskService"]
