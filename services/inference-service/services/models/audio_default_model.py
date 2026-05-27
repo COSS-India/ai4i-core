@@ -113,8 +113,25 @@ class AudioDefaultModel(AudioBase):
     async def postprocess_output(
         self, response_items: List[Dict[str, Any]], **kwargs: Any
     ) -> Dict[str, Any]:
-        """Return mapped output items as-is — no task-specific shaping."""
-        return {"output": response_items}
+        """Unwrap single-element nested lists and decode bytes in each output item.
+
+        Triton KServe v2 returns tensors as flat lists (e.g. shape [1,1] → ["hi"]).
+        After GenericTritonMapper processes them they may still be wrapped in a list.
+        This ensures scalar values like language_code and confidence are plain
+        Python scalars/strings rather than single-element lists.
+        """
+        unwrapped = []
+        for item in response_items:
+            clean = {}
+            for key, value in item.items():
+                # Unwrap single-element list nesting: ["hi"] → "hi", [[0.99]] → 0.99
+                while isinstance(value, (list, tuple)) and len(value) == 1:
+                    value = value[0]
+                if isinstance(value, bytes):
+                    value = value.decode("utf-8", errors="replace")
+                clean[key] = value
+            unwrapped.append(clean)
+        return {"output": unwrapped}
 
     def _build_response(
         self, payload: Dict[str, Any], postprocessed: Dict[str, Any]

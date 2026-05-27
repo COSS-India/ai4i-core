@@ -1,5 +1,6 @@
 """Generic adapter config declarations and path-based mapper utilities."""
 
+import re
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from pydantic import BaseModel, Field, model_validator
@@ -230,12 +231,20 @@ class GenericTritonMapper:
     def _resolve_path(self, source: Any, path: str) -> Any:
         # Dot-path walker for config-driven lookup.
         # Supports dict keys and object attributes.
+        # Falls back to camelCase variant so adapter_config paths declared as
+        # snake_case (e.g. source_language) resolve even when the frontend
+        # sends camelCase (e.g. sourceLanguage).
         current = source
         for part in path.split("."):
             if isinstance(current, dict):
-                if part not in current:
-                    raise GenericMapperError(f"Path '{path}' not found (missing key '{part}')")
-                current = current[part]
+                if part in current:
+                    current = current[part]
+                else:
+                    camel = re.sub(r"_([a-z])", lambda m: m.group(1).upper(), part)
+                    if camel in current:
+                        current = current[camel]
+                    else:
+                        raise GenericMapperError(f"Path '{path}' not found (missing key '{part}')")
             elif hasattr(current, part):
                 current = getattr(current, part)
             else:

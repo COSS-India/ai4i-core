@@ -593,7 +593,7 @@ class AudioBase(BaseTaskService):
         for item in decoded_items:
             # adapter_config maps TRANSCRIPTS → "transcript" (maps_to field)
             transcript = item.get("transcript", item.get("source", ""))
-            output.append(TranscriptionOutput(source=str(transcript)))
+            output.append(TranscriptionOutput(transcript=str(transcript)))
         return {"output": output}
 
     async def _empty_output(self, **kwargs: Any) -> Dict[str, Any]:

@@ -49,7 +49,23 @@ class ASRTaskService(AudioBase):
         input_data: List[Dict[str, Any]],
         config: Dict[str, Any],
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
-        """Build KServe v2 inputs from preprocessed float PCM samples."""
+        """Build KServe v2 inputs from preprocessed float PCM samples.
+
+        Normalises config.language to always expose source_language (snake_case)
+        so the adapter_config path 'request.config.language.source_language' resolves
+        regardless of whether the frontend sends sourceLanguage (camelCase) or a
+        plain language string.
+        """
+        config = dict(config)
+        language = config.get("language", {})
+        if isinstance(language, dict):
+            source_lang = (
+                language.get("source_language") or language.get("sourceLanguage") or ""
+            )
+            config["language"] = {"source_language": str(source_lang)}
+        elif isinstance(language, str):
+            config["language"] = {"source_language": language}
+
         mapper = GenericTritonMapper(self._adapter_config)
         return mapper.compose_triton_kserve_v2_payload(
             input_data=input_data,

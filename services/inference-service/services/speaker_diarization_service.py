@@ -70,12 +70,12 @@ class SpeakerDiarizationTaskService(AudioDefaultModel):
                 if speaker:
                     speakers_set.add(speaker)
                 segments.append({
-                    "start_time": start,
-                    "end_time": end,
+                    "start": start,
+                    "end": end,
                     "duration": float(seg.get("duration", end - start)),
                     "speaker": speaker,
                 })
-            segments.sort(key=lambda s: s["start_time"])
+            segments.sort(key=lambda s: s["start"])
 
             output_list.append({
                 "total_segments": len(segments),
