@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from services.base.audio_base import AudioBase
 from services.base.config_mapper import GenericTritonMapper
-from models.schemas.asr import ASRInferenceResponse
 
 logger = logging.getLogger(__name__)
 
@@ -111,9 +110,11 @@ class ASRTaskService(AudioBase):
     ) -> Dict[str, Any]:
         """Decode bytes → wrap in TranscriptionOutput list."""
         decoded = await self._decode_output_bytes(response_items)
-        return await self._wrap_transcription_output(decoded)
+        return await self._wrap_transcription_output(
+            decoded, source_texts=kwargs.get("source_texts", [])
+        )
 
     def _build_response(
         self, payload: Dict[str, Any], postprocessed: Dict[str, Any]
-    ) -> ASRInferenceResponse:
-        return ASRInferenceResponse(output=postprocessed["output"], smr_response=None)
+    ) -> Dict[str, Any]:
+        return postprocessed
