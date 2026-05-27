@@ -39,7 +39,7 @@ _GENDER_TERMS: frozenset = frozenset({
 # NER labels → canonical entity type
 _AI_LABEL_MAP: Dict[str, str] = {
     "GPE": "LOCATION", "LOC": "LOCATION", "FAC": "LOCATION", "ORG": "LOCATION",
-    "PERSON": "PERSON",
+    "PERSON": "PERSON", "PER": "PERSON",
 }
 
 
