@@ -4,9 +4,11 @@ Handles all inference requests regardless of task type.
 Integrates orchestration, factory, and telemetry.
 """
 
-from typing import Any, Dict, Optional
-from fastapi import APIRouter, Request, HTTPException, Depends
 import logging
+import time
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, Request, HTTPException, Depends
 
 from orchestrator import Orchestrator, OrchestratorError
 from factory import TaskFactory, FactoryError
@@ -30,6 +32,59 @@ async def get_orchestrator() -> Orchestrator:
     Can be overridden in tests.
     """
     return Orchestrator()
+
+
+async def handle_orchestrated_inference(
+    payload: Dict[str, Any],
+    orchestrator: Orchestrator,
+    *,
+    default_task_type: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Shared handler for inference routes that delegate to the orchestrator.
+
+    Handles timing, logging, optional default task_type injection, orchestrator
+    routing, and HTTP error mapping. Reuse from unified and task-specific
+    endpoints (e.g. /inference vs /nmt/inference).
+
+    Args:
+        payload: Raw request payload dictionary
+        orchestrator: Orchestrator instance (dependency-injected)
+        default_task_type: Applied when task_type is missing from payload
+
+    Returns:
+        GenericInferenceResponse-compatible dict with task-specific output
+
+    Raises:
+        HTTPException: If request validation or execution fails
+    """
+    start_time = time.time()
+
+    try:
+        task_type = payload.get("task_type", "").upper()
+        if not task_type and default_task_type:
+            task_type = default_task_type.upper()
+            request_payload = payload.copy()
+            request_payload["task_type"] = task_type
+        else:
+            request_payload = payload
+
+        logger.info(f"Inference request: task_type={task_type}")
+
+        result = await orchestrator.route_inference(payload=request_payload)
+
+        duration_ms = (time.time() - start_time) * 1000
+        logger.info(
+            f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms"
+        )
+        return result
+
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(
+            f"✗ Inference failed: {str(e)}, duration_ms={duration_ms:.2f}ms"
+        )
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post(
@@ -71,28 +126,8 @@ async def run_inference(
     Raises:
         HTTPException: If request validation or execution fails
     """
-    import time
-    start_time = time.time()
-    
-    try:
-        task_type = payload.get("task_type", "").upper()
-        
-        logger.info(f"Inference request: task_type={task_type}")
-        
-        # Route through orchestrator
-        result = await orchestrator.route_inference(
-            payload=payload
-        )
-        
-        duration_ms = (time.time() - start_time) * 1000
-        logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
-        
-        return result
-        
-    except Exception as e:
-        duration_ms = (time.time() - start_time) * 1000
-        logger.error(f"✗ Inference failed: {str(e)}, duration_ms={duration_ms:.2f}ms")
-        raise HTTPException(status_code=400, detail=str(e))
+    return await handle_orchestrated_inference(payload, orchestrator)
+
 
 @router.post(
     "/nmt/inference",
@@ -115,35 +150,10 @@ async def run_nmt_inference(
         GenericInferenceResponse with NMT output    
     Raises:
         HTTPException: If request validation or execution fails
-    """ 
-    import time
-    start_time = time.time()
-    
-    try:
-        task_type = payload.get("task_type", "").upper()
-        if not task_type:            
-            task_type = "NMT"
-            request_payload = payload.copy()
-            request_payload["task_type"] = task_type
-        else:
-            request_payload = payload
-        
-        logger.info(f"Inference request: task_type={task_type}")
-        
-        # Route through orchestrator
-        result = await orchestrator.route_inference(
-            payload=request_payload
-        )
-        
-        duration_ms = (time.time() - start_time) * 1000
-        logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
-        
-        return result
-        
-    except Exception as e:
-        duration_ms = (time.time() - start_time) * 1000
-        logger.error(f"✗ Inference failed: {str(e)}, duration_ms={duration_ms:.2f}ms")
-        raise HTTPException(status_code=400, detail=str(e))
+    """
+    return await handle_orchestrated_inference(
+        payload, orchestrator, default_task_type="NMT"
+    )
 
 
 @router.get(
