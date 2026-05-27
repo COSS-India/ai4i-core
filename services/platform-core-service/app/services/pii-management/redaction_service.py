@@ -15,7 +15,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 from opentelemetry import trace
 
 from app.schemas.pii_management.redaction import (
@@ -71,7 +71,6 @@ class RedactionService:
         # ── Policy lookup ──────────────────────────────────────────────────
         policy = self._policy_sync.get_policy(effective_domain)
         if not policy:
-            from fastapi import HTTPException
             raise HTTPException(
                 status_code=400,
                 detail=(
