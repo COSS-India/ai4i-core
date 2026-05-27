@@ -1,5 +1,5 @@
 # ── Shared platform library (consolidated) ──
-ai4icore-core>=1.1.4
+ai4icore-core>=1.1.5
 
 # FastAPI and ASGI server
 fastapi>=0.104.0
