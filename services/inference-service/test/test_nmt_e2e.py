@@ -1,128 +1,290 @@
 #!/usr/bin/env python3
 """
-Direct unit test of NMT service
-Tests the complete NMT inference pipeline
+End-to-end integration tests for TextDefaultModel.
+
+Uses a real GenericTritonMapper with a representative adapter_config,
+but mocks only the HTTP call to Triton.
+
+This mirrors how the service runs in production:
+  process(payload) → validate → preprocess
+                   → run_inference (real mapper, mocked HTTP) → plain dict response
+
+Run from the inference-service root:
+    python test/test_nmt_e2e.py
 """
 
 import asyncio
-import sys
 import logging
+import sys
+from unittest.mock import AsyncMock, patch
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Representative adapter config for indictrans (source, src-lang, tgt-lang → translation)
+# value_path keys use snake_case to match model_dump(by_alias=False) output
+# ---------------------------------------------------------------------------
+MOCK_ADAPTER_CONFIG = {
+    "version": "1.0",
+    "model_version": "1",
+    "inputs": [
+        {
+            "tensor": "INPUT_TEXT",
+            "dtype": "BYTES",
+            "shape": [1, 1],
+            "value_path": "input.source",
+        },
+        {
+            "tensor": "SRC_LANG",
+            "dtype": "BYTES",
+            "shape": [1, 1],
+            "value_path": "request.config.language.source_language",
+        },
+        {
+            "tensor": "TGT_LANG",
+            "dtype": "BYTES",
+            "shape": [1, 1],
+            "value_path": "request.config.language.target_language",
+        },
+    ],
+    "outputs": [
+        {
+            "tensor": "OUTPUT_TEXT",
+            "dtype": "BYTES",
+            "maps_to": "target",
+        }
+    ],
+}
 
-async def run_tests():
-    """Run comprehensive NMT service tests"""
-    
+MOCK_SERVICE_INFO = {
+    "service_id": "indictrans-v2-all",
+    "name": "indictrans-gpu-t4",
+    "endpoint": "http://localhost:8000/v2/models/indictrans-gpu-t4/infer",
+    "api_key": None,
+    "adapter_config": MOCK_ADAPTER_CONFIG,
+}
+
+# ---------------------------------------------------------------------------
+# Mock Triton response (KServe v2 format, one translated item)
+# ---------------------------------------------------------------------------
+MOCK_TRITON_RESPONSE_SINGLE = {
+    "outputs": [
+        {
+            "name": "OUTPUT_TEXT",
+            "datatype": "BYTES",
+            "shape": [1, 1],
+            "data": ["नमस्ते, आप कैसे हैं?"],
+        }
+    ]
+}
+
+MOCK_TRITON_RESPONSE_HINDI = {
+    "outputs": [
+        {"name": "OUTPUT_TEXT", "datatype": "BYTES", "shape": [1, 1], "data": ["आपका नाम क्या है?"]}
+    ]
+}
+
+
+async def test_full_pipeline_camel_payload():
+    """process() with a camelCase portal payload → plain dict response."""
+    from services.models.text_default_model import TextDefaultModel
+
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+
+    portal_payload = {
+        "input": [{"source": "Hello, how are you?"}],
+        "config": {
+            "serviceId": "indictrans-v2-all",
+            "language": {"sourceLanguage": "en", "targetLanguage": "hi"},
+        },
+    }
+
+    with patch(
+        "utils.http_client.HTTPServiceClient.post_json",
+        new=AsyncMock(return_value=MOCK_TRITON_RESPONSE_SINGLE),
+    ):
+        response = await service.process(portal_payload)
+
+    assert isinstance(response, dict)
+    assert len(response["output"]) == 1
+    assert response["output"][0]["source"] == "Hello, how are you?"
+    assert response["output"][0]["target"] == "नमस्ते, आप कैसे हैं?"
+    logger.info("   [PASS] camelCase portal payload → correct plain dict response")
+
+
+async def test_full_pipeline_snake_payload():
+    """process() with snake_case payload (both naming conventions work)."""
+    from services.models.text_default_model import TextDefaultModel
+
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+
+    snake_payload = {
+        "input": [{"source": "What is your name?"}],
+        "config": {
+            "service_id": "indictrans-v2-all",
+            "language": {"sourceLanguage": "en", "targetLanguage": "hi"},
+        },
+    }
+
+    with patch(
+        "utils.http_client.HTTPServiceClient.post_json",
+        new=AsyncMock(return_value=MOCK_TRITON_RESPONSE_HINDI),
+    ):
+        response = await service.process(snake_payload)
+
+    assert isinstance(response, dict)
+    assert response["output"][0]["target"] == "आपका नाम क्या है?"
+    logger.info("   [PASS] snake_case payload → correct plain dict response")
+
+
+async def test_multi_input_pipeline():
+    """Two input items → two separate Triton calls → two output items."""
+    from services.models.text_default_model import TextDefaultModel
+
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+
+    payload = {
+        "input": [
+            {"source": "Hello"},
+            {"source": "Goodbye"},
+        ],
+        "config": {
+            "language": {"sourceLanguage": "en", "targetLanguage": "hi"}
+        },
+    }
+
+    triton_responses = [
+        {"outputs": [{"name": "OUTPUT_TEXT", "datatype": "BYTES", "shape": [1, 1], "data": ["नमस्ते"]}]},
+        {"outputs": [{"name": "OUTPUT_TEXT", "datatype": "BYTES", "shape": [1, 1], "data": ["अलविदा"]}]},
+    ]
+    call_count = 0
+
+    async def mock_post_json(url, body, headers=None):
+        nonlocal call_count
+        result = triton_responses[call_count]
+        call_count += 1
+        return result
+
+    with patch("utils.http_client.HTTPServiceClient.post_json", new=mock_post_json):
+        response = await service.process(payload)
+
+    assert isinstance(response, dict)
+    assert len(response["output"]) == 2
+    assert call_count == 2  # one Triton call per input item
+    assert response["output"][0]["source"] == "Hello"
+    assert response["output"][0]["target"] == "नमस्ते"
+    assert response["output"][1]["source"] == "Goodbye"
+    assert response["output"][1]["target"] == "अलविदा"
+    logger.info("   [PASS] two inputs → two Triton calls → two output items")
+
+
+async def test_response_serialization():
+    """Response is a plain dict — output key present with correct fields."""
+    from services.models.text_default_model import TextDefaultModel
+
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+
+    payload = {
+        "input": [{"source": "Hello"}],
+        "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+    }
+
+    with patch(
+        "utils.http_client.HTTPServiceClient.post_json",
+        new=AsyncMock(return_value=MOCK_TRITON_RESPONSE_SINGLE),
+    ):
+        response = await service.process(payload)
+
+    assert isinstance(response, dict)
+    assert "output" in response
+    assert response["output"][0]["source"] == "Hello"
+    assert response["output"][0]["target"] == "नमस्ते, आप कैसे हैं?"
+    logger.info("   [PASS] response is plain dict with correct output structure")
+
+
+async def test_validate_same_language_rejected():
+    """process() raises ValueError when source == target language."""
+    from services.models.text_default_model import TextDefaultModel
+
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+
+    payload = {
+        "input": [{"source": "Hello"}],
+        "config": {"language": {"sourceLanguage": "hi", "targetLanguage": "hi"}},
+    }
+
     try:
-        from services.nmt_service import NMTTaskService
-        from models.schemas.nmt import NMTInferenceRequest, LanguagePair, NMTConfig, TextInput
-        
-        logger.info("=" * 70)
-        logger.info("🚀 NMT Service End-to-End Verification")
-        logger.info("=" * 70)
-        
-        # Mock resolver
-        class MockResolver:  # type: ignore
-            async def resolve_service(self, service_id, session_id=None):
-                return {
-                    "service_id": service_id,
-                    "model_name": "indictrans_en_hi_v2",
-                    "triton_endpoint": "http://localhost:8000",
-                    "triton_api_key": "mock-key"
-                }
-        
-        # 1. Initialize service
-        logger.info("\n1️⃣ Initializing NMT Service")
-        resolver = MockResolver()
-        service = NMTTaskService(inference_server_resolver=resolver)  # type: ignore
-        logger.info("   ✅ Service initialized")
-        
-        # 2. Create test request
-        logger.info("\n2️⃣ Creating NMT Request")
-        config = NMTConfig(
-            service_id="indictrans-v2-all",
-            language=LanguagePair(source_language="en", target_language="hi")
-        )
-        request = NMTInferenceRequest(
-            input=[
-                TextInput(source="Hello, how are you?"),
-                TextInput(source="What is your name?")
-            ],
-            config=config
-        )
-        logger.info(f"   ✅ Request created: {len(request.input)} inputs, en→hi")
-        
-        # 3. Test validation
-        logger.info("\n3️⃣ Testing Validation")
-        await service.validate_request(request)
-        logger.info("   ✅ Validation passed")
-        
-        # 4. Test preprocessing
-        logger.info("\n4️⃣ Testing Preprocessing")
-        raw = [{"source": "  Hello   world  "}, {"source": "  What  is  the   weather?  "}]
-        preprocessed = await service.preprocess_input(raw)
-        logger.info(f"   ✅ Preprocessing: {len(preprocessed)} items cleaned")
-        
-        # 5. Test service resolution
-        logger.info("\n5️⃣ Testing Service Resolution")
-        svc_id, model, endpoint, api_key = await service._resolve_service_and_model(config, "test-123")
-        logger.info(f"   ✅ Resolved: {svc_id}/{model} @ {endpoint}")
-        
-        # 6. Test error handling
-        logger.info("\n6️⃣ Testing Error Handling")
-        
-        try:
-            # Empty input
-            NMTInferenceRequest(input=[], config=config)
-            logger.info("   ✗ Should reject empty input")
-            return 1
-        except:
-            logger.info("   ✅ Empty input rejected")
-        
-        try:
-            # Same language
-            same = NMTConfig(
-                service_id="indictrans-v2-all",
-                language=LanguagePair(source_language="en", target_language="en")
-            )
-            req = NMTInferenceRequest(
-                input=[TextInput(source="Hello")],
-                config=same
-            )
-            await service.validate_request(req)
-            logger.info("   ✗ Should reject same language")
-            return 1
-        except:
-            logger.info("   ✅ Same language rejected")
-        
-        # Success!
-        logger.info("\n" + "=" * 70)
-        logger.info("✅ ALL NMT SERVICE TESTS PASSED")
-        logger.info("=" * 70)
-        logger.info("\nNMT Service is working correctly:")
-        logger.info("  ✓ Service initialization")
-        logger.info("  ✓ Request validation")
-        logger.info("  ✓ Input preprocessing")
-        logger.info("  ✓ Service resolution")
-        logger.info("  ✓ Error handling")
-        logger.info("=" * 70)
-        
-        return 0
-        
-    except Exception as e:
-        logger.error(f"❌ Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
+        await service.process(payload)
+        raise AssertionError("Should have raised ValueError")
+    except ValueError as e:
+        assert "cannot be the same" in str(e)
+        logger.info("   [PASS] same language pair rejected in full pipeline")
 
 
-async def main():
-    return await run_tests()
+async def test_validate_whitespace_source_accepted():
+    """Whitespace-only source is sanitised to single space and accepted."""
+    from services.models.text_default_model import TextDefaultModel
+
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+
+    payload = {
+        "input": [{"source": "   "}],
+        "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+    }
+
+    with patch(
+        "utils.http_client.HTTPServiceClient.post_json",
+        new=AsyncMock(return_value=MOCK_TRITON_RESPONSE_SINGLE),
+    ):
+        response = await service.process(payload)
+
+    assert isinstance(response, dict)
+    # Source sanitised to " " (single space) — pipeline completes without error
+    assert response["output"][0]["source"] == " "
+    logger.info("   [PASS] whitespace-only source sanitised and accepted")
+
+
+# ---------------------------------------------------------------------------
+# Runner
+# ---------------------------------------------------------------------------
+
+async def run_all():
+    tests = [
+        ("full pipeline — camelCase portal payload", test_full_pipeline_camel_payload),
+        ("full pipeline — snake_case payload", test_full_pipeline_snake_payload),
+        ("multi-input — two Triton calls", test_multi_input_pipeline),
+        ("response serialization — plain dict", test_response_serialization),
+        ("validation — same language rejected", test_validate_same_language_rejected),
+        ("validation — whitespace source sanitised", test_validate_whitespace_source_accepted),
+    ]
+
+    logger.info("=" * 70)
+    logger.info("TextDefaultModel End-to-End Tests  (real mapper, mocked HTTP)")
+    logger.info("=" * 70)
+
+    passed = 0
+    failed = 0
+    for name, fn in tests:
+        logger.info(f"\n-- {name}")
+        try:
+            await fn()
+            passed += 1
+        except Exception as exc:
+            logger.error(f"   [FAIL] {exc}")
+            import traceback; traceback.print_exc()
+            failed += 1
+
+    logger.info("\n" + "=" * 70)
+    if failed == 0:
+        logger.info(f"ALL {passed} TESTS PASSED")
+    else:
+        logger.info(f"{passed} passed, {failed} FAILED")
+    logger.info("=" * 70)
+
+    return failed == 0
 
 
 if __name__ == "__main__":
-    exit_code = asyncio.run(main())
-    sys.exit(exit_code)
+    ok = asyncio.run(run_all())
+    sys.exit(0 if ok else 1)

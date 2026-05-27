@@ -17,17 +17,19 @@ logger = logging.getLogger(__name__)
 
 
 def _get_default_mapper_path() -> Path:
-    """Resolve default mapper path to inference-service/utils/telemetry."""
+    """Resolve default mapper path to libs/ai4icore_core/ai4icore_core/telemetry/util."""
     current = Path.cwd()
 
     while current != current.parent:
-        inference_service = current / "services" / "inference-service" / "utils" / "telemetry"
-        if inference_service.exists():
-            return inference_service
+        lib_telemetry = current / "libs" / "ai4icore_core" / "ai4icore_core" / "telemetry" / "util"
+        if lib_telemetry.exists():
+            logger.info(f"[MAPPER PATH] Found at: {lib_telemetry}")
+            return lib_telemetry
         current = current.parent
 
-    logger.warning("Could not find inference-service telemetry path, using src/mappers")
-    return Path("src/mappers")
+    fallback = Path("libs/ai4icore_core/ai4icore_core/telemetry/util")
+    logger.warning(f"[MAPPER PATH] Not found in search, using fallback: {fallback}")
+    return fallback
 
 
 def _initialize_tracer_provider() -> TracerProvider:
@@ -101,9 +103,10 @@ class TraceManager:
             mapper_path = self.base_mapper_path / service / "stages.json"
 
             if not mapper_path.exists():
-                logger.warning(f"Mapper not found: {mapper_path}")
+                logger.warning(f"[MAPPER] Not found at: {mapper_path}")
                 self.service_configs[service] = {}
             else:
+                logger.info(f"[MAPPER] Loaded from: {mapper_path}")
                 with open(mapper_path, "r") as f:
                     self.service_configs[service] = json.load(f)
 

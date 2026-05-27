@@ -1,0 +1,32 @@
+{
+  "overall_request": {
+    "start": [
+      {"attr": "task_type", "expr": "task_type"},
+      {"attr": "input_size", "func": "compute_input_size"},
+      {"attr": "customer_id", "func": "compute_customer_id"}
+    ],
+    "end": [
+      {"attr": "total_time_ms", "func": "compute_elapsed_time"},
+      {"attr": "service_used", "func": "compute_service_used"},
+      {"attr": "model_used", "func": "compute_model_used"},
+      {"attr": "success_status", "func": "compute_success_status"}
+    ]
+  },
+  "model_loading": {
+    "start": [],
+    "end": [      {"attr": "load_time_ms", "func": "compute_elapsed_time"}
+    ]
+  },
+  "ai_inference": {
+    "start": [],
+    "end": [
+      {"attr": "execution_time_ms", "func": "compute_elapsed_time"}
+    ]
+  },
+  "database_write": {
+    "start": [],
+    "end": [
+      {"attr": "write_time_ms", "func": "compute_elapsed_time"}
+    ]
+  }
+}
