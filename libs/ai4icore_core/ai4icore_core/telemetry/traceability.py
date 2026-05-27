@@ -247,31 +247,14 @@ class TraceManager:
         return span
 
     def trace_stage_end(self, span: OTelSpan, response: Dict[str, Any]) -> None:
-        """Attach END attributes and close span (triggers console export).
-
-        Computes attributes using both request and response data.
-        Falls back to request if response doesn't have a meaningful value.
-        Enriches response with already-set span attributes for dependent computations.
-        """
+        """Attach END attributes and close span (triggers console export)."""
         mapper = self.load_mapper(span.service, span.stage)
         for config in mapper.get("end", []):
-            # Enrich response with already-set span attributes (e.g., model_name for task_type)
-            enriched_response = {**response, **span.attributes}
-
-            # Try enriched response first, then fallback to request for flexibility
-            value = get_attribute_value(config, enriched_response)
-            # Fallback to request if response value is None
-            if value is None:
-                value = get_attribute_value(config, span.request)
+            value = get_attribute_value(config, response)
             if value is not None:
-                logger.info(f"[ATTR END {i}] SUCCESS: {attr_name}={value}")
                 span.set_attribute(config.get("attr"), value)
-            else:
-                logger.warning(f"[ATTR END {i}] SKIPPED: {attr_name} returned None")
-
         span.span.end()
         logger.info(f"[TRACE RESULT] {json.dumps(span.to_dict(), indent=2)}")
-
     def finalize_trace(self, trace_id: Optional[str] = None) -> None:
         """Clean up the context tracking for a trace.
 
@@ -297,4 +280,3 @@ def get_trace_manager() -> TraceManager:
     if _trace_manager is None:
         _trace_manager = TraceManager()
     return _trace_manager
-

@@ -2,31 +2,6 @@
 
 from functools import wraps
 from .traceability import get_trace_manager
-from ai4icore_core.context import get_endpoint_path
-
-
-def _enrich_request_with_trace_metadata(request_dict: dict, service_name: str = None) -> dict:
-    """Add endpoint from context and task_type from service_name to request dict.
-
-    Args:
-        request_dict: Request dictionary to enrich
-        service_name: Service name to derive task_type from
-    """
-    if not isinstance(request_dict, dict):
-        request_dict = {}
-
-    # Add endpoint from context if not already present
-    if "endpoint" not in request_dict:
-        endpoint = get_endpoint_path()
-        if endpoint:
-            request_dict["endpoint"] = endpoint
-
-    # Add task_type from service_name if not already present
-    if "task_type" not in request_dict and service_name:
-        # Normalize service name: "language-diarization" → "language_diarization"
-        request_dict["task_type"] = service_name.replace("-", "_")
-
-    return request_dict
 
 
 def _get_service_name(self, request=None) -> str:
@@ -58,16 +33,15 @@ def trace_stage(stage_name):
             service_name = _get_service_name(self, request)
             logger.info(f"[TRACE WRAPPER] {stage_name} START: service={service_name}, request_type={type(request).__name__}")
             start_time = time.time()
-            request_dict = request.dict() if hasattr(request, 'dict') else request
-            request_dict = _enrich_request_with_trace_metadata(request_dict, service_name)
-            span = trace_manager.trace_stage_start(service_name, stage_name, request_dict)
+            span = trace_manager.trace_stage_start(service_name, stage_name, request)
             try:
                 response = func(self, request)
                 elapsed_ms = (time.time() - start_time) * 1000
                 response_dict = response.dict() if response and hasattr(response, 'dict') else (response or {})
                 if isinstance(response_dict, dict):
                     response_dict['elapsed_time_ms'] = elapsed_ms
-                logger.info(f"[TRACE WRAPPER] {stage_name} END: response_type={type(response_dict).__name__}")
+                logger.info(f"[TRACE WRAPPER] {stage_name} END: response_type={type(response).__name__}, response_is_none={response is None}")
+                logger.debug(f"[TRACE WRAPPER] {stage_name} response_dict keys: {list(response_dict.keys()) if isinstance(response_dict, dict) else 'N/A'}")
                 trace_manager.trace_stage_end(span, response_dict)
                 return response
             except Exception as e:
@@ -93,7 +67,6 @@ def async_trace_stage(stage_name):
             logger.info(f"[ASYNC TRACE] {stage_name} START: service={service_name}, request_type={type(request_dict).__name__}")
 
             start_time = time.time()
-            request_dict = _enrich_request_with_trace_metadata(request_dict, service_name)
             span = trace_manager.trace_stage_start(service_name, stage_name, request_dict)
             try:
                 response = await func(self, *args, **kwargs)
@@ -101,7 +74,8 @@ def async_trace_stage(stage_name):
                 response_dict = response.dict() if response and hasattr(response, 'dict') else (response or {})
                 if isinstance(response_dict, dict):
                     response_dict['elapsed_time_ms'] = elapsed_ms
-                logger.info(f"[ASYNC TRACE] {stage_name} END: response_type={type(response_dict).__name__}")
+                logger.info(f"[ASYNC TRACE] {stage_name} END: response_type={type(response).__name__}, response_is_none={response is None}")
+                logger.debug(f"[ASYNC TRACE] {stage_name} response_dict keys: {list(response_dict.keys()) if isinstance(response_dict, dict) else 'N/A'}")
                 trace_manager.trace_stage_end(span, response_dict)
                 return response
             except Exception as e:
@@ -122,9 +96,7 @@ class TraceableService:
         trace_manager = get_trace_manager()
         @wraps(method)
         def traced_method(request):
-            request_dict = request.dict() if hasattr(request, 'dict') else request
-            request_dict = _enrich_request_with_trace_metadata(request_dict, service_instance.service_name)
-            span = trace_manager.trace_stage_start(service_instance.service_name, stage_name, request_dict)
+            span = trace_manager.trace_stage_start(service_instance.service_name, stage_name, request)
             try:
                 response = method(request)
                 trace_manager.trace_stage_end(span, response)
