@@ -16,6 +16,19 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
+
+def _deep_merge(existing: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep merge updates into existing JSONB data, preserving unset keys."""
+    if not isinstance(existing, dict) or not isinstance(updates, dict):
+        return updates
+    merged = existing.copy()
+    for key, value in updates.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
 from fastapi.encoders import jsonable_encoder
 
 from app.core.config import settings
@@ -281,7 +294,8 @@ class ModelService:
             if key == "refUrl":
                 update_data["ref_url"] = value
             elif key == "inferenceEndPoint":
-                update_data["inference_endpoint"] = jsonable_encoder(value)
+                existing_ep = instance.inference_endpoint or {}
+                update_data["inference_endpoint"] = _deep_merge(existing_ep, jsonable_encoder(value))
             elif key in ("task", "languages", "domain", "benchmarks", "submitter"):
                 update_data[key] = jsonable_encoder(value)
             else:
