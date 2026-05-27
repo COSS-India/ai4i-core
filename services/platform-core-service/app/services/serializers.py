@@ -70,7 +70,6 @@ def service_to_dict(
         "healthStatus": service.health_status,
         "benchmarks": service.benchmarks,
         "policy": dict(service.policy) if service.policy else None,
-        "adapter_config": service.adapter_config,
         "isPublished": bool(service.is_published),
         "publishedAt": _iso(service.published_at),
         "unpublishedAt": _iso(service.unpublished_at),
