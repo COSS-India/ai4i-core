@@ -403,6 +403,45 @@ async def run_language_diarization_inference(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post(
+    "/ocr/inference",
+    response_model=GenericInferenceResponse,
+    summary="OCR Inference Endpoint",
+    description="Route inference requests to OCR TaskService",
+)
+async def run_ocr_inference(
+    payload: Dict[str, Any],
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+) -> Dict[str, Any]:
+    """
+    Dedicated endpoint for OCR inference requests.
+    Sets task_type to OCR if not provided in payload, then routes via Orchestrator.
+    """
+    import time
+    start_time = time.time()
+
+    try:
+        if not payload.get("task_type"):
+            request_payload = {**payload, "task_type": "OCR"}
+        else:
+            request_payload = payload
+
+        task_type = request_payload["task_type"].upper()
+        logger.info(f"Inference request: task_type={task_type}")
+
+        result = await orchestrator.route_inference(payload=request_payload)
+
+        duration_ms = (time.time() - start_time) * 1000
+        logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
+
+        return result
+
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"✗ Inference failed: {str(e)}, duration_ms={duration_ms:.2f}ms")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get(
     "/inference/health",
     summary="Health Check",
