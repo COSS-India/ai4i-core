@@ -174,8 +174,37 @@ async def create_inference_app() -> FastAPI:
         description="Unified inference endpoint for NMT, ASR, OCR, NER, LLM and other task services",
         version="1.0.0",
         docs_url="/docs",
-        openapi_url="/openapi.json"
+        openapi_url="/openapi.json",
     )
+
+    _PUBLIC_PATHS = {"/", "/health", "/api/v1/inference/health", "/docs", "/redoc", "/openapi.json"}
+
+    def _custom_openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+        from fastapi.openapi.utils import get_openapi
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        components = schema.setdefault("components", {})
+        components.setdefault("securitySchemes", {})["bearerAuth"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+        for path, methods in (schema.get("paths") or {}).items():
+            if path in _PUBLIC_PATHS:
+                continue
+            for _method, op in (methods or {}).items():
+                if isinstance(op, dict):
+                    op.setdefault("security", [{"bearerAuth": []}])
+        app.openapi_schema = schema
+        return app.openapi_schema
+
+    app.openapi = _custom_openapi  # type: ignore[assignment]
 
     # Setup all components
     await factory.setup_dependencies(app, settings)
