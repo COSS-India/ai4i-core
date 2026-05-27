@@ -1,147 +1,118 @@
-"""Language Diarization TaskService implementation."""
+"""
+LanguageDiarizationTaskService — implements language diarization inference.
 
-from typing import Any, Dict, List, Optional
+Extends AudioDefaultModel (base64 passthrough, adapter_config driven).
+Overrides postprocess_output and _build_response to produce the same
+output structure as the old language-diarization-service.
 
-from interfaces.task_service import BaseTaskService
-from models.schemas.language_diarization import (
-    LanguageDiarizationInferenceRequest,
-    LanguageDiarizationInferenceResponse,
-    LanguageDiarizationConfig,
-)
+Triton tensor contract (adapter_config from MMS):
+  Inputs:  AUDIO_DATA (BYTES [1,1]) — base64 audio
+           LANGUAGE   (BYTES [1,1]) — target language code, "" = all languages
+  Output:  DIARIZATION_RESULT (BYTES) — JSON blob
+"""
+
+import json
+import logging
+from typing import Any, Dict, List, Optional, Tuple
+
+from services.models.audio_default_model import AudioDefaultModel
+from services.base.config_mapper import GenericTritonMapper
+
+logger = logging.getLogger(__name__)
 
 
-class LanguageDiarizationTaskService(BaseTaskService):
+class LanguageDiarizationTaskService(AudioDefaultModel):
     """
     TaskService for Language Diarization inference.
-    Identifies language boundaries and segments in audio.
+
+    Inherits base64-passthrough preprocessing from AudioDefaultModel.
+    Overrides convert_payload_to_triton_format (normalise target_language),
+    postprocess_output (parse DIARIZATION_RESULT JSON), and _build_response.
     """
 
-    def __init__(self, **dependencies: Any):
-        """
-        Initialize Language Diarization task service.
+    def __init__(self, service_info: Optional[Dict[str, Any]] = None, **kwargs: Any):
+        super().__init__(service_info=service_info, **kwargs)
+        self.logger = logger
 
-        Args:
-            **dependencies: Injected dependencies
-                - redis_client: Redis client for caching
-                - model_management_client: Client for model/endpoint resolution
-                - inference_server_resolver: Resolver for Triton endpoints
-                - inference_model_factory: Factory for InferenceModel converters
-        """
-        pass
-
-    async def validate_request(
-        self, request: LanguageDiarizationInferenceRequest
-    ) -> None:
-        """
-        Validate language diarization inference request.
-        Checks audio input format, etc.
-
-        Args:
-            request: Language diarization request to validate
-
-        Raises:
-            ValueError: If request is invalid
-        """
-        pass
-
-    async def preprocess_input(
-        self, input_data: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Preprocess audio inputs for language diarization.
-        Handles audio decoding, resampling, etc.
-
-        Args:
-            input_data: List of audio inputs
-
-        Returns:
-            Preprocessed audio data
-        """
-        pass
-
-    async def run_inference(
+    async def convert_payload_to_triton_format(
         self,
-        request: LanguageDiarizationInferenceRequest,
-        user_id: Optional[int] = None,
-        api_key_id: Optional[int] = None,
-        session_id: Optional[str] = None,
-    ) -> LanguageDiarizationInferenceResponse:
-        """
-        Execute end-to-end language diarization inference pipeline.
-        Resolves service -> preprocesses -> calls Triton -> postprocesses -> returns response.
-
-        Args:
-            request: Language diarization inference request
-            user_id: Optional user ID
-            api_key_id: Optional API key ID
-            session_id: Optional session ID
-
-        Returns:
-            Language diarization inference response with language segments
-        """
-        pass
+        input_data: List[Dict[str, Any]],
+        config: Dict[str, Any],
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """Normalise target_language (camelCase or snake_case, defaults to "")."""
+        config = dict(config)
+        config["target_language"] = str(
+            config.get("target_language") or config.get("targetLanguage") or ""
+        )
+        mapper = GenericTritonMapper(self._adapter_config)
+        return mapper.compose_triton_kserve_v2_payload(
+            input_data=input_data,
+            config=config,
+            context_builder=self._build_audio_context,
+        )
 
     async def postprocess_output(
-        self, raw_triton_output: Dict[str, Any]
+        self, response_items: List[Dict[str, Any]], **kwargs: Any
     ) -> Dict[str, Any]:
-        """
-        Post-process raw Triton output for language diarization.
-        Formats segments with timing, extracts confidence, etc.
+        output_list = []
 
-        Args:
-            raw_triton_output: Raw output from Triton server
+        for item in response_items:
+            # Try the well-known key first; fall back to the first value in the
+            # dict so different adapter_config maps_to names still work.
+            raw = item.get("diarization_json") or next(iter(item.values()), None)
+            data = self._parse_json(raw)
+            if not data:
+                output_list.append({"total_segments": 0, "segments": [], "target_language": ""})
+                continue
 
-        Returns:
-            Formatted output dictionary
-        """
-        pass
+            segments = []
+            for seg in data.get("segments", []):
+                start = float(seg.get("start_time", 0.0))
+                end = float(seg.get("end_time", 0.0))
+                segments.append({
+                    "start": start,
+                    "end": end,
+                    "duration": float(seg.get("duration", end - start)),
+                    "language": str(seg.get("language", "")),
+                    "confidence": float(seg.get("confidence", 0.0)),
+                })
+            segments.sort(key=lambda s: s["start"])
 
-    async def _resolve_service_and_model(
-        self, config: LanguageDiarizationConfig, session_id: Optional[str]
-    ) -> tuple:
-        """
-        Resolve inference service and model information.
+            output_list.append({
+                "total_segments": len(segments),
+                "segments": segments,
+                "target_language": str(data.get("target_language", "")),
+            })
 
-        Args:
-            config: Language diarization config with required service_id
-            session_id: Optional session ID for tracing
+        return {"output": output_list}
 
-        Returns:
-            Tuple of (service_id, model_name, triton_endpoint, triton_api_key)
-        """
-        pass
-
-    async def _decode_audio_input(self, audio_input: Dict[str, Any]) -> bytes:
-        """
-        Decode audio from base64 or download from URI.
-
-        Args:
-            audio_input: Audio input dict with audio_content or audio_uri
-
-        Returns:
-            Raw audio bytes
-        """
-        pass
-
-    async def _call_triton_inference(
-        self,
-        triton_endpoint: str,
-        model_name: str,
-        triton_inputs: Dict[str, Any],
-        triton_outputs: List[str],
-        api_key: Optional[str] = None,
+    def _build_response(
+        self, payload: Dict[str, Any], postprocessed: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """
-        Call Triton inference server with prepared audio inputs.
+        service_id = (payload.get("config") or {}).get("serviceId")
+        result = {"taskType": "language-diarization", "output": postprocessed["output"]}
+        if service_id:
+            result["config"] = {"serviceId": service_id}
+        return result
 
-        Args:
-            triton_endpoint: Triton server URL
-            model_name: Model name in Triton
-            triton_inputs: Formatted audio inputs for Triton
-            triton_outputs: Expected output names
-            api_key: Optional Triton API key
+    def _parse_json(self, value: Any) -> Dict[str, Any]:
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return value
+        # Unwrap single-element list nesting from Triton KServe v2 responses
+        # e.g. to_output_items peels [["json"]] → ["json"]; we peel once more → "json"
+        while isinstance(value, (list, tuple)) and len(value) == 1:
+            value = value[0]
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        if isinstance(value, str):
+            try:
+                return json.loads(value) or {}
+            except json.JSONDecodeError:
+                logger.warning("%s: failed to parse diarization JSON: %r", self.task_name, value[:200])
+                return {}
+        return {}
 
-        Returns:
-            Raw output from Triton
-        """
-        pass
+
+__all__ = ["LanguageDiarizationTaskService"]

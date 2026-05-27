@@ -18,13 +18,6 @@ class CacheEntry:
     """In-memory cache entry with TTL."""
 
     def __init__(self, value: Any, ttl_seconds: int):
-        """
-        Initialize cache entry.
-
-        Args:
-            value: Value to cache
-            ttl_seconds: Time-to-live in seconds
-        """
         self.value = value
         self.ttl_seconds = ttl_seconds
         self.created_at = time.time()
@@ -87,7 +80,7 @@ class InferenceServerResolver:
         if cached:
             self._log_cache_hit(service_id, "cache")
             return cached
-        
+
         # Query model management service
         try:
             service_info = await self._query_model_management_service(service_id)
@@ -100,7 +93,6 @@ class InferenceServerResolver:
     async def resolve_smr_service(
         self,
         payload: Dict[str, Any],
-        session_id: Optional[str] = None,
     ) -> str:
         """
         Resolve service_id via SmartModelRouter when not explicitly provided.
@@ -170,19 +162,70 @@ class InferenceServerResolver:
 
         try:
             http_client = HTTPServiceClient(timeout=30)
-            url = f"{model_management_url}/api/v1/model-management/services/{service_id}"
-            # GET — this is a read-only service lookup, not a write operation
-            service_info = await http_client.get_json(url)
-
+            url = f"{model_management_url.rstrip('/')}/api/v1/services/{service_id}"
+            raw = await http_client.get_json(url)
+            service_info = self._normalize_mms_response(raw, service_id)
             logger.debug(f"Resolved service {service_id}: {service_info}")
             return service_info
-                
+
         except HTTPServiceNotFoundError as e:
             logger.error(f"Service {service_id} not found: {str(e)}")
             raise ServiceNotFoundError(f"Service {service_id} not found") from e
+        except ServiceNotFoundError:
+            raise
         except Exception as e:
             logger.error(f"Failed to query model management service: {str(e)}")
             raise ServiceNotFoundError(f"Service {service_id} not found: {str(e)}") from e
+
+    def _normalize_mms_response(self, raw: Dict[str, Any], service_id: str) -> Dict[str, Any]:
+        """
+        Normalize MMS response to internal service info format.
+
+        Real MMS returns {"success": true, "data": {...camelCase...}} with base endpoint
+        and inference path split across data.endpoint and data.model.inferenceEndPoint.schema.endpoint.
+        Flat shape (no envelope) is passed through as-is for legacy/fallback.
+
+        Args:
+            raw: Raw JSON response from MMS
+            service_id: Service ID (for error messages)
+
+        Returns:
+            Normalized dict with keys: name, endpoint, api_key, adapter_config
+
+        Raises:
+            ServiceNotFoundError: If adapter_config is missing from the response
+        """
+        # Real MMS shape: {"success": true, "data": {...}}
+        if "success" in raw and "data" in raw:
+            data = raw["data"]
+            inference_endpoint = data.get("model", {}).get("inferenceEndPoint", {})
+            schema = inference_endpoint.get("schema", {})
+
+            base_endpoint = data.get("endpoint", "").rstrip("/")
+            model_name = schema.get("model_name", "")
+            endpoint = f"{base_endpoint}/v2/models/{model_name}/infer" if model_name else base_endpoint
+
+            # adapter_config can be at data level or nested under inferenceEndPoint
+            adapter_config = (
+                data.get("adapter_config")
+                or inference_endpoint.get("adapter_config")
+                or inference_endpoint.get("adapterConfig")
+            )
+            if not adapter_config:
+                logger.warning(
+                    "Service %s: adapter_config missing from MMS response — "
+                    "model class must supply a default or this request will fail.",
+                    service_id,
+                )
+            return {
+                "name": data.get("serviceName") or data.get("name"),
+                "endpoint": endpoint,
+                "api_key": data.get("apiKey") or data.get("api_key"),
+                "adapter_config": adapter_config,
+            }
+
+        # Flat shape (legacy/fallback): pass through as-is
+        return raw
 
     async def _cache_service_info(
         self,

@@ -1,131 +1,47 @@
-"""Transliteration TaskService implementation."""
-
+"""Transliteration TaskService."""
+import logging
 from typing import Any, Dict, List, Optional
+from services.base.text_base import TextBase
 
-from interfaces.task_service import BaseTaskService
-from models.schemas.transliteration import (
-    TransliterationInferenceRequest,
-    TransliterationInferenceResponse,
-    TransliterationConfig,
-)
+logger = logging.getLogger(__name__)
 
+class TransliterationTaskService(TextBase):
+    REQUIRES_TARGET_LANGUAGE = True  # enables target_language + not-equal check in base
 
-class TransliterationTaskService(BaseTaskService):
-    """
-    TaskService for Transliteration inference.
-    Converts text from one script to another.
-    """
+    def __init__(self, service_info=None, **deps):
+        super().__init__(service_info=service_info)
+        self.logger = logger
 
-    def __init__(self, **dependencies: Any):
-        """
-        Initialize Transliteration task service.
+    async def validate_request(self, payload):
+        await super().validate_request(payload)  # handles input + source/target language checks
 
-        Args:
-            **dependencies: Injected dependencies
-                - redis_client: Redis client for caching
-                - model_management_client: Client for model/endpoint resolution
-                - inference_server_resolver: Resolver for Triton endpoints
-                - inference_model_factory: Factory for InferenceModel converters
-        """
-        pass
+        # --- Transliteration-specific: numSuggestions/isSentence + derived field injection ---
+        config = payload.get("config", {})
+        num_suggestions = config.get("num_suggestions") or config.get("numSuggestions") or 0
+        is_sentence = config.get("is_sentence") or config.get("isSentence") or False
 
-    async def validate_request(self, request: TransliterationInferenceRequest) -> None:
-        """
-        Validate transliteration inference request.
-        Checks input size, language pairs, script codes, etc.
+        if num_suggestions > 0 and is_sentence:
+            raise ValueError("Transliteration: numSuggestions is not valid for sentence-level transliteration")
 
-        Args:
-            request: Transliteration request to validate
+        # Inject derived fields so mapper can resolve value_path: request.config.is_word_level/top_k
+        config["is_word_level"] = not is_sentence
+        config["top_k"] = num_suggestions
 
-        Raises:
-            ValueError: If request is invalid
-        """
-        pass
+        src = self._extract_source_lang(self._get_language(payload))
+        tgt = self._extract_target_lang(self._get_language(payload))
+        self.logger.info(f"Transliteration: {src} -> {tgt} (sentence={is_sentence}, top_k={num_suggestions}, {len(payload.get('input', []))} inputs)")
 
-    async def preprocess_input(self, input_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Preprocess text inputs for transliteration.
-        Handles text normalization, etc.
+    def _build_response(self, payload, postprocessed):
+        return {"output": postprocessed["output"]}
 
-        Args:
-            input_data: List of text inputs
+    async def postprocess_output(self, response_items, source_texts=None):
+        paired = self._pair_with_sources(response_items, source_texts or [])
+        output_list = []
+        for item in paired:
+            target_raw = item.get("target", "")
+            target_text = target_raw[0] if isinstance(target_raw, list) else (target_raw or "")
+            output_list.append({"source": item["source"], "target": target_text})
+        self.logger.debug(f"Transliteration post-processed {len(output_list)} results")
+        return {"output": output_list}
 
-        Returns:
-            Preprocessed input data
-        """
-        pass
-
-    async def run_inference(
-        self,
-        request: TransliterationInferenceRequest,
-        user_id: Optional[int] = None,
-        api_key_id: Optional[int] = None,
-        session_id: Optional[str] = None,
-    ) -> TransliterationInferenceResponse:
-        """
-        Execute end-to-end transliteration inference pipeline.
-        Resolves service -> preprocesses -> calls Triton -> postprocesses -> returns response.
-
-        Args:
-            request: Transliteration inference request
-            user_id: Optional user ID
-            api_key_id: Optional API key ID
-            session_id: Optional session ID
-
-        Returns:
-            Transliteration inference response with transliterated text
-        """
-        pass
-
-    async def postprocess_output(
-        self, raw_triton_output: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Post-process raw Triton output for transliteration.
-        Formats output, handles variant options, etc.
-
-        Args:
-            raw_triton_output: Raw output from Triton server
-
-        Returns:
-            Formatted output dictionary
-        """
-        pass
-
-    async def _resolve_service_and_model(
-        self, config: TransliterationConfig, session_id: Optional[str]
-    ) -> tuple:
-        """
-        Resolve inference service and model information.
-
-        Args:
-            config: Transliteration config with required service_id
-            session_id: Optional session ID for tracing
-
-        Returns:
-            Tuple of (service_id, model_name, triton_endpoint, triton_api_key)
-        """
-        pass
-
-    async def _call_triton_inference(
-        self,
-        triton_endpoint: str,
-        model_name: str,
-        triton_inputs: Dict[str, Any],
-        triton_outputs: List[str],
-        api_key: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        Call Triton inference server with prepared inputs.
-
-        Args:
-            triton_endpoint: Triton server URL
-            model_name: Model name in Triton
-            triton_inputs: Formatted inputs for Triton
-            triton_outputs: Expected output names
-            api_key: Optional Triton API key
-
-        Returns:
-            Raw output from Triton
-        """
-        pass
+__all__ = ["TransliterationTaskService"]

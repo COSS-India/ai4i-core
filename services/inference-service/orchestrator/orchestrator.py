@@ -10,6 +10,9 @@ import logging
 from models.common import GenericInferenceRequest, GenericInferenceResponse
 from models.task_types import task_registry
 from interfaces.task_service import ITaskService
+from inference.inference_server_resolver import InferenceServerResolver
+from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
+from ai4icore_core.telemetry import async_trace_stage
 
 
 logger = logging.getLogger(__name__)
@@ -49,7 +52,10 @@ class Orchestrator:
         """Initialize orchestrator."""
         self.task_registry = task_registry
         self.logger = logger
+        self.inference_server_resolver = InferenceServerResolver()
+        self.task_service_registry: list = TASK_SERVICE_REGISTRY
 
+    @async_trace_stage("overall_request")
     async def route_inference(
         self,
         payload: Dict[str, Any],
@@ -75,9 +81,13 @@ class Orchestrator:
             
             # Validate task type
             await self._validate_task_type(task_type)
-            
-            # Get task service for this task type
-            task_service = await self._get_task_service(task_type)
+
+            # Resolve service and model BEFORE creating task service
+            # so the correct model-specific class can be instantiated
+            service_info = await self._resolve_service_and_model(payload)
+
+            # Get task service for this task type, injecting resolved service info
+            task_service = await self._get_task_service(task_type, service_info)
             
             # Execute task service with raw payload
             # Task service handles its own payload deserialization
@@ -105,34 +115,115 @@ class Orchestrator:
             UnknownTaskTypeError: If task_type not registered
         """
         # For now, allow all known task types
-        allowed_tasks = ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "TRANSLITERATION", "AUDIO_LANG_DETECTION", "SMR"]
+        allowed_tasks = ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]
         if task_type not in allowed_tasks:
             raise UnknownTaskTypeError(f"Unknown task_type: {task_type}. Allowed: {', '.join(allowed_tasks)}")
 
 
 
     async def _get_task_service(
-        self, task_type: str
+        self, task_type: str, service_info: Dict[str, Any]
     ) -> ITaskService:
         """
-        Get or instantiate task service for given task_type.
-        Delegates to TaskFactory for service instantiation.
+        Get or instantiate task service for given task_type and resolved service_info.
+        Looks up TASK_SERVICE_REGISTRY and instantiates the matching service class.
 
         Args:
             task_type: Task type to get service for
+            service_info: Resolved service information from _resolve_service_and_model
+                          (includes endpoint, model name, adapter_config, etc.)
 
         Returns:
-            TaskService instance ready for execution
+            TaskService instance ready for execution, initialized with service_info
 
         Raises:
             TaskServiceExecutionError: If service instantiation fails
         """
         try:
-            from factory import TaskFactory
-            factory = TaskFactory()
-            return await factory.create_service(task_type)  # type: ignore
+            # serviceId (model name) comes from the resolved service_info
+            serviceId = service_info.get("name", "") or service_info.get("serviceId", "")
+
+            # Search flat list: find entry where task_type matches
+            # AND serviceId is listed in the model_name array
+            registry_entry = next(
+                (
+                    entry for entry in self.task_service_registry
+                    if entry.get("task_type") == task_type
+                    and serviceId in entry.get("model_name", [])
+                ),
+                None,
+            )
+
+            if not registry_entry:
+                raise TaskServiceExecutionError(
+                    f"No registry entry found for task_type='{task_type}', "
+                    f"serviceId='{serviceId}'. "
+                    f"Add it to task_service_registry.json under the matching "
+                    f"task_type entry's model_name list."
+                )
+
+            service_class = registry_entry.get("service_class")
+            self.logger.debug(
+                f"Instantiating {service_class.__name__} "
+                f"for task_type='{task_type}', serviceId='{serviceId}'"
+            )
+            return service_class(service_info=service_info)  # type: ignore
+        except TaskServiceExecutionError:
+            raise
         except Exception as e:
             raise TaskServiceExecutionError(f"Failed to get task service: {str(e)}")
+
+    @async_trace_stage("model_loading")
+    async def _resolve_service_and_model(
+        self, payload: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Resolve the model service details from the raw request payload.
+        Extracted here so the Orchestrator can route to the correct model-specific
+        TaskService class before instantiation, rather than always mapping task_type
+        to a single fixed service.
+
+        Args:
+            payload: Raw request payload dictionary (must contain config.serviceId
+                     or a top-level serviceId field)
+
+        Returns:
+            Dict with keys: serviceId, name, endpoint, api_key, adapter_config, ...
+
+        Raises:
+            RuntimeError: If the service cannot be resolved
+        """
+        # Extract serviceId: check config block first, then top-level
+        config_block = payload.get("config", {})
+        if isinstance(config_block, dict):
+            serviceId = config_block.get("serviceId") or payload.get("serviceId")
+        else:
+            serviceId = getattr(config_block, "serviceId", None) or payload.get("serviceId")
+
+        if not serviceId:
+            # Fall back to SMR or a safe default
+            serviceId = await self.inference_server_resolver.resolve_smr_service(payload)
+            self.logger.warning(
+                f"No serviceId in payload, SMR resolved to: {serviceId}"
+            )
+
+        self.logger.debug(f"Resolving service: {serviceId}")
+        try:
+            service_info = await self.inference_server_resolver.resolve_service(serviceId)
+            self.logger.info(
+                f"Resolved serviceId='{serviceId}' → "
+                f"model='{service_info.get('name')}', "
+                f"endpoint='{service_info.get('endpoint')}'"
+            )
+            return service_info
+        except Exception as e:
+            self.logger.error(
+                f"Failed to resolve service '{serviceId}': {type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            raise RuntimeError(
+                f"Orchestrator: Failed to resolve service '{serviceId}': {e}"
+            ) from e
 
     async def _execute_task_service(
         self,
@@ -185,9 +276,6 @@ class Orchestrator:
 
     def _log_request_start(
         self,
-        task_type: str,
-        user_id: Optional[int],
-        session_id: Optional[str],
     ) -> None:
         """
         Log start of inference request.
@@ -202,7 +290,6 @@ class Orchestrator:
     def _log_request_complete(
         self,
         task_type: str,
-        session_id: Optional[str],
         success: bool,
         error_msg: Optional[str] = None,
     ) -> None:
