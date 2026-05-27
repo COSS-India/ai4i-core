@@ -67,13 +67,13 @@ class LanguageDiarizationTaskService(AudioDefaultModel):
                 start = float(seg.get("start_time", 0.0))
                 end = float(seg.get("end_time", 0.0))
                 segments.append({
-                    "start_time": start,
-                    "end_time": end,
+                    "start": start,
+                    "end": end,
                     "duration": float(seg.get("duration", end - start)),
                     "language": str(seg.get("language", "")),
                     "confidence": float(seg.get("confidence", 0.0)),
                 })
-            segments.sort(key=lambda s: s["start_time"])
+            segments.sort(key=lambda s: s["start"])
 
             output_list.append({
                 "total_segments": len(segments),
