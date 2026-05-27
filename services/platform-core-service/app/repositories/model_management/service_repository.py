@@ -9,8 +9,8 @@ from sqlalchemy import and_, delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models.model import Model
-from app.models.service import Service
+from app.models.model_management.model import Model
+from app.models.model_management.service import Service
 
 
 _JSON_COLUMNS = frozenset({"health_status", "benchmarks", "policy"})

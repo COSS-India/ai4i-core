@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.base import BaseSchema
-from app.schemas.enums import LicenseEnum, TaskTypeEnum
+from app.schemas.enums.model_management import LicenseEnum, TaskTypeEnum
 
 
 # ── Shared regex for entity name format: alphanumeric, hyphen, slash ──

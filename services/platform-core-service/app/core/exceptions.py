@@ -12,6 +12,8 @@ from ai4icore_core.exceptions import (  # noqa: F401
     DuplicateEntityError,
     # Validation (422)
     ValidationError,
+    # AuthZ (403) — used by the alert auth dependencies
+    InsufficientPermissionsError,
     # Service Errors
     ServiceError,
     ModelNotFoundError,

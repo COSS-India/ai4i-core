@@ -26,16 +26,16 @@ from app.core.exceptions import (
     EntityNotFoundError,
     ValidationError,
 )
-from app.models.service import Service
-from app.repositories.model_repository import ModelRepository
-from app.repositories.service_repository import ServiceRepository
-from app.schemas.service import (
+from app.models.model_management.service import Service
+from app.repositories.model_management.model_repository import ModelRepository
+from app.repositories.model_management.service_repository import ServiceRepository
+from app.schemas.model_management.service import (
     ServiceCreateRequest,
     ServicePolicy,
     ServiceUpdateRequest,
 )
 from app.services.cache_service import CacheService
-from app.services.serializers import (
+from .serializers import (
     service_detail_dict,
     service_to_dict,
 )

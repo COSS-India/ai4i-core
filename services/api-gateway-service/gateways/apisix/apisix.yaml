@@ -58,7 +58,7 @@
     hash_on: vars
     scheme: http
     nodes:
-      alert-management-service${APISIX_UPSTREAM_SUFFIX}:8098: 1
+      platform-core-service${APISIX_UPSTREAM_SUFFIX}:8095: 1
     pass_host: pass
     type: roundrobin
   plugins:
@@ -99,9 +99,7 @@
       expose_headers: X-Auth-Token,X-Correlation-ID,X-Request-ID
       allow_credential: true
     proxy-rewrite:
-      regex_uri:
-      - ^/api/v1/alerts/(.*)
-      - /alerts/$1
+      # platform-core serves alert routes at /api/v1/alerts/* — no path rewrite.
       headers:
         add:
           X-Correlation-ID: $request_id
@@ -111,7 +109,7 @@
       body_base64: false
       headers:
         X-Served-By: APISIX-Gateway
-        X-Service: alert-management-service
+        X-Service: platform-core-service
     limit-count:
       policy: local
       key_type: var
