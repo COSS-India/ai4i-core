@@ -3,6 +3,7 @@ Platform Core Service — FastAPI application factory.
 No tracing or observability — logging only.
 """
 
+import importlib
 import logging
 from contextlib import asynccontextmanager
 import time
@@ -14,7 +15,8 @@ from starlette.requests import Request
 from app.core.config import settings
 from app.core.database import close_database, init_database
 from app.core.exceptions import register_exception_handlers
-from app.core.redis import close_redis, init_redis
+from app.core.pii_database import close_pii_database, init_pii_database, _pii_session_factory
+from app.core.redis import close_redis, get_redis_client, init_redis
 from app.routes import api_router, versioning
 from app.services.service_service import EndpointValidationFailedError
 
@@ -28,6 +30,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s", settings.service_name, settings.service_version)
 
+    # ── Core DB & Redis ───────────────────────────────────────────────────
     await init_database(
         db_url=settings.get_database_url(),
         pool_size=settings.db_pool_size,
@@ -39,9 +42,58 @@ async def lifespan(app: FastAPI):
         socket_timeout=settings.redis_timeout,
     )
 
+    # ── PII DB ────────────────────────────────────────────────────────────
+    await init_pii_database(
+        db_url=settings.get_pii_database_url(),
+        pool_size=settings.pii_db_pool_size,
+        max_overflow=settings.pii_db_max_overflow,
+        echo=settings.debug,
+    )
+
+    # ── PII singletons ────────────────────────────────────────────────────
+    # Import via importlib because the services directory uses a hyphenated name.
+    _pii_svc = importlib.import_module("app.services.pii-management")
+    kb_svc        = _pii_svc.KnowledgeBaseService()
+    policy_sync   = _pii_svc.PolicySyncService()
+    audit_svc     = _pii_svc.AuditService()
+    detection_eng = _pii_svc.DetectionEngine(kb=kb_svc, ner_service_url=settings.ner_service_url)
+    redaction_svc = _pii_svc.RedactionService(
+        policy_sync=policy_sync,
+        detection_engine=detection_eng,
+        audit_service=audit_svc,
+    )
+
+    # Expose on app.state so routes can access them without DI re-instantiation.
+    app.state.pii_kb            = kb_svc
+    app.state.pii_policy_sync   = policy_sync
+    app.state.pii_redaction_service = redaction_svc
+
+    # Also expose redis client for policy pub/sub broadcast in admin routes.
+    app.state.redis_client = get_redis_client()
+
+    # Initial load from DB.
+    async with _pii_session_factory() as db:
+        await kb_svc.refresh(db)
+        await policy_sync.refresh(db)
+
+    # Start Redis pub/sub listener (background task — auto-cancelled on shutdown).
+    async def _pii_db_factory():
+        async with _pii_session_factory() as session:
+            yield session
+
+    await policy_sync.start_listener(
+        redis_client=app.state.redis_client,
+        db_factory=_pii_db_factory,
+    )
+
+    logger.info("PII guard ready (kb=%s, policy_sync=%s)", kb_svc.ready, policy_sync.ready)
+
     yield
 
+    # ── Shutdown ──────────────────────────────────────────────────────────
+    await policy_sync.stop_listener()
     await close_redis()
+    await close_pii_database()
     await close_database()
     logger.info("Shutdown complete.")
 
