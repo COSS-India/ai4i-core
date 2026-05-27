@@ -19,6 +19,11 @@ class LanguageDetectionTaskService(TextBase):
         items = response_items if isinstance(response_items, list) else [response_items]
         for item in items:
             raw_value = item.get("langPrediction", "") if isinstance(item, dict) else item
+            # Unwrap single-element list nesting from Triton KServe v2 responses
+            while isinstance(raw_value, (list, tuple)) and len(raw_value) == 1:
+                raw_value = raw_value[0]
+            if isinstance(raw_value, bytes):
+                raw_value = raw_value.decode("utf-8", errors="replace")
             decoded = str(raw_value).strip()
             detection_data = self._parse_detection_row(decoded)
             lang_code_full = detection_data.get("langCode", "other")
