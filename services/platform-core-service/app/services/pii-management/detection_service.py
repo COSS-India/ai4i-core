@@ -15,13 +15,11 @@ import re
 from typing import Any, Dict, List, Optional
 
 import httpx
-from opentelemetry import trace
 
 from app.schemas.pii_management.redaction import DetectedEntity
 from .knowledge_base_service import KnowledgeBaseService
 
 logger = logging.getLogger(__name__)
-tracer = trace.get_tracer(__name__)
 
 # ── Static lookup tables ──────────────────────────────────────────────────
 
@@ -120,85 +118,81 @@ class DetectionEngine:
         active_types = {r["entity_type"] for r in rules}
 
         # ── Layer 1: AI extraction ────────────────────────────────────────
-        with tracer.start_as_current_span("pii_ai_extraction") as span:
-            ai_entities = await self._fetch_ai_entities(text, lang)
-            ai_count = 0
-            for ent in ai_entities:
-                ent_text = ent.get("text", "")
-                ent_label = ent.get("label", "")
-                if ent_text.lower() in _FALSE_POSITIVES:
-                    continue
-                mapped = _AI_LABEL_MAP.get(ent_label, ent_label)
-                if mapped not in active_types:
-                    continue
-                detected.append(DetectedEntity(
-                    entity_type=mapped,
-                    start_index=ent["start_char"],
-                    end_index=ent["end_char"],
-                    text_segment=ent_text,
-                    detection_source=f"AI: {ent_label}",
-                    risk_score=1.0 if strict_mode else 0.9,
-                ))
-                ai_count += 1
-            span.set_attribute("pii.ai_entities_found", ai_count)
-            trace_log.append({
-                "step": "AI Extraction",
-                "status": "Success",
-                "details": f"AI identified {ai_count} entities.",
-            })
+        ai_entities = await self._fetch_ai_entities(text, lang)
+        ai_count = 0
+        for ent in ai_entities:
+            ent_text = ent.get("text", "")
+            ent_label = ent.get("label", "")
+            if ent_text.lower() in _FALSE_POSITIVES:
+                continue
+            mapped = _AI_LABEL_MAP.get(ent_label, ent_label)
+            if mapped not in active_types:
+                continue
+            detected.append(DetectedEntity(
+                entity_type=mapped,
+                start_index=ent["start_char"],
+                end_index=ent["end_char"],
+                text_segment=ent_text,
+                detection_source=f"AI: {ent_label}",
+                risk_score=1.0 if strict_mode else 0.9,
+            ))
+            ai_count += 1
+        trace_log.append({
+            "step": "AI Extraction",
+            "status": "Success",
+            "details": f"AI identified {ai_count} entities.",
+        })
 
         # ── Layer 2: Regex scan ───────────────────────────────────────────
-        with tracer.start_as_current_span("pii_regex_scan") as span:
-            regex_count = 0
-            for rule in rules:
-                entity_type = rule["entity_type"]
-                custom_rx = rule.get("custom_regex")
+        regex_count = 0
+        for rule in rules:
+            entity_type = rule["entity_type"]
+            custom_rx = rule.get("custom_regex")
 
-                if custom_rx:
-                    # Domain-specific custom regex (e.g. TRACKING_ID, VEHICLE_REG)
-                    try:
-                        for m in re.finditer(custom_rx, text, re.UNICODE | re.IGNORECASE):
-                            val, st, en = (
-                                (m.group(1), m.start(1), m.end(1))
-                                if m.lastindex
-                                else (m.group(), m.start(), m.end())
-                            )
-                            detected.append(DetectedEntity(
-                                entity_type=entity_type,
-                                start_index=st, end_index=en,
-                                text_segment=val,
-                                detection_source="REGEX: Custom",
-                                risk_score=1.0,
-                            ))
-                            regex_count += 1
-                    except re.error as exc:
-                        logger.warning("Invalid custom_regex for %s: %s", entity_type, exc)
-
-                elif entity_type in patterns:
-                    # Pattern library regex
-                    for m in patterns[entity_type].finditer(text):
+            if custom_rx:
+                # Domain-specific custom regex (e.g. TRACKING_ID, VEHICLE_REG)
+                try:
+                    for m in re.finditer(custom_rx, text, re.UNICODE | re.IGNORECASE):
                         val, st, en = (
                             (m.group(1), m.start(1), m.end(1))
                             if m.lastindex
                             else (m.group(), m.start(), m.end())
                         )
-                        if val.lower() in _FALSE_POSITIVES:
-                            continue
                         detected.append(DetectedEntity(
                             entity_type=entity_type,
                             start_index=st, end_index=en,
                             text_segment=val,
-                            detection_source=f"REGEX: {entity_type}",
+                            detection_source="REGEX: Custom",
                             risk_score=1.0,
                         ))
                         regex_count += 1
+                except re.error as exc:
+                    logger.warning("Invalid custom_regex for %s: %s", entity_type, exc)
 
-            span.set_attribute("pii.regex_entities_found", regex_count)
-            trace_log.append({
-                "step": "Regex Layer",
-                "status": "Success",
-                "details": f"Matched {regex_count} patterns.",
-            })
+            elif entity_type in patterns:
+                # Pattern library regex
+                for m in patterns[entity_type].finditer(text):
+                    val, st, en = (
+                        (m.group(1), m.start(1), m.end(1))
+                        if m.lastindex
+                        else (m.group(), m.start(), m.end())
+                    )
+                    if val.lower() in _FALSE_POSITIVES:
+                        continue
+                    detected.append(DetectedEntity(
+                        entity_type=entity_type,
+                        start_index=st, end_index=en,
+                        text_segment=val,
+                        detection_source=f"REGEX: {entity_type}",
+                        risk_score=1.0,
+                    ))
+                    regex_count += 1
+
+        trace_log.append({
+            "step": "Regex Layer",
+            "status": "Success",
+            "details": f"Matched {regex_count} patterns.",
+        })
 
         # ── Layer 3: Quasi-identifiers ────────────────────────────────────
         detected.extend(self._detect_quasi_identifiers(text))

@@ -16,7 +16,6 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import BackgroundTasks, HTTPException
-from opentelemetry import trace
 
 from app.schemas.pii_management.redaction import (
     DetectedEntity,
@@ -55,12 +54,7 @@ class RedactionService:
         background_tasks: BackgroundTasks,
     ) -> RedactionResponse:
         start = time.time()
-        span_ctx = trace.get_current_span().get_span_context()
-        trace_id = (
-            f"{span_ctx.trace_id:032x}"
-            if getattr(span_ctx, "is_valid", False)
-            else ""
-        )
+        trace_id = ""
         trace_log: List[Dict[str, Any]] = [
             {"step": "Request", "status": "Success", "details": f"Target: {target}, Lang: {language}"}
         ]
