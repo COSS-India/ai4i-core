@@ -10,6 +10,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 
+from ai4icore_core.telemetry.propagator import extract_trace_context, get_current_trace_id
+
 from .registry import get_attribute_value
 from ai4icore_core.context import get_trace_id, set_trace_id
 
@@ -185,47 +187,40 @@ class TraceManager:
         use the same trace_id for the entire request.
         All spans in the request are children of the first span.
         """
-        current_trace_id = get_trace_id()
+        current_trace_id = get_current_trace_id()
         span_name = stage
+        # current_context = extract_trace_context()
 
-        # Use the current async context's identity as the key
-        # This uniquely identifies each request/task
-        from contextvars import copy_context
-        ctx = copy_context()
-        ctx_id = id(ctx)
 
         # Check if this request context already has a synced first span
-        if ctx_id in self._first_span_per_request:
+        if current_trace_id in self._first_span_per_request:
             # Use the existing root span for child spans
-            span_info = self._first_span_per_request[ctx_id]
+            span_info = self._first_span_per_request[current_trace_id]
             root_span = span_info["root_span"]
-            otel_trace_id = span_info["otel_trace_id"]
+            # otel_trace_id = span_info["otel_trace_id"]
 
             # Create child span within the root span's context
             with trace.use_span(root_span):
                 otel_span = self.tracer.start_span(span_name)
 
             # Ensure this span also uses the synced trace_id
-            set_trace_id(otel_trace_id)
+            # set_trace_id(otel_trace_id)
         else:
             # First span in this request - create it and extract OTel's generated trace_id
             root_otel_span = self.tracer.start_span(span_name)
             span_context = root_otel_span.get_span_context()
 
             # Convert OTel's integer trace_id back to hex string (32 chars)
-            otel_trace_id = format(span_context.trace_id, '032x')
+            # otel_trace_id = format(span_context.trace_id, '032x')
 
             # Store the root span for subsequent spans in this request
-            self._first_span_per_request[ctx_id] = {
+            self._first_span_per_request[current_trace_id] = {
                 "root_span": root_otel_span,
-                "otel_trace_id": otel_trace_id,
-                "original_trace_id": current_trace_id
+                "trace_id": current_trace_id
             }
 
             # Sync the OTel trace_id back to the application context
             # This ensures all subsequent logs use the same trace_id as the spans
-            if otel_trace_id != current_trace_id:
-                set_trace_id(otel_trace_id)
 
             otel_span = root_otel_span
 
