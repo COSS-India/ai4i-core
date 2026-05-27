@@ -1,7 +1,7 @@
 """Migrate tenant_status_enum to PENDING/ACTIVE/SUSPENDED/DEACTIVATED
 
 Revision ID: c4e8f1a2b3d0
-Revises: b66dd69a00df
+Revises: 2362774ac241
 Create Date: 2026-05-18 12:00:00.000000
 
 One-way migration: downgrade is intentionally unsupported.
@@ -15,7 +15,7 @@ from typing import Sequence, Union
 from alembic import op
 
 revision: str = "c4e8f1a2b3d0"
-down_revision: Union[str, None] = "b66dd69a00df"
+down_revision: Union[str, None] = "2362774ac241"
 branch_labels: Union[str, Sequence[str]] = None
 depends_on: Union[str, Sequence[str]] = None
 

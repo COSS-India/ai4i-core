@@ -20,7 +20,8 @@ class UserUpdate(BaseSchema):
 
 class UserListResponse(BaseSchema):
     """Compact user list item."""
-    user_id: UUID = Field(validation_alias=AliasChoices("user_id", "id"))
+    # ORM exposes ``id``; API responses use ``user_id`` (field name).
+    user_id: UUID = Field(validation_alias=AliasChoices("id", "user_id"))
     username: str
     email: EmailStr
     phone_number: Optional[str] = None

@@ -15,12 +15,12 @@ Lookup at runtime:
 """
 
 from services.asr_service import ASRTaskService
-from services.audio_language_detection_service import AudioLanguageDetectionTaskService
+from services.models.audio_default_model import AudioDefaultModel
 from services.language_detection_service import LanguageDetectionTaskService
 from services.language_diarization_service import LanguageDiarizationTaskService
 from services.llm_service import LLMTaskService
+from services.models.text_default_model import TextDefaultModel
 from services.ner_service import NERTaskService
-from services.nmt_service import NMTTaskService
 from services.ocr_service import OCRTaskService
 from services.pii_service import PIITaskService
 from services.speaker_diarization_service import SpeakerDiarizationTaskService
@@ -32,21 +32,21 @@ TASK_SERVICE_REGISTRY = [
     {
         "task_type":     "NMT",
         "model_name":    ["indictrans-gpu-t4"],
-        "service_class": NMTTaskService,
+        "service_class": TextDefaultModel,
     },
     {
         "task_type":     "ASR",
-        "model_name":    ["ai4bharat/triton-multilingual-asr"],
+        "model_name":    ["ai4bharat/triton-multilingual-asr", "asr-gpu"],
         "service_class": ASRTaskService,
     },
     {
         "task_type":     "TTS",
-        "model_name":    ["ai4bharat/triton-indo-aryan-tts"],
+        "model_name":    ["ai4bharat/triton-indo-aryan-tts", "indo-aryan-tts-gpu"],
         "service_class": TTSTaskService,
     },
     {
         "task_type":     "NER",
-        "model_name":    ["ai4bharat/triton-ner"],
+        "model_name":    ["ner-gpu"],
         "service_class": NERTaskService,
     },
     {
@@ -56,7 +56,7 @@ TASK_SERVICE_REGISTRY = [
     },
     {
         "task_type":     "LLM",
-        "model_name":    ["ai4bharat/triton-llm"],
+        "model_name":    ["ai4bharat/triton-llm", "llm-indic-prod"],
         "service_class": LLMTaskService,
     },
     {
@@ -66,27 +66,27 @@ TASK_SERVICE_REGISTRY = [
     },
     {
         "task_type":     "LANGUAGE_DETECTION",
-        "model_name":    ["ai4bharat/triton-language-detection"],
+        "model_name":    ["indiclid-gpu"],
         "service_class": LanguageDetectionTaskService,
     },
     {
         "task_type":     "TRANSLITERATION",
-        "model_name":    ["ai4bharat/triton-transliteration"],
+        "model_name":    ["indic-xlit-cpu"],
         "service_class": TransliterationTaskService,
     },
     {
         "task_type":     "SPEAKER_DIARIZATION",
-        "model_name":    ["ai4bharat/triton-speaker-diarization"],
+        "model_name":    ["ai4bharat/triton-speaker-diarization", "sd-gpu"],
         "service_class": SpeakerDiarizationTaskService,
     },
     {
         "task_type":     "LANGUAGE_DIARIZATION",
-        "model_name":    ["ai4bharat/triton-language-diarization"],
+        "model_name":    ["ai4bharat/triton-language-diarization", "lang-diarization-gpu"],
         "service_class": LanguageDiarizationTaskService,
     },
     {
         "task_type":     "AUDIO_LANGUAGE_DETECTION",
-        "model_name":    ["ai4bharat/triton-audio-language-detection"],
-        "service_class": AudioLanguageDetectionTaskService,
+        "model_name":    ["ai4bharat/triton-audio-language-detection", "ald-gpu"],
+        "service_class": AudioDefaultModel,
     },
 ]

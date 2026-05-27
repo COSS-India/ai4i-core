@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-End-to-end integration tests for TextDefaultModel (NMT).
+End-to-end integration tests for NMTTaskService.
 
-Uses a real NMTInferenceModel + real GenericTritonMapper with a representative
-adapter_config, but mocks only the HTTP call to Triton.
+Uses a real GenericTritonMapper with a representative adapter_config,
+but mocks only the HTTP call to Triton.
 
 This mirrors how the service runs in production:
-  process(payload) → _deserialize_payload → validate → preprocess
+  process(payload) → validate → preprocess
                    → run_inference (real mapper, mocked HTTP) → NMTInferenceResponse
 
 Run from the inference-service root:
@@ -88,10 +88,10 @@ MOCK_TRITON_RESPONSE_HINDI = {
 
 async def test_full_pipeline_camel_payload():
     """process() with a camelCase portal payload → NMTInferenceResponse."""
-    from services.models.text_models import TextDefaultModel
+    from services.models.text_default_model import NMTTaskService
     from models.schemas.nmt import NMTInferenceResponse
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     portal_payload = {
         "input": [{"source": "Hello, how are you?"}],
@@ -116,10 +116,10 @@ async def test_full_pipeline_camel_payload():
 
 async def test_full_pipeline_snake_payload():
     """process() with snake_case payload (both naming conventions work)."""
-    from services.models.text_models import TextDefaultModel
+    from services.models.text_default_model import NMTTaskService
     from models.schemas.nmt import NMTInferenceResponse
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     snake_payload = {
         "input": [{"source": "What is your name?"}],
@@ -142,10 +142,10 @@ async def test_full_pipeline_snake_payload():
 
 async def test_multi_input_pipeline():
     """Two input items → two separate Triton calls → two TranslationOutput items."""
-    from services.models.text_models import TextDefaultModel
+    from services.models.text_default_model import NMTTaskService
     from models.schemas.nmt import NMTInferenceResponse
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     payload = {
         "input": [
@@ -184,9 +184,9 @@ async def test_multi_input_pipeline():
 
 async def test_response_serialization():
     """NMTInferenceResponse.model_dump() excludes None fields."""
-    from services.models.text_models import TextDefaultModel
+    from services.models.text_default_model import NMTTaskService
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     payload = {
         "input": [{"source": "Hello"}],
@@ -202,16 +202,16 @@ async def test_response_serialization():
     serialized = response.model_dump()
     assert "smr_response" not in serialized  # None fields excluded
     assert "output" in serialized
-    assert serialized["output"][0]["source"] == "Hello, how are you?"
+    assert serialized["output"][0]["source"] == "Hello"
     assert serialized["output"][0]["target"] == "नमस्ते, आप कैसे हैं?"
     logger.info("   [PASS] model_dump() excludes None + contains correct output")
 
 
 async def test_validate_same_language_rejected():
     """process() raises ValueError when source == target language."""
-    from services.models.text_models import TextDefaultModel
+    from services.models.text_default_model import NMTTaskService
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     payload = {
         "input": [{"source": "Hello"}],
@@ -222,16 +222,16 @@ async def test_validate_same_language_rejected():
         await service.process(payload)
         raise AssertionError("Should have raised ValueError")
     except ValueError as e:
-        assert "must differ" in str(e)
+        assert "cannot be the same" in str(e)
         logger.info("   [PASS] same language pair rejected in full pipeline")
 
 
 async def test_validate_whitespace_source_accepted():
     """Whitespace-only source is sanitised to single space and accepted."""
-    from services.models.text_models import TextDefaultModel
+    from services.models.text_default_model import NMTTaskService
     from models.schemas.nmt import NMTInferenceResponse
 
-    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
+    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
 
     payload = {
         "input": [{"source": "   "}],
@@ -265,7 +265,7 @@ async def run_all():
     ]
 
     logger.info("=" * 70)
-    logger.info("NMT TextDefaultModel End-to-End Tests  (real mapper, mocked HTTP)")
+    logger.info("NMT NMTTaskService End-to-End Tests  (real mapper, mocked HTTP)")
     logger.info("=" * 70)
 
     passed = 0

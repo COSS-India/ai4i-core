@@ -2,29 +2,20 @@
 
 import React, { useEffect, useMemo } from "react";
 import {
-  Alert,
-  AlertDescription,
-  AlertIcon,
   Badge,
   Box,
   Button,
   Card,
   CardBody,
   CardHeader,
-  Center,
   FormControl,
   FormErrorMessage,
+  FormHelperText,
   FormLabel,
   HStack,
   Heading,
   IconButton,
   Input,
-  InputGroup,
-  InputLeftElement,
-  Menu,
-  MenuButton,
-  MenuItem,
-  MenuList,
   Modal,
   ModalBody,
   ModalCloseButton,
@@ -39,54 +30,54 @@ import {
   TabList,
   TabPanel,
   TabPanels,
-  Table,
-  TableContainer,
   Tabs,
-  Tbody,
-  Td,
+  Center,
   Text,
-  Th,
-  Thead,
   Tooltip,
-  Tr,
   VStack,
 } from "@chakra-ui/react";
 import {
   FiArrowLeft,
   FiEdit2,
-  FiEye,
-  FiMoreVertical,
   FiPause,
   FiPlus,
   FiPower,
-  FiSettings,
-  FiTrash2,
   FiUserPlus,
   FiUsers,
 } from "react-icons/fi";
-import { SearchIcon } from "@chakra-ui/icons";
+import { DeleteIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import ConfirmDialog from "../common/ConfirmDialog";
-import type { TenantStatus, TenantUserView, TenantView } from "../../types/tenant";
+import AdminDataTable, {
+  TableSearchField,
+  TableSelectField,
+  type AdminTableColumn,
+} from "../common/AdminDataTable";
+import TenantUserRoleBadges from "../common/TenantUserRoleBadges";
+import type { TenantStatus, TenantUserStatus, TenantUserView, TenantView } from "../../types/tenant";
 
-const TENANT_STATUS_OPTIONS: TenantStatus[] = ["activated", "deactivated", "suspended"];
+const TENANT_STATUS_OPTIONS: TenantStatus[] = ["ACTIVE", "SUSPENDED", "DEACTIVATED"];
 
 function statusColor(status?: string | null): string {
-  switch ((status ?? "").toLowerCase()) {
-    case "activated":
+  switch ((status ?? "").toUpperCase()) {
+    case "ACTIVE":
       return "green";
-    case "suspended":
+    case "SUSPENDED":
       return "orange";
-    case "deactivated":
+    case "DEACTIVATED":
+      return "red";
+    case "PENDING":
+      return "gray";
+    case "INACTIVE":
       return "red";
     default:
       return "gray";
   }
 }
 
-function userActiveStatus(u: TenantUserView): "activated" | "deactivated" {
-  return u.is_active && (u.is_tenant_active ?? true) ? "activated" : "deactivated";
+function userActiveStatus(u: TenantUserView): TenantUserStatus {
+  return u.is_active && (u.is_tenant_active ?? true) ? "ACTIVE" : "INACTIVE";
 }
 
 function dash(v?: string | null): string {
@@ -100,6 +91,23 @@ function fmtDate(v?: string | null): string {
   } catch {
     return v;
   }
+}
+
+function tenantStatusActionLabel(status: TenantStatus): string {
+  switch (status) {
+    case "ACTIVE":
+      return "Activate";
+    case "SUSPENDED":
+      return "Suspend";
+    case "DEACTIVATED":
+      return "Deactivate";
+    default:
+      return status;
+  }
+}
+
+function userStatusActionLabel(isActive: boolean): string {
+  return isActive ? "Suspend" : "Activate";
 }
 
 export interface TenantManagementTabProps {
@@ -135,6 +143,75 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
       Array.from(new Set(tm.tenants.map((t) => t.status).filter(Boolean))) as TenantStatus[],
     [tm.tenants]
   );
+
+  const tenantColumns = useMemo((): AdminTableColumn<TenantView>[] => {
+    return [
+      {
+        id: "organisation",
+        header: "Organisation",
+        cell: (t) => (
+          <Button variant="link" colorScheme="blue" onClick={() => tm.handleViewTenant(t)}>
+            {t.organisation}
+          </Button>
+        ),
+      },
+      { id: "contact", header: "Contact", cell: (t) => dash(t.contact_name) },
+      { id: "email", header: "Email", cell: (t) => dash(t.email) },
+      {
+        id: "status",
+        header: "Status",
+        cell: (t) => <Badge colorScheme={statusColor(t.status)}>{t.status}</Badge>,
+      },
+      { id: "created", header: "Created", cell: (t) => fmtDate(t.created_at) },
+      {
+        id: "actions",
+        header: "Actions",
+        tdProps: { onClick: (e) => e.stopPropagation() },
+        cell: (t) => renderTenantRowActions(t),
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tm]);
+
+  const userColumns = useMemo((): AdminTableColumn<TenantUserView>[] => {
+    return [
+      {
+        id: "username",
+        header: "Username",
+        cell: (u) => (
+          <Button variant="link" colorScheme="blue" onClick={() => tm.handleViewUser(u)}>
+            {u.username}
+          </Button>
+        ),
+      },
+      { id: "email", header: "Email", cell: (u) => dash(u.email) },
+      { id: "full_name", header: "Full Name", cell: (u) => dash(u.full_name) },
+      {
+        id: "roles",
+        header: "Role",
+        cell: (u) => <TenantUserRoleBadges role={u.role} roles={u.roles} />,
+      },
+      {
+        id: "status",
+        header: "Status",
+        cell: (u) => (
+          <Badge colorScheme={statusColor(userActiveStatus(u))}>{userActiveStatus(u)}</Badge>
+        ),
+      },
+      {
+        id: "created",
+        header: "Created",
+        cell: (u) => fmtDate((u as { created_at?: string }).created_at),
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        tdProps: { onClick: (e) => e.stopPropagation() },
+        cell: (u) => renderUserRowActions(u),
+      },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tm]);
 
   return (
     <Box>
@@ -175,81 +252,44 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           </HStack>
         </CardHeader>
         <CardBody>
-          <HStack mb={4} spacing={3}>
-            <InputGroup maxW="320px">
-              <InputLeftElement pointerEvents="none">
-                <SearchIcon color="gray.400" />
-              </InputLeftElement>
-              <Input
-                placeholder="Search by organisation or tenant ID"
-                value={tm.tenantSearch}
-                onChange={(e) => tm.setTenantSearch(e.target.value)}
-              />
-            </InputGroup>
-            <Select
-              maxW="200px"
-              value={tm.tenantFilterStatus}
-              onChange={(e) => tm.setTenantFilterStatus(e.target.value)}
-            >
-              <option value="all">All statuses</option>
-              {allTenantStatuses.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </Select>
-            <Button size="sm" variant="ghost" onClick={tm.handleResetTenantFilters}>
-              Reset
-            </Button>
-          </HStack>
-
-          {tm.isLoadingTenants ? (
-            <Center py={8}>
-              <Spinner />
-            </Center>
-          ) : tm.filteredTenants.length === 0 ? (
-            <Alert status="info">
-              <AlertIcon />
-              <AlertDescription>No tenants found.</AlertDescription>
-            </Alert>
-          ) : (
-            <TableContainer>
-              <Table variant="simple" size="sm">
-                <Thead>
-                  <Tr>
-                    <Th>Organisation</Th>
-                    <Th>Contact</Th>
-                    <Th>Email</Th>
-                    <Th>Status</Th>
-                    <Th>Created</Th>
-                    <Th width="80px">Actions</Th>
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {tm.filteredTenants.map((t) => (
-                    <Tr key={t.tenant_id}>
-                      <Td>
-                        <Button
-                          variant="link"
-                          colorScheme="blue"
-                          onClick={() => tm.handleViewTenant(t)}
-                        >
-                          {t.organisation}
-                        </Button>
-                      </Td>
-                      <Td>{dash(t.contact_name)}</Td>
-                      <Td>{dash(t.email)}</Td>
-                      <Td>
-                        <Badge colorScheme={statusColor(t.status)}>{t.status}</Badge>
-                      </Td>
-                      <Td>{fmtDate(t.created_at)}</Td>
-                      <Td>{renderTenantRowMenu(t)}</Td>
-                    </Tr>
+          <AdminDataTable
+            items={tm.filteredTenants}
+            columns={tenantColumns}
+            getRowKey={(t) => t.tenant_id}
+            isLoading={tm.isLoadingTenants}
+            emptyMessage="No tenants found."
+            noResultsMessage="No tenants match the current filters."
+            unfilteredCount={tm.tenants.length}
+            hasActiveFilters={
+              tm.tenantFilterStatus !== "all" || tm.tenantSearch.trim() !== ""
+            }
+            onClearFilters={() => {
+              tm.setTenantFilterStatus("all");
+              tm.setTenantSearch("");
+            }}
+            filters={
+              <>
+                <TableSearchField
+                  placeholder="Search by organisation or tenant ID"
+                  value={tm.tenantSearch}
+                  onChange={tm.setTenantSearch}
+                />
+                <TableSelectField
+                  label="Status"
+                  value={tm.tenantFilterStatus}
+                  onChange={tm.setTenantFilterStatus}
+                  formControlProps={{ w: { base: "full", sm: "200px" } }}
+                >
+                  <option value="all">All statuses</option>
+                  {allTenantStatuses.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
                   ))}
-                </Tbody>
-              </Table>
-            </TableContainer>
-          )}
+                </TableSelectField>
+              </>
+            }
+          />
         </CardBody>
       </Card>
     );
@@ -281,79 +321,54 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
 
   function renderTenantUsersTable() {
     return (
-      <>
-        <HStack mb={4} spacing={3}>
-          <InputGroup maxW="320px">
-            <InputLeftElement pointerEvents="none">
-              <SearchIcon color="gray.400" />
-            </InputLeftElement>
-            <Input
+      <AdminDataTable
+        key={tm.tenantDetailView?.tenant_id ?? "tenant-users"}
+        items={tm.filteredTenantUsers}
+        columns={userColumns}
+        getRowKey={(u) => u.user_id}
+        isLoading={tm.isLoadingTenantUsers}
+        emptyMessage="No users in this tenant."
+        noResultsMessage="No users match the current filters."
+        unfilteredCount={tm.tenantUsers.length}
+        hasActiveFilters={
+          tm.userFilterStatus !== "all" ||
+          tm.userFilterRole !== "all" ||
+          tm.userSearch.trim() !== ""
+        }
+        onClearFilters={tm.handleResetUserFilters}
+        filters={
+          <>
+            <TableSearchField
               placeholder="Search by username or email"
               value={tm.userSearch}
-              onChange={(e) => tm.setUserSearch(e.target.value)}
+              onChange={tm.setUserSearch}
             />
-          </InputGroup>
-          <Select
-            maxW="200px"
-            value={tm.userFilterStatus}
-            onChange={(e) => tm.setUserFilterStatus(e.target.value)}
-          >
-            <option value="all">All statuses</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-          </Select>
-        </HStack>
-
-        {tm.isLoadingTenantUsers ? (
-          <Center py={8}>
-            <Spinner />
-          </Center>
-        ) : tm.filteredTenantUsers.length === 0 ? (
-          <Alert status="info">
-            <AlertIcon />
-            <AlertDescription>No users in this tenant.</AlertDescription>
-          </Alert>
-        ) : (
-          <TableContainer>
-            <Table variant="simple" size="sm">
-              <Thead>
-                <Tr>
-                  <Th>Username</Th>
-                  <Th>Email</Th>
-                  <Th>Full Name</Th>
-                  <Th>Status</Th>
-                  <Th>Created</Th>
-                  <Th width="80px">Actions</Th>
-                </Tr>
-              </Thead>
-              <Tbody>
-                {tm.filteredTenantUsers.map((u) => (
-                  <Tr key={u.user_id}>
-                    <Td>
-                      <Button
-                        variant="link"
-                        colorScheme="blue"
-                        onClick={() => tm.handleViewUser(u)}
-                      >
-                        {u.username}
-                      </Button>
-                    </Td>
-                    <Td>{dash(u.email)}</Td>
-                    <Td>{dash(u.full_name)}</Td>
-                    <Td>
-                      <Badge colorScheme={statusColor(userActiveStatus(u))}>
-                        {userActiveStatus(u)}
-                      </Badge>
-                    </Td>
-                    <Td>{fmtDate((u as { created_at?: string }).created_at)}</Td>
-                    <Td>{renderUserRowMenu(u)}</Td>
-                  </Tr>
-                ))}
-              </Tbody>
-            </Table>
-          </TableContainer>
-        )}
-      </>
+            <TableSelectField
+              label="Status"
+              value={tm.userFilterStatus}
+              onChange={tm.setUserFilterStatus}
+              formControlProps={{ w: { base: "full", sm: "200px" } }}
+            >
+              <option value="all">All statuses</option>
+              <option value="ACTIVE">Active</option>
+              <option value="INACTIVE">Inactive</option>
+            </TableSelectField>
+            <TableSelectField
+              label="Role"
+              value={tm.userFilterRole}
+              onChange={tm.setUserFilterRole}
+              formControlProps={{ w: { base: "full", sm: "200px" } }}
+            >
+              <option value="all">All roles</option>
+              {tm.tenantUserRoleFilterOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </TableSelectField>
+          </>
+        }
+      />
     );
   }
 
@@ -443,77 +458,119 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
     );
   }
 
-  // ── Row action menus ───────────────────────────────────────────────────
-  function renderTenantRowMenu(t: TenantView) {
+  // ── Row actions (inline icons, same pattern as service/model management) ─
+  function renderTenantRowActions(t: TenantView) {
     return (
-      <Menu>
-        <MenuButton
-          as={IconButton}
-          aria-label="Actions"
-          icon={<FiMoreVertical />}
-          variant="ghost"
-          size="sm"
-        />
-        <MenuList>
-          <MenuItem icon={<FiEye />} onClick={() => tm.handleViewTenant(t)}>
-            View
-          </MenuItem>
-          <MenuItem icon={<FiEdit2 />} onClick={() => tm.handleOpenEditTenant(t)}>
-            Edit
-          </MenuItem>
-          {TENANT_STATUS_OPTIONS.filter((s) => s !== t.status).map((s) => (
-            <MenuItem
-              key={s}
+      <HStack spacing={1}>
+        <Tooltip label="View" placement="top" hasArrow>
+          <IconButton
+            aria-label="View tenant"
+            icon={<ViewIcon />}
+            size="sm"
+            variant="ghost"
+            colorScheme="blue"
+            _hover={{ bg: "blue.50" }}
+            onClick={() => tm.handleViewTenant(t)}
+          />
+        </Tooltip>
+        <Tooltip label="Edit" placement="top" hasArrow>
+          <IconButton
+            aria-label="Edit tenant"
+            icon={<EditIcon />}
+            size="sm"
+            variant="ghost"
+            colorScheme="green"
+            _hover={{ bg: "green.50" }}
+            onClick={() => tm.handleOpenEditTenant(t)}
+          />
+        </Tooltip>
+        {TENANT_STATUS_OPTIONS.filter((s) => s !== t.status).map((s) => (
+          <Tooltip
+            key={s}
+            label={tenantStatusActionLabel(s)}
+            placement="top"
+            hasArrow
+          >
+            <IconButton
+              aria-label={tenantStatusActionLabel(s)}
               icon={
-                s === "activated" ? (
+                s === "ACTIVE" ? (
                   <FiPower />
-                ) : s === "suspended" ? (
+                ) : s === "SUSPENDED" ? (
                   <FiPause />
                 ) : (
-                  <FiTrash2 />
+                  <DeleteIcon />
                 )
               }
+              size="sm"
+              variant="ghost"
+              colorScheme={s === "ACTIVE" ? "green" : s === "SUSPENDED" ? "orange" : "red"}
+              _hover={{
+                bg: s === "ACTIVE" ? "green.50" : s === "SUSPENDED" ? "orange.50" : "red.50",
+              }}
               onClick={() => tm.handleOpenTenantStatus(t, s)}
-            >
-              Set {s}
-            </MenuItem>
-          ))}
-        </MenuList>
-      </Menu>
+            />
+          </Tooltip>
+        ))}
+      </HStack>
     );
   }
 
-  function renderUserRowMenu(u: TenantUserView) {
-    const isActive = userActiveStatus(u) === "activated";
+  function renderUserRowActions(u: TenantUserView) {
+    const isActive = userActiveStatus(u) === "ACTIVE";
     return (
-      <Menu>
-        <MenuButton
-          as={IconButton}
-          aria-label="Actions"
-          icon={<FiMoreVertical />}
-          variant="ghost"
-          size="sm"
-        />
-        <MenuList>
-          <MenuItem icon={<FiEye />} onClick={() => tm.handleViewUser(u)}>
-            View
-          </MenuItem>
-          <MenuItem icon={<FiEdit2 />} onClick={() => tm.handleOpenEditUser(u)}>
-            Edit
-          </MenuItem>
-          <MenuItem
+      <HStack spacing={1}>
+        <Tooltip label="View" placement="top" hasArrow>
+          <IconButton
+            aria-label="View user"
+            icon={<ViewIcon />}
+            size="sm"
+            variant="ghost"
+            colorScheme="blue"
+            _hover={{ bg: "blue.50" }}
+            onClick={() => tm.handleViewUser(u)}
+          />
+        </Tooltip>
+        <Tooltip label="Edit" placement="top" hasArrow>
+          <IconButton
+            aria-label="Edit user"
+            icon={<EditIcon />}
+            size="sm"
+            variant="ghost"
+            colorScheme="green"
+            _hover={{ bg: "green.50" }}
+            onClick={() => tm.handleOpenEditUser(u)}
+          />
+        </Tooltip>
+        <Tooltip
+          label={userStatusActionLabel(isActive)}
+          placement="top"
+          hasArrow
+        >
+          <IconButton
+            aria-label={isActive ? "Suspend user" : "Activate user"}
             icon={isActive ? <FiPause /> : <FiPower />}
+            size="sm"
+            variant="ghost"
+            colorScheme={isActive ? "orange" : "green"}
+            _hover={{ bg: isActive ? "orange.50" : "green.50" }}
             onClick={() =>
-              tm.handleOpenUserStatus(u, isActive ? "deactivated" : "activated")
+              tm.handleOpenUserStatus(u, isActive ? "INACTIVE" : "ACTIVE")
             }
-          >
-            {isActive ? "Deactivate" : "Activate"}
-          </MenuItem>
-          <MenuItem icon={<FiTrash2 />} onClick={() => tm.handleOpenDeleteUser(u)}>
-            Delete
-          </MenuItem>
-        </MenuList>
-      </Menu>
+          />
+        </Tooltip>
+        <Tooltip label="Delete" placement="top" hasArrow>
+          <IconButton
+            aria-label="Delete user"
+            icon={<DeleteIcon />}
+            size="sm"
+            variant="ghost"
+            colorScheme="red"
+            _hover={{ bg: "red.50" }}
+            onClick={() => tm.handleOpenDeleteUser(u)}
+          />
+        </Tooltip>
+      </HStack>
     );
   }
 
@@ -552,9 +609,11 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <Input
                   type="email"
                   value={tm.tenantForm.email}
-                  onChange={(e) =>
-                    tm.setTenantForm({ ...tm.tenantForm, email: e.target.value })
-                  }
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    tm.setTenantForm({ ...tm.tenantForm, email: value });
+                    tm.checkTenantContactEmailUnique(value);
+                  }}
                   onBlur={(e) => tm.checkTenantContactEmailUnique(e.target.value)}
                 />
                 <FormErrorMessage>{tm.tenantFormErrors.email}</FormErrorMessage>
@@ -578,6 +637,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
               colorScheme="blue"
               onClick={tm.handleRegisterTenant}
               isLoading={tm.isSubmittingTenant}
+              isDisabled={!tm.canSubmitTenantForm}
             >
               Create
             </Button>
@@ -636,6 +696,10 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     })
                   }
                 />
+                <FormHelperText>
+                  If you change the contact email, the update takes effect only after the new
+                  address is verified.
+                </FormHelperText>
               </FormControl>
               <FormControl>
                 <FormLabel>Phone Number</FormLabel>
@@ -677,7 +741,20 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           <ModalCloseButton />
           <ModalBody>
             <VStack spacing={3} align="stretch">
-              {isAdmin && (
+              {isAdmin && tm.lockedUserFormTenantId && (
+                <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.tenant_id)}>
+                  <FormLabel>Tenant</FormLabel>
+                  <Input
+                    value={tm.getLockedUserFormTenantLabel()}
+                    isReadOnly
+                    bg="gray.50"
+                    _dark={{ bg: "whiteAlpha.100" }}
+                    cursor="not-allowed"
+                  />
+                  <FormErrorMessage>{tm.userFormErrors.tenant_id}</FormErrorMessage>
+                </FormControl>
+              )}
+              {isAdmin && !tm.lockedUserFormTenantId && (
                 <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.tenant_id)}>
                   <FormLabel>Tenant</FormLabel>
                   <Select
@@ -699,7 +776,11 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <Input
                   type="email"
                   value={tm.userForm.email}
-                  onChange={(e) => tm.setUserForm({ ...tm.userForm, email: e.target.value })}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    tm.setUserForm({ ...tm.userForm, email: value });
+                    tm.checkUserEmailUnique(value);
+                  }}
                   onBlur={(e) => tm.checkUserEmailUnique(e.target.value)}
                 />
                 <FormErrorMessage>{tm.userFormErrors.email}</FormErrorMessage>
@@ -743,6 +824,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
               colorScheme="blue"
               onClick={tm.handleRegisterUser}
               isLoading={tm.isSubmittingUser}
+              isDisabled={!tm.canSubmitUserForm}
             >
               Add
             </Button>
@@ -781,14 +863,13 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <FormLabel>Email</FormLabel>
                 <Input
                   type="email"
-                  value={tm.editUserForm.email ?? ""}
-                  onChange={(e) =>
-                    tm.setEditUserForm({
-                      ...tm.editUserForm,
-                      email: e.target.value,
-                    })
-                  }
+                  value={tm.editUserRow?.email ?? ""}
+                  isReadOnly
+                  bg="gray.50"
+                  _dark={{ bg: "whiteAlpha.100" }}
+                  cursor="not-allowed"
                 />
+                <FormHelperText>Email cannot be changed.</FormHelperText>
               </FormControl>
               <FormControl>
                 <FormLabel>Full Name</FormLabel>
@@ -874,6 +955,10 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     {userActiveStatus(u)}
                   </Badge>
                 </Box>
+                <Box>
+                  <Text fontWeight="semibold">Roles</Text>
+                  <TenantUserRoleBadges role={u.role} roles={u.roles} badgeFontSize="sm" />
+                </Box>
               </VStack>
             ) : (
               <Text>No user selected.</Text>
@@ -887,17 +972,28 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
     );
   }
 
+  function formatStatusConfirmLabel(
+    targetType: "tenant" | "user" | undefined,
+    status: TenantStatus | TenantUserStatus
+  ): string {
+    if (targetType === "user") {
+      return status === "ACTIVE" ? "Activate" : "Suspend";
+    }
+    return tenantStatusActionLabel(status as TenantStatus);
+  }
+
   function renderStatusConfirmDialog() {
     const target = tm.statusUpdateTarget;
     const isOpen = tm.isStatusDialogOpen && Boolean(target);
     const targetLabel = target?.type === "tenant" ? "tenant" : "user";
+    const statusLabel = formatStatusConfirmLabel(target?.type, tm.statusUpdateNewStatus);
     return (
       <ConfirmDialog
         isOpen={isOpen}
         onClose={tm.closeStatusDialog}
         onConfirm={tm.handleConfirmStatusUpdate}
         title={`Change ${targetLabel} status`}
-        body={`Set ${targetLabel} status to "${tm.statusUpdateNewStatus}"?`}
+        body={`Set ${targetLabel} status to "${statusLabel}"?`}
         confirmLabel="Update"
         confirmColorScheme="blue"
         isConfirmLoading={tm.isSubmittingStatus}

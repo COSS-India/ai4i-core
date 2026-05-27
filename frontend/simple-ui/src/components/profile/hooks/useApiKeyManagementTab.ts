@@ -1,26 +1,84 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import authService from "../../../services/authService";
-import type { User, Permission } from "../../../types/auth";
-import type { AdminAPIKeyWithUserResponse, APIKeyUpdate } from "../../../types/auth";
+import type {
+  User,
+  Permission,
+  AdminAPIKeyWithUserResponse,
+  APIKeyUpdate,
+  APIKeyResponse,
+} from "../../../types/auth";
+import { API_KEY, isApiKeyFilterStatus } from "../../../config/constants";
+import {
+  formatApiKeyDisplayId,
+  mergeApiKeyHexFromCache,
+  normalizeApiKeyRecord,
+  permissionLabelWithFallback,
+  resolveApiKeyHex,
+} from "../../../utils/apiKeyUtils";
+
+function permissionIdFromRaw(raw: string | number): number | null {
+  if (typeof raw === "number" && Number.isInteger(raw)) return raw;
+  const s = String(raw);
+  if (/^\d+$/.test(s)) return parseInt(s, 10);
+  return null;
+}
+
+/** Map UI selection (names and/or numeric ids) to permission IDs for the API. */
+function resolvePermissionIds(
+  selected: (string | number)[],
+  catalog: Permission[],
+): number[] {
+  const ids = new Set<number>();
+  for (const item of selected) {
+    if (typeof item === "number" && Number.isInteger(item)) {
+      ids.add(item);
+      continue;
+    }
+    const s = String(item);
+    const byName = catalog.find((p) => p.name === s)?.id;
+    if (byName != null) {
+      ids.add(byName);
+      continue;
+    }
+    if (/^\d+$/.test(s)) {
+      const n = parseInt(s, 10);
+      if (catalog.length === 0 || catalog.some((p) => p.id === n)) {
+        ids.add(n);
+      }
+    }
+  }
+  return Array.from(ids);
+}
 
 export interface UseApiKeyManagementTabOptions {
   user: User | null;
-  users: User[];
-  isLoadingUsers: boolean;
 }
 
-export function useApiKeyManagementTab({
-  user,
-  users,
-}: UseApiKeyManagementTabOptions) {
+function normalizeListedKeys(keys: APIKeyResponse[]): APIKeyResponse[] {
+  return mergeApiKeyHexFromCache(keys.map((key) => normalizeApiKeyRecord(key)));
+}
+
+function mapKeysToAdminRows(
+  keys: APIKeyResponse[],
+  currentUser: User | null,
+): AdminAPIKeyWithUserResponse[] {
+  return normalizeListedKeys(keys).map((key) => ({
+    ...key,
+    user_id: currentUser?.user_id ?? "",
+    user_email: currentUser?.email ?? "",
+    username: currentUser?.username ?? "",
+  }));
+}
+
+export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) {
   const toast = useToastWithDeduplication();
   const [allApiKeys, setAllApiKeys] = useState<AdminAPIKeyWithUserResponse[]>([]);
   const [isLoadingAllApiKeys, setIsLoadingAllApiKeys] = useState(false);
   const [permissions, setPermissions] = useState<Permission[]>([]);
-  const [filterUser, setFilterUser] = useState("all");
   const [filterPermission, setFilterPermission] = useState("all");
-  const [filterActive, setFilterActive] = useState("all");
+  const [filterActive, setFilterActive] = useState<string>(API_KEY.FILTER_STATUS.ALL);
+  const [keyNameSearch, setKeyNameSearch] = useState("");
   const [selectedKeyForUpdate, setSelectedKeyForUpdate] = useState<AdminAPIKeyWithUserResponse | null>(null);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   const [isRevokeModalOpen, setIsRevokeModalOpen] = useState(false);
@@ -30,64 +88,65 @@ export function useApiKeyManagementTab({
   const [updateFormData, setUpdateFormData] = useState<APIKeyUpdate>({
     key_name: "",
     permissions: [],
-    is_active: true,
   });
   const [selectedKeyForView, setSelectedKeyForView] = useState<AdminAPIKeyWithUserResponse | null>(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
 
-  const handleFetchAllApiKeys = async () => {
-    setIsLoadingAllApiKeys(true);
+  const loadPermissionsCatalog = useCallback(async (): Promise<Permission[]> => {
     try {
-      // Load permissions first (if not already loaded)
-      if (permissions.length === 0) {
-        try {
-          const permsList = await authService.getAllPermissions();
-          setPermissions(permsList);
-        } catch (err) {
-          console.error("Failed to fetch permissions for filter:", err);
-        }
-      }
-
-      // Then load API keys
-      const allKeys = await authService.listAllApiKeys();
-      setAllApiKeys(allKeys);
-
-      toast({
-        title: "API Keys Loaded",
-        description: `Loaded ${allKeys?.length} API key(s)`,
-        status: "success",
-        duration: 2000,
-        isClosable: true,
-      });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to load API keys",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
-    } finally {
-      setIsLoadingAllApiKeys(false);
+      const permsList = await authService.getAllPermissions();
+      const catalog = Array.isArray(permsList) ? permsList : [];
+      setPermissions(catalog);
+      return catalog;
+    } catch (err) {
+      console.error("Failed to fetch permissions for filter:", err);
+      return [];
     }
-  };
+  }, []);
+
+  const handleFetchAllApiKeys = useCallback(
+    async (options?: { silent?: boolean }) => {
+      setIsLoadingAllApiKeys(true);
+      try {
+        const [response] = await Promise.all([
+          authService.listApiKeys(),
+          permissions.length > 0 ? Promise.resolve(permissions) : loadPermissionsCatalog(),
+        ]);
+        const keys = Array.isArray(response.api_keys) ? response.api_keys : [];
+        setAllApiKeys(mapKeysToAdminRows(keys, user));
+        if (!options?.silent) {
+          toast({
+            title: "API Keys Loaded",
+            description: `Loaded ${keys.length} API key(s)`,
+            status: "success",
+            duration: 2000,
+            isClosable: true,
+          });
+        }
+      } catch (error) {
+        toast({
+          title: "Error",
+          description: error instanceof Error ? error.message : "Failed to load API keys",
+          status: "error",
+          duration: 5000,
+          isClosable: true,
+        });
+      } finally {
+        setIsLoadingAllApiKeys(false);
+      }
+    },
+    [loadPermissionsCatalog, permissions, toast, user],
+  );
 
   const handleOpenUpdateModal = async (key: AdminAPIKeyWithUserResponse) => {
-    // Ensure permissions are loaded before opening modal
-    if (permissions.length === 0) {
-      try {
-        const permsList = await authService.getAllPermissions();
-        setPermissions(permsList);
-      } catch (err) {
-        console.error("Failed to load permissions:", err);
-      }
+    let catalog = permissions;
+    if (catalog.length === 0) {
+      catalog = await loadPermissionsCatalog();
     }
-
     setSelectedKeyForUpdate(key);
     setUpdateFormData({
       key_name: key.key_name,
-      permissions: key.permissions ? key.permissions.map(p => (typeof p === 'string' ? parseInt(p, 10) : p)) : [],
-      is_active: key.is_active,
+      permissions: (key.permissions ?? []).map((p) => permissionLabelWithFallback(p, catalog)),
     });
     setIsUpdateModalOpen(true);
   };
@@ -95,7 +154,7 @@ export function useApiKeyManagementTab({
   const handleCloseUpdateModal = () => {
     setIsUpdateModalOpen(false);
     setSelectedKeyForUpdate(null);
-    setUpdateFormData({ key_name: "", permissions: [], is_active: true });
+    setUpdateFormData({ key_name: "", permissions: [] });
   };
 
   const handleUpdateApiKey = async () => {
@@ -120,9 +179,51 @@ export function useApiKeyManagementTab({
       });
       return;
     }
+    const hex = resolveApiKeyHex(selectedKeyForUpdate);
+    if (!hex) {
+      toast({
+        title: "Cannot update",
+        description:
+          "This row is missing the 32-character api_key. Refresh the list or check the auth service response.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+    let catalog = permissions;
+    if (catalog.length === 0) {
+      try {
+        catalog = await authService.getAllPermissions();
+        setPermissions(Array.isArray(catalog) ? catalog : []);
+      } catch {
+        toast({
+          title: "Error",
+          description: "Could not load permissions. Try again or open the Permissions tab first.",
+          status: "error",
+          duration: 5000,
+          isClosable: true,
+        });
+        return;
+      }
+    }
+    const permissionIds = resolvePermissionIds(updateFormData.permissions ?? [], catalog);
+    if (!permissionIds.length) {
+      toast({
+        title: "Validation Error",
+        description: "Select at least one valid permission",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     setIsUpdating(true);
     try {
-      await authService.updateApiKey(selectedKeyForUpdate.api_key || selectedKeyForUpdate.id.toString(), updateFormData);
+      await authService.updateApiKey(hex, {
+        key_name: updateFormData.key_name?.trim(),
+        permissions: permissionIds,
+      });
       toast({
         title: "API Key Updated",
         description: "API key has been updated successfully",
@@ -158,6 +259,9 @@ export function useApiKeyManagementTab({
   const handleOpenViewModal = (key: AdminAPIKeyWithUserResponse) => {
     setSelectedKeyForView(key);
     setIsViewModalOpen(true);
+    if (permissions.length === 0) {
+      void loadPermissionsCatalog();
+    }
   };
 
   const handleCloseViewModal = () => {
@@ -166,16 +270,28 @@ export function useApiKeyManagementTab({
   };
 
   const handleResetFilters = () => {
-    setFilterUser("all");
     setFilterPermission("all");
     setFilterActive("all");
+    setKeyNameSearch("");
   };
 
   const handleRevokeApiKey = async () => {
     if (!keyToRevoke) return;
+    const hex = resolveApiKeyHex(keyToRevoke);
+    if (!hex) {
+      toast({
+        title: "Cannot revoke",
+        description:
+          "This row is missing the 32-character api_key. Refresh the list or check the auth service response.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
     setIsRevoking(true);
     try {
-      await authService.revokeApiKey(keyToRevoke.api_key || keyToRevoke.id.toString());
+      await authService.revokeApiKey(hex);
       toast({
         title: "API Key Revoked",
         description: "API key has been revoked successfully",
@@ -202,64 +318,55 @@ export function useApiKeyManagementTab({
     () =>
       [...allApiKeys]
         .filter((key) => {
-          if (filterUser !== "all" && key.user_id.toString() !== filterUser) return false;
-          if (filterPermission !== "all") {
-            // Handle both numeric IDs and string names
-            const permissionMatch = key.permissions.some((perm) => {
-              if (typeof perm === 'number') {
-                // If perm is a number, find its name and compare
-                const permName = permissions.find(p => p.id === perm)?.name;
-                return permName === filterPermission || perm === parseInt(filterPermission, 10);
-              }
-              return perm === filterPermission;
-            });
-            if (!permissionMatch) return false;
+          const search = keyNameSearch.trim().toLowerCase();
+          if (search && !(key.key_name ?? "").toLowerCase().includes(search)) {
+            return false;
           }
-          if (filterActive === "active" && !key.is_active) return false;
-          if (filterActive === "inactive" && key.is_active) return false;
+          if (filterPermission !== "all") {
+            const has = (key.permissions ?? []).some(
+              (p) => permissionLabelWithFallback(p, permissions) === filterPermission,
+            );
+            if (!has) return false;
+          }
+          if (isApiKeyFilterStatus(filterActive, API_KEY.FILTER_STATUS.ACTIVE) && !key.is_active) {
+            return false;
+          }
+          if (isApiKeyFilterStatus(filterActive, API_KEY.FILTER_STATUS.REVOKED) && key.is_active) {
+            return false;
+          }
           return true;
         })
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
-    [allApiKeys, filterUser, filterPermission, filterActive, permissions]
+        .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()),
+    [allApiKeys, filterPermission, filterActive, keyNameSearch, permissions],
   );
 
-  const allUniquePermissions = useMemo(() => {
-    const perms = new Set<string>();
-    allApiKeys.forEach((key) => key.permissions.forEach((p) => perms.add(String(p))));
-    return Array.from(perms).sort();
-  }, [allApiKeys]);
+  /** Static permission names for the filter dropdown (full catalog, not keyed to loaded keys). */
+  const permissionFilterOptions = useMemo(
+    () =>
+      permissions
+        .map((p) => p.name)
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b)),
+    [permissions],
+  );
 
-  const permissionOptionsForFilter = useMemo(() => {
-    if (allUniquePermissions.length > 0) {
-      return allUniquePermissions.map((perm) => {
-        // Handle both numeric IDs and string names
-        if (!isNaN(Number(perm))) {
-          const permId = parseInt(perm, 10);
-          // Try to find permission name, fallback to showing the ID
-          return permissions.find(p => p.id === permId)?.name || String(permId);
-        }
-        return perm;
-      });
-    }
-    // If no unique permissions from keys, show loaded permissions
-    if (permissions.length > 0) {
-      return permissions.map((p) => p.name);
-    }
-    // If no permissions loaded, return empty array (dropdown will show "All Permissions" only)
-    return [];
-  }, [allUniquePermissions, permissions]);
+  const formatPermission = (permissionId: number) =>
+    permissionLabelWithFallback(permissionId, permissions);
+
+  const formatKeyId = (key: AdminAPIKeyWithUserResponse) => formatApiKeyDisplayId(key);
 
   return {
     allApiKeys,
     isLoadingAllApiKeys,
     permissions,
-    users,
-    filterUser,
-    setFilterUser,
+    formatPermission,
+    formatKeyId,
     filterPermission,
     setFilterPermission,
     filterActive,
     setFilterActive,
+    keyNameSearch,
+    setKeyNameSearch,
     selectedKeyForUpdate,
     updateFormData,
     setUpdateFormData,
@@ -276,8 +383,7 @@ export function useApiKeyManagementTab({
     isUpdating,
     handleResetFilters,
     filteredApiKeys,
-    allUniquePermissions,
-    permissionOptionsForFilter,
+    permissionFilterOptions,
     selectedKeyForView,
     isViewModalOpen,
     handleOpenViewModal,

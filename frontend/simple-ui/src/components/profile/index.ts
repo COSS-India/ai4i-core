@@ -1,6 +1,7 @@
 export { default as TenantManagementTab } from "./TenantManagementTab";
 export type { TenantManagementTabProps } from "./TenantManagementTab";
 export { default as UserDetailsTab } from "./UserDetailsTab";
+export { default as ChangePasswordTab } from "./ChangePasswordTab";
 export { default as ApiKeyTab } from "./ApiKeyTab";
 export type { ApiKeyTabProps } from "./ApiKeyTab";
 export { default as RolesTab } from "./RolesTab";

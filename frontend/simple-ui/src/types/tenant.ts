@@ -1,6 +1,9 @@
 // Tenant + tenant-user types — calls auth-service /api/v1/tenants endpoints.
 
-export type TenantStatus = 'activated' | 'deactivated' | 'suspended';
+import type { TenantStatusValue, TenantUserStatusValue } from '../config/constants';
+
+export type TenantStatus = TenantStatusValue;
+export type TenantUserStatus = TenantUserStatusValue;
 export type CreationType = 'direct' | 'google' | 'tenant';
 
 export interface TenantView {
@@ -28,8 +31,12 @@ export interface TenantUserView {
   phone_number?: string | null;
   full_name?: string | null;
   is_active: boolean;
-  is_tenant_active?: boolean;
+  is_tenant_active?: boolean | null;
   creation_type?: CreationType | null;
+  /** Primary role from list-users API (upcoming: singular `role`). */
+  role?: string | null;
+  /** Role list when API returns `roles[]` (legacy or profile/detail). */
+  roles?: string[];
 }
 
 export interface ListUsersResponse {

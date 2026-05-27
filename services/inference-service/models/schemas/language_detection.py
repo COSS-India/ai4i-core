@@ -13,14 +13,16 @@ class TextInput(BaseModel):
 class LanguageDetectionConfig(BaseModel):
     """Configuration for language detection inference."""
 
-    service_id: str = Field(..., description="Service ID (required)")
+    service_id: Optional[str] = Field(None, alias="serviceId", description="Service ID")
     return_all_scores: Optional[bool] = Field(False, description="Return scores for all languages")
+
+    model_config = {"populate_by_name": True}
 
 
 class LanguageDetectionInferenceRequest(BaseModel):
     """Request for language detection inference."""
 
-    input: List[TextInput] = Field(..., min_items=1, description="Text inputs for language detection")
+    input: List[TextInput] = Field(..., min_length=1, description="Text inputs for language detection")
     config: LanguageDetectionConfig = Field(..., description="Language detection configuration")
 
 

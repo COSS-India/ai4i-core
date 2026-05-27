@@ -16,8 +16,6 @@ const protectedRoutes = ['/asr', '/tts', '/llm', '/pipeline', '/pipeline-builder
 
 // Routes that require ADMIN role
 const adminOnlyRoutes = ['/alerts-management'];
-// Routes blocked for TENANT ADMIN users
-const tenantAdminBlockedRoutes = ['/model-management', '/services-management'];
 
 // Routes that allow anonymous access with limited functionality
 const tryItRoutes = ['/nmt'];
@@ -30,12 +28,9 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   const isProtectedRoute = protectedRoutes.includes(router.pathname);
   const isAdminOnlyRoute = adminOnlyRoutes.includes(router.pathname);
   const isTryItRoute = tryItRoutes.includes(router.pathname);
-  
+
   // Check if user is ADMIN
   const isAdmin = user?.roles?.includes('ADMIN') || false;
-  // Check if user is TENANT ADMIN
-  const isTenantAdmin = user?.roles?.some((role) => (role ?? '').trim().toUpperCase() === 'TENANT ADMIN') || false;
-  const isTenantAdminBlockedRoute = tenantAdminBlockedRoutes.includes(router.pathname);
 
   // Redirect to auth page if accessing protected route without authentication
   // Allow access to try-it routes (like /nmt) for anonymous users
@@ -53,14 +48,6 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
       router.push('/');
     }
   }, [isLoading, isAdminOnlyRoute, isAuthenticated, isAdmin, router]);
-
-  // Redirect TENANT ADMIN users away from blocked routes
-  useEffect(() => {
-    if (!isLoading && isAuthenticated && isTenantAdmin && isTenantAdminBlockedRoute) {
-      console.log('AuthGuard: Tenant admin blocked route detected, redirecting to home');
-      router.push('/');
-    }
-  }, [isLoading, isAuthenticated, isTenantAdmin, isTenantAdminBlockedRoute, router]);
 
   // Show loading spinner while checking auth
   if (isLoading) {
@@ -82,11 +69,6 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
     return null; // Will redirect via useEffect
   }
 
-  // If route is blocked for tenant admins, don't render children (will redirect)
-  if (isAuthenticated && isTenantAdmin && isTenantAdminBlockedRoute) {
-    return null; // Will redirect via useEffect
-  }
-
   // Allow access if:
   // 1. User is authenticated, OR
   // 2. Route is not protected, OR
@@ -96,4 +78,3 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
 };
 
 export default AuthGuard;
-

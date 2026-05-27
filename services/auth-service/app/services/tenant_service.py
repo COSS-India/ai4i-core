@@ -22,28 +22,57 @@ from app.core.exceptions import (
     EntityNotFoundError,
     ValidationError,
 )
-from app.models.role_name import RoleName
+from app.models.role_name import RoleName, role_name_to_str
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.verification_repository import VerificationRepository
+from app.core.responses import to_response
 from app.schemas.tenant import (
     TenantCreate,
     TenantStatusUpdate,
     TenantUpdate,
     TenantUserCreate,
+    TenantUserResponse,
+    TenantUserRole,
     TenantUserStatusUpdate,
     TenantUserUpdate,
 )
+from app.schemas.user import UserListResponse
+from app.services.api_key_service import APIKeyService
 from app.services.auth_email_templates import render_setup_link, render_verify_email
+from app.services.tenant_lifecycle import (
+    assert_valid_tenant_status_transition,
+    sync_tenant_users_for_status,
+)
 from app.services.email_helpers import enqueue_email, persist_token_verification, resolve_tenant_id, setup_token_expires_at
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
 from app.utils.username import allocate_unique_username, derive_username_from_email
 
 logger = logging.getLogger(__name__)
+
+_TENANT_ASSIGNABLE_ROLES: tuple[RoleName, ...] = (RoleName.USER, RoleName.TENANT_ADMIN)
+
+
+def _payload_touches_user_access(payload: dict) -> bool:
+    """True when the caller explicitly sent ``is_active`` and/or ``is_tenant_active``."""
+    return "is_active" in payload or "is_tenant_active" in payload
+
+
+def _assert_tenant_active_for_user_deactivation(
+    tenant: Tenant, payload: dict
+) -> None:
+    """Tenant admins may set ``is_active=False`` only while the tenant is ACTIVE."""
+    if payload.get("is_active") is not False:
+        return
+    if tenant.status != TenantStatus.ACTIVE:
+        raise ValidationError(
+            message="Tenant users can only be suspended while the tenant is active.",
+            code="TENANT_NOT_ACTIVE",
+        )
 
 
 class TenantService:
@@ -57,6 +86,7 @@ class TenantService:
         verification_repo: VerificationRepository,
         token_service: TokenService,
         email_client: EmailClient,
+        api_key_service: Optional[APIKeyService] = None,
     ) -> None:
         self._tenants = tenant_repo
         self._users = user_repo
@@ -64,6 +94,7 @@ class TenantService:
         self._verifications = verification_repo
         self._tokens = token_service
         self._email = email_client
+        self._api_keys = api_key_service
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -97,6 +128,50 @@ class TenantService:
     async def is_system_admin(self, user: User) -> bool:
         roles = await self._roles.get_user_roles(user.id)
         return RoleName.ADMIN.value in roles or RoleName.MODERATOR.value in roles
+
+    @staticmethod
+    def resolve_tenant_user_role(roles: list[str]) -> TenantUserRole:
+        if RoleName.TENANT_ADMIN.value in roles:
+            return TenantUserRole.TENANT_ADMIN
+        return TenantUserRole.USER
+
+    async def _set_tenant_user_role(
+        self, user_id: UUID, role: TenantUserRole | RoleName | str, *, commit: bool = True
+    ) -> None:
+        """Ensure the user has exactly one tenant-assignable role (USER or TENANT ADMIN).
+
+        ``commit=False`` leaves role changes in the open transaction so the caller
+        can commit once with other updates (e.g. ``update_tenant_user`` →
+        ``save_and_refresh`` on the user row).
+        """
+        target = role.value if isinstance(role, TenantUserRole) else role_name_to_str(role)
+        await self._roles.ensure_role_exists(target)
+        current = await self._roles.get_user_roles(user_id)
+        for assignable in _TENANT_ASSIGNABLE_ROLES:
+            key = role_name_to_str(assignable)
+            if key in current and key != target:
+                await self._roles.remove_role(user_id, assignable, commit=commit)
+        await self._roles.assign_role(user_id, target, commit=commit)
+
+    async def build_tenant_user_response(self, user: User) -> dict:
+        roles = await self._roles.get_user_roles(user.id)
+        role = self.resolve_tenant_user_role(roles)
+        base = to_response(user, UserListResponse)
+        return TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+
+    async def build_tenant_user_responses(self, users: list[User]) -> list[dict]:
+        """Build list responses with a single batched role lookup."""
+        if not users:
+            return []
+        roles_by_user = await self._roles.get_roles_for_users([u.id for u in users])
+        responses: list[dict] = []
+        for user in users:
+            role = self.resolve_tenant_user_role(roles_by_user.get(user.id, []))
+            base = to_response(user, UserListResponse)
+            responses.append(
+                TenantUserResponse(**base, role=role).model_dump(mode="json", by_alias=True)
+            )
+        return responses
 
     async def provision_user(
         self,
@@ -196,6 +271,21 @@ class TenantService:
         if not tenant:
             raise EntityNotFoundError(f"Tenant {tenant_id}")
         return tenant
+
+    async def _load_tenant_for_update_or_404(self, tenant_id: int) -> Tenant:
+        """Lock tenant row for the current transaction (see ``_require_tenant_active_for_user_creation``)."""
+        tenant = await self._tenants.get_by_id_for_update(tenant_id)
+        if not tenant:
+            raise EntityNotFoundError(f"Tenant {tenant_id}")
+        return tenant
+
+    @staticmethod
+    def _assert_tenant_active_for_user_creation(tenant: Tenant) -> None:
+        if tenant.status != TenantStatus.ACTIVE:
+            raise ValidationError(
+                message="Tenant users can only be added when the tenant is active.",
+                code="TENANT_NOT_ACTIVE",
+            )
 
     async def _load_tenant_user_or_404(self, tenant_id: int, user_id: UUID) -> User:
         target = await self._users.get_by_id(user_id)
@@ -300,12 +390,37 @@ class TenantService:
         current_user: User,
         tenant_id: int,
         body: TenantStatusUpdate,
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> Tenant:
-        tenant = await self._load_tenant_or_404(tenant_id)
+        await self.enforce_scope(current_user, tenant_id)
+        if body.status in (
+            TenantStatus.SUSPENDED,
+            TenantStatus.DEACTIVATED,
+        ) and not await self.is_system_admin(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "TENANT_STATUS_FORBIDDEN",
+                    "message": (
+                        "Only system administrators can suspend or deactivate a tenant."
+                    ),
+                },
+            )
+        tenant = await self._load_tenant_for_update_or_404(tenant_id)
+        assert_valid_tenant_status_transition(tenant.status, body.status)
+        await sync_tenant_users_for_status(
+            self._users, tenant_id, body.status, updated_by=current_user.id
+        )
         await self._tenants.update(
             tenant, {"status": body.status, "updated_by": current_user.id}
         )
         await self._tenants.save_and_refresh(tenant)
+        if self._api_keys is not None:
+            if body.status in (TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED):
+                # Stale Redis entries would still authorize after tenant lockout.
+                await self._api_keys.evict_keys_for_tenant(tenant_id)
+            elif body.status == TenantStatus.ACTIVE:
+                await self._api_keys.refresh_keys_cache_for_tenant(tenant_id)
         return tenant
 
     # ── Tenant-user CRUD ─────────────────────────────────────────────────
@@ -325,8 +440,10 @@ class TenantService:
     ) -> tuple[str, str]:
         """Provision an inactive user for the tenant. Returns (user_id, setup_token)."""
         await self.enforce_scope(current_user, tenant_id)
-        if not await self._tenants.get_by_id(tenant_id):
-            raise EntityNotFoundError(f"Tenant {tenant_id}")
+        # Lock tenant row until provision_user commits — prevents suspend/deactivate
+        # between the ACTIVE check and user insert in the same request.
+        tenant = await self._load_tenant_for_update_or_404(tenant_id)
+        self._assert_tenant_active_for_user_creation(tenant)
         email = body.email.lower().strip()
         username = await allocate_unique_username(
             self._users.list_usernames_in_collision_family,
@@ -339,6 +456,7 @@ class TenantService:
             phone_number=body.phone_number,
             tenant_id=str(tenant_id),
             creation_type="tenant",
+            role_name=body.role.value,
             background_tasks=background_tasks,
         )
 
@@ -350,10 +468,15 @@ class TenantService:
         body: TenantUserUpdate,
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
+        await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
+        role_update = payload.pop("role", None)
         payload["updated_by"] = current_user.id
         await self._users.update(target, payload)
+        if role_update is not None:
+            # Single commit via save_and_refresh — role repo shares this session.
+            await self._set_tenant_user_role(target.id, role_update, commit=False)
         await self._users.save_and_refresh(target)
         return target
 
@@ -365,17 +488,23 @@ class TenantService:
         body: TenantUserStatusUpdate,
     ) -> User:
         await self.enforce_scope(current_user, tenant_id)
+        tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         payload = body.model_dump(exclude_unset=True)
         payload["updated_by"] = current_user.id
+        _assert_tenant_active_for_user_deactivation(tenant, payload)
+
         await self._users.update(target, payload)
         await self._users.save_and_refresh(target)
+        if self._api_keys is not None and _payload_touches_user_access(payload):
+            await self._api_keys.refresh_keys_cache_for_user(target, tenant)
         return target
 
     async def delete_tenant_user(
         self, current_user: User, tenant_id: int, user_id: UUID
     ) -> None:
         await self.enforce_scope(current_user, tenant_id)
+        tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
         await self._users.update(
             target,
@@ -387,3 +516,5 @@ class TenantService:
             },
         )
         await self._users.commit()
+        if self._api_keys is not None:
+            await self._api_keys.evict_keys_for_user(target.id)

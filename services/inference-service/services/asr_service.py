@@ -1,108 +1,55 @@
-"""ASR (Automatic Speech Recognition) TaskService."""
+"""ASR TaskService — Automatic Speech Recognition inference."""
 
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from pydantic import BaseModel
-
 from services.base.audio_base import AudioBase
 from services.base.config_mapper import GenericTritonMapper
-from models.schemas.asr import (
-    ASRConfig,
-    ASRInferenceRequest,
-    ASRInferenceResponse,
-    AudioInput,
-)
+from models.schemas.asr import ASRInferenceResponse
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Fallback adapter config for asr_am_ensemble when MMS does not return one.
-# Tensor contract: asr_preprocessor → asr_am → asr_greedy_decoder
-# ---------------------------------------------------------------------------
-_DEFAULT_ASR_ADAPTER_CONFIG = {
-    "version": "1",
-    "model_version": "1",
-    "inputs": [
-        {
-            "tensor": "AUDIO_SIGNAL",
-            "dtype":  "FP32",
-            "shape":  [-1, -1],
-            "value":  "audio.samples",
-        },
-        {
-            "tensor": "NUM_SAMPLES",
-            "dtype":  "INT32",
-            "shape":  [-1, 1],
-            "value":  "audio.num_samples",
-        },
-        {
-            "tensor": "LANG_ID",
-            "dtype":  "BYTES",
-            "shape":  [-1, 1],
-            "value":  "request.config.language.source_language",
-        },
-    ],
-    "outputs": [
-        {
-            "tensor":  "TRANSCRIPTS",
-            "dtype":   "BYTES",
-            "maps_to": "transcript",
-        },
-    ],
-}
-
-
 class ASRTaskService(AudioBase):
     """
-    TaskService for Automatic Speech Recognition inference.
+    TaskService for Automatic Speech Recognition.
 
-    Inherits the full audio pipeline from AudioBase:
-      validate_request  → audio items present + source_language set
-      preprocess_input  → bytes → decode → mono → resample → equalize → dequantize
-      execute_triton_inference (AudioBase) → per-item Triton loop using service_info
-      postprocess_output → decode bytes → TranscriptionOutput list
-      _build_response   → ASRInferenceResponse
+    Extends AudioBase with ASR-specific behaviour:
+      validate_request                  → adds sourceLanguage check
+      convert_payload_to_triton_format  → GenericTritonMapper + _build_audio_context
+      convert_triton_output_to_task_format → GenericTritonMapper output mapping
+      postprocess_output                → decode bytes → TranscriptionOutput list
+      _build_response                   → ASRInferenceResponse
 
-    service_info is injected by the Orchestrator before construction —
-    no internal resolver calls.
+    preprocess_input is inherited from AudioBase:
+      bytes → decode → mono → resample (16 kHz) → equalize → dequantize
+
+    service_info (including adapter_config) is injected by the Orchestrator.
     """
 
     def __init__(self, service_info: Optional[Dict[str, Any]] = None, **kwargs: Any):
         super().__init__(service_info=service_info, **kwargs)
         self.logger = logger
 
-    async def _deserialize_payload(self, payload: Dict[str, Any]) -> ASRInferenceRequest:
-        """Parse the raw request dict into a typed ASRInferenceRequest."""
-        try:
-            audio_items = payload.get("audio", [])
-            if isinstance(audio_items, list) and audio_items:
-                if isinstance(audio_items[0], dict):
-                    audio_items = [AudioInput(**item) for item in audio_items]
+    # ------------------------------------------------------------------
+    # Validation
+    # ------------------------------------------------------------------
 
-            config_data = payload.get("config", {})
-            if isinstance(config_data, dict):
-                config_data = ASRConfig(**config_data)
+    async def validate_request(self, payload: Dict[str, Any]) -> None:
+        """AudioBase validation + sourceLanguage check."""
+        await super().validate_request(payload)
+        await self._validate_source_language(payload)
 
-            return ASRInferenceRequest(audio=audio_items, config=config_data)
-        except Exception as exc:
-            raise ValueError(f"ASR: failed to deserialize payload: {exc}") from exc
-
-    async def validate_request(self, request: BaseModel) -> None:
-        """AudioBase validation + ASR-specific sourceLanguage check."""
-        await super().validate_request(request)
-        await self._validate_source_language(request)
-
-    def _get_default_adapter_config(self) -> Dict[str, Any]:
-        return _DEFAULT_ASR_ADAPTER_CONFIG
+    # ------------------------------------------------------------------
+    # Triton format hooks
+    # ------------------------------------------------------------------
 
     async def convert_payload_to_triton_format(
         self,
         input_data: List[Dict[str, Any]],
         config: Dict[str, Any],
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
-        """Convert one preprocessed audio item to KServe v2 Triton inputs."""
+        """Build KServe v2 inputs from preprocessed float PCM samples."""
         mapper = GenericTritonMapper(self._adapter_config)
         return mapper.compose_triton_kserve_v2_payload(
             input_data=input_data,
@@ -114,7 +61,7 @@ class ASRTaskService(AudioBase):
         self,
         triton_output: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
-        """Map raw Triton output to a list of transcript dicts."""
+        """Map raw Triton output tensors to a list of transcript dicts."""
         mapper = GenericTritonMapper(self._adapter_config)
         mapped = mapper.map_outputs(triton_output)
         return mapper.to_output_items(mapped)
@@ -125,7 +72,11 @@ class ASRTaskService(AudioBase):
         index: int,
         config: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Build the audio context dict used by value_path declarations in adapter config."""
+        """
+        Context dict fed to adapter_config value_path resolution.
+        Exposes audio.samples, audio.num_samples, audio.sample_rate —
+        populated by AudioBase.preprocess_input before the Triton loop.
+        """
         samples = item.get("samples") or []
         return {
             "audio": {
@@ -135,14 +86,18 @@ class ASRTaskService(AudioBase):
             }
         }
 
+    # ------------------------------------------------------------------
+    # Output
+    # ------------------------------------------------------------------
+
     async def postprocess_output(
         self, response_items: List[Dict[str, Any]], **kwargs: Any
     ) -> Dict[str, Any]:
-        """Decode bytes output → wrap in TranscriptionOutput list."""
+        """Decode bytes → wrap in TranscriptionOutput list."""
         decoded = await self._decode_output_bytes(response_items)
         return await self._wrap_transcription_output(decoded)
 
     def _build_response(
-        self, request: ASRInferenceRequest, postprocessed: Dict[str, Any]
+        self, payload: Dict[str, Any], postprocessed: Dict[str, Any]
     ) -> ASRInferenceResponse:
         return ASRInferenceResponse(output=postprocessed["output"], smr_response=None)
