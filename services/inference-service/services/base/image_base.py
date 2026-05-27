@@ -9,7 +9,7 @@ Works on raw payload dicts (same contract as TextBase / BaseTaskService):
 All Triton I/O (payload assembly, output mapping) is handled by GenericTritonMapper
 via the adapter_config sourced from MMS — concrete task services don't reimplement it.
 
-Concrete task services (e.g. OCRTaskService) provide:
+Concrete task services (e.g. ImageDefaultModel) provide:
   postprocess_output → response shaping
   _build_response    → typed response model
 """

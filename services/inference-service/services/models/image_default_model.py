@@ -6,10 +6,6 @@ Triton output items are returned as-is and the route layer applies
 GenericInferenceResponse. Different tasks share this class; the adapter_config
 and Triton model name are what differ.
 
-Tasks that need task-specific output shaping (e.g. OCR — Surya envelope unwrap →
-OCROutput) extend ImageBase directly and live in their own service file
-(ocr_service.py).
-
 Base64 resolution (inline imageContent or downloaded imageUri) and Triton I/O
 (payload assembly, output mapping via GenericTritonMapper + adapter_config) are
 inherited from ImageBase — concrete tasks don't reimplement them.
