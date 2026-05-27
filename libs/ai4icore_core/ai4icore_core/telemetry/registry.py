@@ -9,37 +9,6 @@ from typing import Any, Union, Dict, List
 
 logger = logging.getLogger(__name__)
 
-
-def compute_input_quality(request):
-    """Compute input quality score for NMT.
-
-    Complex logic: checks text length, language patterns, special chars.
-    """
-    text = request.get("text", "")
-    if not text:
-        return 0
-
-    quality = min(100, len(text.strip()) * 2)
-    return quality
-
-
-def compute_sentiment_score(request):
-    """Compute sentiment score."""
-    text = request.get("text", "")
-    return len(text) % 10
-
-
-def compute_quality_metrics(response):
-    """Compute quality metrics from response."""
-    items = response.get("preprocessed_texts", [])
-    return {"count": len(items), "score": 85}
-
-
-def compute_list_count(data: List[Any]) -> int:
-    """Count items in a list."""
-    return len(data) if isinstance(data, list) else 0
-
-
 def compute_first_item_source(data: List[Any]) -> str:
     """Get source text from first item in list."""
     if isinstance(data, list) and data:
@@ -48,21 +17,6 @@ def compute_first_item_source(data: List[Any]) -> str:
             return item.get("source", "")
         return getattr(item, "source", "")
     return ""
-
-
-def compute_customer_id(request: Dict[str, Any]) -> Any:
-    """Extract customer/user ID from request config."""
-    config = request.get("config", {})
-    if isinstance(config, dict):
-        return config.get("userId") or config.get("customer_id") or config.get("user_id")
-    return getattr(config, "userId", None) or getattr(config, "user_id", None)
-
-
-def compute_input_size(request: Dict[str, Any]) -> int:
-    """Compute input size from request."""
-    input_data = request.get("input") or request.get("audio") or request.get("image")
-    return len(input_data) if input_data else 0
-
 
 def compute_request_status(response: Dict[str, Any]) -> str:
     """Determine request success status from response."""
@@ -75,12 +29,6 @@ def compute_request_status(response: Dict[str, Any]) -> str:
             return "failed"
     return "success"
 
-
-def compute_success_status(response: Dict[str, Any]) -> str:
-    """Determine success status from response (alias for compute_request_status)."""
-    return compute_request_status(response)
-
-
 def compute_service_used(response: Dict[str, Any]) -> str:
     """Extract service name from response (typically NMT for text services)."""
     if isinstance(response, dict):
@@ -89,24 +37,12 @@ def compute_service_used(response: Dict[str, Any]) -> str:
         return str(service).lower()
     return "nmt"
 
-
-def compute_model_used(response: Dict[str, Any]) -> str:
-    """Extract model name from response (checks multiple possible locations)."""
-    if isinstance(response, dict):
-        model = (response.get("model_used") or response.get("model_name")
-                or response.get("model") or response.get("service_used")
-                or response.get("name") or "unknown")
-        return str(model)
-    return "unknown"
-
-
 def compute_elapsed_time(response: Dict[str, Any]) -> int:
     """Compute elapsed time in milliseconds from response."""
     if isinstance(response, dict):
         elapsed = response.get("elapsed_time_ms") or response.get("elapsed_time") or response.get("duration_ms") or 0
         return int(elapsed)
     return 0
-
 
 def compute_endpoint(request: Dict[str, Any]) -> str:
     """Extract endpoint path from request, fallback to context."""
@@ -120,14 +56,12 @@ def compute_endpoint(request: Dict[str, Any]) -> str:
     endpoint = get_endpoint_path()
     return endpoint or ""
 
-
 def compute_http_status_code(response: Dict[str, Any]) -> int:
     """Extract HTTP status code from response."""
     if isinstance(response, dict):
         status = response.get("status_code") or response.get("http_status") or 200
         return int(status)
     return 200
-
 
 def compute_tenant_id(request: Dict[str, Any]) -> str:
     """Extract tenant ID from request data, fallback to context.
@@ -155,49 +89,6 @@ def compute_tenant_id(request: Dict[str, Any]) -> str:
     tenant_id = get_tenant_id()
     return tenant_id or ""
 
-
-def compute_tenant_id_int(request: Dict[str, Any]) -> int:
-    """Extract tenant ID as integer from request data, fallback to context.
-
-    Tries request config first, then context (set by middleware from JWT).
-    """
-    # Try request config first
-    config = request.get("config", {})
-    if isinstance(config, dict):
-        tid = config.get("tenantId") or config.get("tenant_id")
-        if tid:
-            try:
-                return int(tid)
-            except (ValueError, TypeError):
-                pass
-    else:
-        tid = getattr(config, "tenantId", None) or getattr(config, "tenant_id", None)
-        if tid:
-            try:
-                return int(tid)
-            except (ValueError, TypeError):
-                pass
-
-    # Try top-level tenant_id field
-    tid = request.get("tenantId") or request.get("tenant_id")
-    if tid:
-        try:
-            return int(tid)
-        except (ValueError, TypeError):
-            pass
-
-    # Fallback to context (set by middleware from JWT)
-    from ai4icore_core.context import get_tenant_id
-    tenant_id = get_tenant_id()
-    if tenant_id:
-        try:
-            return int(tenant_id)
-        except (ValueError, TypeError):
-            pass
-
-    return 0
-
-
 def compute_user_id_attr(request: Dict[str, Any]) -> str:
     """Extract user ID from request data, fallback to context.
 
@@ -224,49 +115,6 @@ def compute_user_id_attr(request: Dict[str, Any]) -> str:
     user_id = get_user_id()
     return user_id or ""
 
-
-def compute_user_id_int(request: Dict[str, Any]) -> int:
-    """Extract user ID as integer from request data, fallback to context.
-
-    Tries request config first, then context (set by middleware from JWT).
-    """
-    # Try request config first
-    config = request.get("config", {})
-    if isinstance(config, dict):
-        uid = config.get("userId") or config.get("user_id")
-        if uid:
-            try:
-                return int(uid)
-            except (ValueError, TypeError):
-                pass
-    else:
-        uid = getattr(config, "userId", None) or getattr(config, "user_id", None)
-        if uid:
-            try:
-                return int(uid)
-            except (ValueError, TypeError):
-                pass
-
-    # Try top-level userId field
-    uid = request.get("userId") or request.get("user_id")
-    if uid:
-        try:
-            return int(uid)
-        except (ValueError, TypeError):
-            pass
-
-    # Fallback to context (set by middleware from JWT)
-    from ai4icore_core.context import get_user_id
-    user_id = get_user_id()
-    if user_id:
-        try:
-            return int(user_id)
-        except (ValueError, TypeError):
-            pass
-
-    return 0
-
-
 def compute_model_name(data: Dict[str, Any]) -> str:
     """Extract model name from data (response from service resolution).
 
@@ -280,7 +128,6 @@ def compute_model_name(data: Dict[str, Any]) -> str:
                 or "unknown")
         return str(model)
     return "unknown"
-
 
 def compute_model_version(data: Dict[str, Any]) -> str:
     """Extract model version from data (request or response).
@@ -298,7 +145,6 @@ def compute_model_version(data: Dict[str, Any]) -> str:
         if version:
             return str(version)
     return "1"
-
 
 def compute_task_type(data: Dict[str, Any]) -> str:
     """Extract or infer task type from data (request or response).
@@ -344,7 +190,6 @@ def compute_task_type(data: Dict[str, Any]) -> str:
 
     return ""
 
-
 def compute_input_size_kb(request: Dict[str, Any]) -> int:
     """Compute input size in kilobytes from request."""
     if isinstance(request, dict):
@@ -355,7 +200,6 @@ def compute_input_size_kb(request: Dict[str, Any]) -> int:
         except Exception:
             pass
     return 0
-
 
 def compute_output_size_kb(response: Dict[str, Any]) -> int:
     """Compute output size in kilobytes from response."""
@@ -368,7 +212,6 @@ def compute_output_size_kb(response: Dict[str, Any]) -> int:
             pass
     return 0
 
-
 def compute_input_tokens(request: Dict[str, Any]) -> int:
     """Extract input token count from request."""
     if isinstance(request, dict):
@@ -376,14 +219,12 @@ def compute_input_tokens(request: Dict[str, Any]) -> int:
         return int(tokens) if tokens else 0
     return 0
 
-
 def compute_output_tokens(response: Dict[str, Any]) -> int:
     """Extract output token count from response."""
     if isinstance(response, dict):
         tokens = response.get("output_tokens") or response.get("tokens_generated") or 0
         return int(tokens) if tokens else 0
     return 0
-
 
 def compute_input_type(request: Dict[str, Any]) -> str:
     """Extract input data type from request."""
@@ -393,7 +234,6 @@ def compute_input_type(request: Dict[str, Any]) -> str:
         return str(input_type)
     return "text"
 
-
 def compute_output_type(response: Dict[str, Any]) -> str:
     """Extract output data type from response."""
     if isinstance(response, dict):
@@ -402,7 +242,6 @@ def compute_output_type(response: Dict[str, Any]) -> str:
         return str(output_type)
     return "text"
 
-
 def compute_records_saved(response: Dict[str, Any]) -> int:
     """Count records saved to database."""
     if isinstance(response, dict):
@@ -410,27 +249,16 @@ def compute_records_saved(response: Dict[str, Any]) -> int:
         return int(saved)
     return 0
 
-
 REGISTRY = {
-    "compute_input_quality": compute_input_quality,
-    "compute_sentiment_score": compute_sentiment_score,
-    "compute_quality_metrics": compute_quality_metrics,
-    "compute_list_count": compute_list_count,
+
     "compute_first_item_source": compute_first_item_source,
-    "compute_customer_id": compute_customer_id,
-    "compute_input_size": compute_input_size,
     "compute_request_status": compute_request_status,
-    "compute_success_status": compute_success_status,
     "compute_service_used": compute_service_used,
-    "compute_model_used": compute_model_used,
     "compute_elapsed_time": compute_elapsed_time,
-    "compute_records_saved": compute_records_saved,
     "compute_endpoint": compute_endpoint,
     "compute_http_status_code": compute_http_status_code,
     "compute_tenant_id": compute_tenant_id,
-    "compute_tenant_id_int": compute_tenant_id_int,
     "compute_user_id_attr": compute_user_id_attr,
-    "compute_user_id_int": compute_user_id_int,
     "compute_model_name": compute_model_name,
     "compute_model_version": compute_model_version,
     "compute_task_type": compute_task_type,
@@ -441,7 +269,6 @@ REGISTRY = {
     "compute_input_type": compute_input_type,
     "compute_output_type": compute_output_type,
 }
-
 
 def _build_context(data: Union[Dict[str, Any], List[Any]]) -> Dict[str, Any]:
     """
@@ -463,7 +290,6 @@ def _build_context(data: Union[Dict[str, Any], List[Any]]) -> Dict[str, Any]:
         return {**data, "request": data, "response": data}
     else:
         return {"request": data, "response": data}
-
 
 def safe_eval(expression: str, context: Dict[str, Any]) -> Any:
     """
@@ -494,7 +320,6 @@ def safe_eval(expression: str, context: Dict[str, Any]) -> Any:
         logger.error(f"[EXPR ERROR] Failed to evaluate '{expression}': {type(e).__name__}: {e}")
         logger.debug(f"[EXPR DEBUG] Context keys available: {list(context.keys())}")
         return None
-
 
 def get_attribute_value(attr_config: Dict[str, str], data: Union[Dict[str, Any], List[Any]]) -> Any:
     """
