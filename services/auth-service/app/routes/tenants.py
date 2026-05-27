@@ -83,6 +83,16 @@ async def update_tenant_status(
     return success_response(data=to_response(tenant, TenantResponse))
 
 
+@router.get("/{tenant_id}/plan")
+async def get_tenant_plan(
+    tenant_id: int,
+    current_user: User = Depends(get_current_user),
+    svc: TenantService = Depends(get_tenant_service),
+):
+    plan = await svc.get_tenant_plan(tenant_id)
+    return success_response(data=plan)
+
+
 @router.get("/{tenant_id}/users")
 async def list_tenant_users(
     tenant_id: int,

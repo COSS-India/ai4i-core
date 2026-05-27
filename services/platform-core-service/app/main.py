@@ -10,12 +10,14 @@ import time
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
+from prometheus_client import make_asgi_app
 from starlette.requests import Request
 from app.core.config import settings
 from app.core.database import close_database, init_database
 from app.core.exceptions import register_exception_handlers
 from app.core.redis import close_redis, init_redis
 from app.routes import api_router, versioning
+from app.services.pay_per_use.pay_per_use_service import warm_pricing_cache
 from app.services.service_service import EndpointValidationFailedError
 
 from ai4icore_core.logging import configure_logging, RequestMiddleware
@@ -38,6 +40,7 @@ async def lifespan(app: FastAPI):
         url=settings.get_redis_url(),
         socket_timeout=settings.redis_timeout,
     )
+    await warm_pricing_cache()
 
     yield
 
@@ -76,6 +79,7 @@ def create_app() -> FastAPI:
 
     versioning.register(app)
     app.include_router(api_router)
+    app.mount("/metrics", make_asgi_app())
 
     # OpenAPI security: Bearer JWT lock on all endpoints except health/root.
     _PUBLIC_PATHS = {"/", "/health", "/ready", "/docs", "/redoc", "/openapi.json"}
