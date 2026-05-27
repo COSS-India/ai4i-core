@@ -2,7 +2,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 from services.base.text_base import TextBase
-from models.schemas.nmt import NMTInferenceResponse
+
 logger = logging.getLogger(__name__)
 
 class TextDefaultModel(TextBase):
@@ -13,10 +13,9 @@ class TextDefaultModel(TextBase):
         self.logger = logger
 
     def _build_response(self, payload, postprocessed):
-        return NMTInferenceResponse(output=postprocessed["output"], smr_response=None)
+        return {"output": postprocessed["output"]}
 
     async def postprocess_output(self, response_items, source_texts=None):
-        from models.schemas.nmt import TranslationOutput
         paired = self._pair_with_sources(response_items, source_texts or [])
         output_list = []
         for item in paired:
@@ -26,7 +25,7 @@ class TextDefaultModel(TextBase):
                 target = target[0]
             if isinstance(target, bytes):
                 target = target.decode("utf-8", errors="replace")
-            output_list.append(TranslationOutput(source=item["source"], target=str(target)))
+            output_list.append({"source": item["source"], "target": str(target)})
         self.logger.debug(f"NMT post-processed {len(output_list)} translations")
         return {"output": output_list}
 
