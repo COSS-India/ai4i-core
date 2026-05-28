@@ -78,32 +78,6 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  influxdb:
-    image: influxdb:2.7-alpine
-    container_name: ai4v-influxdb
-    environment:
-      DOCKER_INFLUXDB_INIT_MODE: setup
-      DOCKER_INFLUXDB_INIT_CLI_CONFIG_NAME: ai4i-influx
-      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_ADMIN_USER}
-      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD}
-      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG}
-      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET}
-      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_ADMIN_TOKEN}
-      INFLUXD_HTTP_BIND_ADDRESS: ":8086"
-    ports:
-      - "8089:8086"
-    volumes:
-      - influxdb-data:/var/lib/influxdb2
-      - ./infrastructure/influxdb:/docker-entrypoint-initdb.d
-    networks:
-      - microservices-network
-    healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://localhost:8086/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
@@ -238,136 +212,6 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  tts-service:
-    build:
-      context: .
-      dockerfile: ./services/tts-service/Dockerfile
-    container_name: ai4v-tts-service
-    ports:
-      - "8088:8088"
-    environment:
-      - ENV_FILE=.env
-      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
-    env_file:
-      - ./services/tts-service/.env
-    volumes:
-      - ./services/tts-service:/app
-      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
-      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
-      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
-      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
-      - ./libs/ai4icore_env:/app/libs/ai4icore_env
-      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_bootstrap:/app/libs/ai4icore_bootstrap
-      - ./infrastructure:/app/infrastructure
-      - ./shared:/app/shared
-    command: ["--reload"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      microservices-network:
-        aliases:
-          - tts-service
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
-      interval: 10s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    restart: unless-stopped
-
-  llm-service:
-    build:
-      context: .
-      dockerfile: ./services/llm-service/Dockerfile
-    container_name: ai4v-llm-service
-    ports:
-      - "8093:8090"
-    environment:
-      - ENV_FILE=.env
-      - TRITON_ENDPOINT=${TRITON_ENDPOINT}
-      - TRITON_TIMEOUT=300
-    env_file:
-      - ./services/llm-service/.env
-    volumes:
-      - ./services/llm-service:/app
-      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
-      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
-      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
-      - ./libs/ai4icore_env:/app/libs/ai4icore_env
-      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
-      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_bootstrap:/app/libs/ai4icore_bootstrap
-      - ./infrastructure:/app/infrastructure
-      - ./shared:/app/shared
-    command: ["--reload"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      microservices-network:
-        aliases:
-          - llm-service
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/llm/health"]
-      interval: 10s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    restart: unless-stopped
-
-  pipeline-service:
-    build:
-      context: .
-      dockerfile: ./services/pipeline-service/Dockerfile
-    container_name: ai4v-pipeline-service
-    ports:
-      - "8092:8090"
-    environment:
-      - ENV_FILE=.env
-      # Direct service URLs to bypass registry discovery failures
-      - ASR_SERVICE_URL=http://asr-service:8087
-      - NMT_SERVICE_URL=http://nmt-service:8089
-      - TTS_SERVICE_URL=http://tts-service:8088
-    env_file:
-      - ./services/pipeline-service/.env
-    volumes:
-      - ./services/pipeline-service:/app
-      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
-      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
-      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./libs/ai4icore_env:/app/libs/ai4icore_env
-      - ./libs/ai4icore_constants:/app/libs/ai4icore_constants
-      - ./libs/ai4icore_exceptions:/app/libs/ai4icore_exceptions
-      - ./libs/ai4icore_auth:/app/libs/ai4icore_auth
-      - ./infrastructure:/app/infrastructure
-      - ./shared:/app/shared
-    command: ["--reload"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      tts-service:
-        condition: service_started
-    networks:
-      microservices-network:
-        aliases:
-          - pipeline-service
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
-      interval: 10s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    restart: unless-stopped
 
 
   platform-core-service:
@@ -414,113 +258,6 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  smr-service:
-    build:
-      context: .
-      dockerfile: ./services/smr-service/Dockerfile
-    container_name: ai4v-smr-service
-    ports:
-      - "8103:8097"
-    environment:
-      - ENV_FILE=.env
-      - APP_DB_USER=${POSTGRES_USER}
-      - APP_DB_PASSWORD=${POSTGRES_PASSWORD}
-      - APP_DB_HOST=postgres
-      - APP_DB_PORT=5432
-      - APP_DB_NAME=ai4iplatform_core
-      - REQUEST_PROFILER_SERVICE_URL=http://request-profiler-service:8000
-    env_file:
-      - ./services/smr-service/.env
-    volumes:
-      - ./libs/ai4icore_env:/app/libs/ai4icore_env
-      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      microservices-network:
-        aliases:
-          - smr-service
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8097/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
-  request-profiler-service:
-    build:
-      context: ./services/request-profiler
-      dockerfile: Dockerfile
-    container_name: ai4v-request-profiler-service
-    ports:
-      - "8888:8000"
-    volumes:
-      - ./services/request-profiler/models:/app/models:ro
-    environment:
-      - LOG_LEVEL=info
-      - MODEL_DIR=/app/models
-      - ENVIRONMENT=production
-    env_file:
-      - ./.env
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-          cpus: "2.0"
-        reservations:
-          memory: 512M
-          cpus: "1.0"
-    networks:
-      microservices-network:
-        aliases:
-          - request-profiler-service
-          - profiler-service
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    restart: unless-stopped
-
-
-
-  policy-service:
-    build:
-      context: .
-      dockerfile: ./services/policy-service/Dockerfile
-    container_name: ai4v-policy-service
-    ports:
-      - "8107:8099"
-    environment:
-      - ENV_FILE=.env
-      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
-      - JWKS_URL=${JWKS_URL:-http://auth-service:8081/api/v1/auth/.well-known/jwks.json}
-      - PYTHONPATH=/app
-    env_file:
-      - ./services/policy-service/.env
-    volumes:
-      # Bind-mount only the service's application code so image-bundled /app/libs remains intact
-      - ./services/policy-service/app:/app/app
-    command: ["--reload"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      auth-service:
-        condition: service_started
-    networks:
-      microservices-network:
-        aliases:
-          - policy-service
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8099/health"]
-      interval: 10s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    restart: unless-stopped
 
   simple-ui-frontend:
     build:
@@ -561,8 +298,6 @@ services:
       - NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${MODEL_MANAGEMENT_API_KEY}
       # Telemetry/Observability service URL (logs and traces) - routed through API Gateway
       # - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://core-v1.ai4inclusion.org
-      - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
-      - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
     env_file:
       - ./.env
     volumes:
@@ -645,8 +380,6 @@ services:
       timeout: 10s
       retries: 3
 
-  # Alert Management Service
-  # Provides CRUD operations for alert definitions, notification receivers, and routing rules
   grafana:
     image: grafana/grafana:latest
     container_name: ai4v-grafana
@@ -845,8 +578,6 @@ volumes:
      # device: "/home/ubuntu/ai4i-v/volumes/pg_data"
 
   redis-data:
-    driver: local
-  influxdb-data:
     driver: local
   elasticsearch-data:
     driver: local
