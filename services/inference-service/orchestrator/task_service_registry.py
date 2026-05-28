@@ -31,12 +31,12 @@ from services.tts_service import TTSTaskService
 TASK_SERVICE_REGISTRY = [
     {
         "task_type":     "NMT",
-        "model_name":    ["indictrans-gpu-t4"],
+        "model_name":    ["indictrans-gpu-t4", "indictrans-nmt-service-2", "indictrans-nmt-service-3", "NMT-Service-05"],
         "service_class": TextDefaultModel,
     },
     {
         "task_type":     "ASR",
-        "model_name":    ["ai4bharat/triton-multilingual-asr", "asr-gpu"],
+        "model_name":    ["ai4bharat/triton-multilingual-asr", "asr-gpu", "asr-1", "asr-11"],
         "service_class": ASRTaskService,
     },
     {
