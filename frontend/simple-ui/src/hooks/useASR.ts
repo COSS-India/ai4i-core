@@ -6,6 +6,7 @@ import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { performASRInference, transcribeAudio } from '../services/asrService';
 import { getWordCount, convertWebmToWav } from '../utils/helpers';
 import { UseASRReturn, ASRInferenceRequest } from '../types/asr';
+import { getAsrTranscriptText } from '../types/inference';
 import { DEFAULT_ASR_CONFIG, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS } from '../config/constants';
 import { extractErrorInfo } from '../utils/errorHandler';
 
@@ -129,7 +130,7 @@ export const useASR = (): UseASRReturn => {
       const currentLanguage = languageRef.current;
       const currentSampleRate = sampleRateRef.current;
       const currentServiceId = serviceIdRef.current;
-      
+
       const config: ASRInferenceRequest['config'] = {
         language: { sourceLanguage: currentLanguage },
         serviceId: currentServiceId,
@@ -146,20 +147,20 @@ export const useASR = (): UseASRReturn => {
       console.log('Full response:', response);
       console.log('Request language (when started):', currentRequestLanguageRef.current);
       console.log('Current language (now):', languageRef.current);
-      
+
       // Accept response if request language matches current language
       // This means the language hasn't changed since the request started
       if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current === languageRef.current) {
-        const transcript = response.data.output[0]?.source || '';
+        const transcript = getAsrTranscriptText(response.data.output[0]);
         console.log('✓ Response accepted - languages match');
         console.log('Extracted transcript:', transcript);
         console.log('Transcript length:', transcript.length);
         setAudioText(transcript);
         setResponseWordCount(getWordCount(transcript));
-        
+
         // Update request time with actual API response time (in milliseconds)
         setRequestTime(response.responseTime.toString());
-        
+
         setFetched(true);
         setFetching(false);
         setError(null);
@@ -187,14 +188,14 @@ export const useASR = (): UseASRReturn => {
       console.error('Error:', error);
       console.error('Request language (when started):', currentRequestLanguageRef.current);
       console.error('Current language (now):', languageRef.current);
-      
+
       // Accept error if request language matches current language
       if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current === languageRef.current) {
         console.log('✓ Error accepted - languages match, showing error');
-        
+
         // Use centralized error handler (asr context so backend message shown as default when no specific mapping)
         const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error, 'asr');
-        
+
         setError(errorMessage);
         setFetching(false);
         setFetched(false);
@@ -234,7 +235,7 @@ export const useASR = (): UseASRReturn => {
         const isNotFoundError = err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError';
         toast({
           title: isNotFoundError ? 'No Microphone Detected' : 'Recording Error',
-          description: isNotFoundError 
+          description: isNotFoundError
             ? 'No microphone detected. Please connect a microphone and try again.'
             : 'Audio stream not available. Please check microphone permissions.',
           status: 'error',
@@ -244,11 +245,11 @@ export const useASR = (): UseASRReturn => {
         return;
       }
     }
-    
+
     // Check if stream tracks are still active
     const audioTracks = streamToUse.getAudioTracks();
     const hasActiveTrack = audioTracks.some(track => track.readyState === 'live');
-    
+
     if (!hasActiveTrack) {
       try {
         console.log('Audio stream tracks not active, reinitializing...');
@@ -308,14 +309,14 @@ export const useASR = (): UseASRReturn => {
         setRecording(false);
         return;
       }
-      
+
       console.log('Using audio stream with', audioTracks.length, 'active track(s)');
 
       // Create MediaRecorder
       const options: MediaRecorderOptions = {
         mimeType: 'audio/webm;codecs=opus' // Use webm with opus codec
       };
-      
+
       // Fallback to default if codec not supported
       let mediaRecorder: MediaRecorder;
       let actualMimeType = 'audio/webm';
@@ -345,11 +346,11 @@ export const useASR = (): UseASRReturn => {
         try {
           console.log('MediaRecorder onstop triggered');
           console.log('Total chunks collected:', audioChunksRef.current.length);
-          
+
           // Create blob from chunks
           const webmBlob = new Blob(audioChunksRef.current, { type: actualMimeType });
           console.log('Recording completed, WebM blob size:', webmBlob.size);
-          
+
           // Check minimum recording duration
           const duration = recordingDurationRef.current;
           if (duration < MIN_RECORDING_DURATION) {
@@ -381,7 +382,7 @@ export const useASR = (): UseASRReturn => {
             });
             return;
           }
-          
+
           // Convert WebM to WAV format (required by API config)
           // This ensures fast processing on the backend (WAV is handled directly, WebM requires ffmpeg)
           let blobToSend = webmBlob;
@@ -410,7 +411,7 @@ export const useASR = (): UseASRReturn => {
             });
             return;
           }
-          
+
           // Convert blob to base64 for API
           const reader = new FileReader();
           reader.onload = () => {
@@ -454,7 +455,7 @@ export const useASR = (): UseASRReturn => {
       };
 
       mediaRecorderRef.current = mediaRecorder;
-      
+
       // Start recording with timeslice to collect chunks during recording
       // This ensures we get data even if recording is stopped quickly
       // Timeslice of 1000ms = chunks every second
@@ -514,25 +515,25 @@ export const useASR = (): UseASRReturn => {
       console.log('performInference called with audio content length:', audioContent.length);
       console.log('Current language state:', language);
       console.log('Current language ref:', languageRef.current);
-      
+
       // Track the language for this request BEFORE starting
       const requestLanguage = currentLanguage;
       currentRequestLanguageRef.current = requestLanguage;
       console.log('Request language set to:', requestLanguage);
-      
+
       // Clear any previous errors and reset state before starting new request
       setError(null);
       setFetched(false);
       setAudioText('');
       setResponseWordCount(0);
       setFetching(true);
-      
+
       console.log('Calling asrMutation.mutateAsync with language:', requestLanguage);
       console.log('Config will use language:', languageRef.current);
-      
+
       const result = await asrMutation.mutateAsync(audioContent);
       console.log('ASR mutation completed, result:', result);
-      
+
       // The onSuccess handler will check if the language matches
       // We don't need to check here since onSuccess handles it
     } catch (err) {
@@ -558,7 +559,7 @@ export const useASR = (): UseASRReturn => {
   // Stop recording
   const stopRecording = useCallback(() => {
     console.log('stopRecording called, mediaRecorder state:', mediaRecorderRef.current?.state);
-    
+
     if (!mediaRecorderRef.current) {
       console.warn('No mediaRecorder to stop');
       setRecording(false);
@@ -571,7 +572,7 @@ export const useASR = (): UseASRReturn => {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
-      
+
       // Stop the MediaRecorder regardless of state
       const recorder = mediaRecorderRef.current;
       if (recorder.state === 'recording' || recorder.state === 'paused') {
@@ -581,12 +582,12 @@ export const useASR = (): UseASRReturn => {
         recorder.stop();
         console.log('MediaRecorder stop() called, waiting for onstop handler...');
       }
-      
+
       // IMPORTANT: Don't stop audio tracks immediately!
       // Wait for the onstop handler to complete processing the blob
       // The tracks will be stopped after processing is complete
       // Stopping tracks too early can prevent MediaRecorder from finalizing the recording
-      
+
       setRecording(false);
 
       toast({
@@ -596,7 +597,7 @@ export const useASR = (): UseASRReturn => {
         duration: 2000,
         isClosable: true,
       });
-      
+
       // Stop audio tracks after a short delay to allow MediaRecorder to finalize
       // The onstop handler will process the blob, then we can safely stop tracks
       setTimeout(() => {
@@ -609,13 +610,13 @@ export const useASR = (): UseASRReturn => {
           });
         }
       }, 500); // Give MediaRecorder 500ms to finalize
-      
+
       // Note: The blob processing happens in onstop handler, which is set up in startRecording
     } catch (err) {
       console.error('Error stopping recording:', err);
       setError('Failed to stop recording.');
       setRecording(false);
-      
+
       // Force stop tracks even if there's an error
       if (audioStream) {
         audioStream.getTracks().forEach(track => track.stop());
@@ -667,7 +668,7 @@ export const useASR = (): UseASRReturn => {
     // Validate file type - only MP3 and WAV files are supported
     const isMP3 = file.type === 'audio/mpeg' || file.type === 'audio/mp3' || file.name.toLowerCase().endsWith('.mp3');
     const isWAV = file.type === 'audio/wav' || file.type === 'audio/wave' || file.type === 'audio/x-wav' || file.name.toLowerCase().endsWith('.wav');
-    
+
     if (!isMP3 && !isWAV) {
       const err = UPLOAD_ERRORS.UNSUPPORTED_FORMAT;
       toast({
@@ -686,18 +687,18 @@ export const useASR = (): UseASRReturn => {
       return new Promise((resolve) => {
         const audio = new Audio();
         const url = URL.createObjectURL(file);
-        
+
         const timeout = setTimeout(() => {
           URL.revokeObjectURL(url);
           resolve({ isValid: false, duration: 0, error: 'UPLOAD_TIMEOUT' });
         }, 10000); // 10 second timeout
-        
+
         audio.addEventListener('loadedmetadata', () => {
           clearTimeout(timeout);
           URL.revokeObjectURL(url);
           const duration = audio.duration;
           console.log('Audio duration:', duration, 'seconds');
-          
+
           if (duration < MIN_RECORDING_DURATION) {
             resolve({ isValid: false, duration, error: 'AUDIO_TOO_SHORT' });
           } else if (duration > MAX_RECORDING_DURATION) {
@@ -708,14 +709,14 @@ export const useASR = (): UseASRReturn => {
             resolve({ isValid: true, duration });
           }
         });
-        
+
         audio.addEventListener('error', () => {
           clearTimeout(timeout);
           URL.revokeObjectURL(url);
           console.error('Error loading audio metadata');
           resolve({ isValid: false, duration: 0, error: 'INVALID_FILE' });
         });
-        
+
         audio.src = url;
       });
     };
@@ -761,9 +762,9 @@ export const useASR = (): UseASRReturn => {
           setFetched(false);
           setAudioText('');
           setResponseWordCount(0);
-          
+
           const reader = new FileReader();
-          
+
           reader.onload = () => {
             try {
               const result = reader.result as string;
@@ -774,9 +775,9 @@ export const useASR = (): UseASRReturn => {
               if (!base64Data) {
                 throw new Error('Failed to extract base64 data');
               }
-              
+
               console.log('File read successfully, base64 length:', base64Data.length);
-              
+
               // Process the audio
               performInference(base64Data);
             } catch (err) {
@@ -784,7 +785,7 @@ export const useASR = (): UseASRReturn => {
               setError('Failed to process file. Please try again.');
             }
           };
-          
+
           reader.onerror = (error) => {
             console.error('FileReader error:', error);
             const err = UPLOAD_ERRORS.INVALID_FILE;
@@ -797,11 +798,11 @@ export const useASR = (): UseASRReturn => {
             });
             setError(err.description);
           };
-          
+
           reader.onabort = () => {
             console.log('File read aborted by user');
           };
-          
+
           console.log('Starting to read file...');
           reader.readAsDataURL(file);
         } catch (err) {
@@ -856,7 +857,7 @@ export const useASR = (): UseASRReturn => {
     const oldLanguage = languageRef.current;
     console.log('Language changed from', oldLanguage, 'to', language);
     languageRef.current = language;
-    
+
     // If language changed while a request is in progress, cancel that request
     // by setting the request language to null so it won't match
     if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current !== language) {
@@ -908,11 +909,11 @@ export const useASR = (): UseASRReturn => {
         });
         return;
       }
-      
+
       console.log('Language changed from', prevLanguageRef.current, 'to', language);
       const oldLanguage = prevLanguageRef.current;
       prevLanguageRef.current = language;
-      
+
       // Always clear results when language changes, regardless of fetching state
       // If a request is in progress, we'll ignore its response anyway
       console.log('Clearing results due to language change');

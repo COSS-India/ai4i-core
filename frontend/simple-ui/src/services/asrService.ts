@@ -16,14 +16,6 @@ import {
 } from '../types/asr';
 import { io, Socket } from 'socket.io-client';
 import { listServices } from './modelManagementService';
-import type { Service } from '../types/platform';
-import {
-  extractLanguageCodes,
-  resolveEndpoint,
-  resolveModelId,
-  resolveModelVersion,
-  resolveServiceId,
-} from '../utils/platformService';
 
 // ASR Service details from model management
 export interface ASRServiceDetails {
@@ -151,19 +143,35 @@ export const listASRServices = async (): Promise<ASRServiceDetails[]> => {
     const seen = new Set<string>();
 
     // Transform model management service response to ASRServiceDetails format
-    const normalized = services.map((service: Service) => {
-      const supportedLanguages = extractLanguageCodes(service.languages, 'broad');
-      const endpoint = resolveEndpoint(service);
+    const normalized = services.map((service: any) => {
+      // Extract languages from service.languages array
+      const supportedLanguages: string[] = [];
+      if (service.languages && Array.isArray(service.languages)) {
+        service.languages.forEach((lang: any) => {
+          if (typeof lang === 'string') {
+            supportedLanguages.push(lang);
+          } else if (lang && typeof lang === 'object') {
+            // Handle different language object formats
+            const langCode = lang.code || lang.sourceLanguage || lang.language;
+            if (langCode) {
+              supportedLanguages.push(langCode);
+            }
+          }
+        });
+      }
+
+      // Extract endpoint
+      const endpoint = service.endpoint || service.endpoint_url || '';
 
       return {
-        service_id: resolveServiceId(service),
-        model_id: resolveModelId(service),
-        model_version: resolveModelVersion(service),
-        name: service.name || resolveServiceId(service),
+        service_id: service.serviceId || service.service_id,
+        model_id: service.modelId || service.model_id,
+        model_version: service.modelVersion || service.model_version || '',
+        name: service.name || service.serviceId || service.service_id || '',
         description: service.serviceDescription || service.description || '',
-        endpoint,
-        languages: supportedLanguages,
-        modelVersion: resolveModelVersion(service),
+        endpoint: endpoint,
+        languages: Array.from(new Set(supportedLanguages)), // Remove duplicates
+        modelVersion: service.modelVersion || service.model_version,
       } as ASRServiceDetails;
     });
 
@@ -230,7 +238,7 @@ export const validateASRRequest = (
     return { isValid: false, error: 'Audio content is required' };
   }
 
-  if (!config.language.sourceLanguage) {
+  if (!config.language?.sourceLanguage) {
     return { isValid: false, error: 'Source language is required' };
   }
 

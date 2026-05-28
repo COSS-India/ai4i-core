@@ -57,8 +57,8 @@ export const performTryItNMTInference = async (
     const tryItConfig: NMTInferenceRequest['config'] = {
       ...config,
       language: {
-        sourceLanguage: config.language.sourceLanguage,
-        targetLanguage: config.language.targetLanguage,
+        sourceLanguage: config.language?.sourceLanguage ?? '',
+        targetLanguage: config.language?.targetLanguage ?? '',
       },
     };
 

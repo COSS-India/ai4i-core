@@ -2,37 +2,7 @@
 
 import { Language, LanguagePair } from './common';
 
-// ASR Inference Request
-export interface ASRInferenceRequest {
-  audio: Array<{
-    audioContent?: string;
-    audioUri?: string;
-  }>;
-  config: {
-    language: {
-      sourceLanguage: string;
-    };
-    serviceId: string;
-    audioFormat: string;
-    samplingRate: number;
-    transcriptionFormat?: string;
-    bestTokenCount?: number;
-    encoding?: string;
-    preProcessors?: string[];
-    postProcessors?: string[];
-  };
-  controlConfig?: {
-    dataTracking?: boolean;
-  };
-}
-
-// ASR Inference Response
-export interface ASRInferenceResponse {
-  output: Array<{
-    source: string;
-    nBestTokens?: any;
-  }>;
-}
+export type { ASRInferenceRequest, ASRInferenceResponse } from './inference';
 
 // ASR Streaming Configuration
 export interface ASRStreamingConfig {
