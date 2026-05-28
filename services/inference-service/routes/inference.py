@@ -325,6 +325,44 @@ async def run_asr_inference(
 
 
 @router.post(
+    "/tts/inference",
+    summary="TTS Inference Endpoint",
+    description="Route inference requests to TTS TaskService",
+)
+async def run_tts_inference(
+    payload: Dict[str, Any],
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+) -> Dict[str, Any]:
+    """
+    Dedicated endpoint for TTS inference requests.
+    Sets task_type to TTS if not provided in payload, then routes via Orchestrator.
+    """
+    import time
+    start_time = time.time()
+
+    try:
+        if not payload.get("task_type"):
+            request_payload = {**payload, "task_type": "TTS"}
+        else:
+            request_payload = payload
+
+        task_type = request_payload["task_type"].upper()
+        logger.info(f"Inference request: task_type={task_type}")
+
+        result = await orchestrator.route_inference(payload=request_payload)
+
+        duration_ms = (time.time() - start_time) * 1000
+        logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
+
+        return result
+
+    except Exception as e:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.error(f"✗ Inference failed: {str(e)}, duration_ms={duration_ms:.2f}ms")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
     "/audio-lang-detection/inference",
     response_model=None,
     summary="Audio Language Detection Inference Endpoint",
