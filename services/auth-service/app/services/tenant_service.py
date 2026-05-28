@@ -9,8 +9,11 @@ repository access and provisioning lives in this file.
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Literal, Optional
+from decimal import Decimal
+from typing import Any, Callable, Dict, Literal, Optional
 from uuid import UUID
+
+import httpx
 
 from ai4icore_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks, HTTPException, status
@@ -22,8 +25,12 @@ from app.core.exceptions import (
     EntityNotFoundError,
     ValidationError,
 )
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models.role_name import RoleName, role_name_to_str
 from app.models.tenant import Tenant, TenantStatus
+from app.models.tenant_plan import TenantPlan
 from app.models.user import User, CreationType
 from app.models.verification import TokenVerification
 from app.repositories.tenant_repository import TenantRepository
@@ -53,6 +60,45 @@ from app.services.token_service import TokenService
 from app.utils.username import allocate_unique_username, derive_username_from_email
 
 logger = logging.getLogger(__name__)
+
+
+async def _assign_plan_to_tenant(tenant_id: int, plan_id: UUID, db: AsyncSession) -> None:
+    base = (settings.platform_core_url or "").rstrip("/")
+    if not base:
+        logger.warning("platform_core_url not set; skipping plan assignment for tenant %s", tenant_id)
+        return
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            plan_r = await client.get(f"{base}/api/v1/billing/policies/{plan_id}")
+            svc_r = await client.get(f"{base}/api/v1/billing/policies/{plan_id}/services")
+        if plan_r.status_code != 200:
+            logger.error("platform-core GET policies/%s failed: %s %s", plan_id, plan_r.status_code, plan_r.text)
+            return
+        plan_data: Dict[str, Any] = plan_r.json()
+        allowed_services = svc_r.json() if svc_r.status_code == 200 else []
+    except Exception as e:
+        logger.exception("_assign_plan_to_tenant HTTP error for tenant %s: %s", tenant_id, e)
+        return
+
+    try:
+        cost = plan_data.get("cost")
+        row = TenantPlan(
+            tenant_id=tenant_id,
+            plan_id=plan_id,
+            plan_name=str(plan_data.get("plan_name") or ""),
+            tier=str(plan_data.get("tier") or ""),
+            plan_cost=Decimal(str(cost)) if cost is not None else None,
+            quota_config=plan_data.get("quota_config") or {},
+            rate_limit_config=plan_data.get("rate_limit_config") or {},
+            allowed_services=allowed_services if isinstance(allowed_services, list) else [],
+        )
+        db.add(row)
+        await db.commit()
+        logger.info("TenantPlan created for tenant_id=%s plan_id=%s", tenant_id, plan_id)
+    except Exception as e:
+        await db.rollback()
+        logger.exception("TenantPlan DB insert failed for tenant %s: %s", tenant_id, e)
+
 
 _TENANT_ASSIGNABLE_ROLES: tuple[RoleName, ...] = (RoleName.USER, RoleName.TENANT_ADMIN)
 
@@ -348,6 +394,13 @@ class TenantService:
 
         # provision_user committed; refresh to surface server-side defaults.
         await self._tenants.refresh(tenant)
+
+        if body.plan_id:
+            try:
+                await _assign_plan_to_tenant(tenant.id, body.plan_id, self._tenants._db)
+            except Exception as e:
+                logger.exception("Plan assignment after tenant creation failed (tenant was created): %s", e)
+
         return tenant
 
     async def list_tenants(
@@ -422,6 +475,30 @@ class TenantService:
             elif body.status == TenantStatus.ACTIVE:
                 await self._api_keys.refresh_keys_cache_for_tenant(tenant_id)
         return tenant
+
+    async def get_tenant_plan(self, tenant_id: int) -> dict:
+        result = await self._tenants._db.execute(
+            select(TenantPlan, Tenant)
+            .join(Tenant, Tenant.id == TenantPlan.tenant_id)
+            .where(TenantPlan.tenant_id == tenant_id)
+            .order_by(TenantPlan.assigned_at.desc())
+            .limit(1)
+        )
+        row = result.first()
+        if not row:
+            raise EntityNotFoundError(f"Plan for tenant {tenant_id}")
+        plan, tenant = row
+        return {
+            "tenant_id": str(tenant_id),
+            "tenant_name": tenant.name,
+            "plan_id": str(plan.plan_id),
+            "plan_name": plan.plan_name,
+            "tier": plan.tier,
+            "plan_cost": float(plan.plan_cost) if plan.plan_cost is not None else None,
+            "quota_config": plan.quota_config or {},
+            "rate_limit_config": plan.rate_limit_config or {},
+            "allowed_services": plan.allowed_services or [],
+        }
 
     # ── Tenant-user CRUD ─────────────────────────────────────────────────
 

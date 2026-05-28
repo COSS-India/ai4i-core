@@ -132,6 +132,9 @@ class AuthSettings(BaseSettings):
     # Per-email rate limit for /auth/forgot-password
     reset_request_limit_per_hour: int = 3
 
+    # ── External services ──
+    platform_core_url: Optional[str] = None
+
     # ── Derived helpers ──
 
     def get_database_url(self) -> str:

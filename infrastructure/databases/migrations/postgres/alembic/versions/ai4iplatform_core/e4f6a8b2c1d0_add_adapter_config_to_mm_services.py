@@ -32,12 +32,15 @@ _NMT_ADAPTER_CONFIG = {
 
 
 def upgrade() -> None:
-    op.add_column(
-        "mm_services",
-        sa.Column("adapter_config", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-    )
-
     conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    existing_columns = [col["name"] for col in inspector.get_columns("mm_services")]
+    if "adapter_config" not in existing_columns:
+        op.add_column(
+            "mm_services",
+            sa.Column("adapter_config", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        )
+
     conn.execute(
         sa.text(
             "UPDATE mm_services SET adapter_config = CAST(:cfg AS jsonb) WHERE name = :name"

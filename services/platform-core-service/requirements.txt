@@ -18,6 +18,9 @@ redis>=5.0.0
 # ── HTTP client (endpoint validation probing) ──
 httpx>=0.25.0
 
+# ── Metrics (policy evaluation) ──
+prometheus-client>=0.19.0
+
 # ── Observability (optional) ──
 opentelemetry-api>=1.20.0
 opentelemetry-sdk>=1.20.0

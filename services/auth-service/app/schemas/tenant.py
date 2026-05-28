@@ -26,6 +26,7 @@ class TenantCreate(BaseSchema):
     organisation: str = Field(..., min_length=1, max_length=255)
     email: EmailStr
     phone_number: Optional[str] = Field(None, max_length=20)
+    plan_id: Optional[UUID] = None
 
 
 class TenantUpdate(BaseSchema):
