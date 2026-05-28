@@ -115,7 +115,7 @@ def compute_user_id_attr(request: Dict[str, Any]) -> str:
     user_id = get_user_id()
     return user_id or ""
 
-# def compute_model_name(data: Dict[str, Any]) -> str:
+def compute_model_name(data: Dict[str, Any]) -> str:
     """Extract model name from data (response from service resolution).
 
     Tries multiple sources where model name might be returned.
@@ -129,7 +129,7 @@ def compute_user_id_attr(request: Dict[str, Any]) -> str:
         return str(model)
     return "unknown"
 
-# def compute_model_version(data: Dict[str, Any]) -> str:
+def compute_model_version(data: Dict[str, Any]) -> str:
     """Extract model version from data (request or response).
 
     Tries multiple sources:
@@ -146,7 +146,7 @@ def compute_user_id_attr(request: Dict[str, Any]) -> str:
             return str(version)
     return "1"
 
-# def compute_task_type(data: Dict[str, Any]) -> str:
+def compute_task_type(data: Dict[str, Any]) -> str:
     """Extract or infer task type from data (request or response).
 
     Tries multiple sources:
@@ -190,28 +190,6 @@ def compute_user_id_attr(request: Dict[str, Any]) -> str:
 
     return ""
 
-def compute_input_size_kb(request: Dict[str, Any]) -> int:
-    """Compute input size in kilobytes from request."""
-    if isinstance(request, dict):
-        import json
-        try:
-            size_bytes = len(json.dumps(request).encode('utf-8'))
-            return max(1, size_bytes // 1024)
-        except Exception:
-            pass
-    return 0
-
-def compute_output_size_kb(response: Dict[str, Any]) -> int:
-    """Compute output size in kilobytes from response."""
-    if isinstance(response, dict):
-        import json
-        try:
-            size_bytes = len(json.dumps(response).encode('utf-8'))
-            return max(1, size_bytes // 1024)
-        except Exception:
-            pass
-    return 0
-
 def compute_input_tokens(request: Dict[str, Any]) -> int:
     """Extract input token count from request."""
     if isinstance(request, dict):
@@ -226,21 +204,87 @@ def compute_output_tokens(response: Dict[str, Any]) -> int:
         return int(tokens) if tokens else 0
     return 0
 
+def _detect_data_type(data: Any) -> str:
+    """Detect data type: text, audio, image, binary, dict, list, or unknown."""
+    try:
+        import filetype
+        has_filetype = True
+    except ImportError:
+        has_filetype = False
+
+    if data is None:
+        return "unknown"
+
+    # Check if it's bytes/binary
+    if isinstance(data, bytes):
+        if has_filetype:
+            kind = filetype.guess(data)
+            if kind:
+                return kind.mime.split("/")[0]  # 'audio', 'image', 'video', etc.
+        return "binary"
+
+    # Check if it's string/text
+    if isinstance(data, str):
+        return "text"
+
+    # Check if it's a dict
+    if isinstance(data, dict):
+        return "dict"
+
+    # Check if it's a list — inspect first item
+    if isinstance(data, list):
+        if not data:
+            return "list"
+        first = data[0]
+        if isinstance(first, dict):
+            # Infer from dict content
+            if any(k in first for k in ["audio_content", "audioContent", "audio_uri", "audioUri"]):
+                return "audio"
+            if any(k in first for k in ["source", "target", "text", "content", "transcript"]):
+                return "text"
+            if any(k in first for k in ["segment", "segments", "start", "end", "confidence"]):
+                return "audio"  # Likely segmentation output (diarization, ASR with timing)
+            return "list"  # Generic list of dicts
+        if isinstance(first, bytes):
+            return "binary"
+        if isinstance(first, str):
+            return "text"
+        return "list"
+
+    return "unknown"
+
+
 def compute_input_type(request: Dict[str, Any]) -> str:
-    """Extract input data type from request."""
-    if isinstance(request, dict):
-        input_type = (request.get("input_type") or request.get("type")
-                     or request.get("content_type") or "text")
-        return str(input_type)
-    return "text"
+    """Determine input type from request data."""
+    if not isinstance(request, dict):
+        return "unknown"
+
+    # Check for input field (text services)
+    if "input" in request:
+        return _detect_data_type(request.get("input"))
+
+    # Check for audio field (audio services)
+    if "audio" in request:
+        return _detect_data_type(request.get("audio"))
+
+    # Check for image field (vision services)
+    if "image" in request or "images" in request:
+        return _detect_data_type(request.get("image") or request.get("images"))
+
+    return "unknown"
+
 
 def compute_output_type(response: Dict[str, Any]) -> str:
-    """Extract output data type from response."""
-    if isinstance(response, dict):
-        output_type = (response.get("output_type") or response.get("type")
-                      or response.get("content_type") or "text")
-        return str(output_type)
-    return "text"
+    """Determine output type from response data."""
+    if not isinstance(response, dict):
+        return "unknown"
+
+    # Check multiple common output field names
+    for field in ["output", "result", "outputs", "data", "response_data", "response"]:
+        if field in response:
+            return _detect_data_type(response.get(field))
+
+    return "unknown"
 
 def compute_records_saved(response: Dict[str, Any]) -> int:
     """Count records saved to database."""
@@ -259,11 +303,9 @@ REGISTRY = {
     "compute_http_status_code": compute_http_status_code,
     "compute_tenant_id": compute_tenant_id,
     "compute_user_id_attr": compute_user_id_attr,
-    # "compute_model_name": compute_model_name,
-    # "compute_model_version": compute_model_version,
-    # "compute_task_type": compute_task_type,
-    "compute_input_size_kb": compute_input_size_kb,
-    "compute_output_size_kb": compute_output_size_kb,
+    "compute_model_name": compute_model_name,
+    "compute_model_version": compute_model_version,
+    "compute_task_type": compute_task_type,
     "compute_input_tokens": compute_input_tokens,
     "compute_output_tokens": compute_output_tokens,
     "compute_input_type": compute_input_type,
@@ -276,7 +318,19 @@ def _build_context(data: Union[Dict[str, Any], List[Any]]) -> Dict[str, Any]:
 
     For dicts: unpacks as-is
     For lists: provides list-specific variables like 'items', 'item_count', 'first'
+    Also includes async context variables (tenant_id, user_id, endpoint_path).
     """
+    # Fetch async context variables
+    from ai4icore_core.context import (
+        get_tenant_id, get_user_id, get_endpoint_path
+    )
+
+    ctx_vars = {
+        "tenant_id_ctx": get_tenant_id(),
+        "user_id_ctx": get_user_id(),
+        "endpoint_path": get_endpoint_path(),
+    }
+
     if isinstance(data, list):
         return {
             "_": data,  # Direct reference to the list
@@ -285,11 +339,12 @@ def _build_context(data: Union[Dict[str, Any], List[Any]]) -> Dict[str, Any]:
             "first": data[0] if data else None,
             "request": data,
             "response": data,
+            **ctx_vars,
         }
     elif isinstance(data, dict):
-        return {**data, "request": data, "response": data}
+        return {**data, "request": data, "response": data, **ctx_vars}
     else:
-        return {"request": data, "response": data}
+        return {"request": data, "response": data, **ctx_vars}
 
 def safe_eval(expression: str, context: Dict[str, Any]) -> Any:
     """
@@ -308,8 +363,6 @@ def safe_eval(expression: str, context: Dict[str, Any]) -> Any:
         "int": int,
         "float": float,
         "bool": bool,
-        "isinstance": isinstance,
-        "getattr": getattr,
     }
 
     try:

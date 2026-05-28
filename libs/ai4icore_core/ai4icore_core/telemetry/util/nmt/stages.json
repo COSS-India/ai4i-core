@@ -21,14 +21,14 @@
 {"attr": "model_version", "expr": "request.get('model_version', '') or request.get('version', '') or request.get('config', {}).get('model_version', '') or ''"}    ]
   },
   "ai_inference": {
-    "start": [],
+    "start": [      {"attr": "input_type", "func": "compute_input_type"}
+],
     "end": [
       {"attr": "execution_time_ms", "func": "compute_elapsed_time"},
       {"attr": "input_size_kb", "func": "compute_input_size_kb"},
       {"attr": "output_size_kb", "func": "compute_output_size_kb"},
       {"attr": "input_tokens", "func": "compute_input_tokens"},
       {"attr": "output_tokens", "func": "compute_output_tokens"},
-      {"attr": "input_type", "func": "compute_input_type"},
       {"attr": "output_type", "func": "compute_output_type"},
       {"attr": "status", "expr": "response.get('status')"},
       {"attr": "status_code", "expr": "response.get('status_code') or response.get('http_status') or http_status_code_ctx"}
