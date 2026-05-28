@@ -36,6 +36,12 @@ async def get_orchestrator() -> Orchestrator:
     response_model=GenericInferenceResponse,
     summary="Unified Inference Endpoint",
     description="Route inference requests to appropriate TaskService based on task_type",
+    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+        "serviceId": "your-service-id",
+        "task_type": "NMT",
+        "input": [{"source": "hello world"}],
+        "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+    }}}}},
 )
 async def run_inference(
     payload: Dict[str, Any],
@@ -97,6 +103,11 @@ async def run_inference(
     response_model_exclude={"config"},
     summary="NMT Inference Endpoint",
     description="Route inference requests to NMT TaskService",
+    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+        "serviceId": "your-service-id",
+        "input": [{"source": "hello world"}],
+        "config": {"language": {"sourceLanguage": "en", "targetLanguage": "hi"}},
+    }}}}},
 )
 async def run_nmt_inference(
     payload: Dict[str, Any],
@@ -136,6 +147,11 @@ async def run_nmt_inference(
     response_model=None,
     summary="NER Inference Endpoint",
     description="Route inference requests to NER TaskService",
+    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+        "serviceId": "your-service-id",
+        "input": [{"source": "John lives in New York"}],
+        "config": {"language": {"sourceLanguage": "en"}},
+    }}}}},
 )
 async def run_ner_inference(
     payload: Dict[str, Any],
@@ -179,6 +195,11 @@ async def run_ner_inference(
     response_model_exclude={"config", "smr_response"},
     summary="TRANSLITERATION Inference Endpoint",
     description="Route inference requests to TRANSLITERATION TaskService",
+    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+        "serviceId": "your-service-id",
+        "input": [{"source": "namaste"}],
+        "config": {"language": {"sourceLanguage": "hi", "targetLanguage": "en"}},
+    }}}}},
 )
 async def run_transliteration_inference(
     payload: Dict[str, Any],
@@ -218,6 +239,11 @@ async def run_transliteration_inference(
     response_model_exclude={"smr_response"},
     summary="LANGUAGE_DETECTION Inference Endpoint",
     description="Route inference requests to LANGUAGE_DETECTION TaskService",
+    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+        "serviceId": "your-service-id",
+        "input": [{"source": "hello world"}],
+        "config": {"language": {"sourceLanguage": "hi"}},
+    }}}}},
 )
 async def run_language_detection_inference(
     payload: Dict[str, Any],
@@ -257,6 +283,11 @@ async def run_language_detection_inference(
     response_model=GenericInferenceResponse,
     summary="ASR Inference Endpoint",
     description="Route inference requests to ASR TaskService",
+    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+        "serviceId": "your-service-id",
+        "audio": [{"audioContent": "<base64-encoded-audio>", "audioFormat": "wav"}],
+        "config": {"language": {"sourceLanguage": "en"}},
+    }}}}},
 )
 async def run_asr_inference(
     payload: Dict[str, Any],
@@ -296,6 +327,11 @@ async def run_asr_inference(
     response_model=None,
     summary="Audio Language Detection Inference Endpoint",
     description="Route inference requests to Audio Language Detection TaskService",
+    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+        "serviceId": "your-service-id",
+        "audio": [{"audioContent": "<base64-encoded-audio>", "audioFormat": "wav"}],
+        "config": {},
+    }}}}},
 )
 async def run_audio_lang_detection_inference(
     payload: Dict[str, Any],
@@ -337,6 +373,11 @@ async def run_audio_lang_detection_inference(
     response_model=None,
     summary="Speaker Diarization Inference Endpoint",
     description="Route inference requests to Speaker Diarization TaskService",
+    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+        "serviceId": "your-service-id",
+        "audio": [{"audioContent": "<base64-encoded-audio>", "audioFormat": "wav"}],
+        "config": {"numSpeakers": "2"},
+    }}}}},
 )
 async def run_speaker_diarization_inference(
     payload: Dict[str, Any],
@@ -378,6 +419,11 @@ async def run_speaker_diarization_inference(
     response_model=None,
     summary="Language Diarization Inference Endpoint",
     description="Route inference requests to Language Diarization TaskService",
+    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+        "serviceId": "your-service-id",
+        "audio": [{"audioContent": "<base64-encoded-audio>", "audioFormat": "wav"}],
+        "config": {},
+    }}}}},
 )
 async def run_language_diarization_inference(
     payload: Dict[str, Any],
@@ -419,6 +465,11 @@ async def run_language_diarization_inference(
     response_model=GenericInferenceResponse,
     summary="OCR Inference Endpoint",
     description="Route inference requests to OCR TaskService",
+    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+        "serviceId": "your-service-id",
+        "image": [{"imageContent": "<base64-encoded-image>", "imageFormat": "png"}],
+        "config": {"language": {"sourceLanguage": "en"}},
+    }}}}},
 )
 async def run_ocr_inference(
     payload: Dict[str, Any],
