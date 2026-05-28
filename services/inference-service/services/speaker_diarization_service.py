@@ -92,11 +92,15 @@ class SpeakerDiarizationTaskService(AudioDefaultModel):
     def _build_response(
         self, payload: Dict[str, Any], postprocessed: Dict[str, Any]
     ) -> Dict[str, Any]:
-        service_id = (payload.get("config") or {}).get("serviceId")
-        result = {"taskType": "speaker-diarization", "output": postprocessed["output"]}
-        if service_id:
-            result["config"] = {"serviceId": service_id}
-        return result
+        cfg = payload.get("config") or {}
+        return {
+            "taskType": "speaker-diarization",
+            "output": postprocessed["output"],
+            "config": {
+                "serviceId": cfg.get("serviceId"),
+                "language": cfg.get("language"),
+            },
+        }
 
     def _parse_json(self, value: Any) -> Dict[str, Any]:
         if value is None:
