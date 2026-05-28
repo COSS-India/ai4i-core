@@ -21,7 +21,7 @@ from services.language_diarization_service import LanguageDiarizationTaskService
 from services.llm_service import LLMTaskService
 from services.models.text_default_model import TextDefaultModel
 from services.ner_service import NERTaskService
-from services.ocr_service import OCRTaskService
+from services.models.image_default_model import ImageDefaultModel
 from services.pii_service import PIITaskService
 from services.speaker_diarization_service import SpeakerDiarizationTaskService
 from services.transliteration_service import TransliterationTaskService
@@ -51,8 +51,8 @@ TASK_SERVICE_REGISTRY = [
     },
     {
         "task_type":     "OCR",
-        "model_name":    ["ai4bharat/triton-ocr", "surya-ocr-gpu"],
-        "service_class": OCRTaskService,
+        "model_name":    ["surya-ocr-gpu", "ai4bharat/triton-ocr"],
+        "service_class": ImageDefaultModel,
     },
     {
         "task_type":     "LLM",
