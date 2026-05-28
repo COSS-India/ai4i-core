@@ -3,16 +3,21 @@ Orchestrator for routing inference requests to appropriate TaskServices.
 Handles polymorphic payload deserialization, validation, and response serialization.
 """
 
+import time
 from typing import Any, Dict, Optional
+from fastapi import Request
 from pydantic import BaseModel, ValidationError
 import logging
+
+from opentelemetry import trace, context as otel_context
+from opentelemetry.trace import StatusCode
+from trace.request_span import tracer, get_context_attributes, get_endpoint_path, compute_total_time_ms, log_span_attributes
 
 from models.common import GenericInferenceRequest, GenericInferenceResponse
 from models.task_types import task_registry
 from interfaces.task_service import ITaskService
 from inference.inference_server_resolver import InferenceServerResolver
 from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
-from ai4icore_core.telemetry import async_trace_stage
 
 
 logger = logging.getLogger(__name__)
@@ -55,10 +60,10 @@ class Orchestrator:
         self.inference_server_resolver = InferenceServerResolver()
         self.task_service_registry: list = TASK_SERVICE_REGISTRY
 
-    @async_trace_stage("request")
     async def route_inference(
         self,
         payload: Dict[str, Any],
+        request: Optional[Request] = None,
     ) -> Dict[str, Any]:
         """
         Route inference request to appropriate TaskService.
@@ -66,6 +71,7 @@ class Orchestrator:
 
         Args:
             payload: Raw request payload dictionary
+            request: Optional FastAPI Request object for reading path and method
 
         Returns:
             Serialized response dictionary
@@ -74,36 +80,82 @@ class Orchestrator:
             UnknownTaskTypeError: If task_type not registered
             TaskServiceExecutionError: If task service execution fails
         """
-        try:
-            # Extract task type from payload
-            task_type = payload.get("task_type", "").upper()
-            self.logger.info(f"Routing {task_type} inference request...")
+        # Start root span with parentID=null (empty context)
+        start_time = time.time()
+        ctx_attrs = get_context_attributes()
+        end_point = str(request.url.path) if request else get_endpoint_path()
+        request_method = request.method if request else ""
 
-            # Validate task type
-            await self._validate_task_type(task_type)
+        with tracer.start_as_current_span(
+            "request",
+            context=otel_context.Context(),  # ensures parentID=null
+        ) as request_span:
+            try:
+                # Extract task type from payload
+                task_type = payload.get("task_type", "").upper()
 
-            # Resolve service and model BEFORE creating task service
-            # so the correct model-specific class can be instantiated
-            service_info = await self._resolve_service_and_model(payload)
+                # Validate task type
+                await self._validate_task_type(task_type)
 
-            # Get task service for this task type, injecting resolved service info
-            task_service = await self._get_task_service(task_type, service_info)
-            
-            # Execute task service with raw payload
-            # Task service handles its own payload deserialization
-            task_response = await self._execute_task_service(
-                task_service=task_service,
-                payload=payload,
-                serviceInfo=service_info,  # Pass resolved service info to task service 
-            )
-            
-            # Serialize response
-            return task_response.dict() if hasattr(task_response, 'dict') else task_response
-            
-        except OrchestratorError:
-            raise
-        except Exception as e:
-            raise TaskServiceExecutionError(f"Orchestration failed: {str(e)}")
+                # Resolve service and model BEFORE creating task service
+                service_info = await self._resolve_service_and_model(payload)
+
+                # Get task service for this task type, injecting resolved service info
+                task_service = await self._get_task_service(task_type, service_info)
+
+                # Execute task service with raw payload
+                task_response = await self._execute_task_service(
+                    task_service=task_service,
+                    payload=payload,
+                    serviceInfo=service_info,
+                )
+
+                # Serialize response
+                result = task_response.dict() if hasattr(task_response, 'dict') else task_response
+
+                # Set root span attributes on success
+                span_attrs = {
+                    "total_time_ms": compute_total_time_ms(start_time),
+                    "url": end_point,
+                    "method": request_method,
+                    "status": "success",
+                    "status_code": 200,
+                    **ctx_attrs,
+                }
+                for k, v in span_attrs.items():
+                    request_span.set_attribute(k, v)
+                request_span.set_status(StatusCode.OK)
+                log_span_attributes("request", request_span, span_attrs)
+                return result
+
+            except OrchestratorError as e:
+                span_attrs = {
+                    "total_time_ms": compute_total_time_ms(start_time),
+                    "end_point": end_point,
+                    "request_method": request_method,
+                    "status": "failure",
+                    "status_code": 500,
+                    **ctx_attrs,
+                }
+                for k, v in span_attrs.items():
+                    request_span.set_attribute(k, v)
+                request_span.set_status(StatusCode.ERROR, str(e))
+                log_span_attributes("request", request_span, span_attrs)
+                raise
+            except Exception as e:
+                span_attrs = {
+                    "total_time_ms": compute_total_time_ms(start_time),
+                    "end_point": end_point,
+                    "request_method": request_method,
+                    "status": "failure",
+                    "status_code": 500,
+                    **ctx_attrs,
+                }
+                for k, v in span_attrs.items():
+                    request_span.set_attribute(k, v)
+                request_span.set_status(StatusCode.ERROR, str(e))
+                log_span_attributes("request", request_span, span_attrs)
+                raise TaskServiceExecutionError(f"Orchestration failed: {str(e)}")
 
     async def _validate_task_type(self, task_type: str) -> None:
         """
@@ -174,7 +226,6 @@ class Orchestrator:
         except Exception as e:
             raise TaskServiceExecutionError(f"Failed to get task service: {str(e)}")
 
-    @async_trace_stage("model")
     async def _resolve_service_and_model(
         self, payload: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -194,37 +245,61 @@ class Orchestrator:
         Raises:
             RuntimeError: If the service cannot be resolved
         """
-        # Extract serviceId: check config block first, then top-level
-        config_block = payload.get("config", {})
-        if isinstance(config_block, dict):
-            serviceId = config_block.get("serviceId") or payload.get("serviceId")
-        else:
-            serviceId = getattr(config_block, "serviceId", None) or payload.get("serviceId")
+        start_time = time.time()
+        ctx_attrs = get_context_attributes()
+        task_type = payload.get("task_type", "").upper()
 
-        if not serviceId:
-            # Fall back to SMR or a safe default
-            serviceId = await self.inference_server_resolver.resolve_smr_service(payload)
-            self.logger.warning(
-                f"No serviceId in payload, SMR resolved to: {serviceId}"
-            )
+        with tracer.start_as_current_span("model") as model_span:
+            # Extract serviceId: check config block first, then top-level
+            config_block = payload.get("config", {})
+            if isinstance(config_block, dict):
+                serviceId = config_block.get("serviceId") or payload.get("serviceId")
+            else:
+                serviceId = getattr(config_block, "serviceId", None) or payload.get("serviceId")
 
-        self.logger.debug(f"Resolving service: {serviceId}")
-        try:
-            service_info = await self.inference_server_resolver.resolve_service(serviceId)
-            self.logger.info(
-                f"Resolved serviceId='{serviceId}' → "
-                f"model='{service_info.get('name')}', "
-                f"endpoint='{service_info.get('endpoint')}'"
-            )
-            return service_info
-        except Exception as e:
-            self.logger.error(
-                f"Failed to resolve service '{serviceId}': {type(e).__name__}: {e}",
-                exc_info=True,
-            )
-            raise RuntimeError(
-                f"Orchestrator: Failed to resolve service '{serviceId}': {e}"
-            ) from e
+            if not serviceId:
+                # Fall back to SMR or a safe default
+                serviceId = await self.inference_server_resolver.resolve_smr_service(payload)
+                self.logger.warning(
+                    f"No serviceId in payload, SMR resolved to: {serviceId}"
+                )
+
+            self.logger.debug(f"Resolving service: {serviceId}")
+            try:
+                service_info = await self.inference_server_resolver.resolve_service(serviceId)
+
+                # Set model span attributes
+                adapter_cfg = service_info.get("adapter_config") or {}
+                span_attrs = {
+                    "total_time_ms": compute_total_time_ms(start_time),
+                    "model_name": service_info.get("name", ""),
+                    "model_version": service_info.get("model_version") or adapter_cfg.get("model_version", "unknown"),
+                    "task_type": task_type,
+                    **ctx_attrs,
+                }
+                for k, v in span_attrs.items():
+                    model_span.set_attribute(k, v)
+                model_span.set_status(StatusCode.OK)
+                log_span_attributes("model", model_span, span_attrs)
+
+                return service_info
+            except Exception as e:
+                span_attrs = {
+                    "total_time_ms": compute_total_time_ms(start_time),
+                    "task_type": task_type,
+                    **ctx_attrs,
+                }
+                for k, v in span_attrs.items():
+                    model_span.set_attribute(k, v)
+                model_span.set_status(StatusCode.ERROR, str(e))
+                log_span_attributes("model", model_span, span_attrs)
+                self.logger.error(
+                    f"Failed to resolve service '{serviceId}': {type(e).__name__}: {e}",
+                    exc_info=True,
+                )
+                raise RuntimeError(
+                    f"Orchestrator: Failed to resolve service '{serviceId}': {e}"
+                ) from e
 
     async def _execute_task_service(
         self,

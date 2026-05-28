@@ -29,7 +29,6 @@ import numpy as np
 import scipy.signal as sps
 
 from interfaces.task_service import BaseTaskService
-from ai4icore_core.telemetry import async_trace_stage
 
 logger = logging.getLogger(__name__)
 
@@ -139,8 +138,6 @@ class AudioBase(BaseTaskService):
     # ------------------------------------------------------------------
     # execute_triton_inference — audio-specific override
     # ------------------------------------------------------------------
-
-    @async_trace_stage("ai_inference")
     async def execute_triton_inference(
         self,
         payload: Dict[str, Any],

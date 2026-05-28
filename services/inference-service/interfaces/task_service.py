@@ -3,10 +3,9 @@ Task service interface and base class defining the contract for all inference ta
 """
 
 from abc import ABC, abstractmethod
+import os
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
-from ai4icore_core.telemetry import async_trace_stage
-
 
 class ITaskService(ABC):
     """
@@ -238,70 +237,151 @@ class BaseTaskService(ITaskService):
             f"{self.task_name} must implement get_payload_object"
         )
 
-    @async_trace_stage("ai_inference")
     async def execute_triton_inference(
         self,
         payload: Dict[str, Any],
         serviceInfo: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        try:
-            # 1. Use pre-resolved service info injected at construction time
-            serviceInfo = serviceInfo or {}
-            service_id = serviceInfo.get('service_id', '')
-            model_name = serviceInfo.get('name', '')
-            triton_endpoint = serviceInfo.get('endpoint', '')
-            api_key = serviceInfo.get('api_key')
-            adapter_config = serviceInfo.get('adapter_config')
+        import time
+        from trace.request_span import tracer, compute_total_time_ms
+        from trace.span_attributes import get_input_type, get_output_type, count_input_tokens, count_output_tokens
 
-            if not model_name or not triton_endpoint:
-                raise RuntimeError(
-                    f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
-                    "Ensure the Orchestrator resolved the service before creating this task service."
+        start_time = time.time()
+
+        with tracer.start_as_current_span("ai-inference") as inference_span:
+            try:
+                # 1. Use pre-resolved service info injected at construction time
+                serviceInfo = serviceInfo or {}
+                service_id = serviceInfo.get('service_id', '')
+                model_name = serviceInfo.get('name', '')
+                triton_endpoint = serviceInfo.get('endpoint', '')
+                api_key = serviceInfo.get('api_key')
+                adapter_config = {
+                        "inputs": [
+                            {
+                                "dtype": "BYTES",
+                                "shape": [
+                                    -1,
+                                    1
+                                ],
+                                "tensor": "INPUT_TEXT",
+                                "value_path": "input.source"
+                            },
+                            {
+                                "dtype": "BYTES",
+                                "shape": [
+                                    -1,
+                                    1
+                                ],
+                                "tensor": "INPUT_LANGUAGE_ID",
+                                "value_path": "request.config.language.source_language"
+                            },
+                            {
+                                "dtype": "BYTES",
+                                "shape": [
+                                    -1,
+                                    1
+                                ],
+                                "tensor": "OUTPUT_LANGUAGE_ID",
+                                "value_path": "request.config.language.target_language"
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "dtype": "BYTES",
+                                "tensor": "OUTPUT_TEXT",
+                                "maps_to": "target"
+                            }
+                        ],
+                        "version": "1.0",
+                        "model_version": "1"
+                    }#serviceInfo.get('adapter_config')
+
+                if not model_name or not triton_endpoint:
+                    raise RuntimeError(
+                        f"{self.task_name}: service_info is missing 'name' or 'endpoint'. "
+                        "Ensure the Orchestrator resolved the service before creating this task service."
+                    )
+
+                self.logger.debug(f"Converting payload to Triton format for model {model_name}")
+
+                # 2. Instantiate inference model with adapter config
+                from services.base.config_mapper import GenericTritonMapper
+                inference_model = GenericTritonMapper(adapter_config=adapter_config)
+
+                # 3. Extract input and config from payload
+                input_items = self.get_payload_object(payload)
+                config_data = payload.get('config', {})
+
+                if not input_items:
+                    raise ValueError(f"{self.task_name}: input payload is empty or missing")
+
+                source_texts = await self.extract_field_from_items(input_items, 'source')
+
+                # Compute input metrics for ai-inference span
+                input_type = get_input_type(payload)
+                input_tokens = count_input_tokens(input_items, input_type)
+
+                # 5. Convert payload to Triton format using inference model
+                triton_inputs, triton_outputs = await inference_model.convert_payload_to_triton_format(
+                    input_items, config_data
                 )
 
-            self.logger.debug(f"Converting payload to Triton format for model {model_name}")
+                # 6. Call Triton inference server
+                raw_triton_output = await self._call_triton_inference(
+                    triton_endpoint=triton_endpoint,
+                    triton_inputs=triton_inputs,
+                    triton_outputs=triton_outputs,
+                    api_key=api_key,
+                )
 
-            # 2. Instantiate inference model with adapter config
-            from services.base.config_mapper import GenericTritonMapper
-            inference_model = GenericTritonMapper(adapter_config=adapter_config)
+                # 7. Convert Triton output back to task format
+                self.logger.debug("Converting Triton output to task response format")
+                response_data = await inference_model.convert_triton_output_to_task_format(
+                    raw_triton_output
+                )
 
-            # 3. Extract input and config from payload
-            input_items = self.get_payload_object(payload)
-            config_data = payload.get('config', {})
+                # Compute output metrics for ai-inference span
+                output_type = get_output_type(response_data)
+                output_tokens = count_output_tokens(response_data, output_type)
 
-            if not input_items:
-                raise ValueError(f"{self.task_name}: input payload is empty or missing")
+                # Set ai-inference span attributes
+                span_attrs = {
+                    "total_time_ms": compute_total_time_ms(start_time),
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "input_type": input_type,
+                    "output_type": output_type,
+                    "status": "success",
+                    "status_code": 200,
+                }
+                for k, v in span_attrs.items():
+                    inference_span.set_attribute(k, v)
+                from trace.request_span import log_span_attributes
+                log_span_attributes("ai-inference", inference_span, span_attrs)
 
-            source_texts = await self.extract_field_from_items(input_items, 'source')
-
-            # 4. Convert payload to Triton format using inference model
-            triton_inputs, triton_outputs = await inference_model.convert_payload_to_triton_format(
-                input_items, config_data
-            )
-
-            # 5. Call Triton inference server
-            self.logger.info(f"Calling Triton inference server: {triton_endpoint}")
-            raw_triton_output = await self._call_triton_inference(
-                triton_endpoint=triton_endpoint,
-                triton_inputs=triton_inputs,
-                triton_outputs=triton_outputs,
-                api_key=api_key,
-            )
-
-            # 6. Convert Triton output back to task format
-            self.logger.debug("Converting Triton output to task response format")
-            response_data = await inference_model.convert_triton_output_to_task_format(
-                raw_triton_output
-            )
-
-            return {
-                "response_data": response_data,
-                "source_texts": source_texts,
-                "service_id": service_id,
-            }
-        except Exception as e:
-            self.logger.error(f"Triton inference execution failed: {str(e)}", exc_info=True)
-            raise
+                return {
+                    "response_data": response_data,
+                    "source_texts": source_texts,
+                    "service_id": service_id,
+                }
+            except Exception as e:
+                self.logger.error(f"Triton inference execution failed: {str(e)}", exc_info=True)
+                # Set error status on span
+                span_attrs = {
+                    "total_time_ms": compute_total_time_ms(start_time),
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "input_type": get_input_type(payload),
+                    "output_type": "unknown",
+                    "status": "failure",
+                    "status_code": 500,
+                }
+                for k, v in span_attrs.items():
+                    inference_span.set_attribute(k, v)
+                from trace.request_span import log_span_attributes
+                log_span_attributes("ai-inference", inference_span, span_attrs)
+                raise
             
     async def _call_triton_inference(
         self,
@@ -339,7 +419,12 @@ class BaseTaskService(ITaskService):
                 headers["Authorization"] = f"Bearer {api_key}"
 
             self.logger.debug(f"Calling Triton: POST {triton_endpoint}")
+
+            # TODO: Temporarily hardcoding 
+            model_management_url = os.getenv("MODEL_MANAGEMENT_SERVICE_URL")
+            triton_endpoint = f"{model_management_url}/v2/models/nmt/infer"
             return await HTTPServiceClient(timeout=300).post_json(triton_endpoint, payload, headers)
+            # return await HTTPServiceClient(timeout=300).post_json(triton_endpoint, payload, headers)
 
         except Exception as e:
             self.logger.error(f"Failed to connect to Triton: {str(e)}")

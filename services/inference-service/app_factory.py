@@ -5,7 +5,6 @@ Creates and configures the unified inference service with all components.
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from ai4icore_core.telemetry import TraceIDMiddleware
 from typing import Optional, Any
 import logging
 
@@ -16,6 +15,45 @@ from config import settings
 
 
 logger = logging.getLogger(__name__)
+
+
+def setup_tracing() -> None:
+    """
+    Initialize OpenTelemetry tracing for inference service.
+    
+    Sets up the tracer that will be used throughout the service
+    for distributed tracing of inference requests.
+    """
+    try:
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource
+        
+        # Create resource for this service
+        resource = Resource.create({"service.name": "inference-service"})
+        
+        # Create tracer provider
+        tracer_provider = TracerProvider(resource=resource)
+        
+        # Create OTLP exporter (uses OTEL_EXPORTER_OTLP_ENDPOINT env var)
+        try:
+            otlp_exporter = OTLPSpanExporter()
+            tracer_provider.add_span_processor(SimpleSpanProcessor(otlp_exporter))
+            logger.info("✓ OpenTelemetry tracing configured with OTLP exporter")
+        except Exception as e:
+            logger.warning(f"Could not configure OTLP exporter: {e}")
+            logger.info("Tracing will use default span processor")
+        
+        # Set the global tracer provider
+        trace.set_tracer_provider(tracer_provider)
+        logger.info("✓ Global tracer provider initialized")
+        
+    except ImportError:
+        logger.warning("OpenTelemetry not available, tracing disabled")
+    except Exception as e:
+        logger.error(f"Failed to initialize tracing: {e}", exc_info=True)
 
 
 class InferenceServiceFactory:
@@ -65,9 +103,6 @@ class InferenceServiceFactory:
             app: FastAPI application instance
         """
         logger.info("Setting up middleware...")
-        
-        # Trace ID middleware (must be first to capture all requests)
-        app.add_middleware(TraceIDMiddleware)
         
         # CORS middleware
         app.add_middleware(
@@ -166,6 +201,9 @@ async def create_inference_app() -> FastAPI:
     Returns:
         Configured FastAPI application ready to serve inference requests
     """
+    # Initialize tracing FIRST before anything else
+    setup_tracing()
+    
     factory = InferenceServiceFactory()
 
     # Create FastAPI app with OpenAPI docs

@@ -38,6 +38,7 @@ async def get_orchestrator() -> Orchestrator:
     description="Route inference requests to appropriate TaskService based on task_type",
 )
 async def run_inference(
+    request: Request,
     payload: Dict[str, Any],
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Dict[str, Any]:
@@ -79,7 +80,10 @@ async def run_inference(
         logger.info(f"Inference request: task_type={task_type}")
 
         # Route through orchestrator
-        result = await orchestrator.route_inference(payload=payload)
+        result = await orchestrator.route_inference(
+            payload=payload,
+            request=request,
+        )
 
         duration_ms = (time.time() - start_time) * 1000
         logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
@@ -99,6 +103,7 @@ async def run_inference(
     description="Route inference requests to NMT TaskService",
 )
 async def run_nmt_inference(
+    request: Request,
     payload: Dict[str, Any],
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Dict[str, Any]:
@@ -118,10 +123,10 @@ async def run_nmt_inference(
         task_type = request_payload["task_type"].upper()
         logger.info(f"Inference request: task_type={task_type}")
 
-        result = await orchestrator.route_inference(payload=request_payload)
+        result = await orchestrator.route_inference(payload=request_payload, request=request)
 
         duration_ms = (time.time() - start_time) * 1000
-        logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
+        # logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
 
         return result
 
@@ -138,6 +143,7 @@ async def run_nmt_inference(
     description="Route inference requests to NER TaskService",
 )
 async def run_ner_inference(
+    request: Request,
     payload: Dict[str, Any],
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Dict[str, Any]:
@@ -155,14 +161,14 @@ async def run_ner_inference(
             request_payload = payload
 
         task_type = request_payload["task_type"].upper()
-        logger.info(f"Inference request: task_type={task_type}")
+        # logger.info(f"Inference request: task_type={task_type}")
 
-        result = await orchestrator.route_inference(payload=request_payload)
+        result = await orchestrator.route_inference(payload=request_payload, request=request)
         result.pop("smr_response", None)
         result.pop("elapsed_time_ms", None)
 
         duration_ms = (time.time() - start_time) * 1000
-        logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
+        # logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
 
         return result
 
@@ -181,6 +187,7 @@ async def run_ner_inference(
     description="Route inference requests to TRANSLITERATION TaskService",
 )
 async def run_transliteration_inference(
+    request: Request,
     payload: Dict[str, Any],
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Dict[str, Any]:
@@ -200,7 +207,7 @@ async def run_transliteration_inference(
         task_type = request_payload["task_type"].upper()
         logger.info(f"Inference request: task_type={task_type}")
 
-        result = await orchestrator.route_inference(payload=request_payload)
+        result = await orchestrator.route_inference(payload=request_payload, request=request)
 
         duration_ms = (time.time() - start_time) * 1000
         logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
@@ -220,6 +227,7 @@ async def run_transliteration_inference(
     description="Route inference requests to LANGUAGE_DETECTION TaskService",
 )
 async def run_language_detection_inference(
+    request: Request,
     payload: Dict[str, Any],
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Dict[str, Any]:
@@ -239,7 +247,7 @@ async def run_language_detection_inference(
         task_type = request_payload["task_type"].upper()
         logger.info(f"Inference request: task_type={task_type}")
 
-        result = await orchestrator.route_inference(payload=request_payload)
+        result = await orchestrator.route_inference(payload=request_payload, request=request)
 
         duration_ms = (time.time() - start_time) * 1000
         logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
@@ -259,6 +267,7 @@ async def run_language_detection_inference(
     description="Route inference requests to ASR TaskService",
 )
 async def run_asr_inference(
+    request: Request,
     payload: Dict[str, Any],
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Dict[str, Any]:
@@ -278,7 +287,7 @@ async def run_asr_inference(
         task_type = request_payload["task_type"].upper()
         logger.info(f"Inference request: task_type={task_type}")
 
-        result = await orchestrator.route_inference(payload=request_payload)
+        result = await orchestrator.route_inference(payload=request_payload, request=request)
 
         duration_ms = (time.time() - start_time) * 1000
         logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
@@ -298,6 +307,7 @@ async def run_asr_inference(
     description="Route inference requests to Audio Language Detection TaskService",
 )
 async def run_audio_lang_detection_inference(
+    request: Request,
     payload: Dict[str, Any],
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Dict[str, Any]:
@@ -317,7 +327,7 @@ async def run_audio_lang_detection_inference(
         task_type = request_payload["task_type"].upper()
         logger.info(f"Inference request: task_type={task_type}")
 
-        result = await orchestrator.route_inference(payload=request_payload)
+        result = await orchestrator.route_inference(payload=request_payload, request=request)
         result.pop("smr_response", None)
         result.pop("elapsed_time_ms", None)
 
@@ -339,6 +349,7 @@ async def run_audio_lang_detection_inference(
     description="Route inference requests to Speaker Diarization TaskService",
 )
 async def run_speaker_diarization_inference(
+    request: Request,
     payload: Dict[str, Any],
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Dict[str, Any]:
@@ -358,7 +369,7 @@ async def run_speaker_diarization_inference(
         task_type = request_payload["task_type"].upper()
         logger.info(f"Inference request: task_type={task_type}")
 
-        result = await orchestrator.route_inference(payload=request_payload)
+        result = await orchestrator.route_inference(payload=request_payload, request=request)
         result.pop("smr_response", None)
         result.pop("elapsed_time_ms", None)
 
@@ -380,6 +391,7 @@ async def run_speaker_diarization_inference(
     description="Route inference requests to Language Diarization TaskService",
 )
 async def run_language_diarization_inference(
+    request: Request,
     payload: Dict[str, Any],
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Dict[str, Any]:
@@ -399,7 +411,7 @@ async def run_language_diarization_inference(
         task_type = request_payload["task_type"].upper()
         logger.info(f"Inference request: task_type={task_type}")
 
-        result = await orchestrator.route_inference(payload=request_payload)
+        result = await orchestrator.route_inference(payload=request_payload, request=request)
         result.pop("smr_response", None)
         result.pop("elapsed_time_ms", None)
 
@@ -421,6 +433,7 @@ async def run_language_diarization_inference(
     description="Route inference requests to OCR TaskService",
 )
 async def run_ocr_inference(
+    request: Request,
     payload: Dict[str, Any],
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ) -> Dict[str, Any]:
@@ -440,7 +453,7 @@ async def run_ocr_inference(
         task_type = request_payload["task_type"].upper()
         logger.info(f"Inference request: task_type={task_type}")
 
-        result = await orchestrator.route_inference(payload=request_payload)
+        result = await orchestrator.route_inference(payload=request_payload, request=request)
 
         duration_ms = (time.time() - start_time) * 1000
         logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
