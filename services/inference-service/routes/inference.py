@@ -133,7 +133,7 @@ async def run_nmt_inference(
 
 @router.post(
     "/ner/inference",
-    response_model=GenericInferenceResponse,
+    response_model=None,
     summary="NER Inference Endpoint",
     description="Route inference requests to NER TaskService",
 )
@@ -158,6 +158,8 @@ async def run_ner_inference(
         logger.info(f"Inference request: task_type={task_type}")
 
         result = await orchestrator.route_inference(payload=request_payload)
+        result.pop("smr_response", None)
+        result.pop("elapsed_time_ms", None)
 
         duration_ms = (time.time() - start_time) * 1000
         logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
