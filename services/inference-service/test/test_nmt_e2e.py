@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-End-to-end integration tests for NMTTaskService.
+End-to-end integration tests for TextDefaultModel.
 
 Uses a real GenericTritonMapper with a representative adapter_config,
 but mocks only the HTTP call to Triton.
 
 This mirrors how the service runs in production:
   process(payload) → validate → preprocess
-                   → run_inference (real mapper, mocked HTTP) → NMTInferenceResponse
+                   → run_inference (real mapper, mocked HTTP) → plain dict response
 
 Run from the inference-service root:
     python test/test_nmt_e2e.py
@@ -87,11 +87,10 @@ MOCK_TRITON_RESPONSE_HINDI = {
 
 
 async def test_full_pipeline_camel_payload():
-    """process() with a camelCase portal payload → NMTInferenceResponse."""
-    from services.models.text_default_model import NMTTaskService
-    from models.schemas.nmt import NMTInferenceResponse
+    """process() with a camelCase portal payload → plain dict response."""
+    from services.models.text_default_model import TextDefaultModel
 
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
     portal_payload = {
         "input": [{"source": "Hello, how are you?"}],
@@ -107,19 +106,18 @@ async def test_full_pipeline_camel_payload():
     ):
         response = await service.process(portal_payload)
 
-    assert isinstance(response, NMTInferenceResponse)
-    assert len(response.output) == 1
-    assert response.output[0].source == "Hello, how are you?"
-    assert response.output[0].target == "नमस्ते, आप कैसे हैं?"
-    logger.info("   [PASS] camelCase portal payload → correct NMTInferenceResponse")
+    assert isinstance(response, dict)
+    assert len(response["output"]) == 1
+    assert response["output"][0]["source"] == "Hello, how are you?"
+    assert response["output"][0]["target"] == "नमस्ते, आप कैसे हैं?"
+    logger.info("   [PASS] camelCase portal payload → correct plain dict response")
 
 
 async def test_full_pipeline_snake_payload():
     """process() with snake_case payload (both naming conventions work)."""
-    from services.models.text_default_model import NMTTaskService
-    from models.schemas.nmt import NMTInferenceResponse
+    from services.models.text_default_model import TextDefaultModel
 
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
     snake_payload = {
         "input": [{"source": "What is your name?"}],
@@ -135,17 +133,16 @@ async def test_full_pipeline_snake_payload():
     ):
         response = await service.process(snake_payload)
 
-    assert isinstance(response, NMTInferenceResponse)
-    assert response.output[0].target == "आपका नाम क्या है?"
-    logger.info("   [PASS] snake_case payload → correct NMTInferenceResponse")
+    assert isinstance(response, dict)
+    assert response["output"][0]["target"] == "आपका नाम क्या है?"
+    logger.info("   [PASS] snake_case payload → correct plain dict response")
 
 
 async def test_multi_input_pipeline():
-    """Two input items → two separate Triton calls → two TranslationOutput items."""
-    from services.models.text_default_model import NMTTaskService
-    from models.schemas.nmt import NMTInferenceResponse
+    """Two input items → two separate Triton calls → two output items."""
+    from services.models.text_default_model import TextDefaultModel
 
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
     payload = {
         "input": [
@@ -172,21 +169,21 @@ async def test_multi_input_pipeline():
     with patch("utils.http_client.HTTPServiceClient.post_json", new=mock_post_json):
         response = await service.process(payload)
 
-    assert isinstance(response, NMTInferenceResponse)
-    assert len(response.output) == 2
+    assert isinstance(response, dict)
+    assert len(response["output"]) == 2
     assert call_count == 2  # one Triton call per input item
-    assert response.output[0].source == "Hello"
-    assert response.output[0].target == "नमस्ते"
-    assert response.output[1].source == "Goodbye"
-    assert response.output[1].target == "अलविदा"
-    logger.info("   [PASS] two inputs → two Triton calls → two TranslationOutput items")
+    assert response["output"][0]["source"] == "Hello"
+    assert response["output"][0]["target"] == "नमस्ते"
+    assert response["output"][1]["source"] == "Goodbye"
+    assert response["output"][1]["target"] == "अलविदा"
+    logger.info("   [PASS] two inputs → two Triton calls → two output items")
 
 
 async def test_response_serialization():
-    """NMTInferenceResponse.model_dump() excludes None fields."""
-    from services.models.text_default_model import NMTTaskService
+    """Response is a plain dict — output key present with correct fields."""
+    from services.models.text_default_model import TextDefaultModel
 
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
     payload = {
         "input": [{"source": "Hello"}],
@@ -199,19 +196,18 @@ async def test_response_serialization():
     ):
         response = await service.process(payload)
 
-    serialized = response.model_dump()
-    assert "smr_response" not in serialized  # None fields excluded
-    assert "output" in serialized
-    assert serialized["output"][0]["source"] == "Hello"
-    assert serialized["output"][0]["target"] == "नमस्ते, आप कैसे हैं?"
-    logger.info("   [PASS] model_dump() excludes None + contains correct output")
+    assert isinstance(response, dict)
+    assert "output" in response
+    assert response["output"][0]["source"] == "Hello"
+    assert response["output"][0]["target"] == "नमस्ते, आप कैसे हैं?"
+    logger.info("   [PASS] response is plain dict with correct output structure")
 
 
 async def test_validate_same_language_rejected():
     """process() raises ValueError when source == target language."""
-    from services.models.text_default_model import NMTTaskService
+    from services.models.text_default_model import TextDefaultModel
 
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
     payload = {
         "input": [{"source": "Hello"}],
@@ -228,10 +224,9 @@ async def test_validate_same_language_rejected():
 
 async def test_validate_whitespace_source_accepted():
     """Whitespace-only source is sanitised to single space and accepted."""
-    from services.models.text_default_model import NMTTaskService
-    from models.schemas.nmt import NMTInferenceResponse
+    from services.models.text_default_model import TextDefaultModel
 
-    service = NMTTaskService(service_info=MOCK_SERVICE_INFO)
+    service = TextDefaultModel(service_info=MOCK_SERVICE_INFO)
 
     payload = {
         "input": [{"source": "   "}],
@@ -244,9 +239,9 @@ async def test_validate_whitespace_source_accepted():
     ):
         response = await service.process(payload)
 
-    assert isinstance(response, NMTInferenceResponse)
+    assert isinstance(response, dict)
     # Source sanitised to " " (single space) — pipeline completes without error
-    assert response.output[0].source == " "
+    assert response["output"][0]["source"] == " "
     logger.info("   [PASS] whitespace-only source sanitised and accepted")
 
 
@@ -259,13 +254,13 @@ async def run_all():
         ("full pipeline — camelCase portal payload", test_full_pipeline_camel_payload),
         ("full pipeline — snake_case payload", test_full_pipeline_snake_payload),
         ("multi-input — two Triton calls", test_multi_input_pipeline),
-        ("response serialization — exclude_none", test_response_serialization),
+        ("response serialization — plain dict", test_response_serialization),
         ("validation — same language rejected", test_validate_same_language_rejected),
         ("validation — whitespace source sanitised", test_validate_whitespace_source_accepted),
     ]
 
     logger.info("=" * 70)
-    logger.info("NMT NMTTaskService End-to-End Tests  (real mapper, mocked HTTP)")
+    logger.info("TextDefaultModel End-to-End Tests  (real mapper, mocked HTTP)")
     logger.info("=" * 70)
 
     passed = 0

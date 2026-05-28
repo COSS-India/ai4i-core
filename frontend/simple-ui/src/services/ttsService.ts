@@ -8,10 +8,10 @@ import {
   voiceListResponseSchema,
   voiceSchema,
 } from './dto/schemas/inference';
-import { 
-  TTSInferenceRequest, 
-  TTSInferenceResponse, 
-  Voice, 
+import {
+  TTSInferenceRequest,
+  TTSInferenceResponse,
+  Voice,
   TTSHealthResponse,
   VoiceListResponse,
   VoiceFilterOptions
@@ -55,13 +55,13 @@ export const listTTSServices = async (): Promise<TTSServiceDetailsResponse[]> =>
           }
         });
       }
-      
+
       // Extract endpoint and clean it
       let endpoint = service.endpoint || '';
       if (endpoint) {
         endpoint = endpoint.replace('http://', '').replace('https://', '');
       }
-      
+
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id,
@@ -133,7 +133,7 @@ export const performTTSInference = async (
 export const listVoices = async (filters?: VoiceFilterOptions): Promise<VoiceListResponse> => {
   try {
     const params: Record<string, any> = {};
-    
+
     if (filters?.language) {
       params.language = filters.language;
     }
@@ -228,7 +228,7 @@ export const validateTTSRequest = (
     return { isValid: false, error: 'Text length exceeds maximum limit of 512 characters' };
   }
 
-  if (!config.language.sourceLanguage) {
+  if (!config.language?.sourceLanguage) {
     return { isValid: false, error: 'Source language is required' };
   }
 
@@ -259,11 +259,11 @@ export const getSupportedLanguages = async (): Promise<string[]> => {
   try {
     const voices = await listVoices();
     const languages = new Set<string>();
-    
+
     voices.voices.forEach(voice => {
       voice.languages.forEach(lang => languages.add(lang));
     });
-    
+
     return Array.from(languages);
   } catch (error) {
     console.error('Failed to fetch supported languages:', error);

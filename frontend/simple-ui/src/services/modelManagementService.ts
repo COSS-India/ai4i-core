@@ -11,43 +11,28 @@ import {
   unpublishModelResponseSchema,
   withPlatformEnvelope,
 } from './dto/schemas/platform';
+import type {
+  ModelCreateRequest,
+  ModelDetails,
+  ModelListParams,
+  ModelResponse,
+  ModelStatusUpdateResponse,
+  ModelUpdateRequest,
+  PaginatedModels,
+  Service,
+  UnpublishModelResponse,
+} from '../types/platform';
 
-export interface ModelDetails {
-  modelId?: string;
-  model_id?: string;
-  name?: string;
-  versionStatus?: string;
-  version_status?: string;
-  task?: { type?: string };
-  task_type?: string;
-  taskType?: string;
-  version?: string;
-  modelVersion?: string;
-  submittedOn?: string | number;
-  submitted_on?: string | number;
-  [key: string]: any;
-}
-
-export interface ModelListParams {
-  offset?: number;
-  limit?: number;
-  taskType?: string;
-  versionStatus?: string;
-  createdBy?: string;
-}
-
-export interface PaginatedModels {
-  items: ModelDetails[];
-  total: number;
-  offset: number;
-  limit: number | null;
-}
-
-export interface UnpublishModelResponse {
-  message: string;
-  modelId: string;
-  success: boolean;
-}
+export type {
+  ModelCreateRequest,
+  ModelDetails,
+  ModelListParams,
+  ModelResponse,
+  ModelStatusUpdateResponse,
+  ModelUpdateRequest,
+  PaginatedModels,
+  UnpublishModelResponse,
+} from '../types/platform';
 
 /**
  * Unpublish a model
@@ -61,11 +46,11 @@ export const unpublishModel = async (
     // Platform-core toggles status through the model management PATCH endpoint.
     const response = await apiService.patch(
       apiEndpoints.platform.models.base,
-      { modelId, versionStatus: 'DEPRECATED' },
+      { modelId, versionStatus: MODEL_VERSION.STATUS.DEPRECATED },
       { responseSchema: withPlatformEnvelope(unpublishModelResponseSchema) }
     );
     return response.data;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Unpublish model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
     throw error;
@@ -82,7 +67,7 @@ export const getAllModels = async (): Promise<ModelDetails[]> => {
       responseSchema: modelsListSchema,
     });
     return response.data || [];
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Get models error:', error);
     throw error;
   }
@@ -123,7 +108,7 @@ export const fetchAllModelsMatchingFilters = async (
 
 export const getModelsPaginated = async (params: ModelListParams = {}): Promise<PaginatedModels> => {
   try {
-    const queryParams: Record<string, any> = {};
+    const queryParams: Record<string, string | number> = {};
     if (params.offset !== undefined && params.offset > 0) queryParams.offset = params.offset;
     if (params.limit !== undefined) queryParams.limit = params.limit;
     if (params.taskType) queryParams.task_type = params.taskType;
@@ -145,7 +130,7 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
       offset: params.offset ?? 0,
       limit: params.limit ?? null,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Get models (paginated) error:', error);
     throw error;
   }
@@ -156,13 +141,13 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
  * @param modelData - The model data to create
  * @returns Promise with created model
  */
-export const createModel = async (modelData: any): Promise<any> => {
+export const createModel = async (modelData: ModelCreateRequest): Promise<ModelResponse> => {
   try {
     const response = await apiService.post(apiEndpoints.platform.models.base, modelData, {
       responseSchema: unknownPlatformPayloadSchema,
     });
-    return response.data;
-  } catch (error: any) {
+    return response.data as ModelResponse;
+  } catch (error: unknown) {
     console.error('Register model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
     throw error;
@@ -180,7 +165,7 @@ export const getModelById = async (modelId: string): Promise<ModelDetails> => {
       responseSchema: modelSingleSchema,
     });
     return response.data;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Get model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
     throw error;
@@ -192,13 +177,13 @@ export const getModelById = async (modelId: string): Promise<ModelDetails> => {
  * @param modelData - The model data to update
  * @returns Promise with update response
  */
-export const updateModel = async (modelData: any): Promise<any> => {
+export const updateModel = async (modelData: ModelUpdateRequest): Promise<ModelStatusUpdateResponse> => {
   try {
     const response = await apiService.patch(apiEndpoints.platform.models.base, modelData, {
       responseSchema: unknownPlatformPayloadSchema,
     });
-    return response.data;
-  } catch (error: any) {
+    return response.data as ModelStatusUpdateResponse;
+  } catch (error: unknown) {
     console.error('Update model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
     throw error;
@@ -210,7 +195,7 @@ export const updateModel = async (modelData: any): Promise<any> => {
  * @param modelId - The ID of the model to publish
  * @returns Promise with publish response
  */
-export const publishModel = async (modelId: string): Promise<any> => {
+export const publishModel = async (modelId: string): Promise<ModelStatusUpdateResponse> => {
   try {
     // Platform-core toggles status through the model management PATCH endpoint.
     const response = await apiService.patch(
@@ -218,8 +203,8 @@ export const publishModel = async (modelId: string): Promise<any> => {
       { modelId, versionStatus: MODEL_VERSION.STATUS.ACTIVE },
       { responseSchema: unknownPlatformPayloadSchema }
     );
-    return response.data;
-  } catch (error: any) {
+    return response.data as ModelStatusUpdateResponse;
+  } catch (error: unknown) {
     console.error('Publish model error:', error);
     // Don't transform the error - let extractErrorInfo handle it
     throw error;
@@ -235,7 +220,7 @@ export const publishModel = async (modelId: string): Promise<any> => {
 export const listServices = async (
   taskType?: string,
   publishedOnly?: boolean
-): Promise<any[]> => {
+): Promise<Service[]> => {
   try {
     const url = apiEndpoints.platform.services.base;
     const params: Record<string, string> = {};
@@ -246,12 +231,13 @@ export const listServices = async (
       responseSchema: servicesListSchema,
     });
     return response.data || [];
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('List services error:', error);
+    const err = error as { response?: { data?: { detail?: string; message?: string } }; message?: string };
     const errorMessage =
-      error?.response?.data?.detail ||
-      error?.response?.data?.message ||
-      error?.message ||
+      err?.response?.data?.detail ||
+      err?.response?.data?.message ||
+      err?.message ||
       'Failed to fetch services';
     throw new Error(errorMessage);
   }

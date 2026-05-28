@@ -228,6 +228,16 @@ class BaseTaskService(ITaskService):
                 extracted.append('')
         return extracted
 
+    def get_payload_object(self, payload: Dict[str, Any]) -> List[Any]:
+        """Return the modality input list from the raw payload.
+
+        No default — every base class (TextBase/ImageBase/AudioBase) must
+        implement this to read its own key ('input' / 'image' / 'audio').
+        """
+        raise NotImplementedError(
+            f"{self.task_name} must implement get_payload_object"
+        )
+
     @async_trace_stage("ai_inference")
     async def execute_triton_inference(
         self,
@@ -256,11 +266,11 @@ class BaseTaskService(ITaskService):
             inference_model = GenericTritonMapper(adapter_config=adapter_config)
 
             # 3. Extract input and config from payload
-            input_items = payload.get('input', [])
+            input_items = self.get_payload_object(payload)
             config_data = payload.get('config', {})
 
             if not input_items:
-                raise ValueError(f"{self.task_name}: payload 'input' is empty or missing")
+                raise ValueError(f"{self.task_name}: input payload is empty or missing")
 
             source_texts = await self.extract_field_from_items(input_items, 'source')
 
@@ -292,7 +302,7 @@ class BaseTaskService(ITaskService):
         except Exception as e:
             self.logger.error(f"Triton inference execution failed: {str(e)}", exc_info=True)
             raise
-
+            
     async def _call_triton_inference(
         self,
         triton_endpoint: str,

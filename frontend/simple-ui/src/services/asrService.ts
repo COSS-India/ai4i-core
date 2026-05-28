@@ -7,12 +7,12 @@ import {
   asrModelsResponseSchema,
   inferenceConfigJsonSchema,
 } from './dto/schemas/inference';
-import { 
-  ASRInferenceRequest, 
-  ASRInferenceResponse, 
-  ASRModel, 
+import {
+  ASRInferenceRequest,
+  ASRInferenceResponse,
+  ASRModel,
   ASRHealthResponse,
-  ASRModelsResponse 
+  ASRModelsResponse
 } from '../types/asr';
 import { io, Socket } from 'socket.io-client';
 import { listServices } from './modelManagementService';
@@ -159,10 +159,10 @@ export const listASRServices = async (): Promise<ASRServiceDetails[]> => {
           }
         });
       }
-      
+
       // Extract endpoint
       const endpoint = service.endpoint || service.endpoint_url || '';
-      
+
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id,
@@ -238,7 +238,7 @@ export const validateASRRequest = (
     return { isValid: false, error: 'Audio content is required' };
   }
 
-  if (!config.language.sourceLanguage) {
+  if (!config.language?.sourceLanguage) {
     return { isValid: false, error: 'Source language is required' };
   }
 

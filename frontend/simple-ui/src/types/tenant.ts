@@ -53,12 +53,16 @@ export interface TenantRegisterRequest {
 }
 export type TenantRegisterResponse = TenantView;
 
+/** Roles assignable to tenant-scoped users (auth-service TenantUserRole). */
+export type TenantAssignableRole = 'USER' | 'TENANT ADMIN';
+
 // POST /api/v1/tenants/{tenant_id}/users
 export interface UserRegisterRequest {
   email: string;
   username: string;
   full_name?: string;
   phone_number?: string;
+  role?: TenantAssignableRole;
 }
 
 export interface UserRegisterResponse {
@@ -95,5 +99,6 @@ export interface TenantUserUpdateRequest {
   full_name?: string;
   phone_number?: string;
   username?: string;
+  role?: TenantAssignableRole;
 }
 export type TenantUserUpdateResponse = TenantUserView;

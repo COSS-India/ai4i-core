@@ -23,6 +23,7 @@ import { useQuery } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performNERInference, listNERServices } from "../services/nerService";
+import { parseNerEntities } from "../types/inference";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { NER_ERRORS, MIN_NER_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
@@ -58,7 +59,7 @@ const NERPage: React.FC = () => {
 
   const handleProcess = async () => {
     const trimmedText = inputText.trim();
-    
+
     // Validate input text
     if (!trimmedText) {
       const err = NER_ERRORS.TEXT_REQUIRED;
@@ -71,7 +72,7 @@ const NERPage: React.FC = () => {
       });
       return;
     }
-    
+
     if (trimmedText.length < MIN_NER_TEXT_LENGTH) {
       const err = NER_ERRORS.TEXT_TOO_SHORT;
       toast({
@@ -83,7 +84,7 @@ const NERPage: React.FC = () => {
       });
       return;
     }
-    
+
     if (trimmedText.length > MAX_TEXT_LENGTH) {
       const err = NER_ERRORS.TEXT_TOO_LONG;
       toast({
@@ -139,7 +140,7 @@ const NERPage: React.FC = () => {
     } catch (err: any) {
       // Use centralized error handler (ner context so backend message shown as default when no specific mapping)
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'ner');
-      
+
       setError(errorMessage);
       toast({
         title: showOnlyMessage ? undefined : errorTitle,
@@ -406,7 +407,7 @@ const NERPage: React.FC = () => {
                 )}
 
                 {/* NER Results */}
-              {fetched && result && result.output && result.output.length > 0 && (
+              {fetched && result && (
                   <>
                 <Box
                   p={4}
@@ -420,26 +421,8 @@ const NERPage: React.FC = () => {
                   </Text>
                   <VStack align="stretch" spacing={2}>
                     {(() => {
-                      // Handle both response formats:
-                      // 1. New format: nerPrediction array with token/tag
-                      // 2. Old format: entities array with text/label
-                      const firstOutput = result.output[0];
-                      let entities: any[] = [];
-                      
-                      if (firstOutput?.nerPrediction) {
-                        // Transform nerPrediction to entities format
-                        entities = firstOutput.nerPrediction
-                          .filter((pred: any) => pred.tag) // Only filter out entries without tags
-                          .map((pred: any) => ({
-                            text: pred.token,
-                            label: pred.tag,
-                            start: pred.tokenStartIndex || 0,
-                            end: pred.tokenEndIndex || 0,
-                          }));
-                      } else if (firstOutput?.entities) {
-                        entities = firstOutput.entities;
-                      }
-                      
+                      const entities = parseNerEntities(result);
+
                       if (entities.length === 0) {
                         return (
                           <Text fontSize="sm" color="gray.500" fontStyle="italic">
@@ -447,8 +430,8 @@ const NERPage: React.FC = () => {
                           </Text>
                         );
                       }
-                      
-                      return entities.map((entity: any, index: number) => (
+
+                      return entities.map((entity, index) => (
                         <HStack key={index} spacing={2}>
                           <Badge
                             colorScheme={getEntityColor(entity.label)}

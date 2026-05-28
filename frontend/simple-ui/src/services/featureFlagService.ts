@@ -1,81 +1,73 @@
 // Feature flag service for interacting with config service
 
-import apiClient, { apiEndpoints } from './api';
+import { z } from 'zod';
+import { apiService, apiEndpoints } from './api';
+import { ApiValidationError } from './dto/apiValidationError';
+import {
+  featureFlagBooleanEvalSchema,
+  featureFlagBulkEvalSchema,
+  featureFlagEvaluationResponseSchema,
+  featureFlagListResponseSchema,
+  featureFlagResponseSchema,
+  featureFlagSyncResponseSchema,
+} from './dto/schemas/featureFlags';
 
-// Types
 export interface FeatureFlagEvaluationRequest {
   flag_name: string;
   user_id?: string;
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
   default_value: boolean | string | number | object;
   environment: string;
 }
 
-export interface FeatureFlagEvaluationResponse {
-  flag_name: string;
-  value: boolean | string | number | object;
-  variant?: string;
-  reason: string;
-  evaluated_at: string;
-}
-
-export interface FeatureFlagResponse {
-  name: string;
-  description?: string;
-  is_enabled: boolean;
-  environment: string;
-  rollout_percentage?: string;
-  target_users?: string[];
-  unleash_flag_name?: string;
-  last_synced_at?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface FeatureFlagListResponse {
-  items: FeatureFlagResponse[];
-  total: number;
-  limit: number;
-  offset: number;
-}
+export type FeatureFlagEvaluationResponse = z.infer<
+  typeof featureFlagEvaluationResponseSchema
+>;
+export type FeatureFlagResponse = z.infer<typeof featureFlagResponseSchema>;
+export type FeatureFlagListResponse = z.infer<typeof featureFlagListResponseSchema>;
 
 export interface BulkEvaluationRequest {
   flag_names: string[];
   user_id?: string;
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
   environment: string;
 }
 
-// API gateway routes feature flag endpoints to config-service.
-// Use apiClient with centralized apiEndpoints constants.
-
 /**
- * Evaluate a single feature flag
- * Defaults to enabled (true) if evaluation fails or flag doesn't exist
+ * Evaluate a single feature flag.
+ * Defaults to enabled (true) if evaluation fails or flag doesn't exist.
+ * Contract mismatches ({@link ApiValidationError}) always propagate.
  */
 export const evaluateFeatureFlag = async (
   request: FeatureFlagEvaluationRequest
 ): Promise<FeatureFlagEvaluationResponse> => {
   try {
-    // Ensure default_value is true if not specified (for boolean flags)
-    const defaultValue = request.default_value !== undefined 
-      ? request.default_value 
-      : (typeof request.default_value === 'boolean' ? true : request.default_value);
-    
-    const response = await apiClient.post<FeatureFlagEvaluationResponse>(
+    const defaultValue =
+      request.default_value !== undefined
+        ? request.default_value
+        : typeof request.default_value === 'boolean'
+          ? true
+          : request.default_value;
+
+    const response = await apiService.post(
       apiEndpoints.featureFlags.evaluate,
       {
         ...request,
         default_value: defaultValue,
-      }
+      },
+      { responseSchema: featureFlagEvaluationResponseSchema }
     );
     return response.data;
-  } catch (error: any) {
-    // On any error, return enabled (true) by default
+  } catch (error: unknown) {
+    if (error instanceof ApiValidationError) {
+      throw error;
+    }
     console.debug(`Feature flag evaluation failed for '${request.flag_name}':`, error);
+    const fallbackValue =
+      typeof request.default_value === 'boolean' ? true : request.default_value;
     return {
       flag_name: request.flag_name,
-      value: typeof request.default_value === 'boolean' ? true : request.default_value,
+      value: fallbackValue as FeatureFlagEvaluationResponse['value'],
       variant: undefined,
       reason: 'ERROR',
       evaluated_at: new Date().toISOString(),
@@ -83,17 +75,15 @@ export const evaluateFeatureFlag = async (
   }
 };
 
-/**
- * Evaluate a boolean feature flag (simplified)
- */
+/** Evaluate a boolean feature flag (simplified). */
 export const evaluateBooleanFlag = async (
   flagName: string,
   environment: string,
   defaultValue: boolean = false,
   userId?: string,
-  context?: Record<string, any>
-): Promise<{ flag_name: string; value: boolean; reason: string }> => {
-  const response = await apiClient.post<{ flag_name: string; value: boolean; reason: string }>(
+  context?: Record<string, unknown>
+): Promise<z.infer<typeof featureFlagBooleanEvalSchema>> => {
+  const response = await apiService.post(
     apiEndpoints.featureFlags.evaluateBoolean,
     {
       flag_name: flagName,
@@ -101,70 +91,60 @@ export const evaluateBooleanFlag = async (
       context: context || {},
       default_value: defaultValue,
       environment,
-    }
+    },
+    { responseSchema: featureFlagBooleanEvalSchema }
   );
   return response.data;
 };
 
-/**
- * Bulk evaluate multiple feature flags
- */
+/** Bulk evaluate multiple feature flags. */
 export const bulkEvaluateFlags = async (
   request: BulkEvaluationRequest
-): Promise<{ results: Record<string, FeatureFlagEvaluationResponse> }> => {
-  const response = await apiClient.post<{ results: Record<string, FeatureFlagEvaluationResponse> }>(
+): Promise<z.infer<typeof featureFlagBulkEvalSchema>> => {
+  const response = await apiService.post(
     apiEndpoints.featureFlags.evaluateBulk,
-    request
+    request,
+    { responseSchema: featureFlagBulkEvalSchema }
   );
   return response.data;
 };
 
-/**
- * Get a single feature flag by name
- */
+/** Get a single feature flag by name. */
 export const getFeatureFlag = async (
   name: string,
   environment: string
 ): Promise<FeatureFlagResponse> => {
-  const response = await apiClient.get<FeatureFlagResponse>(
-    apiEndpoints.featureFlags.byName(name),
-    {
-      params: { environment },
-    }
-  );
+  const response = await apiService.get(apiEndpoints.featureFlags.byName(name), {
+    params: { environment },
+    responseSchema: featureFlagResponseSchema,
+  });
   return response.data;
 };
 
-/**
- * List all feature flags with pagination
- */
+/** List all feature flags with pagination. */
 export const listFeatureFlags = async (
   environment: string,
   limit: number = 50,
   offset: number = 0
 ): Promise<FeatureFlagListResponse> => {
-  const response = await apiClient.get<FeatureFlagListResponse>(
-    apiEndpoints.featureFlags.list,
-    {
-      params: { environment, limit, offset },
-    }
-  );
+  const response = await apiService.get(apiEndpoints.featureFlags.list, {
+    params: { environment, limit, offset },
+    responseSchema: featureFlagListResponseSchema,
+  });
   return response.data;
 };
 
-/**
- * Sync/refresh feature flags from Unleash
- */
+/** Sync/refresh feature flags from Unleash. */
 export const syncFeatureFlags = async (
   environment: string
-): Promise<{ synced_count: number; environment: string }> => {
-  const response = await apiClient.post<{ synced_count: number; environment: string }>(
+): Promise<z.infer<typeof featureFlagSyncResponseSchema>> => {
+  const response = await apiService.post(
     apiEndpoints.featureFlags.sync,
     null,
     {
       params: { environment },
+      responseSchema: featureFlagSyncResponseSchema,
     }
   );
   return response.data;
 };
-

@@ -295,7 +295,10 @@ class ModelService:
                 update_data["ref_url"] = value
             elif key == "inferenceEndPoint":
                 existing_ep = instance.inference_endpoint or {}
-                update_data["inference_endpoint"] = _deep_merge(existing_ep, jsonable_encoder(value))
+                ep_dict = payload.inferenceEndPoint.model_dump(
+                    by_alias=True, exclude_unset=True, exclude_none=True
+                )
+                update_data["inference_endpoint"] = _deep_merge(existing_ep, jsonable_encoder(ep_dict))
             elif key in ("task", "languages", "domain", "benchmarks", "submitter"):
                 update_data[key] = jsonable_encoder(value)
             else:

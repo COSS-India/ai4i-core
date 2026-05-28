@@ -11,7 +11,6 @@ Child classes only add service-specific logic on top of super().validate_request
 
 from typing import Any, Dict, List, Optional
 from interfaces.task_service import BaseTaskService
-from ai4icore_core.telemetry import async_trace_stage
 import json, logging
 
 
@@ -33,6 +32,14 @@ class TextBase(BaseTaskService):
 
     def _extract_target_lang(self, language: Dict[str, Any]) -> Optional[str]:
         return language.get("target_language") or language.get("targetLanguage")
+
+    # ------------------------------------------------------------------
+    # Payload key
+    # ------------------------------------------------------------------
+
+    def get_payload_object(self, payload: Dict[str, Any]) -> List[Any]:
+        """Text input list lives under payload['input']."""
+        return payload.get("input") or []
 
     # ------------------------------------------------------------------
     # Common validate_request

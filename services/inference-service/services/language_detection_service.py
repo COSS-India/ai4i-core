@@ -1,47 +1,48 @@
 """Language Detection TaskService."""
+import json
 import logging
 from typing import Any, Dict, List, Optional
 from services.base.text_base import TextBase
-from models.schemas.language_detection import LanguageDetectionInferenceResponse, LanguageDetectionOutput, LanguagePrediction
+
 logger = logging.getLogger(__name__)
+
 
 class LanguageDetectionTaskService(TextBase):
     # No language config required — language is DETECTED not specified
-    # Base validate_request handles input existence; language block skipped (no language in config)
+    # Base validate_request handles input existence; language block skipped.
 
     def __init__(self, service_info=None, **deps):
         super().__init__(service_info=service_info)
         self.logger = logger
 
     async def postprocess_output(self, response_items, source_texts=None):
-        import math
+        """
+        Return output items with 'source' (input text) and 'langPrediction'
+        as a list of prediction objects: [{langCode, scriptCode, langScore, language}, ...]
+        """
         output_list = []
+        sources = source_texts or []
         items = response_items if isinstance(response_items, list) else [response_items]
-        for item in items:
+        for idx, item in enumerate(items):
             raw_value = item.get("langPrediction", "") if isinstance(item, dict) else item
             # Unwrap single-element list nesting from Triton KServe v2 responses
             while isinstance(raw_value, (list, tuple)) and len(raw_value) == 1:
                 raw_value = raw_value[0]
             if isinstance(raw_value, bytes):
                 raw_value = raw_value.decode("utf-8", errors="replace")
-            decoded = str(raw_value).strip()
-            detection_data = self._parse_detection_row(decoded)
-            lang_code_full = detection_data.get("langCode", "other")
-            raw_confidence = float(detection_data.get("confidence", 0.0))
-            lang_code, script_code = (lang_code_full.split("_", 1) if "_" in lang_code_full else (lang_code_full, None))
-            confidence = raw_confidence if 0.0 <= raw_confidence <= 1.0 else 1.0 / (1.0 + math.exp(-raw_confidence))
-            primary = LanguagePrediction(language_code=lang_code, language=lang_code, script_code=script_code, confidence=round(confidence, 6))
-            output_list.append(LanguageDetectionOutput(primary_language=primary))
+            # Parse JSON-encoded prediction string into a list of prediction objects
+            if isinstance(raw_value, str):
+                try:
+                    raw_value = json.loads(raw_value)
+                except (json.JSONDecodeError, ValueError):
+                    raw_value = raw_value.strip()
+            source = sources[idx] if idx < len(sources) else ""
+            output_list.append({"source": source, "langPrediction": raw_value})
         self.logger.debug(f"LANGUAGE_DETECTION post-processed {len(output_list)} results")
         return {"output": output_list}
 
-    def _parse_detection_row(self, decoded_str):
-        import json, ast
-        decoded_str = decoded_str.strip()
-        try: return json.loads(decoded_str)
-        except json.JSONDecodeError: return ast.literal_eval(decoded_str)
-
     def _build_response(self, payload, postprocessed):
-        return LanguageDetectionInferenceResponse(output=postprocessed["output"])
+        return postprocessed
+
 
 __all__ = ["LanguageDetectionTaskService"]

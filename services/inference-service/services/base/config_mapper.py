@@ -174,7 +174,7 @@ class GenericTritonMapper:
             item: Dict[str, Any] = {}
             for key, value in mapped_outputs.items():
                 if isinstance(value, list):
-                    item[key] = value[idx] if idx < len(value) else value[-1]
+                    item[key] = value[idx] if idx < len(value) else (value[-1] if value else None)
                 else:
                     item[key] = value
             items.append(item)
