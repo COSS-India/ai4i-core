@@ -35,6 +35,7 @@ import {
 } from "../../../utils/tenantUserRoles";
 
 const USER_EMAIL_PAGE_SIZE = 100;
+const DEFAULT_TENANT_USER_ROLE = "USER" as const;
 
 /** Client-side tenant list search: organisation name or tenant ID (substring, case-insensitive). */
 function tenantMatchesSearch(t: TenantView, rawSearch: string): boolean {
@@ -99,6 +100,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     username: "",
     full_name: "",
     phone_number: "",
+    role: DEFAULT_TENANT_USER_ROLE,
   });
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
   const [userFormErrors, setUserFormErrors] = useState<Record<string, string>>({});
@@ -131,7 +133,11 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   // Edit user modal
   const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
   const [editUserRow, setEditUserRow] = useState<TenantUserView | null>(null);
-  const [editUserForm, setEditUserForm] = useState<EditUserFormState>({ tenant_id: "", user_id: "" });
+  const [editUserForm, setEditUserForm] = useState<EditUserFormState>({
+    tenant_id: "",
+    user_id: "",
+    role: DEFAULT_TENANT_USER_ROLE,
+  });
   const [editUserFormErrors, setEditUserFormErrors] = useState<Record<string, string>>({});
   const [isSubmittingEditUser, setIsSubmittingEditUser] = useState(false);
 
@@ -401,6 +407,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     username: "",
     full_name: "",
     phone_number: "",
+    role: DEFAULT_TENANT_USER_ROLE,
   });
 
   const openUserModal = () => {
@@ -658,7 +665,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     const currentStatus: TenantUserStatus =
       u.is_active && (u.is_tenant_active ?? true)
         ? TENANT.USER_STATUS.ACTIVE
-        : TENANT.USER_STATUS.INACTIVE;
+        : TENANT.USER_STATUS.SUSPENDED;
     setStatusUpdateTarget({
       type: "user",
       tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
@@ -730,6 +737,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   // ----- Edit tenant user -----
   const handleOpenEditUser = (u: TenantUserView) => {
+    const normalizedRole = (u.role ?? u.roles?.[0] ?? "").trim().toUpperCase();
+    const role =
+      normalizedRole === "TENANT ADMIN" ? "TENANT ADMIN" : DEFAULT_TENANT_USER_ROLE;
     setEditUserRow(u);
     setEditUserForm({
       tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
@@ -737,6 +747,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       username: u.username ?? "",
       full_name: u.full_name ?? "",
       phone_number: u.phone_number ?? "",
+      role,
     });
     setEditUserFormErrors({});
     setIsEditUserModalOpen(true);
