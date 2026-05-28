@@ -115,7 +115,7 @@ def compute_user_id_attr(request: Dict[str, Any]) -> str:
     user_id = get_user_id()
     return user_id or ""
 
-def compute_model_name(data: Dict[str, Any]) -> str:
+# def compute_model_name(data: Dict[str, Any]) -> str:
     """Extract model name from data (response from service resolution).
 
     Tries multiple sources where model name might be returned.
@@ -129,7 +129,7 @@ def compute_model_name(data: Dict[str, Any]) -> str:
         return str(model)
     return "unknown"
 
-def compute_model_version(data: Dict[str, Any]) -> str:
+# def compute_model_version(data: Dict[str, Any]) -> str:
     """Extract model version from data (request or response).
 
     Tries multiple sources:
@@ -146,7 +146,7 @@ def compute_model_version(data: Dict[str, Any]) -> str:
             return str(version)
     return "1"
 
-def compute_task_type(data: Dict[str, Any]) -> str:
+# def compute_task_type(data: Dict[str, Any]) -> str:
     """Extract or infer task type from data (request or response).
 
     Tries multiple sources:
@@ -259,9 +259,9 @@ REGISTRY = {
     "compute_http_status_code": compute_http_status_code,
     "compute_tenant_id": compute_tenant_id,
     "compute_user_id_attr": compute_user_id_attr,
-    "compute_model_name": compute_model_name,
-    "compute_model_version": compute_model_version,
-    "compute_task_type": compute_task_type,
+    # "compute_model_name": compute_model_name,
+    # "compute_model_version": compute_model_version,
+    # "compute_task_type": compute_task_type,
     "compute_input_size_kb": compute_input_size_kb,
     "compute_output_size_kb": compute_output_size_kb,
     "compute_input_tokens": compute_input_tokens,
@@ -308,6 +308,8 @@ def safe_eval(expression: str, context: Dict[str, Any]) -> Any:
         "int": int,
         "float": float,
         "bool": bool,
+        "isinstance": isinstance,
+        "getattr": getattr,
     }
 
     try:

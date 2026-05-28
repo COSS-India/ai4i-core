@@ -1,24 +1,24 @@
 {
   "request": {
     "start": [
-      {"attr": "tenantId", "func": "compute_tenant_id"},
-      {"attr": "userId", "func": "compute_user_id_attr"}
+      {"attr": "tenantId", "expr": "request.get('config', {}).get('tenantId', '') or request.get('tenantId', '') or request.get('tenant_id', '') or tenant_id_ctx or ''"},
+      {"attr": "userId", "expr": "request.get('config', {}).get('userId', '') or request.get('userId', '') or request.get('user_id', '') or user_id_ctx or ''"}
     ],
     "end": [
       {"attr": "total_time_ms", "func": "compute_elapsed_time"},
-      {"attr": "end_point", "func": "compute_endpoint"},
-      {"attr": "status", "func": "compute_request_status"},
-      {"attr": "status_code", "func": "compute_http_status_code"}
+      {"attr": "end_point", "expr": "request.get('endpoint', '') or request.get('path', '') or request.get('route', '') or endpoint_path or ''"},
+      {"attr": "status", "expr": "response.get('status')"},
+      {"attr": "status_code", "expr": "response.get('status_code') or response.get('http_status') or http_status_code_ctx"}
     ]
   },
   "model": {
-    "start": [],
+    "start": [
+      {"attr": "task_type", "expr": "request.get('task_type', '')"}
+    ],
     "end": [
       {"attr": "total_time_ms", "func": "compute_elapsed_time"},
-      {"attr": "model_name", "func": "compute_model_name"},
-      {"attr": "model_version", "func": "compute_model_version"},
-      {"attr": "task_type", "func": "compute_task_type"}
-    ]
+      {"attr": "model_name", "expr": " request.get('name', '') or 'unknown' "},
+{"attr": "model_version", "expr": "request.get('model_version', '') or request.get('version', '') or request.get('config', {}).get('model_version', '') or ''"}    ]
   },
   "ai_inference": {
     "start": [],
@@ -30,8 +30,8 @@
       {"attr": "output_tokens", "func": "compute_output_tokens"},
       {"attr": "input_type", "func": "compute_input_type"},
       {"attr": "output_type", "func": "compute_output_type"},
-      {"attr": "status", "func": "compute_request_status"},
-      {"attr": "status_code", "func": "compute_http_status_code"}
+      {"attr": "status", "expr": "response.get('status')"},
+      {"attr": "status_code", "expr": "response.get('status_code') or response.get('http_status') or http_status_code_ctx"}
     ]
   },
   "database_write": {
