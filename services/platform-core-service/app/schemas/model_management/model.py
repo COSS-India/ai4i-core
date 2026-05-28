@@ -20,7 +20,7 @@ from app.schemas.common import (
     validate_entity_name,
     validate_license,
 )
-from app.schemas.enums import VersionStatusEnum
+from app.schemas.enums.model_management import VersionStatusEnum
 
 
 # ── Create / Update ──

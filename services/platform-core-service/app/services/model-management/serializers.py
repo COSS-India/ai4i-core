@@ -9,8 +9,8 @@ the deprecated model-management-service for backwards compatibility.
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from app.models.model import Model
-from app.models.service import Service
+from app.models.model_management.model import Model
+from app.models.model_management.service import Service
 
 
 def _epoch(dt: Optional[datetime]) -> Optional[int]:

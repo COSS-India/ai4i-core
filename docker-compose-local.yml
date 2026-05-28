@@ -1249,6 +1249,11 @@ services:
           cp /etc/alertmanager/alertmanager.default.yml /etc/alertmanager/alertmanager.yml;
         fi;
         exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml
+    # Resolve `inference-service` to the host gateway so Alertmanager can POST the
+    # alert-history webhook back to platform-core when it runs natively on the host
+    # (mirrors the prometheus block's alias used for scraping host services).
+    extra_hosts:
+      - "inference-service:host-gateway"
     networks:
       - microservices-network
     restart: unless-stopped

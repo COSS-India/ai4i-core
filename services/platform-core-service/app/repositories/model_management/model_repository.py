@@ -12,7 +12,7 @@ from sqlalchemy import case, delete, desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models.model import Model, VersionStatus
+from app.models.model_management.model import Model, VersionStatus
 
 
 # JSONB-backed columns — must call flag_modified() after in-place mutation.

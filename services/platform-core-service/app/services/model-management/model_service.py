@@ -37,13 +37,13 @@ from app.core.exceptions import (
     EntityNotFoundError,
     ValidationError,
 )
-from app.models.model import Model, VersionStatus
-from app.repositories.model_repository import ModelRepository
-from app.repositories.service_repository import ServiceRepository
-from app.schemas.enums import VersionStatusEnum
-from app.schemas.model import ModelCreateRequest, ModelUpdateRequest
+from app.models.model_management.model import Model, VersionStatus
+from app.repositories.model_management.model_repository import ModelRepository
+from app.repositories.model_management.service_repository import ServiceRepository
+from app.schemas.enums.model_management import VersionStatusEnum
+from app.schemas.model_management.model import ModelCreateRequest, ModelUpdateRequest
 from app.services.cache_service import CacheService
-from app.services.serializers import model_to_dict
+from .serializers import model_to_dict
 from app.utils.hashing import generate_model_id
 
 logger = logging.getLogger(__name__)

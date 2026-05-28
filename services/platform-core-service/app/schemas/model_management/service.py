@@ -8,13 +8,13 @@ from pydantic import Field, field_validator
 
 from app.schemas.base import BaseSchema
 from app.schemas.common import BenchmarkEntry, validate_entity_name
-from app.schemas.enums import (
+from app.schemas.enums.model_management import (
     InferenceServerTypeEnum,
     PolicyAccuracyEnum,
     PolicyCostEnum,
     PolicyLatencyEnum,
 )
-from app.schemas.model import ModelResponse
+from app.schemas.model_management.model import ModelResponse
 
 
 # ── Health & policy sub-schemas ──
@@ -145,5 +145,3 @@ class ServiceDetailResponse(ServiceResponse):
     """Full service view — includes embedded model card."""
 
     model: Optional[ModelResponse] = None
-
-
