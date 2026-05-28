@@ -213,6 +213,7 @@ async def run_transliteration_inference(
 @router.post(
     "/language-detection/inference",
     response_model=GenericInferenceResponse,
+    response_model_exclude={"smr_response"},
     summary="LANGUAGE_DETECTION Inference Endpoint",
     description="Route inference requests to LANGUAGE_DETECTION TaskService",
 )
