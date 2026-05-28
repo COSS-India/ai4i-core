@@ -1,144 +1,232 @@
 """TTS (Text-to-Speech) TaskService implementation."""
 
+import base64
+import logging
+from io import BytesIO
 from typing import Any, Dict, List, Optional
 
-from interfaces.task_service import BaseTaskService
-from models.schemas.tts import (
-    TTSInferenceRequest,
-    TTSInferenceResponse,
-    TTSConfig,
-)
+import numpy as np
+import scipy.io.wavfile as wav_io
+import scipy.signal as sps
+
+from services.base.text_base import TextBase
+from services.base.config_mapper import GenericTritonMapper
+from pydub import AudioSegment
+
+logger = logging.getLogger(__name__)
+
+# Triton model always outputs at this rate
+_TRITON_SAMPLE_RATE = 22050
+# Maximum characters per Triton call
+_MAX_CHUNK_LENGTH = 400
 
 
-class TTSTaskService(BaseTaskService):
+class TTSTaskService(TextBase):
     """
     TaskService for Text-to-Speech inference.
-    Synthesizes speech audio from text inputs.
+
+    Extends TextBase for text validation and normalization.
+    Overrides run_inference to handle:
+      - per-item character-level chunking (≤ 400 chars per Triton call)
+      - audio concatenation across chunks
+      - resampling, duration adjustment, format conversion, base64 encoding
     """
 
-    def __init__(self, **dependencies: Any):
+    def __init__(self, service_info: Optional[Dict[str, Any]] = None, **kwargs: Any):
+        super().__init__(service_info=service_info)
+        self.logger = logger
+
+    # ------------------------------------------------------------------
+    # Inference — full TTS pipeline
+    # ------------------------------------------------------------------
+
+    async def run_inference(self, payload: Dict[str, Any], **_: Any) -> Any:
         """
-        Initialize TTS task service.
-
-        Args:
-            **dependencies: Injected dependencies
-                - redis_client: Redis client for caching
-                - model_management_client: Client for model/endpoint resolution
-                - inference_server_resolver: Resolver for Triton endpoints
-                - inference_model_factory: Factory for InferenceModel converters
+        TTS pipeline:
+          for each input item:
+            normalize text → chunk (≤ 400 chars) → Triton call per chunk
+            → concatenate FP32 arrays → int16 → resample → duration-adjust
+            → encode to audioFormat → base64
         """
-        pass
+        triton_endpoint = self.service_info.get("endpoint", "")
+        api_key         = self.service_info.get("api_key")
+        adapter_config  = self.service_info.get("adapter_config")
 
-    async def validate_request(self, request: TTSInferenceRequest) -> None:
-        """
-        Validate TTS inference request.
-        Checks input text, voice parameters, etc.
+        if not triton_endpoint:
+            raise RuntimeError(
+                f"{self.task_name}: service_info is missing 'endpoint'. "
+                "Ensure the Orchestrator resolved the service before creating this task service."
+            )
+        if not adapter_config:
+            raise RuntimeError(
+                f"{self.task_name}: adapter_config missing from service_info. "
+                "Every TTS service must have an adapter_config seeded in mm_services."
+            )
 
-        Args:
-            request: TTS request to validate
+        input_items: List[Dict[str, Any]] = payload.get("input", [])
+        config: Dict[str, Any] = payload.get("config") or {}
 
-        Raises:
-            ValueError: If request is invalid
-        """
-        pass
+        # Use TextBase helpers for language extraction
+        language     = self._get_language(payload)
+        source_lang  = self._extract_source_lang(language) or ""
+        gender       = config.get("gender", "female")
+        target_rate  = int(config.get("samplingRate") or config.get("sampling_rate") or _TRITON_SAMPLE_RATE)
+        audio_format = (config.get("audioFormat") or config.get("audio_format") or "wav").lower()
 
-    async def preprocess_input(self, input_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Preprocess text inputs for TTS.
-        Handles text normalization, SSML parsing, etc.
+        # Normalise config for GenericTritonMapper path resolution
+        triton_config = {
+            "language": {"source_language": source_lang},
+            "gender": gender,
+        }
 
-        Args:
-            input_data: List of text inputs
+        audio_outputs: List[Dict[str, Any]] = []
 
-        Returns:
-            Preprocessed input data
-        """
-        pass
+        for item in input_items:
+            item_dict = item if isinstance(item, dict) else item.model_dump(by_alias=False)
+            source_text    = item_dict.get("source", "")
+            audio_duration = item_dict.get("audioDuration") or item_dict.get("audio_duration")
 
-    async def run_inference(
+            chunks = self._chunk_text(source_text, _MAX_CHUNK_LENGTH)
+            chunk_arrays: List[np.ndarray] = []
+
+            for chunk in chunks:
+                chunk_item = {"source": chunk, "gender": gender, "language_id": source_lang}
+                triton_inputs, triton_outputs = self._build_triton_inputs(
+                    adapter_config, [chunk_item], triton_config
+                )
+                raw_output = await self._call_triton_inference(
+                    triton_endpoint=triton_endpoint,
+                    triton_inputs=triton_inputs,
+                    triton_outputs=triton_outputs,
+                    api_key=api_key,
+                )
+                audio_array = self._extract_audio_array(raw_output)
+                chunk_arrays.append(audio_array)
+
+            # Assemble chunks
+            combined = np.concatenate(chunk_arrays) if len(chunk_arrays) > 1 else chunk_arrays[0]
+
+            # Resample to requested rate
+            if target_rate != _TRITON_SAMPLE_RATE:
+                combined = self._resample_audio(combined, _TRITON_SAMPLE_RATE, target_rate)
+
+            # Duration adjustment
+            if audio_duration is not None:
+                actual_duration = len(combined) / target_rate
+                if actual_duration > audio_duration:
+                    combined = self._stretch_audio(combined, target_rate, audio_duration)
+                elif actual_duration < audio_duration:
+                    combined = self._append_silence(combined, target_rate, audio_duration)
+
+            actual_duration = len(combined) / target_rate
+
+            # Format conversion + base64
+            audio_bytes = self._to_audio_bytes(combined, target_rate, audio_format)
+            audio_b64   = base64.b64encode(audio_bytes).decode("utf-8")
+
+            audio_outputs.append({
+                "audioContent":   audio_b64,
+                "_audioDuration": actual_duration,
+            })
+
+        postprocessed = {
+            "audio":  [{"audioContent": o["audioContent"], "audioUri": None} for o in audio_outputs],
+            "config": {
+                "language": {
+                    "sourceLanguage":    source_lang,
+                    "sourceScriptCode":  None,
+                },
+                "audioFormat":   audio_format,
+                "encoding":      "base64",
+                "samplingRate":  target_rate,
+                "audioDuration": audio_outputs[0]["_audioDuration"] if audio_outputs else 0,
+            },
+            "smr_response": None,
+        }
+        return self._build_response(payload, postprocessed)
+
+    # ------------------------------------------------------------------
+    # Triton helpers
+    # ------------------------------------------------------------------
+
+    def _build_triton_inputs(
         self,
-        request: TTSInferenceRequest,
-        user_id: Optional[int] = None,
-        api_key_id: Optional[int] = None,
-        session_id: Optional[str] = None,
-    ) -> TTSInferenceResponse:
-        """
-        Execute end-to-end TTS inference pipeline.
-        Resolves service -> preprocesses -> calls Triton -> postprocesses -> returns response.
+        adapter_config: Any,
+        input_data: List[Dict[str, Any]],
+        config: Dict[str, Any],
+    ):
+        """Build KServe v2 payload from adapter_config."""
+        mapper = GenericTritonMapper(adapter_config)
+        return mapper.compose_triton_kserve_v2_payload(input_data=input_data, config=config)
 
-        Args:
-            request: TTS inference request
-            user_id: Optional user ID
-            api_key_id: Optional API key ID
-            session_id: Optional session ID
-
-        Returns:
-            TTS inference response with synthesized audio
+    def _extract_audio_array(self, triton_output: Dict[str, Any]) -> np.ndarray:
         """
-        pass
+        Extract OUTPUT_GENERATED_AUDIO from Triton response.
+        Triton returns FP32 data; converts to int16 for downstream processing.
+        """
+        audio_data = None
+        for output in triton_output.get("outputs", []):
+            if output.get("name") == "OUTPUT_GENERATED_AUDIO":
+                audio_data = output.get("data")
+                break
+
+        if audio_data is None:
+            raise ValueError(
+                f"{self.task_name}: OUTPUT_GENERATED_AUDIO not found in Triton response"
+            )
+
+        audio_fp32 = np.array(audio_data, dtype=np.float32).flatten()
+        # FP32 range assumed [-1, 1] from Triton TTS model
+        audio_int16 = np.clip(audio_fp32 * 32767, -32768, 32767).astype(np.int16)
+        return audio_int16
+
+    # ------------------------------------------------------------------
+    # Audio processing helpers
+    # ------------------------------------------------------------------
+
+    def _resample_audio(self, audio: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
+        if from_rate == to_rate:
+            return audio
+        num_samples = round(len(audio) * float(to_rate) / from_rate)
+        resampled = sps.resample(audio.astype(np.float32), num_samples)
+        return np.clip(resampled, -32768, 32767).astype(np.int16)
+
+    def _stretch_audio(self, audio: np.ndarray, sample_rate: int, target_duration: float) -> np.ndarray:
+        """Speed-stretch audio to fit target_duration by resampling to target sample count."""
+        target_samples = max(1, int(target_duration * sample_rate))
+        resampled = sps.resample(audio.astype(np.float32), target_samples)
+        return np.clip(resampled, -32768, 32767).astype(np.int16)
+
+    def _append_silence(self, audio: np.ndarray, sample_rate: int, target_duration: float) -> np.ndarray:
+        """Pad audio with trailing silence to reach target_duration."""
+        target_samples = int(target_duration * sample_rate)
+        if target_samples <= len(audio):
+            return audio
+        padding = np.zeros(target_samples - len(audio), dtype=np.int16)
+        return np.concatenate([audio, padding])
+
+    def _to_audio_bytes(self, audio: np.ndarray, sample_rate: int, audio_format: str) -> bytes:
+        """Convert int16 numpy array to bytes in the requested format."""
+        wav_buffer = BytesIO()
+        wav_io.write(wav_buffer, sample_rate, audio)
+        wav_bytes = wav_buffer.getvalue()
+
+        if audio_format == "wav":
+            return wav_bytes
+        segment = AudioSegment.from_wav(BytesIO(wav_bytes))
+        out_buffer = BytesIO()
+        segment.export(out_buffer, format=audio_format)
+        return out_buffer.getvalue()
+
+    # ------------------------------------------------------------------
+    # Output
+    # ------------------------------------------------------------------
 
     async def postprocess_output(
-        self, raw_triton_output: Dict[str, Any]
+        self, response_items: List[Dict[str, Any]], **kwargs: Any
     ) -> Dict[str, Any]:
-        """
-        Post-process raw Triton output for TTS.
-        Encodes audio to base64, formats metadata, etc.
+        # Not used — run_inference builds the response directly
+        return {"audio": response_items}
 
-        Args:
-            raw_triton_output: Raw output from Triton server
-
-        Returns:
-            Formatted output dictionary
-        """
-        pass
-
-    async def _resolve_service_and_model(
-        self, config: TTSConfig, session_id: Optional[str]
-    ) -> tuple:
-        """
-        Resolve inference service and model information.
-        Uses SmartModelRouter if service_id not provided.
-
-        Args:
-            config: TTS config with optional service_id
-            session_id: Optional session ID for tracing
-
-        Returns:
-            Tuple of (service_id, model_name, triton_endpoint, triton_api_key)
-        """
-        pass
-
-    async def _call_triton_inference(
-        self,
-        triton_endpoint: str,
-        model_name: str,
-        triton_inputs: Dict[str, Any],
-        triton_outputs: List[str],
-        api_key: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        Call Triton inference server with prepared inputs.
-
-        Args:
-            triton_endpoint: Triton server URL
-            model_name: Model name in Triton
-            triton_inputs: Formatted inputs for Triton
-            triton_outputs: Expected output names
-            api_key: Optional Triton API key
-
-        Returns:
-            Raw output from Triton
-        """
-        pass
-
-    async def _encode_audio_to_base64(self, audio_bytes: bytes) -> str:
-        """
-        Encode audio bytes to base64 string.
-
-        Args:
-            audio_bytes: Raw audio data
-
-        Returns:
-            Base64 encoded audio string
-        """
-        pass
+    def _build_response(self, payload: Dict[str, Any], postprocessed: Dict[str, Any]) -> Dict[str, Any]:
+        return postprocessed
