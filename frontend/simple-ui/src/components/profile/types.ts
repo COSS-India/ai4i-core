@@ -29,11 +29,14 @@ export const LANGUAGES = [
 ];
 
 export type {
+  TenantAssignableRole,
   TenantView,
   TenantUserView,
   ListTenantsResponse,
   ListUsersResponse,
 } from "../../types/tenant";
+
+import type { TenantAssignableRole } from "../../types/tenant";
 
 export interface TenantFormState {
   organisation: string;
@@ -48,15 +51,14 @@ export interface TenantUserFormState {
   username: string;
   full_name: string;
   phone_number: string;
+  role: TenantAssignableRole;
 }
 
+/** Static tenant user role values for list filters (Tenant Admin, User). */
 export const TENANT_USER_ROLE_OPTIONS = [
-  { value: "USER", label: "User" },
-  { value: "ADMIN", label: "Admin" },
-  { value: "GUEST", label: "Guest" },
-  { value: "MODERATOR", label: "Moderator" },
   { value: "TENANT ADMIN", label: "Tenant Admin" },
-] as const;
+  { value: "USER", label: "User" },
+] as const satisfies ReadonlyArray<{ value: TenantAssignableRole; label: string }>;
 
 export interface EditTenantFormState {
   tenant_id: string;
@@ -73,6 +75,7 @@ export interface EditUserFormState {
   email?: string;
   full_name?: string;
   phone_number?: string;
+  role: TenantAssignableRole;
 }
 
 export interface StatusUpdateTarget {

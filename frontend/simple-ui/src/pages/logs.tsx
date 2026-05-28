@@ -799,7 +799,7 @@ const LogsPage: React.FC = () => {
           const timestamp = log.timestamp || log["@timestamp"] || log.time || "";
           return (
             <Text fontSize="sm" color="gray.600" py={3}>
-              {formatTimestamp(timestamp)}
+              {formatTimestamp(typeof timestamp === "string" ? timestamp : String(timestamp ?? ""))}
             </Text>
           );
         },

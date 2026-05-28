@@ -9,71 +9,30 @@ import {
   traceSchema,
   traceSearchResponseSchema,
 } from './dto/schemas/observability';
+import type {
+  LogAggregationResponse,
+  LogEntry,
+  LogSearchResponse,
+  Process,
+  Span,
+  Trace,
+  TraceSearchResponse,
+} from '../types/observability';
 
-// Telemetry service runs on port 8084 (different from API gateway on 8080)
-const TELEMETRY_SERVICE_URL = process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL ;
+export type {
+  LogAggregationResponse,
+  LogEntry,
+  LogSearchResponse,
+  Process,
+  Span,
+  Trace,
+  TraceSearchResponse,
+} from '../types/observability';
+
+// Empty base URL uses same-origin paths so Next.js dev rewrites can proxy to the backend.
+const TELEMETRY_SERVICE_URL = process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL ?? '';
 
 const telemetryUrl = (path: string): string => `${TELEMETRY_SERVICE_URL}${path}`;
-
-// Types
-export interface LogEntry {
-  timestamp: string;
-  level: string;
-  service: string;
-  message: string;
-  organization?: string;
-  [key: string]: any;
-}
-
-export interface LogSearchResponse {
-  logs: LogEntry[];
-  total: number;
-  page: number;
-  size: number;
-  total_pages: number;
-}
-
-export interface LogAggregationResponse {
-  total: number;
-  error_count: number;
-  warning_count: number;
-  info_count?: number;  // Optional, calculated from by_level if needed
-  debug_count?: number;  // Optional, calculated from by_level if needed
-  by_level: Record<string, number>;
-  by_service: Record<string, number>;
-}
-
-export interface Trace {
-  traceID: string;
-  spans: Span[];
-  processes: Record<string, Process>;
-  startTime: number;
-  duration: number;
-}
-
-export interface Span {
-  traceID: string;
-  spanID: string;
-  operationName: string;
-  startTime: number;
-  duration: number;
-  tags: Array<{ key: string; value: any }>;
-  logs: Array<{ timestamp: number; fields: Array<{ key: string; value: any }> }>;
-  processID: string;
-  references?: Array<{ refType: string; traceID: string; spanID: string }>;
-}
-
-export interface Process {
-  serviceName: string;
-  tags: Array<{ key: string; value: any }>;
-}
-
-export interface TraceSearchResponse {
-  data: Trace[];
-  total: number;
-  limit: number;
-  offset: number;
-}
 
 /**
  * Search logs with filters
@@ -373,4 +332,3 @@ export const getOperationsForService = async (serviceName: string): Promise<stri
     throw new Error(errorMessage);
   }
 };
-
