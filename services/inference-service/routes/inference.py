@@ -174,6 +174,7 @@ async def run_ner_inference(
 @router.post(
     "/transliteration/inference",
     response_model=GenericInferenceResponse,
+    response_model_exclude={"config", "smr_response"},
     summary="TRANSLITERATION Inference Endpoint",
     description="Route inference requests to TRANSLITERATION TaskService",
 )
