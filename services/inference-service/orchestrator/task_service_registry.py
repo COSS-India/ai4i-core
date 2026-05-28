@@ -18,7 +18,6 @@ from services.asr_service import ASRTaskService
 from services.models.audio_default_model import AudioDefaultModel
 from services.language_detection_service import LanguageDetectionTaskService
 from services.language_diarization_service import LanguageDiarizationTaskService
-from services.llm_service import LLMTaskService
 from services.models.text_default_model import TextDefaultModel
 from services.ner_service import NERTaskService
 from services.models.image_default_model import ImageDefaultModel
@@ -53,11 +52,6 @@ TASK_SERVICE_REGISTRY = [
         "task_type":     "OCR",
         "model_name":    ["surya-ocr-gpu", "ai4bharat/triton-ocr"],
         "service_class": ImageDefaultModel,
-    },
-    {
-        "task_type":     "LLM",
-        "model_name":    ["ai4bharat/triton-llm", "llm-indic-prod"],
-        "service_class": LLMTaskService,
     },
     {
         "task_type":     "PII",

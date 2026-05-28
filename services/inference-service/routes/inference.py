@@ -5,12 +5,14 @@ Integrates orchestration, factory, and telemetry.
 """
 
 from typing import Any, Dict, Optional
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import JSONResponse
 import logging
 
 from orchestrator import Orchestrator, OrchestratorError
 from models.common import GenericInferenceRequest, GenericInferenceResponse
 from models.task_types import task_registry
+from services.llm_service import OpenAIProxyService
 
 
 logger = logging.getLogger(__name__)
@@ -53,7 +55,7 @@ async def run_inference(
 
     Request payload structure:
     {
-        "task_type": "NMT|ASR|OCR|NER|LLM|...",
+        "task_type": "NMT|ASR|OCR|NER|...",
         "input"|"audio"|"image": [...],  # Polymorphic input array
         "config": {...},                  # Task-specific config
         "control_config": {...}          # Optional control parameters
@@ -504,6 +506,26 @@ async def run_ocr_inference(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post(
+    "/chat/completions",
+    summary="OpenAI-compatible Chat Completions",
+    description="Forwards the request to the upstream LLM at /v1/chat/completions",
+)
+async def chat_completions(payload: Dict[str, Any]) -> JSONResponse:
+    status_code, body = await OpenAIProxyService().proxy(path="/v1/chat/completions", payload=payload)
+    return JSONResponse(status_code=status_code, content=body)
+
+
+@router.post(
+    "/chat",
+    summary="LLM Chat",
+    description="Forwards the request to the upstream LLM at /v1/chat",
+)
+async def chat(payload: Dict[str, Any]) -> JSONResponse:
+    status_code, body = await OpenAIProxyService().proxy(path="/v1/chat", payload=payload)
+    return JSONResponse(status_code=status_code, content=body)
+
+
 @router.get(
     "/inference/health",
     summary="Health Check",
@@ -536,7 +558,7 @@ async def list_available_tasks(
     Returns:
         Dict with list of available task types
     """
-    return {"tasks": ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]}
+    return {"tasks": ["NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]}
 
 async def get_task_info(
     task_type: str,

@@ -13,7 +13,6 @@ class TaskType(str, Enum):
     ASR = "ASR"  # Automatic Speech Recognition
     OCR = "OCR"  # Optical Character Recognition
     NER = "NER"  # Named Entity Recognition
-    LLM = "LLM"  # Large Language Model
     LANGUAGE_DETECTION = "LANGUAGE_DETECTION"  # Language Detection
     TTS = "TTS"  # Text-to-Speech
     TRANSLITERATION = "TRANSLITERATION"  # Transliteration
