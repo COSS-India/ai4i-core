@@ -79,15 +79,3 @@ class GenericInferenceResponse(BaseModel):
     class Config:
         use_enum_values = True
 
-class NMTInferenceResponse(BaseModel):
-    """NMT-specific response envelope: output array + SMR metadata only."""
-
-    output: List[Dict[str, Any]] = Field(..., description="Translation output results")
-    smr_response: Optional[Dict[str, Any]] = Field(
-        None, description="Smart Model Router metadata (if routing was performed)"
-    )
-
-    class Config:
-        use_enum_values = True
-
-

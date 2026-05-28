@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request, HTTPException, Depends
 import logging
 
 from orchestrator import Orchestrator, OrchestratorError
-from models.common import GenericInferenceRequest, GenericInferenceResponse, NMTInferenceResponse
+from models.common import GenericInferenceRequest, GenericInferenceResponse
 from models.task_types import task_registry
 
 
@@ -93,7 +93,8 @@ async def run_inference(
 
 @router.post(
     "/nmt/inference",
-    response_model=NMTInferenceResponse,
+    response_model=GenericInferenceResponse,
+    response_model_exclude={"config"},
     summary="NMT Inference Endpoint",
     description="Route inference requests to NMT TaskService",
 )
