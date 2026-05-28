@@ -70,13 +70,13 @@ class LanguageDiarizationTaskService(AudioDefaultModel):
                 start = float(seg.get("start_time", 0.0))
                 end = float(seg.get("end_time", 0.0))
                 segments.append({
-                    "start": start,
-                    "end": end,
+                    "start_time": start,
+                    "end_time": end,
                     "duration": float(seg.get("duration", end - start)),
                     "language": str(seg.get("language", "")),
                     "confidence": float(seg.get("confidence", 0.0)),
                 })
-            segments.sort(key=lambda s: s["start"])
+            segments.sort(key=lambda s: s["start_time"])
 
             output_list.append({
                 "total_segments": len(segments),
@@ -89,11 +89,12 @@ class LanguageDiarizationTaskService(AudioDefaultModel):
     def _build_response(
         self, payload: Dict[str, Any], postprocessed: Dict[str, Any]
     ) -> Dict[str, Any]:
-        service_id = (payload.get("config") or {}).get("serviceId")
-        result = {"taskType": "language-diarization", "output": postprocessed["output"]}
-        if service_id:
-            result["config"] = {"serviceId": service_id}
-        return result
+        cfg = payload.get("config") or {}
+        return {
+            "taskType": "language-diarization",
+            "output": postprocessed["output"],
+            "config": {"serviceId": cfg.get("serviceId")},
+        }
 
     def _parse_json(self, value: Any) -> Dict[str, Any]:
         if value is None:

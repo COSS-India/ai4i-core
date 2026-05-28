@@ -9,6 +9,7 @@ Tasks that need float PCM preprocessing (ASR) extend AudioBase directly
 and live in their own service file.
 """
 
+import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -73,6 +74,9 @@ class AudioDefaultModel(AudioBase):
         config: Dict[str, Any],
     ) -> Tuple[List[Dict[str, Any]], List[str]]:
         """Build Triton inputs from adapter_config tensor declarations."""
+        config = dict(config)
+        if "num_speakers" not in config and "numSpeakers" not in config:
+            config["num_speakers"] = ""
         mapper = GenericTritonMapper(self._adapter_config)
         return mapper.compose_triton_kserve_v2_payload(
             input_data=input_data,
@@ -124,11 +128,20 @@ class AudioDefaultModel(AudioBase):
         for item in response_items:
             clean = {}
             for key, value in item.items():
-                # Unwrap single-element list nesting: ["hi"] → "hi", [[0.99]] → 0.99
                 while isinstance(value, (list, tuple)) and len(value) == 1:
                     value = value[0]
                 if isinstance(value, bytes):
                     value = value.decode("utf-8", errors="replace")
+                if key == "all_scores" and isinstance(value, str):
+                    try:
+                        value = json.loads(value)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                if key == "confidence":
+                    try:
+                        value = float(value)
+                    except (TypeError, ValueError):
+                        pass
                 clean[key] = value
             unwrapped.append(clean)
         return {"output": unwrapped}
@@ -136,5 +149,9 @@ class AudioDefaultModel(AudioBase):
     def _build_response(
         self, payload: Dict[str, Any], postprocessed: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Return postprocessed dict directly — route applies GenericInferenceResponse."""
-        return postprocessed
+        cfg = payload.get("config") or {}
+        return {
+            "taskType": "audio-lang-detection",
+            "output": postprocessed["output"],
+            "config": {"serviceId": cfg.get("serviceId")},
+        }

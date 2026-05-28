@@ -608,13 +608,11 @@ class AudioBase(BaseTaskService):
         execute_triton_inference; used to populate TranscriptionOutput.source so
         the frontend can identify which audio item each transcript belongs to.
         """
-        sources = source_texts or []
         output = []
-        for idx, item in enumerate(decoded_items):
-            # adapter_config maps TRANSCRIPTS → "transcript" (maps_to field)
+        for item in decoded_items:
             transcript = item.get("transcript", item.get("source", ""))
-            source = sources[idx] if idx < len(sources) else ""
-            output.append({"source": source, "transcript": str(transcript)})
+            n_best = item.get("nBestTokens", item.get("n_best_tokens"))
+            output.append({"source": str(transcript), "nBestTokens": n_best})
         return {"output": output}
 
     async def _empty_output(self, **kwargs: Any) -> Dict[str, Any]:
