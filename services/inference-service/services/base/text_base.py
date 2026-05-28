@@ -185,8 +185,3 @@ class TextBase(BaseTaskService):
         return [{"token": wi["word"], "tag": aligned[idx]["tag"] if idx in aligned else "O",
                  "tokenIndex": idx, "tokenStartIndex": wi["start"], "tokenEndIndex": wi["end"]}
                 for idx, wi in enumerate(word_positions)]
-
-    @async_trace_stage("ai_inference")
-    async def execute_triton_inference(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Override to use ai_inference stage name for text-based task tracing."""
-        return await super().execute_triton_inference(payload)

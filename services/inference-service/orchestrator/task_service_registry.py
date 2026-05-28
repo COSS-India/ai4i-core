@@ -31,7 +31,7 @@ from services.tts_service import TTSTaskService
 TASK_SERVICE_REGISTRY = [
     {
         "task_type":     "NMT",
-        "model_name":    ["indictrans-gpu-t4"],
+        "model_name":    ["indictrans-gpu-t4", "indictrans-gpu-t4"],
         "service_class": TextDefaultModel,
     },
     {

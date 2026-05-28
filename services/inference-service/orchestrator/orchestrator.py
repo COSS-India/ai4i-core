@@ -94,6 +94,7 @@ class Orchestrator:
             task_response = await self._execute_task_service(
                 task_service=task_service,
                 payload=payload,
+                serviceInfo=service_info,  # Pass resolved service info to task service 
             )
             
             # Serialize response
@@ -229,6 +230,7 @@ class Orchestrator:
         self,
         task_service: ITaskService,
         payload: Dict[str, Any],
+        serviceInfo: Optional[Dict[str, Any]] = None,
     ) -> BaseModel:
         """
         Execute task service with raw payload.
@@ -245,7 +247,7 @@ class Orchestrator:
             TaskServiceExecutionError: If service execution fails
         """
         try:
-            result = await task_service.process(payload)  # type: ignore
+            result = await task_service.process(payload, serviceInfo)  # type: ignore
             return result  # type: ignore
         except Exception as e:
             raise TaskServiceExecutionError(f"Task service execution failed: {str(e)}")

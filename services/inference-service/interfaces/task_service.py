@@ -5,6 +5,7 @@ Task service interface and base class defining the contract for all inference ta
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
+from ai4icore_core.telemetry import async_trace_stage
 
 
 class ITaskService(ABC):
@@ -44,9 +45,6 @@ class ITaskService(ABC):
     async def run_inference(
         self,
         payload: Dict[str, Any],
-        user_id: Optional[int] = None,
-        api_key_id: Optional[int] = None,
-        session_id: Optional[str] = None,
     ) -> BaseModel:
         """
         Execute the core inference logic.
@@ -114,6 +112,7 @@ class BaseTaskService(ITaskService):
     async def process(
         self,
         payload: Dict[str, Any],
+        serviceInfo: Optional[Dict[str, Any]] = None,
     ) -> BaseModel:
         """
         Execute the complete inference pipeline (Template Method).
@@ -130,6 +129,8 @@ class BaseTaskService(ITaskService):
         Raises:
             ValueError: If validation fails
         """
+
+        
         # Shallow copy so preprocessing mutations don't affect the caller's original dict
         payload = dict(payload)
 
@@ -150,7 +151,13 @@ class BaseTaskService(ITaskService):
                     break
 
         # 3. Run inference
-        response = await self.run_inference(payload)
+        if serviceInfo is not None:
+            self.logger.debug("Using injected service_info for Triton inference")
+            self.service_info = serviceInfo
+        else:
+            serviceInfo = self.service_info  # Fallback to self.service_info if not passed as argument
+
+        response = await self.run_inference(payload, serviceInfo=serviceInfo)
 
         return response
 
@@ -186,11 +193,9 @@ class BaseTaskService(ITaskService):
     async def run_inference(
         self,
         payload: Dict[str, Any],
-        user_id: Optional[int] = None,
-        api_key_id: Optional[int] = None,
-        session_id: Optional[str] = None,
+        serviceInfo: Optional[Dict[str, Any]] = None,
     ) -> Any:
-        result = await self.execute_triton_inference(payload)
+        result = await self.execute_triton_inference(payload, serviceInfo=serviceInfo)
         postprocessed = await self.postprocess_output(
             result["response_data"], source_texts=result["source_texts"]
         )
@@ -223,18 +228,20 @@ class BaseTaskService(ITaskService):
                 extracted.append('')
         return extracted
 
+    @async_trace_stage("ai_inference")
     async def execute_triton_inference(
         self,
         payload: Dict[str, Any],
-
+        serviceInfo: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         try:
             # 1. Use pre-resolved service info injected at construction time
-            service_id = self.service_info.get('service_id', '')
-            model_name = self.service_info.get('name', '')
-            triton_endpoint = self.service_info.get('endpoint', '')
-            api_key = self.service_info.get('api_key')
-            adapter_config = self.service_info.get('adapter_config')
+            serviceInfo = serviceInfo or {}
+            service_id = serviceInfo.get('service_id', '')
+            model_name = serviceInfo.get('name', '')
+            triton_endpoint = serviceInfo.get('endpoint', '')
+            api_key = serviceInfo.get('api_key')
+            adapter_config = serviceInfo.get('adapter_config')
 
             if not model_name or not triton_endpoint:
                 raise RuntimeError(
