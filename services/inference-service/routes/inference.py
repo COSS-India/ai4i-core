@@ -1,4 +1,4 @@
-services/inference-service/orchestrator/task_service_registry.py"""
+"""
 Main inference router with unified /inference endpoint.
 Handles all inference requests regardless of task type.
 Integrates orchestration, factory, and telemetry.
@@ -375,7 +375,7 @@ async def run_speaker_diarization_inference(
 
 @router.post(
     "/language-diarization/inference",
-    response_model=GenericInferenceResponse,
+    response_model=None,
     summary="Language Diarization Inference Endpoint",
     description="Route inference requests to Language Diarization TaskService",
 )
@@ -400,6 +400,8 @@ async def run_language_diarization_inference(
         logger.info(f"Inference request: task_type={task_type}")
 
         result = await orchestrator.route_inference(payload=request_payload)
+        result.pop("smr_response", None)
+        result.pop("elapsed_time_ms", None)
 
         duration_ms = (time.time() - start_time) * 1000
         logger.info(f"✓ Inference completed: task_type={task_type}, duration_ms={duration_ms:.2f}ms")
