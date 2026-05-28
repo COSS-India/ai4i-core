@@ -2,16 +2,11 @@
 
 import { apiService, apiEndpoints } from './api';
 import { transliterationInferenceResponseSchema } from './dto/schemas/inference';
+import type {
+  TransliterationInferenceRequest,
+  TransliterationInferenceResponse,
+} from '../types/inference';
 import { listServices } from './modelManagementService';
-import type { Service } from '../types/platform';
-import {
-  extractLanguageCodes,
-  resolveEndpoint,
-  resolveModelId,
-  resolveModelVersion,
-  resolveServiceId,
-  stripEndpointProtocol,
-} from '../utils/platformService';
 
 export interface TransliterationServiceDetailsResponse {
   service_id: string;
@@ -23,33 +18,10 @@ export interface TransliterationServiceDetailsResponse {
   supported_languages: string[];
 }
 
-export interface TransliterationInferenceRequest {
-  input: Array<{
-    source: string;
-  }>;
-  config: {
-    serviceId: string;
-    language: {
-      sourceLanguage: string;
-      targetLanguage: string;
-      sourceScriptCode?: string;
-      targetScriptCode?: string;
-    };
-    isSentence?: boolean;
-    numSuggestions?: number;
-  };
-  controlConfig?: {
-    [key: string]: any;
-  };
-}
-
-export interface TransliterationInferenceResponse {
-  output: Array<{
-    source: string;
-    target: string;
-    [key: string]: any;
-  }>;
-}
+export type {
+  TransliterationInferenceRequest,
+  TransliterationInferenceResponse,
+} from '../types/inference';
 
 /**
  * Get list of available Transliteration services from model management service
@@ -62,18 +34,37 @@ export const listTransliterationServices = async (): Promise<TransliterationServ
     const seen = new Set<string>();
 
     // Transform model management service response to TransliterationServiceDetailsResponse format
-    const normalized = services.map((service: Service) => {
-      const supportedLanguages = extractLanguageCodes(service.languages, 'simple');
-      const endpoint = stripEndpointProtocol(resolveEndpoint(service));
+    const normalized = services.map((service: any) => {
+      // Extract languages from service.languages array
+      const supportedLanguages: string[] = [];
+      if (service.languages && Array.isArray(service.languages)) {
+        service.languages.forEach((lang: any) => {
+          if (typeof lang === 'string') {
+            supportedLanguages.push(lang);
+          } else if (lang && typeof lang === 'object') {
+            // Handle different language object formats
+            const langCode = lang.code || lang.language;
+            if (langCode) {
+              supportedLanguages.push(langCode);
+            }
+          }
+        });
+      }
+
+      // Extract endpoint and clean it
+      let endpoint = service.endpoint || '';
+      if (endpoint) {
+        endpoint = endpoint.replace('http://', '').replace('https://', '');
+      }
 
       return {
-        service_id: resolveServiceId(service),
-        model_id: resolveModelId(service),
-        model_version: resolveModelVersion(service),
-        name: service.name || resolveServiceId(service),
+        service_id: service.serviceId || service.service_id,
+        model_id: service.modelId || service.model_id,
+        model_version: service.modelVersion || service.model_version || '',
+        name: service.name || service.serviceId || '',
         serviceDescription: service.serviceDescription || service.description || '',
-        endpoint,
-        supported_languages: supportedLanguages,
+        endpoint: endpoint,
+        supported_languages: Array.from(new Set(supportedLanguages)), // Remove duplicates
       } as TransliterationServiceDetailsResponse;
     });
 

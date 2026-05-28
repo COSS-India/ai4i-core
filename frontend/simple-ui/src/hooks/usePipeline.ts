@@ -4,9 +4,10 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { runPipelineInference } from '../services/pipelineService';
 import { convertWebmToWav, base64ToAudioObjectUrl } from '../utils/helpers';
-import { 
-  PipelineInferenceRequest, 
-  PipelineResult 
+import { getAsrTranscriptText } from '../types/inference';
+import {
+  PipelineInferenceRequest,
+  PipelineResult
 } from '../types/pipeline';
 import { MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS, PIPELINE_ERRORS } from '../config/constants';
 import { extractErrorInfo } from '../utils/errorHandler';
@@ -20,7 +21,7 @@ export const usePipeline = () => {
   const [timer, setTimer] = useState<number>(0);
   const [pendingAudio, setPendingAudio] = useState<string | null>(null);
   const [pendingAudioFormat, setPendingAudioFormat] = useState<string>('wav');
-  
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -144,11 +145,11 @@ export const usePipeline = () => {
         return;
       }
     }
-    
+
     // Check if stream tracks are still active
     const audioTracks = streamToUse.getAudioTracks();
     const hasActiveTrack = audioTracks.some(track => track.readyState === 'live');
-    
+
     if (!hasActiveTrack) {
       try {
         console.log('Audio stream tracks not active, reinitializing...');
@@ -209,14 +210,14 @@ export const usePipeline = () => {
         setTimer(0); // Reset timer on error
         return;
       }
-      
+
       console.log('Using audio stream with', tracks.length, 'active track(s)');
 
       // Create MediaRecorder
       const options: MediaRecorderOptions = {
         mimeType: 'audio/webm;codecs=opus' // Use webm with opus codec
       };
-      
+
       // Fallback to default if codec not supported
       let mediaRecorder: MediaRecorder;
       let actualMimeType = 'audio/webm';
@@ -246,11 +247,11 @@ export const usePipeline = () => {
         try {
           console.log('MediaRecorder onstop triggered');
           console.log('Total chunks collected:', audioChunksRef.current.length);
-          
+
           // Create blob from chunks
           const webmBlob = new Blob(audioChunksRef.current, { type: actualMimeType });
           console.log('Recording completed, WebM blob size:', webmBlob.size);
-          
+
           // Validate blob has actual audio data (not just header)
           if (webmBlob.size < 1000) {
             console.error('Recording blob too small, likely contains no audio data');
@@ -266,7 +267,7 @@ export const usePipeline = () => {
             setTimer(0); // Reset timer on error
             return;
           }
-          
+
           // Convert WebM to WAV format (required by API config)
           let blobToStore = webmBlob;
           try {
@@ -293,7 +294,7 @@ export const usePipeline = () => {
             setTimer(0); // Reset timer on error
             return;
           }
-          
+
           // Convert blob to base64 for API and process immediately
           const reader = new FileReader();
           reader.onload = () => {
@@ -307,10 +308,10 @@ export const usePipeline = () => {
             }
             console.log(`${blobToStore.type} Base64 data length:`, base64Data.length);
             console.log('Processing recorded audio...');
-            
+
             // Store blob for compatibility
             setAudioBlob(blobToStore);
-            
+
             // Process the audio immediately like ASR does
             if (processRecordedAudioRef.current) {
               processRecordedAudioRef.current(base64Data);
@@ -331,7 +332,7 @@ export const usePipeline = () => {
             setTimer(0);
           };
           reader.readAsDataURL(blobToStore);
-          
+
           setIsRecording(false);
           setTimer(0); // Reset timer when recording stops
         } catch (err) {
@@ -364,7 +365,7 @@ export const usePipeline = () => {
       };
 
       mediaRecorderRef.current = mediaRecorder;
-      
+
       // Start recording with timeslice to collect chunks during recording
       // This ensures we get data even if recording is stopped quickly
       // Timeslice of 1000ms = chunks every second
@@ -409,7 +410,7 @@ export const usePipeline = () => {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
-      
+
       // Stop the MediaRecorder regardless of state
       const recorder = mediaRecorderRef.current;
       if (recorder.state === 'recording' || recorder.state === 'paused') {
@@ -419,12 +420,12 @@ export const usePipeline = () => {
         recorder.stop();
         console.log('MediaRecorder stop() called, waiting for onstop handler...');
       }
-      
+
       // IMPORTANT: Don't stop audio tracks immediately!
       // Wait for the onstop handler to complete processing the blob
       // The tracks will be stopped after processing is complete
       // Stopping tracks too early can prevent MediaRecorder from finalizing the recording
-      
+
       setIsRecording(false);
 
       toast({
@@ -434,7 +435,7 @@ export const usePipeline = () => {
         duration: 2000,
         isClosable: true,
       });
-      
+
       // Stop audio tracks after a short delay to allow MediaRecorder to finalize
       // The onstop handler will process the blob, then we can safely stop tracks
       setTimeout(() => {
@@ -447,18 +448,18 @@ export const usePipeline = () => {
           });
         }
       }, 500); // Give MediaRecorder 500ms to finalize
-      
+
       // Note: The blob processing happens in onstop handler, which is set up in startRecording
     } catch (err) {
       console.error('Error stopping recording:', err);
       setIsRecording(false);
       setTimer(0);
-      
+
       // Force stop tracks even if there's an error
       if (audioStream) {
         audioStream.getTracks().forEach(track => track.stop());
       }
-      
+
       toast({
         title: 'Recording Error',
         description: 'Failed to stop recording.',
@@ -484,7 +485,7 @@ export const usePipeline = () => {
         reader.abort();
         reject(new Error('UPLOAD_TIMEOUT'));
       }, 30000); // 30 second timeout for file reading
-      
+
       reader.onloadend = () => {
         clearTimeout(timeout);
         const result = reader.result as string;
@@ -527,18 +528,18 @@ export const usePipeline = () => {
 
       // Parse response
       const pipelineData = response.pipelineResponse;
-      
+
       if (pipelineData.length >= 3) {
         // Extract ASR output (index 0)
         const asrOutput = pipelineData[0].output?.[0];
-        
+
         // Extract translation output (index 1)
         const nmtOutput = pipelineData[1].output?.[0];
-        
+
         // Extract TTS audio (index 2)
         const ttsAudio = pipelineData[2].audio?.[0] || pipelineData[2].output?.[0];
-        
-        const sourceText = nmtOutput?.source || asrOutput?.source || '';
+
+        const sourceText = nmtOutput?.source || getAsrTranscriptText(asrOutput) || '';
         const targetText = nmtOutput?.target || '';
         const audioContent = ttsAudio?.audioContent || '';
         const outputAudioFormat =
@@ -559,7 +560,7 @@ export const usePipeline = () => {
         };
 
         setResult(pipelineResult);
-        
+
         toast({
           title: 'Pipeline Completed',
           description: 'Speech-to-Speech translation completed successfully!',
@@ -572,10 +573,10 @@ export const usePipeline = () => {
       }
     } catch (error: any) {
       console.error('Pipeline error:', error);
-      
+
       // Use centralized error handler (pipeline context so backend message shown as default when no specific mapping)
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error, 'pipeline');
-      
+
       toast({
         title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
@@ -693,17 +694,17 @@ export const usePipeline = () => {
       return new Promise((resolve) => {
         const audio = new Audio();
         const url = URL.createObjectURL(file);
-        
+
         const timeout = setTimeout(() => {
           URL.revokeObjectURL(url);
           resolve({ isValid: false, duration: 0, error: 'UPLOAD_TIMEOUT' });
         }, 10000);
-        
+
         audio.addEventListener('loadedmetadata', () => {
           clearTimeout(timeout);
           URL.revokeObjectURL(url);
           const duration = audio.duration;
-          
+
           if (duration < MIN_RECORDING_DURATION) {
             resolve({ isValid: false, duration, error: 'AUDIO_TOO_SHORT' });
           } else if (duration > MAX_RECORDING_DURATION) {
@@ -714,13 +715,13 @@ export const usePipeline = () => {
             resolve({ isValid: true, duration });
           }
         });
-        
+
         audio.addEventListener('error', () => {
           clearTimeout(timeout);
           URL.revokeObjectURL(url);
           resolve({ isValid: false, duration: 0, error: 'INVALID_FILE' });
         });
-        
+
         audio.src = url;
       });
     };
@@ -775,7 +776,7 @@ export const usePipeline = () => {
       setPendingAudioFormat(formatToUse);
     } catch (error: any) {
       console.error('Error processing uploaded audio:', error);
-      const err = error?.message === 'UPLOAD_TIMEOUT' 
+      const err = error?.message === 'UPLOAD_TIMEOUT'
         ? UPLOAD_ERRORS.UPLOAD_TIMEOUT
         : error?.message === 'INVALID_FILE'
         ? UPLOAD_ERRORS.INVALID_FILE

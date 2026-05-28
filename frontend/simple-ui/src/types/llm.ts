@@ -1,27 +1,6 @@
 // TypeScript type definitions for LLM service
 
-// LLM Inference Request
-export interface LLMInferenceRequest {
-  input: Array<{
-    source: string;
-  }>;
-  config: {
-    serviceId: string;
-    inputLanguage?: string;
-    outputLanguage?: string;
-  };
-  controlConfig?: {
-    dataTracking?: boolean;
-  };
-}
-
-// LLM Inference Response
-export interface LLMInferenceResponse {
-  output: Array<{
-    source: string;
-    target: string;
-  }>;
-}
+export type { LLMInferenceRequest, LLMInferenceResponse } from './inference';
 
 // LLM Model
 export interface LLMModel {
@@ -104,4 +83,3 @@ export interface LLMResultsProps {
   onCopyOutput?: () => void;
   onSwapTexts?: () => void;
 }
-

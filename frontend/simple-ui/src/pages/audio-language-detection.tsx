@@ -23,6 +23,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import AudioInputPreview from "../components/common/AudioInputPreview";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performAudioLanguageDetectionInference, listAudioLanguageDetectionServices } from "../services/audioLanguageDetectionService";
+import { parseAudioLanguageDetectionOutput } from "../types/inference";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { AUDIO_LANGUAGE_DETECTION_ERRORS } from "../config/constants";
@@ -132,7 +133,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
     } catch (err: any) {
       // Use centralized error handler (audio-language-detection context so backend message shown as default when no specific mapping)
       const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'audio-language-detection');
-      
+
       setError(errorMessage);
       toast({
         title: showOnlyMessage ? undefined : errorTitle,
@@ -371,32 +372,12 @@ const AudioLanguageDetectionPage: React.FC = () => {
 
                 {/* Audio Language Detection Results */}
                 {fetched && result && (() => {
-                  // Extract data - handle both result.output[0] and direct result structure
-                  const data = result.output && result.output[0] ? result.output[0] : result;
-                  
-                  // If we have multiple outputs, use the first one
-                  const outputItem = result.output && result.output.length > 0 
-                    ? result.output[0] 
-                    : data;
-
-                  // Extract language - handle predicted_language format "ml: Malayalam"
-                  let language = "Unknown";
-                  const predictedLanguage = outputItem.all_scores?.predicted_language || data?.all_scores?.predicted_language;
-                  
-                  if (predictedLanguage) {
-                    // Parse format like "ml: Malayalam" to extract "Malayalam"
-                    const parts = predictedLanguage.split(":");
-                    if (parts.length > 1) {
-                      language = parts.slice(1).join(":").trim(); // Join in case language name contains ":"
-                    } else {
-                      language = predictedLanguage.trim();
-                    }
-                  } else {
-                    // Fallback to other possible fields
-                    language = outputItem.detectedLanguage || outputItem.language || data.detectedLanguage || data.language || "Unknown";
-                  }
-                  
-                  const conf = outputItem.confidence !== undefined ? outputItem.confidence : (data.confidence !== undefined ? data.confidence : null);
+                  const outputItem =
+                    result.output && result.output.length > 0
+                      ? result.output[0]
+                      : result;
+                  const { language, confidence: conf } =
+                    parseAudioLanguageDetectionOutput(outputItem);
 
                   return (
                     <>
@@ -410,7 +391,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
                         <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
                           Audio Language Detection Results:
                         </Text>
-                        
+
                         <Box
                           p={4}
                           bg="white"
