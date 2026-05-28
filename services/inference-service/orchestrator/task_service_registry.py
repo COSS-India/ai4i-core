@@ -86,7 +86,7 @@ TASK_SERVICE_REGISTRY = [
     },
     {
         "task_type":     "AUDIO_LANGUAGE_DETECTION",
-        "model_name":    ["ai4bharat/triton-audio-language-detection", "ald-gpu"],
+        "model_name":    ["ai4bharat/triton-audio-language-detection", "ald-gpu", "sd-gpu"],
         "service_class": AudioDefaultModel,
     },
 ]
