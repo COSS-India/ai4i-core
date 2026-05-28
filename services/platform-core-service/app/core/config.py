@@ -104,6 +104,10 @@ class CoreSettings(BaseSettings):
     endpoint_validation_mode: str = "lenient"
     endpoint_validation_skip_tls_verify: bool = False
 
+    # ── External services ──
+    auth_service_url: str = ""
+    model_management_url: str = ""
+
     # ── Logging / Observability ──
     log_level: str = "INFO"
     jaeger_endpoint: Optional[str] = None

@@ -14,6 +14,7 @@ from app.routes.alert import router as alert_router
 from app.routes.health import router as health_router
 from app.routes.model import router as model_router
 from app.routes.service import router as service_router
+from app.routes.pay_per_use import router as pay_per_use_router, billing_router
 
 # ── Versioning ──
 versioning = APIVersioning(
@@ -29,6 +30,8 @@ versioning = APIVersioning(
 v1_router = versioning.create_router("v1")
 v1_router.include_router(model_router)
 v1_router.include_router(service_router)
+v1_router.include_router(pay_per_use_router)
+v1_router.include_router(billing_router)
 v1_router.include_router(alert_router)
 
 # ── Top-level router ──

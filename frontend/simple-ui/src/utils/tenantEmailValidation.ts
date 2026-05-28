@@ -39,18 +39,42 @@ export function collectUserEmails(users: { email?: string | null }[]): Set<strin
   return out;
 }
 
+/** When editing, skip collision checks for the record's current email. */
+export interface EmailUniquenessExclusions {
+  excludeTenantEmail?: string;
+  excludeUserEmail?: string;
+}
+
+function isExcludedEmail(lower: string, exclusions?: EmailUniquenessExclusions): {
+  tenant: boolean;
+  user: boolean;
+} {
+  const excludedTenant = exclusions?.excludeTenantEmail
+    ? normalizeEmail(exclusions.excludeTenantEmail)
+    : "";
+  const excludedUser = exclusions?.excludeUserEmail
+    ? normalizeEmail(exclusions.excludeUserEmail)
+    : "";
+  return {
+    tenant: Boolean(excludedTenant) && lower === excludedTenant,
+    user: Boolean(excludedUser) && lower === excludedUser,
+  };
+}
+
 /** Validate email for Create Tenant (contact + auto-provisioned tenant admin). */
 export function validateTenantContactEmail(
   email: string,
   tenantEmails: Set<string>,
-  userEmails: Set<string>
+  userEmails: Set<string>,
+  exclusions?: EmailUniquenessExclusions
 ): string | undefined {
   const trimmed = (email || "").trim();
   if (!trimmed) return EMAIL_REQUIRED_MSG;
   if (!isValidEmailFormat(trimmed)) return EMAIL_INVALID_FORMAT_MSG;
   const lower = normalizeEmail(trimmed);
-  if (userEmails.has(lower)) return EMAIL_USER_ALREADY_EXISTS_MSG;
-  if (tenantEmails.has(lower)) return EMAIL_ALREADY_EXISTS_MSG;
+  const skip = isExcludedEmail(lower, exclusions);
+  if (userEmails.has(lower) && !skip.user) return EMAIL_USER_ALREADY_EXISTS_MSG;
+  if (tenantEmails.has(lower) && !skip.tenant) return EMAIL_ALREADY_EXISTS_MSG;
   return undefined;
 }
 
@@ -58,13 +82,15 @@ export function validateTenantContactEmail(
 export function validateTenantUserEmail(
   email: string,
   tenantEmails: Set<string>,
-  userEmails: Set<string>
+  userEmails: Set<string>,
+  exclusions?: EmailUniquenessExclusions
 ): string | undefined {
   const trimmed = (email || "").trim();
   if (!trimmed) return EMAIL_REQUIRED_MSG;
   if (!isValidEmailFormat(trimmed)) return EMAIL_INVALID_FORMAT_MSG;
   const lower = normalizeEmail(trimmed);
-  if (userEmails.has(lower) || tenantEmails.has(lower)) {
+  const skip = isExcludedEmail(lower, exclusions);
+  if ((userEmails.has(lower) && !skip.user) || (tenantEmails.has(lower) && !skip.tenant)) {
     return EMAIL_ALREADY_EXISTS_MSG;
   }
   return undefined;

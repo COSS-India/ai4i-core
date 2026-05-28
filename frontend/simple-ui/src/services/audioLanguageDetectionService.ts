@@ -2,6 +2,10 @@
 
 import { apiService, apiEndpoints } from './api';
 import { audioLanguageDetectionInferenceResponseSchema } from './dto/schemas/inference';
+import type {
+  AudioLanguageDetectionInferenceRequest,
+  AudioLanguageDetectionInferenceResponse,
+} from '../types/inference';
 import { listServices } from './modelManagementService';
 
 export interface AudioLanguageDetectionServiceDetailsResponse {
@@ -14,23 +18,10 @@ export interface AudioLanguageDetectionServiceDetailsResponse {
   supported_languages: string[];
 }
 
-export interface AudioLanguageDetectionInferenceRequest {
-  audio: Array<{
-    audioContent: string;
-  }>;
-  config: {
-    serviceId: string;
-    [key: string]: any;
-  };
-}
-
-export interface AudioLanguageDetectionInferenceResponse {
-  output: Array<{
-    detectedLanguage?: string;
-    confidence?: number;
-    [key: string]: any;
-  }>;
-}
+export type {
+  AudioLanguageDetectionInferenceRequest,
+  AudioLanguageDetectionInferenceResponse,
+} from '../types/inference';
 
 /**
  * List all available audio language detection services
@@ -38,7 +29,7 @@ export interface AudioLanguageDetectionInferenceResponse {
 export const listAudioLanguageDetectionServices = async (): Promise<AudioLanguageDetectionServiceDetailsResponse[]> => {
   try {
     const services = await listServices('audio-lang-detection', true);
-    
+
     // Transform to AudioLanguageDetectionServiceDetailsResponse format
     const transformedServices = services.map((service: any) => {
       // Extract languages from service.languages array
@@ -56,9 +47,9 @@ export const listAudioLanguageDetectionServices = async (): Promise<AudioLanguag
           }
         });
       }
-      
+
       const endpoint = service.endpoint || '';
-      
+
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id || '',
@@ -115,4 +106,3 @@ export const performAudioLanguageDetectionInference = async (
     throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
-

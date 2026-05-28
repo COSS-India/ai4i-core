@@ -19,6 +19,12 @@ Base = declarative_base()
 # Model-management tables
 from app.models.model_management.model import Model  # noqa: E402
 from app.models.model_management.service import Service  # noqa: E402
+from app.models.pay_per_use.usage_record import UsageRecord  # noqa: E402
+from app.models.pay_per_use.wallet import WalletBalance, WalletTransaction  # noqa: E402
+from app.models.pay_per_use.quota_usage import QuotaUsage  # noqa: E402
+from app.models.pay_per_use.quota_config import QuotaConfig, QuotaServiceLimit  # noqa: E402
+from app.models.pay_per_use.rate_limit_config import RateLimitConfig  # noqa: E402
+from app.models.pay_per_use.subscription_plan import SubscriptionPlan  # noqa: E402
 
 # Alert-management tables (FK-ordered)
 from app.models.alert_management.alert_definition import (  # noqa: E402
@@ -36,6 +42,14 @@ __all__ = [
     # model-management
     "Model",
     "Service",
+    "UsageRecord",
+    "WalletBalance",
+    "WalletTransaction",
+    "QuotaUsage",
+    "QuotaConfig",
+    "QuotaServiceLimit",
+    "RateLimitConfig",
+    "SubscriptionPlan",
     # alert-management
     "AlertAnnotation",
     "AlertDefinition",

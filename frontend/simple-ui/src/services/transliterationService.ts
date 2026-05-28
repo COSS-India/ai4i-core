@@ -2,6 +2,10 @@
 
 import { apiService, apiEndpoints } from './api';
 import { transliterationInferenceResponseSchema } from './dto/schemas/inference';
+import type {
+  TransliterationInferenceRequest,
+  TransliterationInferenceResponse,
+} from '../types/inference';
 import { listServices } from './modelManagementService';
 
 export interface TransliterationServiceDetailsResponse {
@@ -14,33 +18,10 @@ export interface TransliterationServiceDetailsResponse {
   supported_languages: string[];
 }
 
-export interface TransliterationInferenceRequest {
-  input: Array<{
-    source: string;
-  }>;
-  config: {
-    serviceId: string;
-    language: {
-      sourceLanguage: string;
-      targetLanguage: string;
-      sourceScriptCode?: string;
-      targetScriptCode?: string;
-    };
-    isSentence?: boolean;
-    numSuggestions?: number;
-  };
-  controlConfig?: {
-    [key: string]: any;
-  };
-}
-
-export interface TransliterationInferenceResponse {
-  output: Array<{
-    source: string;
-    target: string;
-    [key: string]: any;
-  }>;
-}
+export type {
+  TransliterationInferenceRequest,
+  TransliterationInferenceResponse,
+} from '../types/inference';
 
 /**
  * Get list of available Transliteration services from model management service
@@ -69,13 +50,13 @@ export const listTransliterationServices = async (): Promise<TransliterationServ
           }
         });
       }
-      
+
       // Extract endpoint and clean it
       let endpoint = service.endpoint || '';
       if (endpoint) {
         endpoint = endpoint.replace('http://', '').replace('https://', '');
       }
-      
+
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id,
@@ -135,4 +116,3 @@ export const performTransliterationInference = async (
     throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
-
