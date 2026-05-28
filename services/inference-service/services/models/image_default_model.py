@@ -35,10 +35,11 @@ class ImageDefaultModel(ImageBase):
     async def postprocess_output(
         self, response_items: List[Dict[str, Any]], source_texts: Optional[List[str]] = None
     ) -> Dict[str, Any]:
-        """Unwrap Surya envelope → wrap each text in OCROutput.
+        """Unwrap Surya envelope → shape as {source: <extracted text>, target: ""}
+        (NMT-style source/target pairing; target is empty for OCR).
         Bytes were already decoded to UTF-8 strings by GenericTritonMapper."""
         output_list = [
-            {"text": self._unwrap_surya_envelope(item.get("text", ""))}
+            {"source": self._unwrap_surya_envelope(item.get("text", "")), "target": ""}
             for item in response_items
         ]
         return {"output": output_list}
@@ -46,4 +47,11 @@ class ImageDefaultModel(ImageBase):
     def _build_response(
         self, payload: Dict[str, Any], postprocessed: Dict[str, Any]
     ) -> Dict[str, Any]:
-        return {"output": postprocessed["output"]}
+        """Return output + echo the request config verbatim. We deliberately
+        do NOT synthesize language / textDetection here — those values should
+        come from the model (Surya detects language) once the envelope is
+        actually parsed for them. Faking defaults would lie about the source."""
+        return {
+            "output": postprocessed["output"],
+            "config": payload.get("config"),
+        }
