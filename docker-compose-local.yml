@@ -155,25 +155,6 @@ services:
       start_period: 40s
     restart: unless-stopped
 
-  nginx:
-    image: nginx:1.27-alpine
-    container_name: ai4v-nginx-proxy
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./services/api-gateway-service/gateways/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-    networks:
-      microservices-network:
-        aliases:
-          - api-gateway-service
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/health > /dev/null 2>&1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    restart: unless-stopped
-
   auth-service:
     build:
       context: .

@@ -82,7 +82,7 @@ docker compose -f docker-compose-local.yml ps
 
 You should see `postgres`, `redis`, `kafka`, `zookeeper`, and `influxdb` all showing as "healthy" or "Up".
 
-If any service is not running, start the specific service using: 
+If any service is not running, start the specific service using:
 ```bash
 docker compose -f docker-compose-local.yml up -d <service-name>
 ```
@@ -205,7 +205,6 @@ Once all services are running, use the table below to find URLs and ports. The *
 | Telemetry Service | telemetry-service | http://localhost:8084/docs | 8084 |
 | Alerting Service | alerting-service | http://localhost:8085/docs | 8085 |
 | Dashboard Service | dashboard-service | http://localhost:8090/docs | 8090 |
-| API Gateway | api-gateway-service | http://localhost:8080 | 8080 |
 | Prometheus | prometheus | http://localhost:9090 | 9090 |
 | Grafana | grafana | http://localhost:3001 | 3001 |
 | Jaeger | jaeger | http://localhost:16686 | 16686 |
@@ -299,7 +298,7 @@ Or use a path in the project: `mkdir -p volumes/pg_data` and set `device: "./vol
 
 ### Default admin login not working
 
-Use the credentials from the [Default Credentials](#default-credentials) section: **Username** `admin`, **Email** `admin@ai4inclusion.org`, **Password** `ADMIN_PASSWORD`. 
+Use the credentials from the [Default Credentials](#default-credentials) section: **Username** `admin`, **Email** `admin@ai4inclusion.org`, **Password** `ADMIN_PASSWORD`.
 
 If login still fails:
 
@@ -372,7 +371,7 @@ sudo docker compose -f docker-compose-local.yml down -v
 ## Fresh Start: Starting from Scratch
 
 To reset the installation and start over:
- 
+
 Stop containers and remove volumes for this project.
 
 ```bash
@@ -391,4 +390,3 @@ Then run the setup again from [Step 1: Clone the Repository](#step-1-clone-the-r
 After the platform is running, you can enable or customize these optional features:
 
 **Need Help?** Check the [Troubleshooting Guide](TROUBLESHOOTING.md) or open an issue on GitHub.
-
