@@ -14,7 +14,11 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import get_default_config
-from ai4icore_core.context import set_trace_id, generate_trace_id
+from ai4icore_core.context import (
+    generate_trace_id,
+    set_tenant_id,
+    set_trace_id,
+)
 
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 
@@ -62,6 +66,17 @@ class RequestMiddleware(BaseHTTPMiddleware):
         trace_id = (_to_trace_id(raw) if raw else None) or generate_trace_id()
         set_trace_id(trace_id)
         request.state.correlation_id = trace_id
+
+        # Seed tenant_id from the gateway-injected X-Tenant-ID header (set by
+        # auth-service /validate after verifying the bearer token; the gateway
+        # forwards it upstream). Must happen before call_next so downstream
+        # middlewares (observability, etc.) and handlers can read it from the
+        # contextvar / request.state. HTTP header names are case-insensitive,
+        # so this matches X-Tenant-Id / X-Tenant-ID / x-tenant-id.
+        tenant_id = (request.headers.get("X-Tenant-Id") or "").strip()
+        if tenant_id:
+            set_tenant_id(tenant_id)
+            request.state.tenant_id = tenant_id
 
         start = time.time()
         response = await call_next(request)
