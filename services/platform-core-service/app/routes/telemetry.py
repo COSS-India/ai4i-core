@@ -21,12 +21,8 @@ def get_telemetry_service() -> TelemetryService:
 
 
 def _extract_tenant_id_from_jwt(request: Request) -> Optional[str]:
-    """Extract tenant_id from Authorization header (mocked for now)."""
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        # Mock: return tenant_id "2" when Bearer token is present
-        return "2"
-    return None
+    """Extract tenant_id from X-Tenant-Id header."""
+    return request.headers.get("X-Tenant-Id")
 
 
 def _is_user_admin(request: Request) -> bool:
@@ -61,12 +57,13 @@ if not _opensearch_client.connect():
 @router.get("/traces/search", response_model=SearchTracesResponse)
 async def search_traces_opensearch(
     request: Request,
-    TaskType: Optional[str] = Query(None, description="Filter by task type (NMT, ASR, OCR, etc.)"),
-    Level: Optional[str] = Query(None, description="Filter by status/level (Pass/Fail)"),
-    startDate: Optional[str] = Query(None, description="Start date in ISO format"),
-    endDate: Optional[str] = Query(None, description="End date in ISO format"),
-    PageCount: int = Query(1, ge=1, description="Page number for pagination"),
-    pageSize: int = Query(20, ge=1, le=100, description="Number of traces per page"),
+    task_type: Optional[str] = Query(None, description="Filter by task type (NMT, ASR, OCR, etc.)"),
+    status: Optional[str] = Query(None, description="Filter by status (success, failure, etc.)"),
+    tenant_id: Optional[str] = Query(None, description="Filter by tenant_id (ADMIN only for other tenants)"),
+    start_date: Optional[str] = Query(None, description="Start date in ISO format"),
+    end_date: Optional[str] = Query(None, description="End date in ISO format"),
+    page: int = Query(1, ge=1, description="Page number for pagination"),
+    page_size: int = Query(20, ge=1, le=100, description="Number of traces per page"),
 ) -> SearchTracesResponse:
     """
     Search traces from OpenSearch.
@@ -75,66 +72,115 @@ async def search_traces_opensearch(
     Spans are automatically aggregated into complete traces.
 
     Args:
-        TaskType: Filter by task type (NMT, ASR, OCR, etc.)
-        Level: Filter by status (Pass/Fail)
-        startDate: Start date ISO format
-        endDate: End date ISO format
-        PageCount: Page number
-        pageSize: Results per page (note: applies to spans, not traces)
+        task_type: Filter by task type (NMT, ASR, OCR, etc.)
+        status: Filter by status (success, failure, etc.)
+        tenant_id: Filter by tenant_id (ADMIN can view any tenant, TENANT_ADMIN/users can only view their own)
+        start_date: Start date in ISO format
+        end_date: End date in ISO format
+        page: Page number
+        page_size: Results per page (note: applies to spans, not traces)
     """
     try:
         is_admin = _is_user_admin(request)
         is_tenant_admin = _is_user_tenant_admin(request)
         jwt_tenant_id = _extract_tenant_id_from_jwt(request)
 
+        # Authorization: only ADMIN and TENANT_ADMIN can see traces
+        if not is_admin and not is_tenant_admin:
+            logger.warning("Regular user attempted to access traces - access denied")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Regular users cannot access traces. Only ADMIN and TENANT_ADMIN roles are allowed.",
+            )
+
+        # Determine tenant filter based on role
         tenant_filter = None
         if is_admin:
-            logger.info("ADMIN user - can see all traces from OpenSearch")
-            tenant_filter = None
-        elif is_tenant_admin:
-            if not jwt_tenant_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT ADMIN account has no tenant_id in token",
-                )
-            tenant_filter = jwt_tenant_id
+            # ADMIN: can see any tenant, optionally filter by tenant_id param
+            if tenant_id:
+                tenant_filter = tenant_id
+                logger.info(f"ADMIN user - filtering by tenant_id={tenant_id}")
+            else:
+                logger.info("ADMIN user - can see all traces from OpenSearch")
+                tenant_filter = None
         else:
+            # TENANT_ADMIN: can only see their own tenant, tenant_id param is ignored
             if not jwt_tenant_id:
-                logger.warning("Regular user has no tenant_id, denying access")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You must have a valid tenant_id to access traces",
+                    detail="TENANT_ADMIN account has no tenant_id in token",
                 )
             tenant_filter = jwt_tenant_id
+            if tenant_id and tenant_id != jwt_tenant_id:
+                logger.warning(f"TENANT_ADMIN tried to filter by different tenant - using their own tenant_id={jwt_tenant_id}")
+            logger.info(f"TENANT_ADMIN user - viewing only their own tenant_id={jwt_tenant_id}")
 
         logger.info(
-            f"Searching OpenSearch - TaskType={TaskType}, Level={Level}, "
-            f"Page={PageCount}, tenant={tenant_filter}"
+            f"Searching OpenSearch - task_type={task_type}, status={status}, "
+            f"page={page}, tenant={tenant_filter}"
         )
 
-        # Build OpenSearch query (searches spans, not traces)
+        # Build OpenSearch query (get all traces, then filter in Python)
         query = _opensearch_client.build_complex_query(
-            task_type=TaskType,
-            status=None,  # Don't filter by status in query (will extract from spans)
+            task_type=None,  # Filter in Python below
+            status=None,  # Filter in Python below
             tenant_id=tenant_filter,
-            start_date=startDate,
-            end_date=endDate,
+            start_date=start_date,
+            end_date=end_date,
         )
 
-        # Execute search with pagination
-        offset = (PageCount - 1) * pageSize
-        response = _opensearch_client.search_traces(query=query, size=pageSize, from_=offset)
+        # Execute search with large size to get enough data for filtering
+        response = _opensearch_client.search_traces(query=query, size=1000, from_=0)
 
         # Extract aggregated traces
         traces_dict = response.get("traces", {})
-        total_spans = response.get("total_spans", 0)
-        total_traces = len(traces_dict)
 
-        logger.info(f"Found {total_traces} traces with {total_spans} spans in OpenSearch")
+        # Filter traces by task_type and status in Python
+        filtered_traces = {}
+        for trace_id, trace_data in traces_dict.items():
+            spans = trace_data.get("spans", []) if isinstance(trace_data, dict) else trace_data
+
+            # Check if trace matches filters
+            task_type_match = True
+            status_match = True
+
+            # Check task_type filter
+            if task_type:
+                for span in spans:
+                    if span.get("name") == "model":
+                        span_task_type = span.get("attributes", {}).get("task_type")
+                        task_type_match = (span_task_type == task_type)
+                        break
+
+            # Check status filter
+            if status:
+                for span in spans:
+                    span_status = span.get("attributes", {}).get("status")
+                    if span_status == status:
+                        status_match = True
+                        break
+                    status_match = False
+
+            if task_type_match and status_match:
+                filtered_traces[trace_id] = trace_data
+
+        # Apply pagination to filtered results
+        trace_list = list(filtered_traces.items())
+        offset = (page - 1) * page_size
+        paginated_traces = trace_list[offset : offset + page_size]
+        total_traces = len(trace_list)
+
+        logger.info(
+            f"Found {total_traces} traces (filters: task_type={task_type}, status={status})"
+        )
 
         # Transform aggregated traces to response format
         data = []
-        for trace_id, spans in traces_dict.items():
+        for trace_id, trace_data in paginated_traces:
+            spans = trace_data.get("spans", []) if isinstance(trace_data, dict) else trace_data
+            trace_tenant_id = trace_data.get("tenant_id") if isinstance(trace_data, dict) else None
+            trace_service = trace_data.get("service") if isinstance(trace_data, dict) else None
+
             task_type = None
             status = None
             url = None
@@ -160,19 +206,19 @@ async def search_traces_opensearch(
             if trace_id:
                 data.append({
                     "trace_id": trace_id,
-                    "service": "ai4x-inference",
+                    "service": trace_service or "ai4x-inference",
                     "task_type": task_type,
                     "status": status,
                     "url": url,
-                    "tenant_id": tenant_filter or "system",
+                    "tenant_id": trace_tenant_id or "system",
                     "timestamp": timestamp,
                 })
 
         return SearchTracesResponse(
             data=data,
             total=total_traces,
-            page=PageCount,
-            pageSize=pageSize,
+            page=page,
+            pageSize=page_size,
             aggregations={
                 "total": total_traces,
                 "by_level": {},
@@ -254,12 +300,14 @@ async def get_trace_by_id(
                 detail=f"Trace {trace_id} not found or not accessible",
             )
 
-        spans = traces_dict[trace_id]
+        trace_data = traces_dict[trace_id]
+        spans = trace_data.get("spans", []) if isinstance(trace_data, dict) else trace_data
+        trace_tenant_id = trace_data.get("tenant_id") if isinstance(trace_data, dict) else None
+        trace_service = trace_data.get("service") if isinstance(trace_data, dict) else None
 
         # Build response
-        # Extract service info from first span
-        service_name = "ai4x-inference"
-        tenant_id = tenant_filter or "system"
+        service_name = trace_service or "ai4x-inference"
+        tenant_id = trace_tenant_id or "system"
         service_version = "1.0.0"
         environment = "development"
         hostname = "unknown"

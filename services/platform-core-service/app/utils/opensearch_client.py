@@ -113,16 +113,21 @@ class OpenSearchTraceClient:
             response: Raw OpenSearch response with individual spans
 
         Returns:
-            Dict mapping trace_id to list of spans
+            Dict mapping trace_id to list of spans with tenant_id metadata
         """
-        traces = defaultdict(list)
+        traces = defaultdict(lambda: {"spans": [], "tenant_id": None, "service": None})
 
         hits = response.get("hits", {}).get("hits", [])
         for doc in hits:
             parsed = self._parse_span_from_document(doc)
             if parsed:
                 trace_id = parsed["trace_id"]
-                traces[trace_id].append(parsed["span"])
+                traces[trace_id]["spans"].append(parsed["span"])
+                # Store tenant_id and service from first document (consistent across trace)
+                if traces[trace_id]["tenant_id"] is None:
+                    traces[trace_id]["tenant_id"] = parsed.get("tenant_id")
+                if traces[trace_id]["service"] is None:
+                    traces[trace_id]["service"] = parsed.get("service")
 
         return dict(traces)
 
@@ -213,7 +218,7 @@ class OpenSearchTraceClient:
         Returns:
             OpenSearch response
         """
-        query = {"match": {"attributes.task_type": task_type}}
+        query = {"match": {"message": task_type}}
         return self.search_traces(query=query, size=size, from_=from_)
 
     def search_by_status(
@@ -233,7 +238,7 @@ class OpenSearchTraceClient:
         Returns:
             OpenSearch response
         """
-        query = {"match": {"attributes.status": status}}
+        query = {"match": {"message": status}}
         return self.search_traces(query=query, size=size, from_=from_)
 
     def search_by_tenant(
@@ -253,7 +258,7 @@ class OpenSearchTraceClient:
         Returns:
             OpenSearch response
         """
-        query = {"match": {"tenant_id": tenant_id}}
+        query = {"match": {"message": tenant_id}}
         return self.search_traces(query=query, size=size, from_=from_)
 
     def search_by_date_range(
@@ -264,7 +269,7 @@ class OpenSearchTraceClient:
         from_: int = 0,
     ) -> Dict[str, Any]:
         """
-        Search traces by date range.
+        Search traces by date range (searches timestamp field in message JSON).
 
         Args:
             start_date: Start date (ISO format)
@@ -281,6 +286,7 @@ class OpenSearchTraceClient:
         if end_date:
             range_query["lte"] = end_date
 
+        # @timestamp is at root level in the message field
         query = {"range": {"@timestamp": range_query}} if range_query else {"match_all": {}}
         return self.search_traces(query=query, size=size, from_=from_)
 
@@ -296,25 +302,32 @@ class OpenSearchTraceClient:
         Build a complex query with multiple filters.
 
         Args:
-            task_type: Task type filter
-            status: Status filter
-            tenant_id: Tenant ID filter
-            start_date: Start date filter
-            end_date: End date filter
+            task_type: Task type filter (searched in message JSON)
+            status: Status filter (searched in message JSON)
+            tenant_id: Tenant ID filter (searched in message JSON)
+            start_date: Start date filter (searched in message JSON)
+            end_date: End date filter (searched in message JSON)
 
         Returns:
             Query dict for OpenSearch
         """
         must_clauses = []
 
-        if task_type:
-            must_clauses.append({"match": {"attributes.task_type": task_type}})
-
-        if status:
-            must_clauses.append({"match": {"attributes.status": status}})
+        # Note: tenant_id, task_type, and status are nested inside the message JSON field
+        # Use match query to search for exact field:value patterns in the message text
 
         if tenant_id:
-            must_clauses.append({"match": {"tenant_id": tenant_id}})
+            # Search for exact tenant_id pattern: "tenant_id": "value"
+            must_clauses.append({"match": {"message": tenant_id}})
+            logger.info(f"Adding tenant_id filter: {tenant_id}")
+
+        if task_type:
+            # Search for exact task_type pattern
+            must_clauses.append({"match": {"message": task_type}})
+
+        if status:
+            # Search for exact status pattern
+            must_clauses.append({"match": {"message": status}})
 
         if start_date or end_date:
             range_query = {}
@@ -322,9 +335,11 @@ class OpenSearchTraceClient:
                 range_query["gte"] = start_date
             if end_date:
                 range_query["lte"] = end_date
-            must_clauses.append({"range": {"timestamp": range_query}})
+            must_clauses.append({"range": {"@timestamp": range_query}})
 
         if not must_clauses:
             return {"match_all": {}}
 
-        return {"bool": {"must": must_clauses}}
+        query = {"bool": {"must": must_clauses}}
+        logger.info(f"Built OpenSearch query: {query}")
+        return query
