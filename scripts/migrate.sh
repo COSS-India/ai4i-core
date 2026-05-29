@@ -38,12 +38,10 @@ COMMAND="${2:-upgrade}"
 EXTRA_ARGS=("${@:3}")
 
 DATABASES=(
-  "alerting_db"
   "ai4iplatform_auth"
   "config_db"
   "ai4i_platform_db"
   "ai4iplatform_core"
-  "policy_db"
   "telemetry_db"
 )
 

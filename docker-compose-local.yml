@@ -28,12 +28,13 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # Run database CLI (migrations, init:external, seed, etc.) inside Docker network
-  # so that POSTGRES_HOST=postgres resolves. Uses project root .env so credentials
-  # match the postgres container (compose substitutes ${POSTGRES_*} from root .env).
+  # Run the database CLI (Alembic wrapper) inside the Docker network so that
+  # POSTGRES_HOST=postgres resolves. Uses project root .env so credentials match
+  # the postgres container (compose substitutes ${POSTGRES_*} from root .env).
+  # Commands: migrate, migrate:all, rollback, migrate:status, migrate:fresh, make:migration
   # Usage:
-  #   docker compose -f docker-compose-local.yml run --rm migration-runner python infrastructure/databases/cli.py init:external
-  #   ./scripts/run-migration-cli.sh init:external
+  #   docker compose -f docker-compose-local.yml run --rm migration-runner python infrastructure/databases/cli.py migrate:status
+  #   ./scripts/run-migration-cli.sh migrate:all
   migration-runner:
     image: python:3.11-slim
     container_name: ai4v-migration-runner
@@ -76,31 +77,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-    restart: unless-stopped
-
-
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
-    container_name: ai4v-elasticsearch
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=true
-      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
-      - ELASTIC_USERNAME=${ELASTIC_USERNAME}
-      - "ES_JAVA_OPTS=-Xms256m -Xmx256m"
-    ports:
-      - "9203:9200"
-    volumes:
-      - elasticsearch-data:/usr/share/elasticsearch/data
-      - ./infrastructure/elasticsearch:/docker-entrypoint-initdb.d
-    networks:
-      - microservices-network
-    healthcheck:
-      test: ["CMD-SHELL", "curl -u ${ELASTIC_USERNAME}:${ELASTIC_PASSWORD} -f http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1"]
-      interval: 10s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
     restart: unless-stopped
 
 
@@ -153,25 +129,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    restart: unless-stopped
-
-  nginx:
-    image: nginx:1.27-alpine
-    container_name: ai4v-nginx-proxy
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./services/api-gateway-service/gateways/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-    networks:
-      microservices-network:
-        aliases:
-          - api-gateway-service
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8080/health > /dev/null 2>&1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
     restart: unless-stopped
 
   auth-service:
@@ -588,8 +545,6 @@ volumes:
      # device: "/home/ubuntu/ai4i-v/volumes/pg_data"
 
   redis-data:
-    driver: local
-  elasticsearch-data:
     driver: local
   kafka-data:
     driver: local
