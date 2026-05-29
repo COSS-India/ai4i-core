@@ -256,46 +256,7 @@ class BaseTaskService(ITaskService):
                 model_name = serviceInfo.get('name', '')
                 triton_endpoint = serviceInfo.get('endpoint', '')
                 api_key = serviceInfo.get('api_key')
-                adapter_config = {
-                        "inputs": [
-                            {
-                                "dtype": "BYTES",
-                                "shape": [
-                                    -1,
-                                    1
-                                ],
-                                "tensor": "INPUT_TEXT",
-                                "value_path": "input.source"
-                            },
-                            {
-                                "dtype": "BYTES",
-                                "shape": [
-                                    -1,
-                                    1
-                                ],
-                                "tensor": "INPUT_LANGUAGE_ID",
-                                "value_path": "request.config.language.source_language"
-                            },
-                            {
-                                "dtype": "BYTES",
-                                "shape": [
-                                    -1,
-                                    1
-                                ],
-                                "tensor": "OUTPUT_LANGUAGE_ID",
-                                "value_path": "request.config.language.target_language"
-                            }
-                        ],
-                        "outputs": [
-                            {
-                                "dtype": "BYTES",
-                                "tensor": "OUTPUT_TEXT",
-                                "maps_to": "target"
-                            }
-                        ],
-                        "version": "1.0",
-                        "model_version": "1"
-                    }#serviceInfo.get('adapter_config')
+                adapter_config = serviceInfo.get('adapter_config')
 
                 if not model_name or not triton_endpoint:
                     raise RuntimeError(
