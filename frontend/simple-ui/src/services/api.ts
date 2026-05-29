@@ -94,6 +94,7 @@ const SERVICE_BASE_PATHS = [
   API_URL_PATH_MARKERS.tts,
   API_URL_PATH_MARKERS.nmt,
   API_URL_PATH_MARKERS.llm,
+  apiEndpoints.llm.chat,
   API_URL_PATH_MARKERS.pipeline,
   API_URL_PATH_MARKERS.ocr,
   API_URL_PATH_MARKERS.ner,

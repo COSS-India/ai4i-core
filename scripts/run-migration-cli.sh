@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Run the database CLI inside the Docker network so POSTGRES_HOST=postgres resolves.
 # Usage: ./scripts/run-migration-cli.sh [command] [args...]
-# Example: ./scripts/run-migration-cli.sh init:external
-# Example: ./scripts/run-migration-cli.sh seed:all
+# Valid commands: migrate, migrate:all, rollback, migrate:status, migrate:fresh, make:migration
+# Example: ./scripts/run-migration-cli.sh migrate:status
+# Example: ./scripts/run-migration-cli.sh migrate:all
 
 set -euo pipefail
 

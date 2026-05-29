@@ -1,26 +1,14 @@
 // LLM service API client with typed methods
 
+import { LLM_SUPPORTED_LANGUAGES } from '../config/constants';
 import { apiService, apiEndpoints } from './api';
-import {
-  llmHealthResponseSchema,
-  llmInferenceResponseSchema,
-  llmModelsListSchema,
-} from './dto/schemas/inference';
-import {
-  LLMInferenceRequest,
-  LLMInferenceResponse,
-  LLMHealthResponse,
-  LLMModel
-} from '../types/llm';
-import { listServices } from './modelManagementService';
-import type { Service } from '../types/platform';
-import {
-  extractLanguageCodes,
-  resolveEndpoint,
-  resolveModelId,
-  resolveModelVersion,
-  resolveServiceId,
-} from '../utils/platformService';
+import { chatCompletionResponseSchema } from './dto/schemas/inference';
+import { LLMInferenceRequest, LLMInferenceResponse } from '../types/llm';
+/** Hardcoded model for POST /api/v1/chat (OpenAI-compatible proxy). */
+export const LLM_CHAT_MODEL = 'google/gemma-4-E4B-it';
+
+export const LLM_CHAT_DEFAULT_SOURCE_LANGUAGE = 'en';
+export const LLM_CHAT_DEFAULT_TARGET_LANGUAGE = 'hi';
 
 export interface LLMServiceDetailsResponse {
   service_id: string;
@@ -32,114 +20,74 @@ export interface LLMServiceDetailsResponse {
   supported_languages: string[];
 }
 
-/**
- * Get list of available LLM services from model management service
- * @returns Promise with LLM services response
- */
-export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> => {
-  try {
-    // Fetch services from model management service filtered by task_type='llm'
-    const services = await listServices('llm', true);
-    const seen = new Set<string>();
+/** Single option shown in the LLM Service dropdown (matches {@link LLM_CHAT_MODEL}). */
+export const DEFAULT_LLM_SERVICES: LLMServiceDetailsResponse[] = [
+  {
+    service_id: LLM_CHAT_MODEL,
+    model_id: LLM_CHAT_MODEL,
+    model_version: '',
+    name: LLM_CHAT_MODEL,
+    serviceDescription:
+      'Google Gemma 4 instruction-tuned model for contextual translation.',
+    endpoint: apiEndpoints.llm.chat,
+    supported_languages: LLM_SUPPORTED_LANGUAGES.map((l) => l.code),
+  },
+];
 
-    // Transform model management service response to LLMServiceDetailsResponse format
-    const normalized = services.map((service: Service) => {
-      const supportedLanguages = extractLanguageCodes(service.languages, 'simple');
-      const endpoint = resolveEndpoint(service);
+const getLanguageLabel = (code: string): string => {
+  const lang = LLM_SUPPORTED_LANGUAGES.find((l) => l.code === code);
+  return lang?.label ?? code;
+};
 
-      return {
-        service_id: resolveServiceId(service),
-        model_id: resolveModelId(service),
-        model_version: resolveModelVersion(service),
-        name: service.name || resolveServiceId(service),
-        serviceDescription: service.serviceDescription || service.description || '',
-        endpoint,
-        supported_languages: supportedLanguages,
-      } as LLMServiceDetailsResponse;
-    });
-
-    // Deduplicate by service_id in case API returns duplicates
-    const uniqueServices: LLMServiceDetailsResponse[] = [];
-    for (const svc of normalized) {
-      if (!svc.service_id) continue;
-      if (seen.has(svc.service_id)) continue;
-      seen.add(svc.service_id);
-      uniqueServices.push(svc);
-    }
-
-    return uniqueServices;
-  } catch (error) {
-    console.error('Failed to fetch LLM services:', error);
-    throw new Error('Failed to fetch LLM services');
-  }
+const buildTranslationPrompt = (
+  text: string,
+  inputLanguage: string,
+  outputLanguage: string
+): string => {
+  const source = getLanguageLabel(inputLanguage);
+  const target = getLanguageLabel(outputLanguage);
+  return `Translate from ${source} to ${target}. Output only the translation. Text: ${text}`;
 };
 
 /**
- * Perform LLM inference on text
- * @param text - Text to process
- * @param config - LLM configuration
- * @returns Promise with LLM inference response and timing info
+ * LLM services for the UI dropdown (fixed chat model; no model-management fetch).
  */
-export const performLLMInference = async (
+export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> =>
+  DEFAULT_LLM_SERVICES;
+
+/**
+ * Translate via POST /api/v1/chat (OpenAI-compatible). Does not use /llm/inference.
+ */
+export const performLLMChat = async (
   text: string,
   config: LLMInferenceRequest['config']
 ): Promise<{ data: LLMInferenceResponse; responseTime: number }> => {
   try {
-    const payload: LLMInferenceRequest = {
-      input: [{ source: text }],
-      config,
-      controlConfig: {
-        dataTracking: false,
+    const inputLanguage = config.inputLanguage ?? '';
+    const outputLanguage = config.outputLanguage ?? '';
+    const content = buildTranslationPrompt(text, inputLanguage, outputLanguage);
+
+    const response = await apiService.post(
+      apiEndpoints.llm.chat,
+      {
+        model: LLM_CHAT_MODEL,
+        messages: [{ role: 'user', content }],
+        stream: false,
       },
-    };
+      { responseSchema: chatCompletionResponseSchema }
+    );
 
-    const response = await apiService.post(apiEndpoints.llm.inference, payload, {
-      responseSchema: llmInferenceResponseSchema,
-    });
-
-    // Extract response time from headers
     const responseTime = parseInt(response.headers['request-duration'] || '0');
+    const translated =
+      response.data.choices?.[0]?.message?.content?.trim() ?? '';
 
-    return {
-      data: response.data,
-      responseTime
+    const data: LLMInferenceResponse = {
+      output: [{ source: text, target: translated }],
     };
+
+    return { data, responseTime };
   } catch (error) {
-    console.error('LLM inference error:', error);
-    throw error; // Re-throw so toast can show backend message via extractErrorInfo
-  }
-};
-
-/**
- * Get list of available LLM models
- * @returns Promise with LLM models response
- */
-export const listLLMModels = async (): Promise<LLMModel[]> => {
-  try {
-    const response = await apiService.get(apiEndpoints.llm.models, {
-      responseSchema: llmModelsListSchema,
-    });
-
-    return response.data.models;
-  } catch (error) {
-    console.error('Failed to fetch LLM models:', error);
-    throw new Error('Failed to fetch LLM models');
-  }
-};
-
-/**
- * Check LLM service health
- * @returns Promise with health status
- */
-export const checkLLMHealth = async (): Promise<LLMHealthResponse> => {
-  try {
-    const response = await apiService.get(apiEndpoints.llm.health, {
-      responseSchema: llmHealthResponseSchema,
-    });
-
-    return response.data;
-  } catch (error) {
-    console.error('Failed to check LLM health:', error);
-    throw new Error('Failed to check LLM service health');
+    console.error('LLM chat error:', error);
+    throw error;
   }
 };

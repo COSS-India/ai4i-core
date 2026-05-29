@@ -72,7 +72,7 @@ import type { TenantUserStatus, TenantUserView, TenantView } from "../../types/t
 function userActiveStatus(u: TenantUserView): TenantUserStatus {
   return u.is_active && (u.is_tenant_active ?? true)
     ? TENANT.USER_STATUS.ACTIVE
-    : TENANT.USER_STATUS.INACTIVE;
+    : TENANT.USER_STATUS.SUSPENDED;
 }
 
 function dash(v?: string | null): string {
@@ -556,7 +556,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             onClick={() =>
               tm.handleOpenUserStatus(
                 u,
-                isActive ? TENANT.USER_STATUS.INACTIVE : TENANT.USER_STATUS.ACTIVE
+                isActive ? TENANT.USER_STATUS.SUSPENDED : TENANT.USER_STATUS.ACTIVE
               )
             }
           />

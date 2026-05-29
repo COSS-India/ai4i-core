@@ -126,7 +126,8 @@ class Orchestrator:
                     request_span.set_attribute(k, v)
                 request_span.set_status(StatusCode.OK)
                 log_span_attributes("request", request_span, span_attrs)
-                return result
+
+                return result # type: ignore
 
             except OrchestratorError as e:
                 span_attrs = {
@@ -141,20 +142,7 @@ class Orchestrator:
                     request_span.set_attribute(k, v)
                 request_span.set_status(StatusCode.ERROR, str(e))
                 log_span_attributes("request", request_span, span_attrs)
-                raise
-            except Exception as e:
-                span_attrs = {
-                    "total_time_ms": compute_total_time_ms(start_time),
-                    "end_point": end_point,
-                    "request_method": request_method,
-                    "status": "failure",
-                    "status_code": 500,
-                    **ctx_attrs,
-                }
-                for k, v in span_attrs.items():
-                    request_span.set_attribute(k, v)
-                request_span.set_status(StatusCode.ERROR, str(e))
-                log_span_attributes("request", request_span, span_attrs)
+
                 raise TaskServiceExecutionError(f"Orchestration failed: {str(e)}")
 
     async def _validate_task_type(self, task_type: str) -> None:
@@ -168,7 +156,7 @@ class Orchestrator:
             UnknownTaskTypeError: If task_type not registered
         """
         # For now, allow all known task types
-        allowed_tasks = ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]
+        allowed_tasks = ["NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]
         if task_type not in allowed_tasks:
             raise UnknownTaskTypeError(f"Unknown task_type: {task_type}. Allowed: {', '.join(allowed_tasks)}")
 

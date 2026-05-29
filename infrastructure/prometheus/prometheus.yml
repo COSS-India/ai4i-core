@@ -30,7 +30,6 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets:
-          - "api-gateway-service:8080"
           - "auth-service:8081"
           - "config-service:8082"
           - "metrics-service:8083"
@@ -65,7 +64,6 @@ scrape_configs:
     metrics_path: /enterprise/metrics
     static_configs:
       - targets:
-          - "api-gateway-service:8080"
           - "auth-service:8081"
           - "config-service:8082"
           - "metrics-service:8083"

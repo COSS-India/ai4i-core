@@ -8,48 +8,39 @@ import {
   Grid,
   GridItem,
   Heading,
-  HStack,
   Progress,
   Select,
-  Spinner,
   Text,
   VStack,
 } from "@chakra-ui/react";
 import { FaLanguage } from "react-icons/fa";
-import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
 import React, { useState, useEffect } from "react";
 import ContentLayout from "../components/common/ContentLayout";
-import LoadingSpinner from "../components/common/LoadingSpinner";
-import DualComparison from "../components/llm/DualComparison";
+import LLMResults from "../components/llm/LLMResults";
 import LanguageSelector from "../components/llm/LanguageSelector";
 import TextInput from "../components/llm/TextInput";
 import { LLM_SUPPORTED_LANGUAGES } from "../config/constants";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { useLLM } from "../hooks/useLLM";
-import { listLLMModels, listLLMServices } from "../services/llmService";
-import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
-
+import {
+  DEFAULT_LLM_SERVICES,
+  LLM_CHAT_MODEL,
+} from "../services/llmService";
 const LLMPage: React.FC = () => {
-  const toast = useToastWithDeduplication();
-  const [serviceId, setServiceId] = useState<string>("");
+  const [serviceId, setServiceId] = useState<string>(LLM_CHAT_MODEL);
   const {
-    selectedModelId,
     inputLanguage,
     outputLanguage,
     inputText,
     outputText,
-    nmtOutputText,
     fetching,
     fetched,
-    isDualMode,
     requestWordCount,
     responseWordCount,
-    nmtResponseWordCount,
     requestTime,
-    nmtRequestTime,
     error,
-    performDualInference,
+    performInference,
     setInputText,
     setInputLanguage,
     setOutputLanguage,
@@ -58,19 +49,11 @@ const LLMPage: React.FC = () => {
     swapLanguages,
   } = useLLM(serviceId);
 
-  // Fetch available LLM services
-  const { data: llmServices, isLoading: servicesLoading } = useQuery({
-    queryKey: ["llm-services"],
-    queryFn: listLLMServices,
-    staleTime: 10 * 60 * 1000, // 10 minutes
-  });
+  const llmServices = DEFAULT_LLM_SERVICES;
 
-  // Fetch available LLM models
-  const { data: models, isLoading: modelsLoading } = useQuery({
-    queryKey: ["llm-models"],
-    queryFn: listLLMModels,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-  });
+  useEffect(() => {
+    setSelectedModelId(LLM_CHAT_MODEL);
+  }, [setSelectedModelId]);
 
   const availableLanguages = LLM_SUPPORTED_LANGUAGES.map((lang) => lang.code);
 
@@ -85,12 +68,7 @@ const LLMPage: React.FC = () => {
 
   const handleTranslate = () => {
     if (!canTranslate) return;
-    // Always use dual translation (LLM + NMT)
-    performDualInference(inputText);
-  };
-
-  const handleSwapTexts = () => {
-    swapLanguages();
+    performInference(inputText);
   };
 
   return (
@@ -131,31 +109,26 @@ const LLMPage: React.FC = () => {
                     LLM Service{" "}
                     <Text as="span" color="red.500">*</Text>
                   </FormLabel>
-                  {servicesLoading ? (
-                    <HStack spacing={2} p={2}>
-                      <Spinner size="sm" color="orange.500" />
-                      <Text fontSize="sm" color="gray.600">Loading services...</Text>
-                    </HStack>
-                  ) : (
-                    <Select
-                      value={serviceId}
-                      onChange={(e) => setServiceId(e.target.value)}
-                      placeholder={servicesLoading ? "Loading..." : "Select"}
-                      disabled={fetching}
-                      size="md"
-                      borderColor="gray.300"
-                      _focus={{
-                        borderColor: "orange.400",
-                        boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
-                      }}
-                    >
-                      {llmServices?.map((service) => (
-                        <option key={service.service_id} value={service.service_id}>
-                          {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
-                        </option>
-                      ))}
-                    </Select>
-                  )}
+                  <Select
+                    value={serviceId}
+                    onChange={(e) => {
+                      setServiceId(e.target.value);
+                      setSelectedModelId(e.target.value);
+                    }}
+                    disabled={fetching}
+                    size="md"
+                    borderColor="gray.300"
+                    _focus={{
+                      borderColor: "orange.400",
+                      boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
+                    }}
+                  >
+                    {llmServices.map((service) => (
+                      <option key={service.service_id} value={service.service_id}>
+                        {service.name || service.service_id}
+                      </option>
+                    ))}
+                  </Select>
                   {serviceId && llmServices && (
                     <Box
                       mt={2}
@@ -213,7 +186,7 @@ const LLMPage: React.FC = () => {
 
                 {/* Instruction above Translate (aligned with NMT) */}
                 <Text fontSize="sm" color="gray.600">
-                  Enter text and click &quot;Translate&quot; to translate. You can change source and target languages in the configuration above.
+                  Enter text and click &quot;Translate&quot; to translate.
                 </Text>
 
                 {/* Translate Button */}
@@ -260,16 +233,14 @@ const LLMPage: React.FC = () => {
                   </Box>
                 )}
 
-                {fetched && nmtOutputText && (
-                  <DualComparison
+                {fetched && outputText && (
+                  <LLMResults
                     sourceText={inputText}
-                    llmOutput={outputText}
-                    nmtOutput={nmtOutputText}
+                    outputText={outputText}
                     requestWordCount={requestWordCount}
-                    llmResponseWordCount={responseWordCount}
-                    nmtResponseWordCount={nmtResponseWordCount || 0}
-                    llmResponseTime={Number(requestTime)}
-                    nmtResponseTime={Number(nmtRequestTime || 0)}
+                    responseWordCount={responseWordCount}
+                    responseTime={Number(requestTime)}
+                    onSwapTexts={swapLanguages}
                   />
                 )}
               </VStack>

@@ -14,7 +14,6 @@ if "inference_models" not in sys.modules:
     sys.modules["inference_models"] = _pkg
 
 from services.asr_service import ASRTaskService
-from services.llm_service import LLMTaskService
 from services.ner_service import NERTaskService
 from services.language_detection_service import LanguageDetectionTaskService
 from services.tts_service import TTSTaskService
@@ -27,7 +26,6 @@ from services.models.text_default_model import TextDefaultModel
 __all__ = [
     "TextDefaultModel",
     "ASRTaskService",
-    "LLMTaskService",
     "NERTaskService",
     "LanguageDetectionTaskService",
     "TTSTaskService",

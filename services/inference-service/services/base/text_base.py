@@ -192,3 +192,26 @@ class TextBase(BaseTaskService):
         return [{"token": wi["word"], "tag": aligned[idx]["tag"] if idx in aligned else "O",
                  "tokenIndex": idx, "tokenStartIndex": wi["start"], "tokenEndIndex": wi["end"]}
                 for idx, wi in enumerate(word_positions)]
+
+    def _chunk_text(self, text: str, max_length: int = 400) -> List[str]:
+        """Split text into chunks ≤ max_length chars at sentence/clause boundaries."""
+        text = self._normalize_text(text)
+        if not text:
+            return [""]
+        if len(text) <= max_length:
+            return [text]
+
+        chunks: List[str] = []
+        while len(text) > max_length:
+            split_pos = max_length
+            for sep in ('.', '?', '!', '।', ',', ' '):
+                pos = text.rfind(sep, 0, max_length)
+                if pos > 0:
+                    split_pos = pos + 1
+                    break
+            chunks.append(text[:split_pos].strip())
+            text = text[split_pos:].strip()
+
+        if text:
+            chunks.append(text)
+        return [c for c in chunks if c]

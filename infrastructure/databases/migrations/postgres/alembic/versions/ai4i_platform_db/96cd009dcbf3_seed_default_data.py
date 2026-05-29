@@ -19,18 +19,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute(sa.text("""
-        INSERT INTO smr_tenant_policies (tenant_id, latency_policy, cost_policy, accuracy_policy)
-        VALUES
-            ('tenant-a', 'low',    'tier_3', 'sensitive'),
-            ('tenant-b', 'high',   'tier_1', 'standard'),
-            ('tenant-c', 'medium', 'tier_2', 'standard')
-        ON CONFLICT (tenant_id) DO NOTHING
-    """))
+    pass
 
 
 def downgrade() -> None:
-    op.execute(sa.text("""
-        DELETE FROM smr_tenant_policies
-        WHERE tenant_id IN ('tenant-a', 'tenant-b', 'tenant-c')
-    """))
+    pass
