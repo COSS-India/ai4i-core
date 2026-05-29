@@ -28,12 +28,13 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # Run database CLI (migrations, init:external, seed, etc.) inside Docker network
-  # so that POSTGRES_HOST=postgres resolves. Uses project root .env so credentials
-  # match the postgres container (compose substitutes ${POSTGRES_*} from root .env).
+  # Run the database CLI (Alembic wrapper) inside the Docker network so that
+  # POSTGRES_HOST=postgres resolves. Uses project root .env so credentials match
+  # the postgres container (compose substitutes ${POSTGRES_*} from root .env).
+  # Commands: migrate, migrate:all, rollback, migrate:status, migrate:fresh, make:migration
   # Usage:
-  #   docker compose -f docker-compose-local.yml run --rm migration-runner python infrastructure/databases/cli.py init:external
-  #   ./scripts/run-migration-cli.sh init:external
+  #   docker compose -f docker-compose-local.yml run --rm migration-runner python infrastructure/databases/cli.py migrate:status
+  #   ./scripts/run-migration-cli.sh migrate:all
   migration-runner:
     image: python:3.11-slim
     container_name: ai4v-migration-runner
