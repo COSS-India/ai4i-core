@@ -45,7 +45,11 @@ class AudioBase(BaseTaskService):
     # Pipeline entry points — self-contained raw-dict pipeline
     # ------------------------------------------------------------------
 
-    async def process(self, payload: Dict[str, Any]) -> Any:
+    async def process(
+        self,
+        payload: Dict[str, Any],
+        serviceInfo: Optional[Dict[str, Any]] = None,
+    ) -> Any:
         """
         Audio inference pipeline (overrides BaseTaskService.process).
 
@@ -58,6 +62,10 @@ class AudioBase(BaseTaskService):
           preprocess_input(payload['audio']) — decode / resample / equalize (or passthrough)
           run_inference(payload)             — Triton loop → postprocess → _build_response
         """
+        # The Orchestrator passes the resolved service dict positionally; mirror the
+        # base contract and adopt it so execute_triton_inference reads the right endpoint.
+        if serviceInfo is not None:
+            self.service_info = serviceInfo
         payload = dict(payload)  # shallow copy — don't mutate caller's dict
         await self.validate_request(payload)
         audio_items = payload.get("audio")
@@ -68,6 +76,7 @@ class AudioBase(BaseTaskService):
     async def run_inference(
         self,
         payload: Dict[str, Any],
+        serviceInfo: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """
         Audio inference runner (overrides BaseTaskService.run_inference).
@@ -75,6 +84,8 @@ class AudioBase(BaseTaskService):
         Calls execute_triton_inference directly with the raw payload dict —
         no config._request_payload indirection.
         """
+        if serviceInfo is not None:
+            self.service_info = serviceInfo
         result = await self.execute_triton_inference(payload, self._get_inference_model_class())
         postprocessed = await self.postprocess_output(
             result["response_data"], source_texts=result["source_texts"]
