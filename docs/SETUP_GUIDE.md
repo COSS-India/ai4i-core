@@ -123,7 +123,7 @@ This command will:
 - Create all tables, indexes, constraints, and triggers
 - Seed the default data — the seed steps are themselves Alembic migrations (`*_seed_*.py` under `infrastructure/databases/migrations/postgres/alembic/versions/`), so they run as part of the same `upgrade`. This includes:
   - Default admin user: `admin@ai4inclusion.org` / `ADMIN_PASSWORD` (the password is the literal string `ADMIN_PASSWORD` unless you override it by setting `ADMIN_DEFAULT_PASSWORD` in the environment before running the migration)
-  - Default roles (ADMIN, DEVELOPER, USER) and permissions
+  - Default roles: `ADMIN`, `USER`, `GUEST`, `MODERATOR`, `TENANT ADMIN`, with permissions wired up per role
   - Service configurations and default alert rules
 
 **Note:** The migration framework automatically handles database creation, so you don't need to create databases manually. There is no separate `seed` step — re-running `./scripts/migrate.sh all upgrade` is the way to (re-)apply seed data.
