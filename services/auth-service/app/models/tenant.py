@@ -42,3 +42,4 @@ class Tenant(Base):
 
     # Relationships
     users = relationship("User", back_populates="tenant")
+    tenant_plans = relationship("TenantPlan", back_populates="tenant", cascade="all, delete-orphan")

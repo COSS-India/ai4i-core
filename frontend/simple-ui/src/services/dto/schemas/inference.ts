@@ -1,5 +1,39 @@
 import { z } from 'zod';
 
+/**
+ * Loose inference response validation — only enforces top-level array shape.
+ * Detailed fields are typed in `src/types/inference.ts` without runtime strictness.
+ */
+
+const looseRecord = z.record(z.unknown());
+
+/** `output` array present (most inference tasks). */
+export const inferenceOutputResponseSchema = z
+  .object({
+    output: z.array(looseRecord),
+  })
+  .passthrough();
+
+/** TTS returns `audio` instead of `output`. */
+export const inferenceAudioResponseSchema = z
+  .object({
+    audio: z.array(looseRecord),
+  })
+  .passthrough();
+
+// Per-service exports (same loose shape; kept for stable import paths)
+export const asrInferenceResponseSchema = inferenceOutputResponseSchema;
+export const nmtInferenceResponseSchema = inferenceOutputResponseSchema;
+export const llmInferenceResponseSchema = inferenceOutputResponseSchema;
+export const ocrInferenceResponseSchema = inferenceOutputResponseSchema;
+export const nerInferenceResponseSchema = inferenceOutputResponseSchema;
+export const languageDetectionInferenceResponseSchema = inferenceOutputResponseSchema;
+export const transliterationInferenceResponseSchema = inferenceOutputResponseSchema;
+export const speakerDiarizationInferenceResponseSchema = inferenceOutputResponseSchema;
+export const languageDiarizationInferenceResponseSchema = inferenceOutputResponseSchema;
+export const audioLanguageDetectionInferenceResponseSchema = inferenceOutputResponseSchema;
+export const ttsInferenceResponseSchema = inferenceAudioResponseSchema;
+
 const healthComponentsSchema = z.record(
   z.string(),
   z
@@ -9,17 +43,6 @@ const healthComponentsSchema = z.record(
     })
     .passthrough()
 );
-
-export const asrInferenceResponseSchema = z.object({
-  output: z.array(
-    z
-      .object({
-        source: z.string(),
-        nBestTokens: z.unknown().optional(),
-      })
-      .passthrough()
-  ),
-});
 
 export const asrModelsResponseSchema = z.object({
   models: z.array(
@@ -36,15 +59,6 @@ export const asrModelsResponseSchema = z.object({
 export const asrHealthResponseSchema = z.object({
   status: z.string(),
   components: healthComponentsSchema,
-});
-
-export const nmtInferenceResponseSchema = z.object({
-  output: z.array(
-    z.object({
-      source: z.string(),
-      target: z.string(),
-    })
-  ),
 });
 
 export const nmtModelsListSchema = z.object({
@@ -65,20 +79,6 @@ export const nmtHealthResponseSchema = z.object({
   status: z.string(),
   components: healthComponentsSchema,
 });
-
-export const ttsInferenceResponseSchema = z
-  .object({
-    audio: z.array(
-      z
-        .object({
-          audioContent: z.string(),
-          audioUri: z.string().optional(),
-        })
-        .passthrough()
-    ),
-    config: z.record(z.unknown()).optional(),
-  })
-  .passthrough();
 
 export const voiceSchema = z
   .object({
@@ -103,15 +103,6 @@ export const voiceListResponseSchema = z.object({
 export const ttsHealthResponseSchema = z.object({
   status: z.string(),
   components: healthComponentsSchema,
-});
-
-export const llmInferenceResponseSchema = z.object({
-  output: z.array(
-    z.object({
-      source: z.string(),
-      target: z.string(),
-    })
-  ),
 });
 
 export const llmModelsListSchema = z.object({
@@ -140,113 +131,6 @@ export const llmHealthResponseSchema = z
     timestamp: z.number(),
   })
   .passthrough();
-
-export const ocrInferenceResponseSchema = z.object({
-  output: z.array(
-    z
-      .object({
-        source: z.string(),
-      })
-      .passthrough()
-  ),
-});
-
-export const nerInferenceResponseSchema = z.object({
-  output: z.array(
-    z
-      .object({
-        source: z.string(),
-        entities: z
-          .array(
-            z.object({
-              text: z.string(),
-              label: z.string(),
-              start: z.number(),
-              end: z.number(),
-            })
-          )
-          .optional(),
-      })
-      .passthrough()
-  ),
-});
-
-export const languageDetectionInferenceResponseSchema = z.object({
-  output: z.array(
-    z
-      .object({
-        source: z.string(),
-        langPrediction: z.array(
-          z.object({
-            langCode: z.string(),
-            scriptCode: z.string(),
-            langScore: z.number(),
-            language: z.string(),
-          })
-        ),
-      })
-      .passthrough()
-  ),
-});
-
-export const transliterationInferenceResponseSchema = z.object({
-  output: z.array(
-    z
-      .object({
-        source: z.string(),
-        target: z.string(),
-      })
-      .passthrough()
-  ),
-});
-
-export const speakerDiarizationInferenceResponseSchema = z.object({
-  output: z.array(
-    z
-      .object({
-        segments: z
-          .array(
-            z.object({
-              start: z.number(),
-              end: z.number(),
-              speaker: z.string(),
-              text: z.string().optional(),
-            })
-          )
-          .optional(),
-      })
-      .passthrough()
-  ),
-});
-
-export const languageDiarizationInferenceResponseSchema = z.object({
-  output: z.array(
-    z
-      .object({
-        segments: z
-          .array(
-            z.object({
-              start: z.number(),
-              end: z.number(),
-              language: z.string(),
-            })
-          )
-          .optional(),
-      })
-      .passthrough()
-  ),
-});
-
-export const audioLanguageDetectionInferenceResponseSchema = z.object({
-  output: z.array(
-    z
-      .object({
-        detectedLanguage: z.string().optional(),
-        confidence: z.number().optional(),
-      })
-      .passthrough()
-  ),
-});
 
 /** Generic JSON config blob from inference services. */
 export const inferenceConfigJsonSchema = z.record(z.unknown());

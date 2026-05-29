@@ -1,0 +1,1 @@
+"""Alert-management Pydantic schemas."""

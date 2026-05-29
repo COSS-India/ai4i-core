@@ -2,6 +2,10 @@
 
 import { apiService, apiEndpoints } from './api';
 import { speakerDiarizationInferenceResponseSchema } from './dto/schemas/inference';
+import type {
+  SpeakerDiarizationInferenceRequest,
+  SpeakerDiarizationInferenceResponse,
+} from '../types/inference';
 import { listServices } from './modelManagementService';
 
 export interface SpeakerDiarizationServiceDetailsResponse {
@@ -14,27 +18,10 @@ export interface SpeakerDiarizationServiceDetailsResponse {
   supported_languages: string[];
 }
 
-export interface SpeakerDiarizationInferenceRequest {
-  audio: Array<{
-    audioContent: string;
-  }>;
-  config: {
-    serviceId: string;
-    [key: string]: any;
-  };
-}
-
-export interface SpeakerDiarizationInferenceResponse {
-  output: Array<{
-    segments?: Array<{
-      start: number;
-      end: number;
-      speaker: string;
-      text?: string;
-    }>;
-    [key: string]: any;
-  }>;
-}
+export type {
+  SpeakerDiarizationInferenceRequest,
+  SpeakerDiarizationInferenceResponse,
+} from '../types/inference';
 
 /**
  * Get list of available Speaker Diarization services from model management service
@@ -63,13 +50,13 @@ export const listSpeakerDiarizationServices = async (): Promise<SpeakerDiarizati
           }
         });
       }
-      
+
       // Extract endpoint and clean it
       let endpoint = service.endpoint || '';
       if (endpoint) {
         endpoint = endpoint.replace('http://', '').replace('https://', '');
       }
-      
+
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id,
@@ -129,4 +116,3 @@ export const performSpeakerDiarizationInference = async (
     throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
-

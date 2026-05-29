@@ -22,6 +22,7 @@ from app.routes.permission import router as permission_router
 from app.routes.api_key import router as api_key_router
 from app.routes.tenants import router as tenants_router
 from app.routes.validation import router as validation_router
+from app.routes.internal import router as internal_router
 
 # ── Versioning ──
 versioning = APIVersioning(
@@ -55,3 +56,4 @@ v1_router.include_router(tenants_router)
 api_router = APIRouter()
 api_router.include_router(health_router, prefix="/api/v1/auth", tags=["Health"])
 api_router.include_router(v1_router)
+api_router.include_router(internal_router, prefix="/internal")

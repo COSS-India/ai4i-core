@@ -249,6 +249,9 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   const handleOpenRevokeModal = (key: AdminAPIKeyWithUserResponse) => {
     setKeyToRevoke(key);
     setIsRevokeModalOpen(true);
+    if (permissions.length === 0) {
+      void loadPermissionsCatalog();
+    }
   };
 
   const handleCloseRevokeModal = () => {
@@ -350,7 +353,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     [permissions],
   );
 
-  const formatPermission = (permissionId: number) =>
+  const formatPermission = (permissionId: number | string) =>
     permissionLabelWithFallback(permissionId, permissions);
 
   const formatKeyId = (key: AdminAPIKeyWithUserResponse) => formatApiKeyDisplayId(key);

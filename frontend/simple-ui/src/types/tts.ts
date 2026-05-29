@@ -5,40 +5,7 @@ import { Gender, SampleRate, AudioFormat } from './common';
 // Re-export common types for convenience
 export type { Gender, SampleRate, AudioFormat };
 
-// TTS Inference Request
-export interface TTSInferenceRequest {
-  input: Array<{
-    source: string;
-    audioDuration?: number;
-  }>;
-  config: {
-    language: {
-      sourceLanguage: string;
-    };
-    serviceId: string;
-    gender: string;
-    samplingRate: number;
-    audioFormat: string;
-  };
-  controlConfig?: {
-    dataTracking?: boolean;
-  };
-}
-
-// TTS Inference Response
-export interface TTSInferenceResponse {
-  audio: Array<{
-    audioContent: string;
-    audioUri?: string;
-  }>;
-  config?: {
-    language: any;
-    audioFormat: string;
-    encoding: string;
-    samplingRate: number;
-    audioDuration?: number;
-  };
-}
+export type { TTSInferenceRequest, TTSInferenceResponse } from './inference';
 
 // TTS Streaming Configuration
 export interface TTSStreamingConfig {

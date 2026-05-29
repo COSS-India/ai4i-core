@@ -87,6 +87,10 @@ class AudioBase(BaseTaskService):
         )
         return self._build_response(payload, postprocessed)
 
+    def get_payload_object(self, payload: Dict[str, Any]) -> List[Any]:
+        """Audio input list lives under payload['audio']."""
+        return payload.get("audio") or []
+
     # ------------------------------------------------------------------
     # Validation
     # ------------------------------------------------------------------
@@ -182,7 +186,7 @@ class AudioBase(BaseTaskService):
 
         # Audio items are already preprocessed by process() via preprocess_input.
         # Config is the raw payload dict — field names match the schema (snake_case for ASR).
-        audio_items: List[Any] = payload.get("audio") or []
+        audio_items: List[Any] = self.get_payload_object(payload)
         config_dict: Dict[str, Any] = payload.get("config") or {}
         all_response_data: List[Dict[str, Any]] = []
 
@@ -604,13 +608,11 @@ class AudioBase(BaseTaskService):
         execute_triton_inference; used to populate TranscriptionOutput.source so
         the frontend can identify which audio item each transcript belongs to.
         """
-        sources = source_texts or []
         output = []
-        for idx, item in enumerate(decoded_items):
-            # adapter_config maps TRANSCRIPTS → "transcript" (maps_to field)
+        for item in decoded_items:
             transcript = item.get("transcript", item.get("source", ""))
-            source = sources[idx] if idx < len(sources) else ""
-            output.append({"source": source, "transcript": str(transcript)})
+            n_best = item.get("nBestTokens", item.get("n_best_tokens"))
+            output.append({"source": str(transcript), "nBestTokens": n_best})
         return {"output": output}
 
     async def _empty_output(self, **kwargs: Any) -> Dict[str, Any]:

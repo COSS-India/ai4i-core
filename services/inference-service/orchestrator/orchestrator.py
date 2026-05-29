@@ -78,7 +78,7 @@ class Orchestrator:
             # Extract task type from payload
             task_type = payload.get("task_type", "").upper()
             self.logger.info(f"Routing {task_type} inference request...")
-            
+
             # Validate task type
             await self._validate_task_type(task_type)
 
@@ -88,17 +88,17 @@ class Orchestrator:
 
             # Get task service for this task type, injecting resolved service info
             task_service = await self._get_task_service(task_type, service_info)
-            
+
             # Execute task service with raw payload
             # Task service handles its own payload deserialization
             task_response = await self._execute_task_service(
                 task_service=task_service,
                 payload=payload,
             )
-            
+
             # Serialize response
             return task_response.dict() if hasattr(task_response, 'dict') else task_response
-            
+
         except OrchestratorError:
             raise
         except Exception as e:
@@ -115,7 +115,7 @@ class Orchestrator:
             UnknownTaskTypeError: If task_type not registered
         """
         # For now, allow all known task types
-        allowed_tasks = ["NMT", "ASR", "OCR", "NER", "LLM", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]
+        allowed_tasks = ["NMT", "ASR", "OCR", "NER", "TTS", "PII", "LANGUAGE_DETECTION", "SPEAKER_DIARIZATION", "LANGUAGE_DIARIZATION", "TRANSLITERATION", "AUDIO_LANGUAGE_DETECTION", "SMR"]
         if task_type not in allowed_tasks:
             raise UnknownTaskTypeError(f"Unknown task_type: {task_type}. Allowed: {', '.join(allowed_tasks)}")
 

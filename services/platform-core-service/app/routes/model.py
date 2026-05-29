@@ -9,13 +9,12 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.core.exceptions import ValidationError
 from app.core.responses import success_response
-from app.dependencies.services import get_model_service
-from app.schemas.enums import TaskTypeEnum
-from app.schemas.model import (
+from app.dependencies.services import ModelService, get_model_service
+from app.schemas.enums.model_management import TaskTypeEnum
+from app.schemas.model_management.model import (
     ModelCreateRequest,
     ModelUpdateRequest,
 )
-from app.services.model_service import ModelService
 
 logger = logging.getLogger(__name__)
 

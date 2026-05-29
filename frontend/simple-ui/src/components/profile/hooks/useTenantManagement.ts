@@ -13,6 +13,11 @@ import {
   validateTenantContactEmail,
   validateTenantUserEmail,
 } from "../../../utils/tenantEmailValidation";
+import {
+  TENANT,
+  TENANT_ADMIN_UPDATABLE_STATUSES,
+  normalizeTenantStatus,
+} from "../../../config/constants";
 import type { TenantStatus, TenantUserStatus, TenantView, TenantUserView } from "../../../types/tenant";
 import type {
   TenantFormState,
@@ -29,10 +34,8 @@ import {
   TENANT_USER_ROLE_FILTER_LIST,
 } from "../../../utils/tenantUserRoles";
 
-/** Tenant lifecycle status — values mirror the auth-service enum. */
-const TENANT_STATUS_VALUES: TenantStatus[] = ["ACTIVE", "SUSPENDED", "DEACTIVATED"];
-
 const USER_EMAIL_PAGE_SIZE = 100;
+const DEFAULT_TENANT_USER_ROLE = "USER" as const;
 
 /** Client-side tenant list search: organisation name or tenant ID (substring, case-insensitive). */
 function tenantMatchesSearch(t: TenantView, rawSearch: string): boolean {
@@ -97,6 +100,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     username: "",
     full_name: "",
     phone_number: "",
+    role: DEFAULT_TENANT_USER_ROLE,
   });
   const [isSubmittingUser, setIsSubmittingUser] = useState(false);
   const [userFormErrors, setUserFormErrors] = useState<Record<string, string>>({});
@@ -120,14 +124,20 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   // Status update confirmation
   const [statusUpdateTarget, setStatusUpdateTarget] = useState<StatusUpdateTargetUnion | null>(null);
-  const [statusUpdateNewStatus, setStatusUpdateNewStatus] = useState<TenantStatus | TenantUserStatus>("ACTIVE");
+  const [statusUpdateNewStatus, setStatusUpdateNewStatus] = useState<TenantStatus | TenantUserStatus>(
+    TENANT.STATUS.ACTIVE
+  );
   const [isStatusDialogOpen, setIsStatusDialogOpen] = useState(false);
   const [isSubmittingStatus, setIsSubmittingStatus] = useState(false);
 
   // Edit user modal
   const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
   const [editUserRow, setEditUserRow] = useState<TenantUserView | null>(null);
-  const [editUserForm, setEditUserForm] = useState<EditUserFormState>({ tenant_id: "", user_id: "" });
+  const [editUserForm, setEditUserForm] = useState<EditUserFormState>({
+    tenant_id: "",
+    user_id: "",
+    role: DEFAULT_TENANT_USER_ROLE,
+  });
   const [editUserFormErrors, setEditUserFormErrors] = useState<Record<string, string>>({});
   const [isSubmittingEditUser, setIsSubmittingEditUser] = useState(false);
 
@@ -140,7 +150,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const filteredTenants = useMemo(
     () =>
       tenants.filter((t) => {
-        if (tenantFilterStatus !== "all" && t.status !== tenantFilterStatus) return false;
+        if (
+          tenantFilterStatus !== "all" &&
+          normalizeTenantStatus(t.status) !== normalizeTenantStatus(tenantFilterStatus)
+        ) {
+          return false;
+        }
         return tenantMatchesSearch(t, tenantSearch);
       }),
     [tenants, tenantFilterStatus, tenantSearch]
@@ -151,7 +166,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       tenantUsers.filter((u) => {
         if (userFilterStatus !== "all") {
           const isActive = u.is_active && (u.is_tenant_active ?? true);
-          const matches = userFilterStatus === "ACTIVE" ? isActive : !isActive;
+          const matches =
+            userFilterStatus === TENANT.USER_STATUS.ACTIVE ? isActive : !isActive;
           if (!matches) return false;
         }
         if (userFilterRole !== "all" && !tenantUserHasRole(u, userFilterRole)) {
@@ -391,6 +407,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     username: "",
     full_name: "",
     phone_number: "",
+    role: DEFAULT_TENANT_USER_ROLE,
   });
 
   const openUserModal = () => {
@@ -646,7 +663,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const handleOpenUserStatus = (u: TenantUserView, newStatus: TenantUserStatus) => {
     const currentStatus: TenantUserStatus =
-      u.is_active && (u.is_tenant_active ?? true) ? "ACTIVE" : "INACTIVE";
+      u.is_active && (u.is_tenant_active ?? true)
+        ? TENANT.USER_STATUS.ACTIVE
+        : TENANT.USER_STATUS.SUSPENDED;
     setStatusUpdateTarget({
       type: "user",
       tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
@@ -669,7 +688,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         toast({ title: "Tenant status updated", status: "success", isClosable: true });
         await refreshTenantAndUserLists(statusUpdateTarget.tenant_id);
       } else {
-        const isActive = statusUpdateNewStatus === "ACTIVE";
+        const isActive = statusUpdateNewStatus === TENANT.USER_STATUS.ACTIVE;
         await tenantService.updateUserStatus({
           tenant_id: statusUpdateTarget.tenant_id,
           user_id: statusUpdateTarget.user_id,
@@ -718,6 +737,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   // ----- Edit tenant user -----
   const handleOpenEditUser = (u: TenantUserView) => {
+    const normalizedRole = (u.role ?? u.roles?.[0] ?? "").trim().toUpperCase();
+    const role =
+      normalizedRole === "TENANT ADMIN" ? "TENANT ADMIN" : DEFAULT_TENANT_USER_ROLE;
     setEditUserRow(u);
     setEditUserForm({
       tenant_id: tenantDetailView?.tenant_id ?? user?.tenant_id ?? "",
@@ -725,6 +747,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       username: u.username ?? "",
       full_name: u.full_name ?? "",
       phone_number: u.phone_number ?? "",
+      role,
     });
     setEditUserFormErrors({});
     setIsEditUserModalOpen(true);
@@ -831,7 +854,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleResetTenantFilters,
     handleResetUserFilters,
     tenantUserRoleFilterOptions: TENANT_USER_ROLE_FILTER_LIST,
-    TENANT_STATUS_VALUES,
+    TENANT_ADMIN_UPDATABLE_STATUSES,
     // Create tenant
     isTenantModalOpen,
     tenantForm,
