@@ -11,7 +11,6 @@ The `docker-compose-local.yml` is configured with volume mounts that sync your l
 All the following services have hot reload enabled:
 
 **Core Services:**
-- `api-gateway-service` (port 9000)
 - `auth-service` (port 8081)
 - `config-service` (port 8082)
 - `docs-manager` (port 8103)
@@ -208,7 +207,6 @@ To check all services at once:
 # Check all services with hot reload (portable version)
 
 services=(
-  "api-gateway-service:ai4v-api-gateway"
   "auth-service:ai4v-auth-service"
   "config-service:ai4v-config-service"
   "docs-manager:ai4v-docs-manager"
@@ -235,7 +233,7 @@ echo "--------------------------------------------------------------------------
 for svc_pair in "${services[@]}"; do
   service=$(echo "$svc_pair" | cut -d: -f1)
   container=$(echo "$svc_pair" | cut -d: -f2)
-  
+
   if docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
     reload=$(docker top "${container}" 2>/dev/null | grep -q "\-\-reload" && echo "✅ Enabled" || echo "❌ Disabled")
     status=$(docker ps --filter "name=${container}" --format "{{.Status}}" | head -1 | cut -d' ' -f1-3)
