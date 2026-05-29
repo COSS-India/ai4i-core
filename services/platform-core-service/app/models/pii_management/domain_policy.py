@@ -1,13 +1,13 @@
-"""ORM model for the domain_policies table (PII database)."""
+"""ORM model for the pii_domain_policies table."""
 
 from sqlalchemy import Boolean, Column, DateTime, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 
-from app.models.pii_management import PiiBase
+from app.models import Base
 
 
-class DomainPolicy(PiiBase):
+class DomainPolicy(Base):
     """
     A named redaction policy domain (e.g. 'logistics', 'healthcare').
 
@@ -26,7 +26,7 @@ class DomainPolicy(PiiBase):
         }
     """
 
-    __tablename__ = "domain_policies"
+    __tablename__ = "pii_domain_policies"
 
     domain_id  = Column(String(50), primary_key=True)
     is_active  = Column(Boolean,   server_default="false", nullable=True)

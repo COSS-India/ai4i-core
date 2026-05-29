@@ -31,7 +31,7 @@ import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.pii_database import get_pii_db, _pii_session_factory
+from app.core.database import get_db as get_pii_db, get_primary_session_factory as _get_session_factory
 from app.core.config import settings
 from app.repositories.pii_management.audit_log_repository import AuditLogRepository
 from app.repositories.pii_management.policy_repository import PolicyRepository
@@ -241,7 +241,7 @@ async def upsert_tenant_domain(
     # Eagerly refresh the in-memory policy cache for this pod
     policy_sync = getattr(request.app.state, "pii_policy_sync", None)
     if policy_sync:
-        async with _pii_session_factory() as fresh_db:
+        async with _get_session_factory()() as fresh_db:
             await policy_sync.refresh(fresh_db)
 
     return {"status": "success", "tenant_id": tid, "domain_id": did}
@@ -266,7 +266,7 @@ async def delete_tenant_domain(
 
     policy_sync = getattr(request.app.state, "pii_policy_sync", None)
     if policy_sync:
-        async with _pii_session_factory() as fresh_db:
+        async with _get_session_factory()() as fresh_db:
             await policy_sync.refresh(fresh_db)
 
     return {"status": "success"}
