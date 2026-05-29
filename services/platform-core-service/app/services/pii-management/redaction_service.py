@@ -54,7 +54,7 @@ class RedactionService:
         background_tasks: BackgroundTasks,
     ) -> RedactionResponse:
         start = time.time()
-        trace_id = ""
+        trace_id = None
         trace_log: List[Dict[str, Any]] = [
             {"step": "Request", "status": "Success", "details": f"Target: {target}, Lang: {language}"}
         ]
