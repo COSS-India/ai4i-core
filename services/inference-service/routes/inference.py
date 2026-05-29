@@ -5,7 +5,7 @@ Integrates orchestration, factory, and telemetry.
 """
 
 from typing import Any, Dict, Optional
-from fastapi import APIRouter, Body, HTTPException, Depends
+from fastapi import APIRouter, Body, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 import logging
 
