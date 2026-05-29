@@ -21,7 +21,7 @@ from app.core.database import (
     init_database,
 )
 from app.core.exceptions import register_exception_handlers
-from app.core.pii_database import close_pii_database, init_pii_database, _pii_session_factory
+from app.core.database import get_primary_session_factory as _get_pii_session_factory
 from app.core.redis import close_redis, get_redis_client, init_redis
 from app.routes import api_router, versioning
 from app.services.pay_per_use.pay_per_use_service import warm_pricing_cache
@@ -70,14 +70,6 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Alert config sync disabled (ALERT_SYNC_ENABLED=false)")
 
-    # ── PII DB ────────────────────────────────────────────────────────────
-    await init_pii_database(
-        db_url=settings.get_pii_database_url(),
-        pool_size=settings.pii_db_pool_size,
-        max_overflow=settings.pii_db_max_overflow,
-        echo=settings.debug,
-    )
-
     # ── PII singletons ────────────────────────────────────────────────────
     # Import via importlib because the services directory uses a hyphenated name.
     _pii_svc = _importlib.import_module("app.services.pii-management")
@@ -100,13 +92,13 @@ async def lifespan(app: FastAPI):
     app.state.redis_client = get_redis_client()
 
     # Initial load from DB.
-    async with _pii_session_factory() as db:
+    async with _get_pii_session_factory()() as db:
         await kb_svc.refresh(db)
         await policy_sync.refresh(db)
 
     # Start Redis pub/sub listener (background task — auto-cancelled on shutdown).
     async def _pii_db_factory():
-        async with _pii_session_factory() as session:
+        async with _get_pii_session_factory()() as session:
             yield session
 
     await policy_sync.start_listener(
@@ -130,7 +122,6 @@ async def lifespan(app: FastAPI):
     await policy_sync.stop_listener()
     await close_redis()
     await close_auth_database()
-    await close_pii_database()
     await close_database()
     logger.info("Shutdown complete.")
 

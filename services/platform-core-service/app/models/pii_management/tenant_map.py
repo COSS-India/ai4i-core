@@ -1,15 +1,15 @@
-"""ORM model for the tenant_pii_domain_map table (PII database)."""
+"""ORM model for the pii_tenant_domain_map table."""
 
 from sqlalchemy import Column, DateTime, String
 from sqlalchemy.sql import func
 
-from app.models.pii_management import PiiBase
+from app.models import Base
 
 
-class TenantPiiDomainMap(PiiBase):
+class TenantPiiDomainMap(Base):
     """Maps a tenant to its assigned PII redaction domain."""
 
-    __tablename__ = "tenant_pii_domain_map"
+    __tablename__ = "pii_tenant_domain_map"
 
     tenant_id  = Column(String(255), primary_key=True)
     domain_id  = Column(String(50),  nullable=False)

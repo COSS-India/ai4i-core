@@ -1,11 +1,11 @@
-"""ORM models for pattern_library and geo_library tables (PII database)."""
+"""ORM models for pii_pattern_library and pii_geo_library tables."""
 
 from sqlalchemy import Boolean, Column, Float, Integer, String, Text, UniqueConstraint
 
-from app.models.pii_management import PiiBase
+from app.models import Base
 
 
-class PatternLibrary(PiiBase):
+class PatternLibrary(Base):
     """
     Compiled regex patterns for PII entity detection, keyed by entity label and language.
 
@@ -13,9 +13,9 @@ class PatternLibrary(PiiBase):
     Patterns with a unique (entity_label, lang_code) pair can be overridden per language.
     """
 
-    __tablename__ = "pattern_library"
+    __tablename__ = "pii_pattern_library"
     __table_args__ = (
-        UniqueConstraint("entity_label", "lang_code", name="uq_pattern_entity_lang"),
+        UniqueConstraint("entity_label", "lang_code", name="uq_pii_pattern_entity_lang"),
     )
 
     id             = Column(Integer, primary_key=True, autoincrement=True)
@@ -26,7 +26,7 @@ class PatternLibrary(PiiBase):
     is_active      = Column(Boolean,    server_default="true", nullable=True)
 
 
-class GeoLibrary(PiiBase):
+class GeoLibrary(Base):
     """
     Geographic reference terms used by the detection engine.
 
@@ -35,7 +35,7 @@ class GeoLibrary(PiiBase):
         SAFE_CITY — well-known city names that should NOT be redacted as PII addresses.
     """
 
-    __tablename__ = "geo_library"
+    __tablename__ = "pii_geo_library"
 
     id        = Column(Integer,    primary_key=True, autoincrement=True)
     term_text = Column(String(100), nullable=False)

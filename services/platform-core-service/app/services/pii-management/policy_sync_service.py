@@ -107,16 +107,18 @@ class PolicySyncService:
         self._listener_task = None
 
     async def _listen(self, redis_client, db_factory) -> None:
-        try:
-            pubsub = redis_client.pubsub()
-            await pubsub.subscribe(_POLICY_UPDATES_CHANNEL)
-            logger.info("PolicySync listening on Redis channel '%s'", _POLICY_UPDATES_CHANNEL)
-            async for message in pubsub.listen():
-                if message.get("type") == "message":
-                    logger.debug("PolicySync received update signal, refreshing…")
-                    async with db_factory() as db:
-                        await self.refresh(db)
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            logger.error("PolicySync listener error: %s", exc)
+        while True:
+            try:
+                pubsub = redis_client.pubsub()
+                await pubsub.subscribe(_POLICY_UPDATES_CHANNEL)
+                logger.info("PolicySync listening on Redis channel '%s'", _POLICY_UPDATES_CHANNEL)
+                async for message in pubsub.listen():
+                    if message.get("type") == "message":
+                        logger.debug("PolicySync received update signal, refreshing…")
+                        async with db_factory() as db:
+                            await self.refresh(db)
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                logger.warning("PolicySync listener error (reconnecting in 5 s): %s", exc)
+                await asyncio.sleep(5)
