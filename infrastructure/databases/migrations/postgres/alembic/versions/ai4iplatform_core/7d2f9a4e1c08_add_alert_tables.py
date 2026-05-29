@@ -6,7 +6,7 @@ alert_management/* — with `organization` columns dropped and the audit-log tab
 omitted per the alert→platform-core migration plan.
 
 Revision ID: 7d2f9a4e1c08
-Revises: d3e850228f7e
+Revises: 31d7bc3f4379
 Create Date: 2026-05-27 00:00:00.000000
 
 """
@@ -18,7 +18,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '7d2f9a4e1c08'
-down_revision: Union[str, None] = 'd3e850228f7e'
+down_revision: Union[str, None] = '31d7bc3f4379'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
