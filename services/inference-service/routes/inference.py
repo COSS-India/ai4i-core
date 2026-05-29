@@ -5,7 +5,7 @@ Integrates orchestration, factory, and telemetry.
 """
 
 from typing import Any, Dict, Optional
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Body, HTTPException, Depends
 from fastapi.responses import JSONResponse
 import logging
 
@@ -17,6 +17,13 @@ from services.llm_service import OpenAIProxyService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["inference"])
+
+
+_CHAT_EXAMPLE = {
+    "model": "google/gemma-4-E4B-it",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "stream": False,
+}
 
 
 class InferenceRouterError(Exception):
@@ -549,7 +556,9 @@ async def run_ocr_inference(
     summary="OpenAI-compatible Chat Completions",
     description="Forwards the request to the upstream LLM at /v1/chat/completions",
 )
-async def chat_completions(payload: Dict[str, Any]) -> JSONResponse:
+async def chat_completions(
+    payload: Dict[str, Any] = Body(..., example=_CHAT_EXAMPLE),
+) -> JSONResponse:
     status_code, body = await OpenAIProxyService().proxy(path="/v1/chat/completions", payload=payload)
     return JSONResponse(status_code=status_code, content=body)
 
@@ -559,7 +568,9 @@ async def chat_completions(payload: Dict[str, Any]) -> JSONResponse:
     summary="LLM Chat",
     description="Forwards the request to the upstream LLM at /v1/chat",
 )
-async def chat(payload: Dict[str, Any]) -> JSONResponse:
+async def chat(
+    payload: Dict[str, Any] = Body(..., example=_CHAT_EXAMPLE),
+) -> JSONResponse:
     status_code, body = await OpenAIProxyService().proxy(path="/v1/chat", payload=payload)
     return JSONResponse(status_code=status_code, content=body)
 
