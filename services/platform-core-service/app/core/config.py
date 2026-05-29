@@ -83,6 +83,30 @@ class CoreSettings(BaseSettings):
     smtp_auth_username: Optional[str] = None
     smtp_auth_password: Optional[str] = None
 
+    # ── PII database (ai4i_platform DB — separate from core DB) ──
+    # Full URL takes precedence; otherwise built from individual fields.
+    # Legacy pii-service used DB_HOST/DB_NAME/DB_USER/DB_PASS — supported as aliases.
+    pii_database_url: Optional[str] = None
+    pii_db_user: Optional[str] = None
+    pii_db_password: Optional[str] = None
+    pii_db_host: Optional[str] = None
+    pii_db_port: Optional[int] = None
+    pii_db_name: Optional[str] = None
+    # Legacy aliases from the old pii-service environment
+    db_host: Optional[str] = None
+    db_name: Optional[str] = None
+    db_user: Optional[str] = None
+    db_pass: Optional[str] = None
+
+    pii_db_pool_size: int = 10
+    pii_db_max_overflow: int = 5
+
+    # ── NER service (used by PII DetectionEngine for AI-based entity extraction) ──
+    ner_service_url: str
+
+    # ── LLM service (used by PII /admin/generate-regex to produce regex patterns) ──
+    pii_llm_url: str
+
     # ── Redis ──
     redis_host: str
     redis_port: int
@@ -141,6 +165,17 @@ class CoreSettings(BaseSettings):
         password = self.auth_db_password or self.app_db_password or self.postgres_password
         host = self.auth_db_host or self.app_db_host or self.postgres_host
         port = self.auth_db_port or self.app_db_port or self.postgres_port
+        return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}"
+
+    def get_pii_database_url(self) -> str:
+        """Build the asyncpg URL for the PII (ai4i_platform) database."""
+        if self.pii_database_url:
+            return self.pii_database_url
+        user     = self.pii_db_user     or self.db_user     or self.postgres_user
+        password = self.pii_db_password or self.db_pass     or self.postgres_password
+        host     = self.pii_db_host     or self.db_host     or self.postgres_host
+        port     = self.pii_db_port     or self.postgres_port
+        db       = self.pii_db_name     or self.db_name     or self.postgres_db
         return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}"
 
     def get_redis_url(self) -> str:

@@ -223,6 +223,16 @@ services:
       - "8102:8095"
     env_file:
       - ./services/platform-core-service/.env
+    environment:
+      # ── PII DB (ai4i_platform) — separate from platform-core DB ──
+      - PII_DB_HOST=postgres
+      - PII_DB_PORT=5432
+      - PII_DB_USER=${POSTGRES_USER}
+      - PII_DB_PASSWORD=${POSTGRES_PASSWORD}
+      - PII_DB_NAME=ai4i_platform
+      # ── External GPU service endpoints ──
+      - NER_SERVICE_URL=${NER_SERVICE_URL}
+      - PII_LLM_URL=${PII_LLM_URL}
     volumes:
       # Bind-mount app code for hot-reload without image rebuilds
       - ./services/platform-core-service:/app
