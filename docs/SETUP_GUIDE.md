@@ -28,7 +28,7 @@ cd ai4i-core
 cp env.template .env
 ```
 
-Open `.env` and fill in the **Database Configuration** section (around **line 95**). Replace the `<YOUR_...>` placeholders with your values:
+Open `.env` and fill in the **Database Configuration** section (around **line 107**). Replace the `<YOUR_...>` placeholders with your values. Example:
 
 ```bash
 POSTGRES_USER=postgres
@@ -36,15 +36,18 @@ POSTGRES_PASSWORD=postgres
 POSTGRES_HOST=postgres
 POSTGRES_PORT=5432
 POSTGRES_DB=ai4i_platform
-AUTH_DB_NAME=auth_db
+
+# Databases the migration framework actually creates (one per Alembic
+# versions/<dir>, see infrastructure/databases/migrations/postgres/alembic/versions/):
+AUTH_DB_NAME=ai4iplatform_auth
 CONFIG_DB_NAME=config_db
-DASHBOARD_DB_NAME=dashboard_db
+MODEL_MANAGEMENT_DB_NAME=ai4iplatform_core
+POLICY_DB_NAME=policy_db
 TELEMETRY_DB_NAME=telemetry_db
-METRICS_DB_NAME=metrics_db
 ALERTING_DB_NAME=alerting_db
-ALEMBIC_DB_HOST=localhost
-ALEMBIC_DB_PORT=5434
 ```
+
+> Note: `env.template` also contains `DASHBOARD_DB_NAME` and `METRICS_DB_NAME`. These have no Alembic migration directory and are not created by `migrate.sh` — leaving them at defaults is fine; they are read by services that no longer exist.
 
 ### 2.2 Generate All Service Environment Files
 
@@ -89,7 +92,7 @@ docker compose -f docker-compose-local.yml up -d <service-name>
 
 ## Step 5: Initialize Databases
 
-The platform uses a custom Laravel-like migration framework for database management.
+The platform uses Alembic for database migrations, with a thin CLI wrapper (`infrastructure/databases/cli.py`) for convenience. For full details see [`infrastructure/databases/MIGRATIONS.md`](../infrastructure/databases/MIGRATIONS.md).
 
 ### Step 5.1: Install Migration Framework Dependencies
 
@@ -119,7 +122,7 @@ This command will:
 - Create all required databases (`ai4iplatform_auth`, `ai4iplatform_core`, `config_db`, `alerting_db`, `telemetry_db`, `policy_db`, `ai4i_platform_db`)
 - Create all tables, indexes, constraints, and triggers
 - Seed the default data — the seed steps are themselves Alembic migrations (`*_seed_*.py` under `infrastructure/databases/migrations/postgres/alembic/versions/`), so they run as part of the same `upgrade`. This includes:
-  - Default admin user: `admin@ai4inclusion.org` / `ADMIN_PASSWORD`
+  - Default admin user: `admin@ai4inclusion.org` / `ADMIN_PASSWORD` (the password is the literal string `ADMIN_PASSWORD` unless you override it by setting `ADMIN_DEFAULT_PASSWORD` in the environment before running the migration)
   - Default roles (ADMIN, DEVELOPER, USER) and permissions
   - Service configurations and default alert rules
 
@@ -196,7 +199,7 @@ Once all services are running, use the table below to find URLs and ports. The *
 **Platform Admin:**
 - **Username**: `admin`
 - **Email**: `admin@ai4inclusion.org`
-- **Password**: `ADMIN_PASSWORD`
+- **Password**: the literal string `ADMIN_PASSWORD` (override by setting `ADMIN_DEFAULT_PASSWORD` in the environment before running the migration)
 - **Role**: ADMIN (all permissions)
 
 ## Troubleshooting
@@ -269,8 +272,9 @@ If ports are already in use, you can modify the port mappings in `docker-compose
 
 This `docker-compose-local.yml` configuration is optimized for local development:
 
-- **Health checks**: Configured with 6-hour intervals to reduce overhead
-- **Monitoring stack**: Full observability with Prometheus, Grafana, Jaeger, and OpenSearch
+- **Health checks**: Every containerised service has a `healthcheck` on a 10-second interval — `docker compose ps` will tell you whether a service is `healthy`, `starting`, or `unhealthy`
+- **Monitoring stack**: Full observability with Prometheus, Alertmanager, Grafana, Jaeger, and OpenSearch
+- **Hybrid run model**: Long-lived services (`auth-service`, `platform-core-service`, `simple-ui-frontend`) run in Docker. `inference-service` is intentionally **not** in compose — it runs natively on the host so iteration is fast and a Python debugger can attach (see Step 6)
 
 ### Production Deployment
 
