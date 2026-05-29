@@ -27,11 +27,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 import numpy as np
 import scipy.signal as sps
-from pydub import AudioSegment
-from pydub.effects import normalize as pydub_normalize
 
 from interfaces.task_service import BaseTaskService
-from ai4icore_core.telemetry import async_trace_stage
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +68,6 @@ class AudioBase(BaseTaskService):
     async def run_inference(
         self,
         payload: Dict[str, Any],
-        user_id: Optional[int] = None,
-        api_key_id: Optional[int] = None,
-        session_id: Optional[str] = None,
     ) -> Any:
         """
         Audio inference runner (overrides BaseTaskService.run_inference).
@@ -144,8 +138,6 @@ class AudioBase(BaseTaskService):
     # ------------------------------------------------------------------
     # execute_triton_inference — audio-specific override
     # ------------------------------------------------------------------
-
-    @async_trace_stage("ai_inference")
     async def execute_triton_inference(
         self,
         payload: Dict[str, Any],
@@ -326,7 +318,7 @@ class AudioBase(BaseTaskService):
     ) -> Tuple[Any, int]:
         """
         Decode raw audio bytes → (float32 numpy array, sample_rate).
-        Uses soundfile as primary decoder; falls back to pydub for unsupported formats.
+        Uses soundfile as primary decoder; falls back to raw PCM for unsupported formats.
         """
         try:
             import soundfile as sf
@@ -336,14 +328,17 @@ class AudioBase(BaseTaskService):
             return audio_data, sample_rate
         except Exception as sf_err:
             logger.warning(
-                "soundfile failed to decode audio (%s), falling back to pydub", sf_err
+                "soundfile failed to decode audio (%s), falling back to raw PCM", sf_err
             )
-            seg = AudioSegment.from_file(BytesIO(audio_bytes))
-            sample_rate = seg.frame_rate
-            audio_data = np.array(seg.get_array_of_samples(), dtype=np.float32) / (2**15)
-            if seg.channels == 2:
-                audio_data = audio_data.reshape((-1, 2))
-            return audio_data, sample_rate
+            # Fallback: treat raw bytes as little-endian int16 PCM at 16kHz
+            try:
+                audio_data = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+                return audio_data, 16000
+            except Exception as pcm_err:
+                logger.error("Failed to decode audio: %s", pcm_err)
+                raise RuntimeError(
+                    f"{self.task_name}: unable to decode audio bytes"
+                ) from pcm_err
 
     async def _resolve_audio_base64(self, audio_input: Any) -> Optional[str]:
         """
@@ -458,25 +453,23 @@ class AudioBase(BaseTaskService):
 
     def _equalize_amplitude(self, audio: Any, frame_rate: int) -> Any:
         """
-        Quantize float audio to int16 and apply amplitude normalization.
-        Returns a normalized AudioSegment.
+        Normalize audio amplitude using numpy operations.
+        Returns normalized float32 numpy array.
         """
-        audio_quantized = audio * (2**15 - 1)
-        audio_int16 = audio_quantized.astype(np.int16)
-        audio_segment = AudioSegment(
-            audio_int16.tobytes(),
-            frame_rate=frame_rate,
-            sample_width=2,
-            channels=1,
-        )
-        return pydub_normalize(audio_segment)
+        # Normalize to [-1, 1] range
+        max_val = np.max(np.abs(audio))
+        if max_val > 0:
+            audio_normalized = audio / max_val
+        else:
+            audio_normalized = audio
+        return audio_normalized.astype(np.float32)
 
-    def _dequantize_audio(self, audio_segment: Any) -> Any:
+    def _dequantize_audio(self, audio_data: Any) -> Any:
         """
-        Convert a normalized AudioSegment back to a float32 numpy array.
+        Return normalized float32 audio data.
+        Since _equalize_amplitude now returns float32 directly, this is a pass-through.
         """
-        samples = audio_segment.get_array_of_samples()
-        return np.array(samples, dtype=np.float32) / (2**15 - 1)
+        return audio_data.astype(np.float32)
 
     async def _download_audio(self, uri: str) -> bytes:
         """

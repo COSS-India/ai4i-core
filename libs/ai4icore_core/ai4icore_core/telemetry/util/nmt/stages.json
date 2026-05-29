@@ -1,27 +1,37 @@
 {
-  "overall_request": {
+  "request": {
     "start": [
-      {"attr": "task_type", "expr": "task_type"},
-      {"attr": "input_size", "func": "compute_input_size"},
-      {"attr": "customer_id", "func": "compute_customer_id"}
+      {"attr": "tenantId", "expr": "request.get('config', {}).get('tenantId', '') or request.get('tenantId', '') or request.get('tenant_id', '') or tenant_id_ctx or ''"},
+      {"attr": "userId", "expr": "request.get('config', {}).get('userId', '') or request.get('userId', '') or request.get('user_id', '') or user_id_ctx or ''"}
     ],
     "end": [
       {"attr": "total_time_ms", "func": "compute_elapsed_time"},
-      {"attr": "service_used", "func": "compute_service_used"},
-      {"attr": "model_used", "func": "compute_model_used"},
-      {"attr": "success_status", "func": "compute_success_status"}
+      {"attr": "end_point", "expr": "request.get('endpoint', '') or request.get('path', '') or request.get('route', '') or endpoint_path or ''"},
+      {"attr": "status", "expr": "response.get('status')"},
+      {"attr": "status_code", "expr": "response.get('status_code') or response.get('http_status') or http_status_code_ctx"}
     ]
   },
-  "model_loading": {
-    "start": [],
+  "model": {
+    "start": [
+      {"attr": "task_type", "expr": "request.get('task_type', '')"}
+    ],
     "end": [
-      {"attr": "load_time_ms", "func": "compute_elapsed_time"}
-    ]
+      {"attr": "total_time_ms", "func": "compute_elapsed_time"},
+      {"attr": "model_name", "expr": " request.get('name', '') or 'unknown' "},
+{"attr": "model_version", "expr": "request.get('model_version', '') or request.get('version', '') or request.get('config', {}).get('model_version', '') or ''"}    ]
   },
   "ai_inference": {
-    "start": [],
+    "start": [      {"attr": "input_type", "func": "compute_input_type"}
+],
     "end": [
-      {"attr": "execution_time_ms", "func": "compute_elapsed_time"}
+      {"attr": "execution_time_ms", "func": "compute_elapsed_time"},
+      {"attr": "input_size_kb", "func": "compute_input_size_kb"},
+      {"attr": "output_size_kb", "func": "compute_output_size_kb"},
+      {"attr": "input_tokens", "func": "compute_input_tokens"},
+      {"attr": "output_tokens", "func": "compute_output_tokens"},
+      {"attr": "output_type", "func": "compute_output_type"},
+      {"attr": "status", "expr": "response.get('status')"},
+      {"attr": "status_code", "expr": "response.get('status_code') or response.get('http_status') or http_status_code_ctx"}
     ]
   },
   "database_write": {

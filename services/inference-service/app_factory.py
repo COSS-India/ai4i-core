@@ -5,18 +5,14 @@ Creates and configures the unified inference service with all components.
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from ai4icore_core.telemetry import TraceIDMiddleware
 from typing import Optional, Any
 import logging
-
 from ai4icore_core.observability import setup_observability
-
 from routes import router
 from config import settings
-
+from trace.setup import setup_tracing
 
 logger = logging.getLogger(__name__)
-
 
 class InferenceServiceFactory:
     """
@@ -65,9 +61,6 @@ class InferenceServiceFactory:
             app: FastAPI application instance
         """
         logger.info("Setting up middleware...")
-        
-        # Trace ID middleware (must be first to capture all requests)
-        app.add_middleware(TraceIDMiddleware)
         
         # CORS middleware
         app.add_middleware(
@@ -166,6 +159,7 @@ async def create_inference_app() -> FastAPI:
     Returns:
         Configured FastAPI application ready to serve inference requests
     """
+    
     factory = InferenceServiceFactory()
 
     # Create FastAPI app with OpenAPI docs
@@ -212,7 +206,8 @@ async def create_inference_app() -> FastAPI:
     await factory.setup_routes(app)
     await factory.setup_exception_handlers(app)
     await factory.setup_lifespan_events(app)
-
+# Initialize tracing FIRST before anything else
+    setup_tracing()
     logger.info("✓ Inference service application created and configured")
     return app
 
