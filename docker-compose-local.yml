@@ -80,31 +80,6 @@ services:
     restart: unless-stopped
 
 
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
-    container_name: ai4v-elasticsearch
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=true
-      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
-      - ELASTIC_USERNAME=${ELASTIC_USERNAME}
-      - "ES_JAVA_OPTS=-Xms256m -Xmx256m"
-    ports:
-      - "9203:9200"
-    volumes:
-      - elasticsearch-data:/usr/share/elasticsearch/data
-      - ./infrastructure/elasticsearch:/docker-entrypoint-initdb.d
-    networks:
-      - microservices-network
-    healthcheck:
-      test: ["CMD-SHELL", "curl -u ${ELASTIC_USERNAME}:${ELASTIC_PASSWORD} -f http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1"]
-      interval: 10s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    restart: unless-stopped
-
-
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
     container_name: ai4v-zookeeper
@@ -570,8 +545,6 @@ volumes:
      # device: "/home/ubuntu/ai4i-v/volumes/pg_data"
 
   redis-data:
-    driver: local
-  elasticsearch-data:
     driver: local
   kafka-data:
     driver: local
