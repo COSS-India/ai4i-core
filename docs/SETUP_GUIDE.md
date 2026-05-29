@@ -118,28 +118,12 @@ Run migrations for all databases at once.
 This command will:
 - Create all required databases (`ai4iplatform_auth`, `ai4iplatform_core`, `config_db`, `alerting_db`, `telemetry_db`, `policy_db`, `ai4i_platform_db`)
 - Create all tables, indexes, constraints, and triggers
+- Seed the default data — the seed steps are themselves Alembic migrations (`*_seed_*.py` under `infrastructure/databases/migrations/postgres/alembic/versions/`), so they run as part of the same `upgrade`. This includes:
+  - Default admin user: `admin@ai4inclusion.org` / `ADMIN_PASSWORD`
+  - Default roles (ADMIN, DEVELOPER, USER) and permissions
+  - Service configurations and default alert rules
 
-### Step 5.4: Seed Default Data
-
-Populate databases with default data.
-
-**Linux/macOS:**
-```bash
-python3 infrastructure/databases/cli.py seed:all
-```
-
-**Windows:**
-```bash
-python infrastructure/databases/cli.py seed:all
-```
-
-This will create:
-- Default admin user: `admin@ai4inclusion.org` / `ADMIN_PASSWORD`
-- Default roles (ADMIN, DEVELOPER, USER) and permissions
-- Sample service configurations
-- Default alert rules and dashboard configurations
-
-**Note:** The migration framework automatically handles database creation, so you don't need to create databases manually.
+**Note:** The migration framework automatically handles database creation, so you don't need to create databases manually. There is no separate `seed` step — re-running `./scripts/migrate.sh all upgrade` is the way to (re-)apply seed data.
 
 ## Step 6: Start Application Services
 
@@ -237,11 +221,10 @@ Replace `<service-name>` with the service that is stuck (e.g. `auth-service`, `p
 
 1. Ensure PostgreSQL is running: `docker compose -f docker-compose-local.yml ps postgres`
 2. Check PostgreSQL is healthy: `docker compose -f docker-compose-local.yml ps | grep postgres`
-3. Re-run migrations if needed:
+3. Re-run migrations if needed (seed data is baked into the migrations):
 
    ```bash
    ./scripts/migrate.sh all upgrade
-   python3 infrastructure/databases/cli.py seed:all
    ```
 
 ### Postgres volume or "no such file or directory" for pg_data
@@ -265,16 +248,10 @@ If login still fails:
    docker compose -f docker-compose-local.yml ps auth-service
    ```
 
-2. Re-run the seeders to recreate the admin user:
+2. Re-run migrations to recreate the admin user (seed data is part of the migrations):
 
-   **Linux/macOS:**
    ```bash
-   python3 infrastructure/databases/cli.py seed:all
-   ```
-
-   **Windows:**
-   ```bash
-   python infrastructure/databases/cli.py seed:all
+   ./scripts/migrate.sh all upgrade
    ```
 
 3. Check auth service logs:
