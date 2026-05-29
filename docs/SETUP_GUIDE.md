@@ -389,4 +389,4 @@ Then run the setup again from [Step 1: Clone the Repository](#step-1-clone-the-r
 
 After the platform is running, you can enable or customize these optional features:
 
-**Need Help?** Check the [Troubleshooting Guide](TROUBLESHOOTING.md) or open an issue on GitHub.
+**Need Help?** Open an issue on GitHub.

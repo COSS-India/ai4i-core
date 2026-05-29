@@ -225,7 +225,6 @@ Once deployed locally, access your services at:
 - [Setup Guide](docs/SETUP_GUIDE.md) - Comprehensive setup instructions
 - [Deployment Guide](docs/DEPLOYMENT.md) - Production deployment guide
 - [Architecture](docs/ARCHITECTURE.md) - Detailed architecture documentation
-- [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
 
 ### Migration Guides
 - [Kubernetes Migration](K8s-MIGRATION-GUIDE.md) - Migrate from Docker Compose to Kubernetes
@@ -382,7 +381,6 @@ This is an **open-source project**. Community support is available through:
 
 - **Issues**: Report bugs or request features via [GitHub Issues](https://github.com/COSS-India/ai4i-core/issues)
 - **Documentation**: Check the [docs](docs/) directory for setup guides, API documentation, and architecture details
-- **Troubleshooting**: Review [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for common deployment issues
 - **Discussions**: Join discussions for questions and community help
 - **Pull Requests**: Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md)
 
