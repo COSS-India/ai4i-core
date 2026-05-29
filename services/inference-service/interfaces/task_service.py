@@ -380,12 +380,7 @@ class BaseTaskService(ITaskService):
                 headers["Authorization"] = f"Bearer {api_key}"
 
             self.logger.debug(f"Calling Triton: POST {triton_endpoint}")
-
-            # TODO: Temporarily hardcoding 
-            model_management_url = os.getenv("MODEL_MANAGEMENT_SERVICE_URL")
-            triton_endpoint = f"{model_management_url}/v2/models/nmt/infer"
             return await HTTPServiceClient(timeout=300).post_json(triton_endpoint, payload, headers)
-            # return await HTTPServiceClient(timeout=300).post_json(triton_endpoint, payload, headers)
 
         except Exception as e:
             self.logger.error(f"Failed to connect to Triton: {str(e)}")
