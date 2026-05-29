@@ -99,13 +99,15 @@ SIGNAL_METRIC_LABEL_TO_KEY: Dict[str, str] = {
 SERVICE_SUFFIX = "-service"
 
 # ── Inference task → endpoint scoping ────────────────────────────────────────
-# The observability middleware encodes the inference task in the `endpoint`
-# label as `/api/v1/inference/<task>`, where <task> is the lowercased
-# inference-service TaskType. Alerts scope to a task by narrowing this selector.
-INFERENCE_ENDPOINT_PREFIX = "/api/v1/inference"
+# Each inference task is exposed by inference-service at a dedicated route
+# ``/api/v1/<task>/inference`` (see services/inference-service/routes/inference.py).
+# Observability emits ``request.url.path`` verbatim as the Prometheus ``endpoint``
+# label, so alerts scope to a task by narrowing the endpoint selector to that
+# path. No dependency on a ``task_type`` field in the request body — the URL
+# alone identifies the task.
 
 # Lowercased inference-service TaskType values (services/inference-service/
-# models/task_types.py). These are the literal endpoint suffixes in Prometheus.
+# models/task_types.py). These are the literal task segments in the URL.
 INFERENCE_TASKS: tuple = (
     "nmt",
     "asr",
@@ -384,9 +386,9 @@ def inject_endpoint_into_promql(promql_expr: str, tasks: Optional[List[str]]) ->
         return promql_expr
 
     if len(task_list) == 1:
-        new_selector = f'endpoint="{INFERENCE_ENDPOINT_PREFIX}/{task_list[0]}"'
+        new_selector = f'endpoint="/api/v1/{task_list[0]}/inference"'
     else:
         pattern = "|".join(task_list)
-        new_selector = f'endpoint=~"{INFERENCE_ENDPOINT_PREFIX}/({pattern})"'
+        new_selector = f'endpoint=~"/api/v1/({pattern})/inference"'
 
     return promql_expr.replace(_DEFAULT_ENDPOINT_SELECTOR, new_selector)
