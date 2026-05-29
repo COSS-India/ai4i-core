@@ -3,7 +3,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.schemas.telemetry import SearchTracesResponse, TraceResponse
 from app.utils.opensearch_client import OpenSearchTraceClient
@@ -30,21 +30,15 @@ def _is_user_tenant_admin(request: Request) -> bool:
     return "TENANT ADMIN" in roles
 
 
-# Real OpenSearch client (singleton)
-# TODO: Move these to environment variables
-OPENSEARCH_URL = "http://localhost:9204"
-OPENSEARCH_USERNAME = "admin"
-OPENSEARCH_PASSWORD = "admin"
-OPENSEARCH_INDEX = "traces-*"  # Wildcard to match traces-YYYY.MM.DD indices
-
-_opensearch_client = OpenSearchTraceClient(
-    url=OPENSEARCH_URL,
-    username=OPENSEARCH_USERNAME,
-    password=OPENSEARCH_PASSWORD,
-    index=OPENSEARCH_INDEX,
-)
-if not _opensearch_client.connect():
-    logger.warning("Could not connect to OpenSearch - real traces endpoint will return empty results")
+def _get_opensearch_client(request: Request) -> OpenSearchTraceClient:
+    """Get OpenSearch client from app state."""
+    client = getattr(request.app.state, "opensearch_client", None)
+    if not client:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OpenSearch service unavailable",
+        )
+    return client
 
 
 @router.get("/traces/search", response_model=SearchTracesResponse)
@@ -57,6 +51,7 @@ async def search_traces_opensearch(
     end_date: Optional[str] = Query(None, description="End date in ISO format"),
     page: int = Query(1, ge=1, description="Page number for pagination"),
     page_size: int = Query(20, ge=1, le=100, description="Number of traces per page"),
+    opensearch_client: OpenSearchTraceClient = Depends(_get_opensearch_client),
 ) -> SearchTracesResponse:
     """
     Search traces from OpenSearch using direct queries on nested fields.
@@ -117,7 +112,7 @@ async def search_traces_opensearch(
 
         # Execute search with pagination
         offset = (page - 1) * page_size
-        response = _opensearch_client.search_traces(
+        response = opensearch_client.search_traces(
             query=query,
             size=page_size,
             from_=offset,
@@ -133,35 +128,41 @@ async def search_traces_opensearch(
         hits = response.get("hits", {}).get("hits", [])
         total = response.get("hits", {}).get("total", {}).get("value", 0)
 
-        data = []
-        seen_traces = set()
-
+        # Aggregate spans by trace_id to extract metadata from different span types
+        traces_map = {}
         for hit in hits:
             source = hit.get("_source", {})
             trace_id = source.get("context", {}).get("trace_id")
-
-            # Skip duplicates in same page
-            if trace_id in seen_traces:
+            if not trace_id:
                 continue
-            seen_traces.add(trace_id)
+
+            if trace_id not in traces_map:
+                traces_map[trace_id] = {
+                    "trace_id": trace_id,
+                    "service": "ai4x-inference",
+                    "task_type": None,
+                    "status": "unknown",
+                    "url": None,
+                    "tenant_id": tenant_filter or "system",
+                    "timestamp": source.get("@timestamp") or source.get("timestamp"),
+                }
 
             span_name = source.get("name")
             attrs = source.get("attributes", {})
 
-            task_type_val = attrs.get("task_type") if span_name == "model" else None
-            status_val = attrs.get("status", "unknown")
-            url = attrs.get("url") if span_name == "request" else None
+            # Extract task_type from model span
+            if span_name == "model" and not traces_map[trace_id]["task_type"]:
+                traces_map[trace_id]["task_type"] = attrs.get("task_type")
 
-            if trace_id:
-                data.append({
-                    "trace_id": trace_id,
-                    "service": "ai4x-inference",
-                    "task_type": task_type_val,
-                    "status": status_val,
-                    "url": url,
-                    "tenant_id": tenant_filter or "system",
-                    "timestamp": source.get("@timestamp") or source.get("timestamp"),
-                })
+            # Extract url from request span
+            if span_name == "request" and not traces_map[trace_id]["url"]:
+                traces_map[trace_id]["url"] = attrs.get("url")
+
+            # Extract status from any span
+            if not traces_map[trace_id]["status"] or traces_map[trace_id]["status"] == "unknown":
+                traces_map[trace_id]["status"] = attrs.get("status", "unknown")
+
+        data = list(traces_map.values())
 
         return SearchTracesResponse(
             data=data,
@@ -190,6 +191,7 @@ async def search_traces_opensearch(
 async def get_trace_by_id(
     trace_id: str,
     request: Request,
+    opensearch_client: OpenSearchTraceClient = Depends(_get_opensearch_client),
 ) -> TraceResponse:
     """
     Get a specific trace by ID from OpenSearch.
@@ -220,7 +222,7 @@ async def get_trace_by_id(
         logger.info(f"Getting trace {trace_id} from OpenSearch")
 
         # Query OpenSearch for all spans with matching trace_id
-        response = _opensearch_client.get_trace_by_id(trace_id, source_fields=[
+        response = opensearch_client.get_trace_by_id(trace_id, source_fields=[
             "@timestamp",
             "name",
             "context.trace_id",

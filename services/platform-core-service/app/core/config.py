@@ -10,6 +10,7 @@ both .env and OS-level vars are accepted.
 
 from typing import Optional
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -119,6 +120,12 @@ class CoreSettings(BaseSettings):
     jaeger_endpoint: Optional[str] = None
     telemetry_enabled: bool = True
 
+    # ── OpenSearch (traces) ──
+    opensearch_url: Optional[str] = Field(default=None, description="OpenSearch URL (e.g., http://localhost:9204)")
+    opensearch_username: Optional[str] = Field(default=None, description="OpenSearch username")
+    opensearch_password: Optional[str] = Field(default=None, description="OpenSearch password")
+    opensearch_index: str = Field(default="traces-*", description="OpenSearch traces index pattern")
+
     # ── Derived helpers ──
 
     def get_database_url(self) -> str:
@@ -153,6 +160,10 @@ class CoreSettings(BaseSettings):
         if self.redis_password:
             return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
         return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+
+    def get_opensearch_url(self) -> str:
+        """Get OpenSearch URL from configuration."""
+        return self.opensearch_url
 
 
 settings = CoreSettings()
