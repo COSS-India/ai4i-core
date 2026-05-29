@@ -71,7 +71,7 @@ docker compose -f docker-compose-local.yml build
 Start the infrastructure services (PostgreSQL, Redis, Kafka, etc.). Application services depend on databases being initialized:
 
 ```bash
-docker compose -f docker-compose-local.yml up -d postgres redis kafka zookeeper influxdb
+docker compose -f docker-compose-local.yml up -d postgres redis kafka zookeeper
 ```
 
 Wait for all infrastructure services to be healthy:
@@ -80,7 +80,7 @@ Wait for all infrastructure services to be healthy:
 docker compose -f docker-compose-local.yml ps
 ```
 
-You should see `postgres`, `redis`, `kafka`, `zookeeper`, and `influxdb` all showing as "healthy" or "Up".
+You should see `postgres`, `redis`, `kafka`, and `zookeeper` all showing as "healthy" or "Up".
 
 If any service is not running, start the specific service using:
 ```bash
@@ -116,10 +116,8 @@ Run migrations for all databases at once.
 ```
 
 This command will:
-- Create all required databases (auth_db, config_db, alerting_db, dashboard_db, metrics_db, telemetry_db)
+- Create all required databases (`ai4iplatform_auth`, `ai4iplatform_core`, `config_db`, `alerting_db`, `telemetry_db`, `policy_db`, `ai4i_platform_db`)
 - Create all tables, indexes, constraints, and triggers
-- Set up Redis cache structures
-- Configure InfluxDB metrics buckets (if available)
 
 ### Step 5.4: Seed Default Data
 
@@ -143,17 +141,30 @@ This will create:
 
 **Note:** The migration framework automatically handles database creation, so you don't need to create databases manually.
 
-## Step 6: Start All Services
+## Step 6: Start Application Services
 
-Now that the databases are ready, start all remaining services:
+Now that the databases are ready, start the remaining containerised services (auth, platform-core, frontend) and the monitoring stack:
 
 ```bash
 docker compose -f docker-compose-local.yml up -d
 ```
 
-This will start all application services, monitoring tools, and the frontend.
-
 **Note:** Docker Compose will automatically start services in the correct order based on their dependencies.
+
+### Run `inference-service` natively (uvicorn)
+
+`inference-service` is **not** managed by Docker Compose — it runs directly on the host so iteration is fast and the local Python debugger can attach. After the infrastructure containers are up:
+
+```bash
+cd services/inference-service
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python main.py    # listens on http://localhost:8090
+```
+
+Or use VS Code's "Debug Inference Service" launch configuration in `.vscode/launch.json`.
+
+Prometheus and Alertmanager inside the compose network resolve `inference-service` to `host-gateway` so they can scrape and webhook to the host-side process.
 
 ### Verify Services Are Running
 
@@ -182,30 +193,16 @@ docker compose -f docker-compose-local.yml logs -f <service-name>
 
 ## Step 7: Access the Platform
 
-Once all services are running, use the table below to find URLs and ports. The **Compose service** column gives the service name to use with Docker Compose (for example, `docker compose -f docker-compose-local.yml logs -f asr-service` or `docker compose -f docker-compose-local.yml up -d nmt-service`).
+Once all services are running, use the table below to find URLs and ports. The **Compose service** column gives the service name to use with Docker Compose (for example, `docker compose -f docker-compose-local.yml logs -f auth-service`).
 
 | Service / Tool | Compose service | URL | Port |
 |----------------|-----------------|-----|------|
 | Frontend | simple-ui-frontend | http://localhost:3000 | 3000 |
 | Auth Service | auth-service | http://localhost:8081/docs | 8081 |
-| Config Service | config-service | http://localhost:8082/docs | 8082 |
-| ASR Service | asr-service | http://localhost:8087/docs | 8087 |
-| TTS Service | tts-service | http://localhost:8088/docs | 8088 |
-| NMT Service | nmt-service | http://localhost:8091/docs | 8091 |
-| LLM Service | llm-service | http://localhost:8093/docs | 8093 |
-| Transliteration Service | transliteration-service | http://localhost:8097/docs | 8097 |
-| OCR Service | ocr-service | http://localhost:8099/docs | 8099 |
-| NER Service | ner-service | http://localhost:9001/docs | 9001 |
-| Language Detection Service | language-detection-service | http://localhost:8098/docs | 8098 |
-| Language Diarization Service | language-diarization-service | http://localhost:9002/docs | 9002 |
-| Audio Language Detection Service | audio-lang-detection-service | http://localhost:8096/docs | 8096 |
-| Speaker Diarization Service | speaker-diarization-service | http://localhost:8095/docs | 8095 |
-| Pipeline Service | pipeline-service | http://localhost:8092/docs | 8092 |
-| Metrics Service | metrics-service | http://localhost:8083/docs | 8083 |
-| Telemetry Service | telemetry-service | http://localhost:8084/docs | 8084 |
-| Alerting Service | alerting-service | http://localhost:8085/docs | 8085 |
-| Dashboard Service | dashboard-service | http://localhost:8090/docs | 8090 |
+| Platform Core Service | platform-core-service | http://localhost:8102/docs | 8102 |
+| Inference Service | *(runs natively, see Step 6)* | http://localhost:8090/docs | 8090 |
 | Prometheus | prometheus | http://localhost:9090 | 9090 |
+| Alertmanager | alertmanager | http://localhost:9095 | 9095 |
 | Grafana | grafana | http://localhost:3001 | 3001 |
 | Jaeger | jaeger | http://localhost:16686 | 16686 |
 | OpenSearch Dashboards | opensearch-dashboards | http://localhost:5602 | 5602 |
@@ -234,16 +231,7 @@ If some containers stay in a **Created** state and do not start, bring them up e
 docker compose -f docker-compose-local.yml up -d <service-name>
 ```
 
-Replace `<service-name>` with the service that is stuck (e.g. `asr-service`, `tts-service`).
-
-Alternatively, start services in smaller groups so they come up more reliably:
-
-```bash
-docker compose -f docker-compose-local.yml up -d asr-service tts-service nmt-service
-docker compose -f docker-compose-local.yml up -d llm-service pipeline-service ner-service
-```
-
-Add or repeat similar groups for other services as needed.
+Replace `<service-name>` with the service that is stuck (e.g. `auth-service`, `platform-core-service`).
 
 ### Database connection errors
 
@@ -251,40 +239,10 @@ Add or repeat similar groups for other services as needed.
 2. Check PostgreSQL is healthy: `docker compose -f docker-compose-local.yml ps | grep postgres`
 3. Re-run migrations if needed:
 
-   **Linux/macOS:**
    ```bash
-   python3 infrastructure/databases/cli.py migrate:all
+   ./scripts/migrate.sh all upgrade
    python3 infrastructure/databases/cli.py seed:all
    ```
-
-   **Windows:**
-   ```bash
-   python infrastructure/databases/cli.py migrate:all
-   python infrastructure/databases/cli.py seed:all
-   ```
-
-### InfluxDB not starting
-
-If InfluxDB fails to start or you see errors related to it, try resetting the container and volume:
-
-```bash
-docker stop ai4v-influxdb
-docker rm ai4v-influxdb
-
-docker volume ls | grep influxdb
-```
-
-Then remove the volume (replace `<VOLUME_NAME>` with the name you see, e.g. `ai4i-core_influxdb-data`):
-
-```bash
-docker volume rm <VOLUME_NAME>
-```
-
-Finally, bring InfluxDB back up:
-
-```bash
-docker compose -f docker-compose-local.yml up -d --build influxdb
-```
 
 ### Postgres volume or "no such file or directory" for pg_data
 
@@ -339,14 +297,16 @@ This `docker-compose-local.yml` configuration is optimized for local development
 
 ### Production Deployment
 
-For production deployment with Kong API Gateway, load balancing, and enhanced security features, refer to the production docker-compose configuration.
+For production deployment with load balancing and enhanced security features, refer to the production docker-compose configuration.
 
 ## Next Steps
 
-- Explore the API using Swagger documentation at http://localhost:8080/docs
+- Explore the per-service Swagger UIs:
+  - Auth — http://localhost:8081/docs
+  - Platform Core — http://localhost:8102/docs
+  - Inference — http://localhost:8090/docs
 - Test the frontend at http://localhost:3000
-- Review service logs and metrics in Grafana
-- Check the API documentation for detailed endpoint information
+- Review service logs and metrics in Grafana (http://localhost:3001)
 
 ## Stopping Services
 
