@@ -57,6 +57,24 @@ async def lifespan(app: FastAPI):
     )
     await warm_pricing_cache()
 
+    # ── Telemetry / OpenSearch ────────────────────────────────────────────
+    if settings.opensearch_url and settings.opensearch_username and settings.opensearch_password:
+        from app.utils.opensearch_client import OpenSearchTraceClient
+
+        opensearch_client = OpenSearchTraceClient(
+            url=settings.opensearch_url,
+            username=settings.opensearch_username,
+            password=settings.opensearch_password,
+            index=settings.opensearch_index,
+        )
+        if opensearch_client.connect():
+            app.state.opensearch_client = opensearch_client
+            logger.info("OpenSearch client connected for telemetry")
+        else:
+            logger.warning("Could not connect to OpenSearch — telemetry will return empty results")
+    else:
+        logger.info("OpenSearch not configured (OPENSEARCH_URL, OPENSEARCH_USERNAME, OPENSEARCH_PASSWORD required)")
+
     # Alert config sync background loop — only when explicitly enabled, so the
     # service can run without alerting wired up (and to avoid double-writes
     # during the side-by-side rollout window).
