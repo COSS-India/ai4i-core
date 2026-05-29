@@ -333,8 +333,19 @@ async def run_asr_inference(
 
 @router.post(
     "/tts/inference",
+    response_model=None,
     summary="TTS Inference Endpoint",
     description="Route inference requests to TTS TaskService",
+    openapi_extra={"requestBody": {"content": {"application/json": {"example": {
+        "serviceId": "your-service-id",
+        "input": [{"source": "यह एक परीक्षण है"}],
+        "config": {
+            "language": {"sourceLanguage": "hi"},
+            "gender": "female",
+            "samplingRate": 22050,
+            "audioFormat": "mp3",
+        },
+    }}}}},
 )
 async def run_tts_inference(
     payload: Dict[str, Any],
